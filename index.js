@@ -191,4 +191,8 @@ app.use((req, res) => res.status(404).send("Not Found"));
 
 // ===== 起動 =====
 const serverPort = PORT || 3000;
+<<<<<<< HEAD
 app.listen(serverPort, () => console.log(`🚀 Server running on port ${serverPort}`));
+=======
+app.listen(serverPort, () => console.log(`🚀 Server running on port ${serverPort}`));
+>>>>>>> afc7c3c (Prepare for pull: save local changes)
