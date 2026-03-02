@@ -16,7 +16,7 @@ try {
   ({ createCanvas } = require("canvas"));
   Chart = require("chart.js/auto");
   console.log("[OK] canvas/chart.js loaded");
-} catch (e) {
+} catch {
   console.warn("[WARN] canvas/chart.js not available -> graph will fallback to text");
 }
 
@@ -29,13 +29,18 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// ====== startup checks ======
+// ====== 起動時チェック ======
 function requireEnv(key) {
   if (!process.env[key]) throw new Error(`Missing ENV: ${key}`);
 }
 function isHttps(u) {
   return typeof u === "string" && /^https:\/\/.+/i.test(u);
 }
+function normalizeBaseUrl(u) {
+  // 末尾スラッシュを除去して、URL連結の事故を防ぐ
+  return String(u || "").replace(/\/+$/, "");
+}
+
 try {
   requireEnv("BASE_URL");
   requireEnv("LINE_CHANNEL_ACCESS_TOKEN");
@@ -47,6 +52,30 @@ try {
   console.error("❌ Startup error:", e.message);
   process.exit(1);
 }
+
+const BASE_URL_N = normalizeBaseUrl(BASE_URL);
+
+// ====== “同じ過ちを繰り返さない”自己検査 ======
+// もしコピペミスや混在で「Bearer ${」や「url: data:image」が残っていたら起動時に検知して止める
+function selfLintOrExit() {
+  try {
+    const self = fs.readFileSync(__filename, "utf8");
+    const badPatterns = [
+      { re: /Authorization:\s*Bearer\s*\$\{/g, msg: "Found: Authorization: Bearer ${...}  -> 必ず Bearer ${...} にしてください" },
+      { re: /url:\s*data:image\/jpeg;base64,\$\{/g, msg: "Found: url: data:image...${...} -> 必ず data:image/jpeg;base64,${...} の文字列にしてください" },
+      { re: /url:\s*data:image\/png;base64,\$\{/g, msg: "Found: url: data:image...${...} -> 必ずテンプレ文字列にしてください" },
+    ];
+    const hits = badPatterns.filter(p => p.re.test(self));
+    if (hits.length) {
+      console.error("❌ SELF-LINT FAILED. 以下の禁止パターンが残っています:");
+      hits.forEach(h => console.error(" -", h.msg));
+      process.exit(1);
+    }
+  } catch (e) {
+    console.warn("[WARN] self-lint skipped:", e.message);
+  }
+}
+selfLintOrExit();
 
 // ====== app ======
 const app = express();
@@ -74,11 +103,11 @@ function safeText(x) {
   return String(x ?? "");
 }
 function sanitizeInput(text) {
-  // シンプルな注入対策（最低限）
+  // 最低限の注入対策（壊しすぎない）
   return safeText(text).replace(/system:|assistant:|ignore previous/gi, "");
 }
 function lineHeadersJSON() {
-  // ここを統一。二度と Bearer のミスが起きない。
+  // headers直書き禁止。ここだけを使う。
   return {
     Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
     "Content-Type": "application/json",
@@ -94,12 +123,12 @@ function fmtDate(iso) {
   return `${mm}/${dd}`;
 }
 
-// ====== 3段階アップ: 簡易レート制限（暴走防止） ======
+// ====== 簡易レート制限（運用安定） ======
 const rateMap = new Map(); // userId -> {count, ts}
 function isRateLimited(userId) {
   const now = Date.now();
-  const windowMs = 30 * 1000; // 30秒
-  const maxCount = 6; // 30秒で6回まで
+  const windowMs = 30 * 1000;
+  const maxCount = 6;
   const v = rateMap.get(userId) || { count: 0, ts: now };
   if (now - v.ts > windowMs) {
     rateMap.set(userId, { count: 1, ts: now });
@@ -239,11 +268,7 @@ async function fetchBodyRecords(userId, limit = 120) {
 // ====== LINE API ======
 async function replyLine(replyToken, messages) {
   try {
-    await axios.post(
-      "https://api.line.me/v2/bot/message/reply",
-      { replyToken, messages },
-      { headers: lineHeadersJSON() }
-    );
+    await axios.post("https://api.line.me/v2/bot/message/reply", { replyToken, messages }, { headers: lineHeadersJSON() });
   } catch (e) {
     console.error("[LINE reply error]:", e.response?.data || e.message);
   }
@@ -252,8 +277,7 @@ async function getLineImage(messageId) {
   try {
     const resp = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
       responseType: "arraybuffer",
-      // ※GETなのでContent-Type不要。AuthorizationだけでOK
-      headers: { Authorization: Bearer ${LINE_CHANNEL_ACCESS_TOKEN} },
+      headers: { Authorization: Bearer ${LINE_CHANNEL_ACCESS_TOKEN} }, // GETはこれでOK
     });
     return Buffer.from(resp.data, "binary");
   } catch (e) {
@@ -286,8 +310,7 @@ async function analyzeFoodImage(imageBuffer) {
           role: "user",
           content: [
             { type: "text", text: "この食事の概算カロリーと分析をしてください。" },
-            // ✅ data:image は必ず文字列（バッククォート）
-            { type: "image_url", image_url: { url: data:image/jpeg;base64,${base64} } },
+            { type: "image_url", image_url: { url: data:image/jpeg;base64,${base64} } }, // ✅必ず文字列
           ],
         },
       ],
@@ -304,45 +327,10 @@ async function analyzeFoodImage(imageBuffer) {
 // ====== summary ======
 async function generateSummary(userId) {
   const logs = await dbSafe("user_logs select", () =>
-    supabase
-      .from("user_logs")
-      .select("role,message,created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(40)
+    supabase.from("user_logs").select("role,message,created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(40)
   );
   if (!logs || logs.length === 0) return "";
 
-  const textBlock = logs
-    .reverse()
-    .map((d) => `${d.role}: ${d.message}`)
-    .join("\n");
+  const textBlock = logs.reverse().map((d) => `${d.role}: ${d.message}`).join("\n");
 
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "重要な事実（体重/行動/感情/制約）だけを200字以内で要約して。" },
-        { role: "user", content: textBlock },
-      ],
-      max_tokens: 220,
-    });
-    return completion.choices?.[0]?.message?.content || "";
-  } catch (e) {
-    console.error("[Summary error]:", e.message);
-    return "";
-  }
-}
-
-// ====== graph (optional) ======
-async function generateWeightGraphPublicPath(userId, profile) {
-  if (!createCanvas || !Chart) return null;
-
-  const records = await fetchBodyRecords(userId, 120);
-  if (!records.length) return null;
-
-  const labels = records.map((r) => fmtDate(r.recorded_at));
-  const weights = records.map((r) => r.weight);
-
-  const target = profile?.target_weight ?? null;
-  const pred3m = profile?.current_weight ? predictFutureWeight3m(profile.current_we
+  t
