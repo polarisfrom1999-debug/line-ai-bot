@@ -1,3 +1,5 @@
+"use strict";
+
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
@@ -5,52 +7,52 @@ const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
-// ====== optional deps（無くても起動する） ======
+// ====== optional deps (canvas/chart.js が無くても起動する) ======
 let createCanvas = null;
 let Chart = null;
 try {
   ({ createCanvas } = require("canvas"));
   Chart = require("chart.js/auto");
+  console.log("[OK] canvas/chart.js loaded");
 } catch (e) {
-  console.warn("[WARN] canvas/chart.js not available. Graph will fallback to text only.");
+  console.warn("[WARN] canvas/chart.js not available -> graph will fallback to text");
 }
 
 // ====== ENV ======
 const PORT = process.env.PORT || 10000;
-const BASE_URL = process.env.BASE_URL; // 必須（https://...）
+const BASE_URL = process.env.BASE_URL; // 必須: https://xxxxx.onrender.com
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // 任意
-
-// ====== 起動チェック ======
+// ====== startup checks ======
 function requireEnv(key) {
   if (!process.env[key]) throw new Error(`Missing ENV: ${key}`);
 }
-function mustHttps(url) {
-  return typeof url === "string" && /^https:\/\/.+/i.test(url);
+function isHttps(u) {
+  return typeof u === "string" && /^https:\/\/.+/i.test(u);
 }
 try {
+  requireEnv("BASE_URL");
+  requireEnv("LINE_CHANNEL_ACCESS_TOKEN");
   requireEnv("OPENAI_API_KEY");
   requireEnv("SUPABASE_URL");
   requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-  requireEnv("LINE_CHANNEL_ACCESS_TOKEN");
-  requireEnv("BASE_URL");
-  if (!mustHttps(BASE_URL)) throw new Error("BASE_URL must start with https:// (LINE image requires https public URL)");
+  if (!isHttps(BASE_URL)) throw new Error("BASE_URL must start with https:// (LINE image requires public https URL)");
 } catch (e) {
   console.error("❌ Startup error:", e.message);
   process.exit(1);
 }
 
-// ====== App ======
+// ====== app ======
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-// 静的配信（LINE画像返信用）
+// ====== static files for LINE images ======
 const PUBLIC_DIR = path.join(__dirname, "public");
 const GRAPH_DIR = path.join(PUBLIC_DIR, "graphs");
 if (!fs.existsSync(GRAPH_DIR)) fs.mkdirSync(GRAPH_DIR, { recursive: true });
@@ -58,21 +60,57 @@ app.use("/public", express.static(PUBLIC_DIR));
 
 app.get("/", (req, res) => res.send("LINE AI Bot is running ✅"));
 
-// ====== Clients ======
+// ====== clients ======
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// ====== LINE headers（共通化） ======
-function lineHeaders() {
+// ====== helpers ======
+function nowIso() {
+  return new Date().toISOString();
+}
+function safeText(x) {
+  return String(x ?? "");
+}
+function sanitizeInput(text) {
+  // シンプルな注入対策（最低限）
+  return safeText(text).replace(/system:|assistant:|ignore previous/gi, "");
+}
+function lineHeadersJSON() {
+  // ここを統一。二度と Bearer のミスが起きない。
   return {
     Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
     "Content-Type": "application/json",
   };
 }
+function randomId() {
+  return crypto.randomBytes(12).toString("hex");
+}
+function fmtDate(iso) {
+  const d = new Date(iso);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}/${dd}`;
+}
 
-// ====== 思想OS ======
+// ====== 3段階アップ: 簡易レート制限（暴走防止） ======
+const rateMap = new Map(); // userId -> {count, ts}
+function isRateLimited(userId) {
+  const now = Date.now();
+  const windowMs = 30 * 1000; // 30秒
+  const maxCount = 6; // 30秒で6回まで
+  const v = rateMap.get(userId) || { count: 0, ts: now };
+  if (now - v.ts > windowMs) {
+    rateMap.set(userId, { count: 1, ts: now });
+    return false;
+  }
+  v.count += 1;
+  rateMap.set(userId, v);
+  return v.count > maxCount;
+}
+
+// ====== core prompt ======
 const corePrompt = `
 あなたは「ここから。」思想ブランドAI。
 院長の27年治療経験と日本代表トレーナー思考を持つ。
@@ -92,68 +130,13 @@ LINE向け：
 ・最後に「ここから。」（緊急時は除く）
 `.trim();
 
-// ===== 医療リスク検知 =====
+// ====== medical risk ======
 function checkMedicalRisk(text) {
   const dangerWords = ["胸が痛い", "息苦しい", "意識", "出血", "しびれが強い", "激痛", "倒れた"];
   return dangerWords.some((w) => text.includes(w));
 }
 
-// ===== 入力サニタイズ =====
-function sanitizeInput(text) {
-  return String(text || "").replace(/system:|assistant:|ignore previous/gi, "");
-}
-function nowIso() {
-  return new Date().toISOString();
-}
-
-// ===== DB操作（失敗しても止めない安全ラッパ） =====
-async function dbSafe(name, fn) {
-  try {
-    const { data, error } = await fn();
-    if (error) {
-      console.error(`[DB ERROR] ${name}:`, error.message);
-      return null;
-    }
-    return data ?? null;
-  } catch (e) {
-    console.error(`[DB EXCEPTION] ${name}:`, e.message);
-    return null;
-  }
-}
-
-// ===== DB保存：会話ログ =====
-async function saveToUserLogs(userId, message, role = "user") {
-  await dbSafe("user_logs insert", () =>
-    supabase.from("user_logs").insert([{ user_id: userId, message, role, created_at: nowIso() }])
-  );
-}
-
-// ===== プロフィール取得/更新 =====
-async function getUserProfile(userId) {
-  return await dbSafe("user_profiles select", () =>
-    supabase.from("user_profiles").select("*").eq("user_id", userId).maybeSingle()
-  );
-}
-
-async function upsertUserProfile(userId, dataObj) {
-  await dbSafe("user_profiles upsert", () =>
-    supabase.from("user_profiles").upsert({ user_id: userId, ...dataObj, updated_at: nowIso() })
-  );
-}
-
-// ===== 体重/食事保存 =====
-async function saveBodyRecord(userId, weight) {
-  await dbSafe("body_records insert", () =>
-    supabase.from("body_records").insert([{ user_id: userId, weight, recorded_at: nowIso() }])
-  );
-}
-async function saveMealRecord(userId, analysisText) {
-  await dbSafe("meal_records insert", () =>
-    supabase.from("meal_records").insert([{ user_id: userId, content: analysisText, recorded_at: nowIso() }])
-  );
-}
-
-// ===== 抽出 =====
+// ====== extractors ======
 function extractName(text) {
   const m = text.match(/私は(.+?)です|名前は(.+?)です/);
   return m ? (m[1] || m[2])?.trim() : null;
@@ -175,6 +158,7 @@ function extractAge(text) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// ====== metrics ======
 function calculateBMI(weight, heightCm) {
   if (!weight || !heightCm) return null;
   const h = heightCm / 100;
@@ -199,24 +183,90 @@ function calculateRiskScore(age, bmi) {
   return score;
 }
 
-// ===== LINE画像取得 =====
-async function getLineImage(messageId) {
+// ====== DB safe wrapper ======
+async function dbSafe(name, fn) {
   try {
-    const resp = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
-      responseType: "arraybuffer",
-      headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
-    });
-    return Buffer.from(resp.data, "binary");
-  } catch (err) {
-    console.error("LINE image fetch error:", err.response?.data || err.message);
+    const { data, error } = await fn();
+    if (error) {
+      console.error(`[DB ERROR] ${name}:`, error.message);
+      return null;
+    }
+    return data ?? null;
+  } catch (e) {
+    console.error(`[DB EXCEPTION] ${name}:`, e.message);
     return null;
   }
 }
 
-// ===== 食事画像解析（OpenAI） =====
+// ====== DB ops ======
+async function saveToUserLogs(userId, message, role = "user") {
+  await dbSafe("user_logs insert", () =>
+    supabase.from("user_logs").insert([{ user_id: userId, message, role, created_at: nowIso() }])
+  );
+}
+async function getUserProfile(userId) {
+  return await dbSafe("user_profiles select", () =>
+    supabase.from("user_profiles").select("*").eq("user_id", userId).maybeSingle()
+  );
+}
+async function upsertUserProfile(userId, patch) {
+  await dbSafe("user_profiles upsert", () =>
+    supabase.from("user_profiles").upsert({ user_id: userId, ...patch, updated_at: nowIso() })
+  );
+}
+async function saveBodyRecord(userId, weight) {
+  await dbSafe("body_records insert", () =>
+    supabase.from("body_records").insert([{ user_id: userId, weight, recorded_at: nowIso() }])
+  );
+}
+async function saveMealRecord(userId, analysisText) {
+  await dbSafe("meal_records insert", () =>
+    supabase.from("meal_records").insert([{ user_id: userId, content: analysisText, recorded_at: nowIso() }])
+  );
+}
+async function fetchBodyRecords(userId, limit = 120) {
+  const data = await dbSafe("body_records select", () =>
+    supabase
+      .from("body_records")
+      .select("weight,recorded_at")
+      .eq("user_id", userId)
+      .order("recorded_at", { ascending: true })
+      .limit(limit)
+  );
+  return data || [];
+}
+
+// ====== LINE API ======
+async function replyLine(replyToken, messages) {
+  try {
+    await axios.post(
+      "https://api.line.me/v2/bot/message/reply",
+      { replyToken, messages },
+      { headers: lineHeadersJSON() }
+    );
+  } catch (e) {
+    console.error("[LINE reply error]:", e.response?.data || e.message);
+  }
+}
+async function getLineImage(messageId) {
+  try {
+    const resp = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+      responseType: "arraybuffer",
+      // ※GETなのでContent-Type不要。AuthorizationだけでOK
+      headers: { Authorization: Bearer ${LINE_CHANNEL_ACCESS_TOKEN} },
+    });
+    return Buffer.from(resp.data, "binary");
+  } catch (e) {
+    console.error("[LINE image fetch error]:", e.response?.data || e.message);
+    return null;
+  }
+}
+
+// ====== OpenAI food image analysis ======
 async function analyzeFoodImage(imageBuffer) {
   try {
     const base64 = imageBuffer.toString("base64");
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -224,35 +274,36 @@ async function analyzeFoodImage(imageBuffer) {
           role: "system",
           content: `
 あなたは「ここから。」思想の栄養分析AI。
-必ず以下を出力：
+必ず以下を出力（推定/目安で）：
 1) 推定カロリー(kcal)
 2) PFC推定（g）
 3) 注意点（過剰/不足）
-4) 今日の1アクション
-5) 20年視点の一言
-※断定せず「推定」「目安」を使う
+4) 今日の1アクション（超具体）
+5) 20年視点の一言（安心感・伴走）
 `.trim(),
         },
         {
           role: "user",
           content: [
             { type: "text", text: "この食事の概算カロリーと分析をしてください。" },
+            // ✅ data:image は必ず文字列（バッククォート）
             { type: "image_url", image_url: { url: data:image/jpeg;base64,${base64} } },
           ],
         },
       ],
       max_tokens: 800,
     });
+
     return completion.choices?.[0]?.message?.content || "解析結果が取得できませんでした。";
-  } catch (err) {
-    console.error("Food analysis error:", err.message);
+  } catch (e) {
+    console.error("[Food analysis error]:", e.message);
     return "画像解析に失敗しました。もう一度お試しください。";
   }
 }
 
-// ===== 要約（履歴） =====
+// ====== summary ======
 async function generateSummary(userId) {
-  const data = await dbSafe("user_logs select", () =>
+  const logs = await dbSafe("user_logs select", () =>
     supabase
       .from("user_logs")
       .select("role,message,created_at")
@@ -260,9 +311,9 @@ async function generateSummary(userId) {
       .order("created_at", { ascending: false })
       .limit(40)
   );
-  if (!data || data.length === 0) return "";
+  if (!logs || logs.length === 0) return "";
 
-  const textBlock = data
+  const textBlock = logs
     .reverse()
     .map((d) => `${d.role}: ${d.message}`)
     .join("\n");
@@ -277,33 +328,13 @@ async function generateSummary(userId) {
       max_tokens: 220,
     });
     return completion.choices?.[0]?.message?.content || "";
-  } catch (err) {
-    console.error("Summary error:", err.message);
+  } catch (e) {
+    console.error("[Summary error]:", e.message);
     return "";
   }
 }
 
-// ===== 体重履歴取得 =====
-async function fetchBodyRecords(userId, limit = 120) {
-  const data = await dbSafe("body_records select", () =>
-    supabase
-      .from("body_records")
-      .select("weight,recorded_at")
-      .eq("user_id", userId)
-      .order("recorded_at", { ascending: true })
-      .limit(limit)
-  );
-  return data || [];
-}
-
-function fmtDate(iso) {
-  const d = new Date(iso);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}/${dd}`;
-}
-
-// ===== グラフ生成（PNG保存→公開URL / 失敗時null） =====
+// ====== graph (optional) ======
 async function generateWeightGraphPublicPath(userId, profile) {
   if (!createCanvas || !Chart) return null;
 
@@ -314,43 +345,4 @@ async function generateWeightGraphPublicPath(userId, profile) {
   const weights = records.map((r) => r.weight);
 
   const target = profile?.target_weight ?? null;
-  const pred3m = profile?.current_weight ? predictFutureWeight3m(profile.current_weight) : null;
-
-  try {
-    const canvas = createCanvas(900, 450);
-    const ctx = canvas.getContext("2d");
-
-    const datasets = [
-      { label: "体重", data: weights, borderColor: "blue", fill: false, tension: 0.2 },
-    ];
-    if (target) {
-      datasets.push({
-        label: "目標",
-        data: weights.map(() => target),
-        borderColor: "green",
-        borderDash: [6, 6],
-        fill: false,
-      });
-    }
-    if (pred3m) {
-      datasets.push({
-        label: "3ヶ月予測(目安)",
-        data: weights.map((_, i) => (i === weights.length - 1 ? pred3m : null)),
-        borderColor: "orange",
-        fill: false,
-      });
-    }
-
-    new Chart(ctx, {
-      type: "line",
-      data: { labels, datasets },
-      options: {
-        responsive: false,
-        plugins: { legend: { display: true } },
-        scales: { y: { title: { display: true, text: "kg" } } },
-      },
-    });
-
-    const fileName = `weight_${userId}_${Date.now()}.png`;
-    const filePath = path.join(GRAPH_DIR, fileName);
-    fs.writeFileSync(filePath, canvas.toBuffer("ima
+  const pred3m = profile?.current_weight ? predictFutureWeight3m(profile.current_we
