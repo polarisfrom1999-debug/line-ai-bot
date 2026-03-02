@@ -3,33 +3,48 @@ const express = require("express");
 const axios = require("axios");
 const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
-const { createCanvas } = require("canvas");
-const Chart = require("chart.js/auto");
 const fs = require("fs");
 const path = require("path");
 
+// ====== optional deps（無くても起動する） ======
+let createCanvas = null;
+let Chart = null;
+try {
+  ({ createCanvas } = require("canvas"));
+  Chart = require("chart.js/auto");
+} catch (e) {
+  console.warn("[WARN] canvas/chart.js not available. Graph will fallback to text only.");
+}
+
 // ====== ENV ======
 const PORT = process.env.PORT || 10000;
-const BASE_URL = process.env.BASE_URL; // 例: https://line-ai-bot-xxxx.onrender.com
+const BASE_URL = process.env.BASE_URL; // 必須（https://...）
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // 任意（後で実装可）
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // 任意
 
-// ====== 必須チェック（起動時に分かりやすく落とす） ======
+// ====== 起動チェック ======
 function requireEnv(key) {
-  if (!process.env[key]) {
-    throw new Error(`Missing ENV: ${key}`);
-  }
+  if (!process.env[key]) throw new Error(`Missing ENV: ${key}`);
 }
-requireEnv("OPENAI_API_KEY");
-requireEnv("SUPABASE_URL");
-requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-requireEnv("LINE_CHANNEL_ACCESS_TOKEN");
-requireEnv("BASE_URL");
+function mustHttps(url) {
+  return typeof url === "string" && /^https:\/\/.+/i.test(url);
+}
+try {
+  requireEnv("OPENAI_API_KEY");
+  requireEnv("SUPABASE_URL");
+  requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  requireEnv("LINE_CHANNEL_ACCESS_TOKEN");
+  requireEnv("BASE_URL");
+  if (!mustHttps(BASE_URL)) throw new Error("BASE_URL must start with https:// (LINE image requires https public URL)");
+} catch (e) {
+  console.error("❌ Startup error:", e.message);
+  process.exit(1);
+}
 
 // ====== App ======
 const app = express();
@@ -43,11 +58,19 @@ app.use("/public", express.static(PUBLIC_DIR));
 
 app.get("/", (req, res) => res.send("LINE AI Bot is running ✅"));
 
-// ====== OpenAI ======
+// ====== Clients ======
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
-// ====== Supabase ======
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+// ====== LINE headers（共通化） ======
+function lineHeaders() {
+  return {
+    Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+    "Content-Type": "application/json",
+  };
+}
 
 // ====== 思想OS ======
 const corePrompt = `
@@ -79,74 +102,55 @@ function checkMedicalRisk(text) {
 function sanitizeInput(text) {
   return String(text || "").replace(/system:|assistant:|ignore previous/gi, "");
 }
-
-// ===== DB保存：会話ログ =====
-async function saveToUserLogs(userId, message, role = "user") {
-  try {
-    await supabase.from("user_logs").insert([
-      {
-        user_id: userId,
-        message,
-        role,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.error("user_logs save error:", err.message);
-  }
+function nowIso() {
+  return new Date().toISOString();
 }
 
-// ===== プロフィール取得/更新 =====
-async function getUserProfile(userId) {
+// ===== DB操作（失敗しても止めない安全ラッパ） =====
+async function dbSafe(name, fn) {
   try {
-    const { data } = await supabase.from("user_profiles").select("*").eq("user_id", userId).maybeSingle();
-    return data || null;
-  } catch (err) {
-    console.error("getUserProfile error:", err.message);
+    const { data, error } = await fn();
+    if (error) {
+      console.error(`[DB ERROR] ${name}:`, error.message);
+      return null;
+    }
+    return data ?? null;
+  } catch (e) {
+    console.error(`[DB EXCEPTION] ${name}:`, e.message);
     return null;
   }
 }
 
+// ===== DB保存：会話ログ =====
+async function saveToUserLogs(userId, message, role = "user") {
+  await dbSafe("user_logs insert", () =>
+    supabase.from("user_logs").insert([{ user_id: userId, message, role, created_at: nowIso() }])
+  );
+}
+
+// ===== プロフィール取得/更新 =====
+async function getUserProfile(userId) {
+  return await dbSafe("user_profiles select", () =>
+    supabase.from("user_profiles").select("*").eq("user_id", userId).maybeSingle()
+  );
+}
+
 async function upsertUserProfile(userId, dataObj) {
-  try {
-    await supabase.from("user_profiles").upsert({
-      user_id: userId,
-      ...dataObj,
-      updated_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error("user_profiles upsert error:", err.message);
-  }
+  await dbSafe("user_profiles upsert", () =>
+    supabase.from("user_profiles").upsert({ user_id: userId, ...dataObj, updated_at: nowIso() })
+  );
 }
 
-// ===== 体重保存 =====
+// ===== 体重/食事保存 =====
 async function saveBodyRecord(userId, weight) {
-  try {
-    await supabase.from("body_records").insert([
-      {
-        user_id: userId,
-        weight,
-        recorded_at: new Date().toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.error("body_records insert error:", err.message);
-  }
+  await dbSafe("body_records insert", () =>
+    supabase.from("body_records").insert([{ user_id: userId, weight, recorded_at: nowIso() }])
+  );
 }
-
-// ===== 食事保存 =====
 async function saveMealRecord(userId, analysisText) {
-  try {
-    await supabase.from("meal_records").insert([
-      {
-        user_id: userId,
-        content: analysisText,
-        recorded_at: new Date().toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.error("meal_records insert error:", err.message);
-  }
+  await dbSafe("meal_records insert", () =>
+    supabase.from("meal_records").insert([{ user_id: userId, content: analysisText, recorded_at: nowIso() }])
+  );
 }
 
 // ===== 抽出 =====
@@ -176,7 +180,6 @@ function calculateBMI(weight, heightCm) {
   const h = heightCm / 100;
   return +(weight / (h * h)).toFixed(1);
 }
-
 function determinePhase(currentWeight, targetWeight) {
   if (!currentWeight || !targetWeight) return "準備期";
   const diff = currentWeight - targetWeight;
@@ -184,12 +187,10 @@ function determinePhase(currentWeight, targetWeight) {
   if (diff > 1) return "調整期";
   return "維持期";
 }
-
 function predictFutureWeight3m(currentWeight) {
   if (!currentWeight) return null;
   return +(currentWeight - 2).toFixed(1);
 }
-
 function calculateRiskScore(age, bmi) {
   let score = 0;
   if (age && age >= 60) score += 2;
@@ -251,21 +252,22 @@ async function analyzeFoodImage(imageBuffer) {
 
 // ===== 要約（履歴） =====
 async function generateSummary(userId) {
-  try {
-    const { data } = await supabase
+  const data = await dbSafe("user_logs select", () =>
+    supabase
       .from("user_logs")
       .select("role,message,created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
-      .limit(40);
+      .limit(40)
+  );
+  if (!data || data.length === 0) return "";
 
-    if (!data || data.length === 0) return "";
+  const textBlock = data
+    .reverse()
+    .map((d) => `${d.role}: ${d.message}`)
+    .join("\n");
 
-    const textBlock = data
-      .reverse()
-      .map((d) => `${d.role}: ${d.message}`)
-      .join("\n");
-
+  try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -274,7 +276,6 @@ async function generateSummary(userId) {
       ],
       max_tokens: 220,
     });
-
     return completion.choices?.[0]?.message?.content || "";
   } catch (err) {
     console.error("Summary error:", err.message);
@@ -284,12 +285,14 @@ async function generateSummary(userId) {
 
 // ===== 体重履歴取得 =====
 async function fetchBodyRecords(userId, limit = 120) {
-  const { data } = await supabase
-    .from("body_records")
-    .select("weight,recorded_at")
-    .eq("user_id", userId)
-    .order("recorded_at", { ascending: true })
-    .limit(limit);
+  const data = await dbSafe("body_records select", () =>
+    supabase
+      .from("body_records")
+      .select("weight,recorded_at")
+      .eq("user_id", userId)
+      .order("recorded_at", { ascending: true })
+      .limit(limit)
+  );
   return data || [];
 }
 
@@ -300,8 +303,10 @@ function fmtDate(iso) {
   return `${mm}/${dd}`;
 }
 
-// ===== グラフ生成（PNG保存→公開URL） =====
+// ===== グラフ生成（PNG保存→公開URL / 失敗時null） =====
 async function generateWeightGraphPublicPath(userId, profile) {
+  if (!createCanvas || !Chart) return null;
+
   const records = await fetchBodyRecords(userId, 120);
   if (!records.length) return null;
 
@@ -311,66 +316,41 @@ async function generateWeightGraphPublicPath(userId, profile) {
   const target = profile?.target_weight ?? null;
   const pred3m = profile?.current_weight ? predictFutureWeight3m(profile.current_weight) : null;
 
-  const canvas = createCanvas(900, 450);
-  const ctx = canvas.getContext("2d");
+  try {
+    const canvas = createCanvas(900, 450);
+    const ctx = canvas.getContext("2d");
 
-  const datasets = [
-    { label: "体重", data: weights, borderColor: "blue", fill: false, tension: 0.2 },
-  ];
-  if (target) {
-    datasets.push({ label: "目標", data: weights.map(() => target), borderColor: "green", borderDash: [6, 6], fill: false });
-  }
-  if (pred3m) {
-    datasets.push({
-      label: "3ヶ月予測(目安)",
-      data: weights.map((_, i) => (i === weights.length - 1 ? pred3m : null)),
-      borderColor: "orange",
-      fill: false,
+    const datasets = [
+      { label: "体重", data: weights, borderColor: "blue", fill: false, tension: 0.2 },
+    ];
+    if (target) {
+      datasets.push({
+        label: "目標",
+        data: weights.map(() => target),
+        borderColor: "green",
+        borderDash: [6, 6],
+        fill: false,
+      });
+    }
+    if (pred3m) {
+      datasets.push({
+        label: "3ヶ月予測(目安)",
+        data: weights.map((_, i) => (i === weights.length - 1 ? pred3m : null)),
+        borderColor: "orange",
+        fill: false,
+      });
+    }
+
+    new Chart(ctx, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: false,
+        plugins: { legend: { display: true } },
+        scales: { y: { title: { display: true, text: "kg" } } },
+      },
     });
-  }
 
-  new Chart(ctx, {
-    type: "line",
-    data: { labels, datasets },
-    options: {
-      responsive: false,
-      plugins: { legend: { display: true } },
-      scales: { y: { title: { display: true, text: "kg" } } },
-    },
-  });
-
-  const fileName = `weight_${userId}_${Date.now()}.png`;
-  const filePath = path.join(GRAPH_DIR, fileName);
-  fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
-  return `/public/graphs/${fileName}`;
-}
-
-// ===== LINE返信 =====
-async function replyLine(replyToken, messages) {
-  try {
-    await axios.post(
-      "https://api.line.me/v2/bot/message/reply",
-      { replyToken, messages },
-      {
-        headers: {
-          Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (err) {
-    console.error("LINE reply error:", err.response?.data || err.message);
-  }
-}
-
-// ===== コマンド判定 =====
-function isGraphCommand(text) {
-  return /(グラフ|体重グラフ|推移|見せて)/.test(text);
-}
-
-// ===== Webhook =====
-app.post("/webhook", async (req, res) => {
-  try {
-    const events = req.body.events || [];
-
-    for (const eve
+    const fileName = `weight_${userId}_${Date.now()}.png`;
+    const filePath = path.join(GRAPH_DIR, fileName);
+    fs.writeFileSync(filePath, canvas.toBuffer("ima
