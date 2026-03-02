@@ -204,7 +204,7 @@ async function getLineImage(messageId) {
   try {
     const resp = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
       responseType: "arraybuffer",
-      headers: { Authorization: Bearer ${LINE_CHANNEL_ACCESS_TOKEN} },
+      headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` },
     });
     return Buffer.from(resp.data, "binary");
   } catch (err) {
