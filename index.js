@@ -7,6 +7,16 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenAI } = require('@google/genai');
+const {
+  LAB_ITEM_LABELS,
+  renderPanelSummary,
+  buildLabQuickReplyMain,
+  createLabDraftSession,
+  getOpenLabDraft,
+  setActiveLabCorrection,
+  applyLabCorrection,
+  confirmLabDraftToResults,
+} = require('./blood_test_flow_helpers');
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -126,6 +136,24 @@ function normalizeLineMessages(messages) {
       return msg;
     });
 }
+
+function textMessageWithQuickReplies(text, labels) {
+  const items = (labels || [])
+    .filter(Boolean)
+    .slice(0, 13)
+    .map((label) => ({
+      type: 'action',
+      action: { type: 'message', label: String(label).slice(0, 20), text: String(label).slice(0, 300) },
+    }));
+
+  if (!items.length) return { type: 'text', text: String(text).slice(0, 5000) };
+  return {
+    type: 'text',
+    text: String(text).slice(0, 5000),
+    quickReply: { items },
+  };
+}
+
 
 async function getLineImageContent(messageId) {
   return retry(async () => {
@@ -284,34 +312,55 @@ async function handleMealImage({ replyToken, user, messageId, buffer, mime }) {
 }
 
 async function handleBloodTestImage({ replyToken, user, messageId, buffer, mime }) {
-  const analysis = await analyzeBloodTestImageWithGemini(buffer, mime);
-  const measuredAt = toIsoStringInTZ(new Date(), TZ);
+  const extraction = await extractBloodTestDraftWithGemini(buffer, mime);
+  const dates = Array.isArray(extraction.dates) ? extraction.dates.filter(Boolean) : [];
+  const panels = Array.isArray(extraction.panels) ? extraction.panels : [];
 
-  const insertPayload = {
+  if (!dates.length || !panels.length) {
+    await replyMessage(
+      replyToken,
+      '🧪 血液検査の画像として受け取りました。少し見えにくい所があるので、もう少しはっきり写るように送っていただけると助かります。'
+    );
+    return;
+  }
+
+  const workingData = {};
+  for (const panel of panels) {
+    if (!panel || !panel.date) continue;
+    workingData[panel.date] = panel.items || {};
+  }
+
+  const firstDate = dates[0];
+  await createLabDraftSession(supabase, {
     user_id: user.id,
-    source_message_id: messageId,
-    measured_at: measuredAt,
-    hba1c: toNumberOrNull(analysis.hba1c),
-    fasting_glucose: toNumberOrNull(analysis.fasting_glucose),
-    ldl: toNumberOrNull(analysis.ldl),
-    hdl: toNumberOrNull(analysis.hdl),
-    triglycerides: toNumberOrNull(analysis.triglycerides),
-    ast: toNumberOrNull(analysis.ast),
-    alt: toNumberOrNull(analysis.alt),
-    ggt: toNumberOrNull(analysis.ggt),
-    ai_summary: safeText(analysis.ai_summary, 2000),
-    raw_model_json: analysis,
-  };
+    line_user_id: user.line_user_id,
+    line_message_id: messageId,
+    status: 'draft',
+    detected_dates_json: dates,
+    selected_date: dates.length === 1 ? firstDate : null,
+    raw_extracted_json: extraction,
+    working_data_json: workingData,
+    source_image_url: null,
+    expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  });
 
-  const { error } = await supabase.from('lab_results').insert(insertPayload);
-  if (error) throw error;
+  if (dates.length > 1) {
+    const chooseText = [
+      '🧪 血液検査の画像を読み取りました。',
+      'この画像には複数回分の検査結果がありそうです。',
+      'まず確認したい日付を選んでください。',
+      '',
+      ...dates.map((d, i) => `${i + 1}. ${String(d).replace(/-/g, '/')}`),
+    ].join('
+');
 
-  const reply = [
-    '🧪 血液検査の画像として受け取りました。',
-    analysis.ai_summary || '内容を記録しました。気になる点があれば、次回ポラリス整骨院で牛込先生にも気軽に相談してくださいね。',
-  ].join('\n');
+    await replyMessage(replyToken, textMessageWithQuickReplies(chooseText, dates.map((d) => d.replace(/-/g, '/'))));
+    return;
+  }
 
-  await replyMessage(replyToken, reply);
+  const items = workingData[firstDate] || {};
+  const text = renderPanelSummary(firstDate, items);
+  await replyMessage(replyToken, textMessageWithQuickReplies(text, buildLabQuickReplyMain(items)));
 }
 
 async function handleBodyScaleImage({ replyToken, user, messageId, buffer, mime }) {
@@ -443,31 +492,70 @@ async function analyzeMealImageWithGemini(buffer, mimeType) {
   };
 }
 
-async function analyzeBloodTestImageWithGemini(buffer, mimeType) {
+async function extractBloodTestDraftWithGemini(buffer, mimeType) {
   const schema = {
     type: 'object',
     properties: {
-      hba1c: { type: 'number' },
-      fasting_glucose: { type: 'number' },
-      ldl: { type: 'number' },
-      hdl: { type: 'number' },
-      triglycerides: { type: 'number' },
-      ast: { type: 'number' },
-      alt: { type: 'number' },
-      ggt: { type: 'number' },
-      ai_summary: { type: 'string' },
+      dates: { type: 'array', items: { type: 'string' } },
+      panels: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            date: { type: 'string' },
+            items: {
+              type: 'object',
+              properties: {
+                hba1c: { type: 'string' },
+                fasting_glucose: { type: 'string' },
+                ldl: { type: 'string' },
+                hdl: { type: 'string' },
+                triglycerides: { type: 'string' },
+                ast: { type: 'string' },
+                alt: { type: 'string' },
+                ggt: { type: 'string' },
+                uric_acid: { type: 'string' },
+                creatinine: { type: 'string' }
+              }
+            }
+          },
+          required: ['date', 'items']
+        }
+      },
+      notes: { type: 'string' }
     },
-    required: ['ai_summary'],
+    required: ['dates', 'panels']
   };
 
   const prompt = [
-    'あなたは血液検査画像を読み取り、一般的な範囲で分かりやすく整理するアシスタントです。',
+    'あなたは日本の健診結果・血液検査画像を読み取るアシスタントです。',
+    '画像内に複数の日付がある場合は dates にすべて入れてください。',
+    'panels には日付ごとの検査結果を入れてください。',
     '読める項目だけ拾ってください。読めない項目は無理に埋めないでください。',
-    '診断の断定はせず、生活改善の一般的なコメントを短くまとめてください。',
-    '必ずJSONだけを返してください。',
-  ].join('\n');
+    '数値は文字列で返してください。',
+    '対象項目: hba1c, fasting_glucose, ldl, hdl, triglycerides, ast, alt, ggt, uric_acid, creatinine',
+    '日付は YYYY-MM-DD に正規化してください。',
+    '必ずJSONだけを返してください。'
+  ].join('
+');
 
-  return generateJsonWithGemini({ prompt, buffer, mimeType, schema, temperature: 0.1 });
+  const parsed = await generateJsonWithGemini({ prompt, buffer, mimeType, schema, temperature: 0.1 });
+  if (!parsed || !Array.isArray(parsed.panels)) {
+    throw new Error('Blood test extraction JSON is invalid');
+  }
+  return parsed;
+}
+
+async function analyzeBloodTestImageWithGemini(buffer, mimeType) {
+  const draft = await extractBloodTestDraftWithGemini(buffer, mimeType);
+  const firstDate = Array.isArray(draft.dates) && draft.dates.length ? draft.dates[0] : null;
+  const panel = Array.isArray(draft.panels) ? draft.panels.find((x) => x.date === firstDate) || draft.panels[0] : null;
+  return {
+    ...(panel?.items || {}),
+    ai_summary: draft.notes || '血液検査の内容を読み取りました。',
+    dates: draft.dates || [],
+    panels: draft.panels || [],
+  };
 }
 
 async function analyzeBodyScaleImageWithGemini(buffer, mimeType) {
@@ -594,12 +682,127 @@ function safeJsonParse(text) {
   }
 }
 
+
+function normalizeLabQuickReplyInput(text) {
+  const t = String(text || '').trim();
+  if (/^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/.test(t)) return t.replace(/\//g, '-');
+  return t;
+}
+
+function getPanelDateKeys(session) {
+  return Object.keys(session?.working_data_json || {}).sort((a, b) => (a < b ? 1 : -1));
+}
+
+function findPanelDateFromInput(session, text) {
+  const normalized = normalizeLabQuickReplyInput(text);
+  const keys = getPanelDateKeys(session);
+  return keys.find((k) => k === normalized) || null;
+}
+
+function mapCorrectionLabelToField(text) {
+  const t = String(text || '').trim();
+  const pairs = {
+    '日付を修正': 'measured_at',
+    'HbA1cを修正': 'hba1c',
+    'LDLを修正': 'ldl',
+    'HDLを修正': 'hdl',
+    'TGを修正': 'triglycerides',
+    'ASTを修正': 'ast',
+    'ALTを修正': 'alt',
+    'γGTPを修正': 'ggt',
+    '血糖を修正': 'fasting_glucose',
+    '尿酸を修正': 'uric_acid',
+    'クレアチニンを修正': 'creatinine'
+  };
+  return pairs[t] || null;
+}
+
+async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
+  const trimmed = String(text || '').trim();
+
+  if (openDraft?.active_item_name) {
+    try {
+      const updated = await applyLabCorrection(supabase, openDraft, trimmed);
+      const panelDate = updated.selected_date || getPanelDateKeys(updated)[0];
+      const items = (updated.working_data_json || {})[panelDate] || {};
+      const summary = renderPanelSummary(panelDate, items);
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(
+          `ありがとうございます。修正しました。\n\n${summary}`,
+          ['この内容で保存', ...buildLabQuickReplyMain(items).filter((x) => x !== 'この内容で保存')]
+        )
+      );
+      return true;
+    } catch (error) {
+      if (String(error?.message).includes('INVALID_DATE')) {
+        await replyMessage(replyToken, '日付がうまく読み取れませんでした。YYYY/MM/DD の形で送ってください。例: 2025/03/12');
+        return true;
+      }
+      if (String(error?.message).includes('INVALID_NUMBER')) {
+        await replyMessage(replyToken, '数値だけを送ってください。例: 138');
+        return true;
+      }
+      throw error;
+    }
+  }
+
+  if (openDraft && openDraft.status === 'draft') {
+    if (getPanelDateKeys(openDraft).length > 1 && !openDraft.selected_date) {
+      const chosenDate = findPanelDateFromInput(openDraft, trimmed);
+      if (chosenDate) {
+        const { data: updated, error } = await supabase
+          .from('lab_import_sessions')
+          .update({ selected_date: chosenDate })
+          .eq('id', openDraft.id)
+          .select('*')
+          .single();
+        if (error) throw error;
+
+        const items = (updated.working_data_json || {})[chosenDate] || {};
+        const summary = renderPanelSummary(chosenDate, items);
+        await replyMessage(replyToken, textMessageWithQuickReplies(summary, buildLabQuickReplyMain(items)));
+        return true;
+      }
+    }
+
+    const selectedDate = openDraft.selected_date || getPanelDateKeys(openDraft)[0];
+
+    if (trimmed === 'この内容で保存') {
+      await confirmLabDraftToResults(supabase, openDraft, selectedDate);
+      await replyMessage(replyToken, '保存しました。これで今後の変化も見やすくなりますね。');
+      return true;
+    }
+
+    const field = mapCorrectionLabelToField(trimmed);
+    if (field) {
+      await setActiveLabCorrection(supabase, openDraft.id, field, selectedDate);
+      const label = LAB_ITEM_LABELS[field] || field;
+      const guide = field === 'measured_at'
+        ? `${label}を修正します。\nYYYY/MM/DD の形で送ってください。\n例: 2025/03/12`
+        : `${label}の値を修正します。\n正しい数値をそのまま送ってください。\n例: 138`;
+      await replyMessage(replyToken, guide);
+      return true;
+    }
+
+    if (trimmed === '他の項目を修正') {
+      await replyMessage(replyToken, '修正したい項目名を送ってください。\n例: クレアチニンを修正');
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ---------- Text flow ----------
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
 
   try {
+    const openDraft = await getOpenLabDraft(supabase, user.id);
+    const consumedByLabFlow = await handleLabDraftTextFlow(event.replyToken, user, text, openDraft);
+    if (consumedByLabFlow) return;
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage());
       return;
