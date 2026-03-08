@@ -73,6 +73,21 @@ const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 const AI_PROMPT_PATH = path.join(process.cwd(), 'ai_ushigome_prompt.txt');
 const AI_BASE_PROMPT = loadAiPrompt();
 
+const MEAL_ACTIONS = {
+  SINGLE: 'この1枚で食事解析',
+  ADD: '食事写真を追加',
+  CANCEL: '食事をやめる',
+  DUPLICATE: '同じ食事の別角度',
+  EXTRA: '追加料理あり',
+  SAVE: 'この内容で食事保存',
+};
+
+const ACTIVITY_ACTIONS = {
+  SAVE: 'この内容で運動保存',
+  ADD: '運動を追加',
+  CANCEL: '運動をやめる',
+};
+
 const INTAKE_STEPS = [
   'choose_ai_type',
   'choose_main_goal',
@@ -485,7 +500,7 @@ async function buildInitialIntakeSummary(answers) {
       future_prediction_summary: safeText(parsed.future_prediction_summary, 1000),
       initial_plan_summary: safeText(parsed.initial_plan_summary, 1000),
     };
-  } catch (e) {
+  } catch {
     return {
       personality_summary: 'やさしく寄り添いながら、続けやすい形を一緒に探していくのが合いそうです。',
       strengths_summary: '自分の状態を見つめて、良くしたい気持ちを持てていること自体が大きな強みです。',
@@ -672,9 +687,9 @@ async function getOpenMealDraft(userId) {
   const { data, error } = await supabase
     .from('meal_import_sessions')
     .select('*')
-    .eq('user_id', userId)
     .in('status', ['draft', 'ready_to_confirm'])
-    .order('created_at', { ascending: false })
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -857,12 +872,12 @@ function summarizeMealAnalysis(analysis) {
 
 function mealConfirmButtonsForStage(stage = 'single') {
   if (stage === 'duplicate') {
-    return ['同じ食事の別角度', '追加料理あり', 'やめる'];
+    return [MEAL_ACTIONS.DUPLICATE, MEAL_ACTIONS.EXTRA, MEAL_ACTIONS.CANCEL];
   }
   if (stage === 'ready_to_confirm') {
-    return ['この内容で保存', 'もう1枚追加', 'やめる'];
+    return [MEAL_ACTIONS.SAVE, MEAL_ACTIONS.ADD, MEAL_ACTIONS.CANCEL];
   }
-  return ['この1枚で解析', 'もう1枚追加', 'やめる'];
+  return [MEAL_ACTIONS.SINGLE, MEAL_ACTIONS.ADD, MEAL_ACTIONS.CANCEL];
 }
 
 async function saveMealDraftToLog(session, user) {
@@ -903,13 +918,13 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
   const trimmed = String(text || '').trim();
   if (!openMealDraft) return false;
 
-  if (trimmed === 'やめる') {
+  if (trimmed === MEAL_ACTIONS.CANCEL || trimmed === 'やめる') {
     await cancelMealDraftSession(openMealDraft.id);
     await replyMessage(replyToken, '食事の下書きは取り消しました。またいつでも送ってくださいね。');
     return true;
   }
 
-  if (trimmed === 'もう1枚追加' || trimmed === '追加あり' || trimmed === 'まだ追加する') {
+  if (trimmed === MEAL_ACTIONS.ADD || trimmed === '食事を追加' || trimmed === 'もう1枚追加') {
     await updateMealDraftSession(openMealDraft.id, {
       awaiting_action: 'waiting_more_image',
       status: 'draft',
@@ -918,7 +933,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
     return true;
   }
 
-  if (trimmed === 'この1枚で解析') {
+  if (trimmed === MEAL_ACTIONS.SINGLE || trimmed === 'この1枚で解析') {
     const analysis =
       openMealDraft.merged_analysis_json ||
       chooseBestMealAnalysis(extractMealAnalysesFromSession(openMealDraft));
@@ -939,7 +954,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
     return true;
   }
 
-  if (trimmed === '同じ食事の別角度' || trimmed === '別角度です') {
+  if (trimmed === MEAL_ACTIONS.DUPLICATE || trimmed === '別角度です') {
     const analysis = chooseBestMealAnalysis(extractMealAnalysesFromSession(openMealDraft));
     const updated = await updateMealDraftSession(openMealDraft.id, {
       merged_analysis_json: analysis,
@@ -958,7 +973,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
     return true;
   }
 
-  if (trimmed === '追加料理あり' || trimmed === 'この内容で解析' || trimmed === 'この2枚で解析') {
+  if (trimmed === MEAL_ACTIONS.EXTRA || trimmed === '追加料理あり') {
     const merged = mergeMealAnalyses(extractMealAnalysesFromSession(openMealDraft));
     const updated = await updateMealDraftSession(openMealDraft.id, {
       merged_analysis_json: merged,
@@ -977,7 +992,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
     return true;
   }
 
-  if (trimmed === 'この内容で保存') {
+  if (trimmed === MEAL_ACTIONS.SAVE || trimmed === 'この内容で食事保存') {
     const saved = await saveMealDraftToLog(openMealDraft, user);
     const daySummary = await buildDailySummary(user.id, saved.eaten_at.slice(0, 10));
     const weekly = await buildWeeklySummary(user.id, saved.eaten_at);
@@ -1001,7 +1016,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
   }
 
   if (openMealDraft.awaiting_action === 'waiting_more_image') {
-    await replyMessage(replyToken, '追加の写真を待っています。写真を送るか、「この内容で保存」または「やめる」を選んでください。');
+    await replyMessage(replyToken, '追加の食事写真を待っています。写真を送るか、「この内容で食事保存」または「食事をやめる」を選んでください。');
     return true;
   }
 
@@ -1015,7 +1030,7 @@ async function getOpenActivityDraft(userId) {
     .select('*')
     .eq('user_id', userId)
     .eq('status', 'draft')
-    .order('created_at', { ascending: false })
+    .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -1118,19 +1133,19 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
 
   if (!openActivityDraft) return false;
 
-  if (trimmed === 'やめる') {
+  if (trimmed === ACTIVITY_ACTIONS.CANCEL || trimmed === 'やめる') {
     await cancelActivityDraftSession(openActivityDraft.id);
     await replyMessage(replyToken, '運動の下書きは取り消しました。またできた時に教えてくださいね。');
     return true;
   }
 
-  if (trimmed === '追加あり') {
+  if (trimmed === ACTIVITY_ACTIONS.ADD || trimmed === '追加あり') {
     await updateActivityDraftSession(openActivityDraft.id, { awaiting_action: 'waiting_more_input' });
     await replyMessage(replyToken, 'ありがとうございます。追加の運動内容を送ってください。例: スクワット 5回');
     return true;
   }
 
-  if (trimmed === 'この内容で保存' || trimmed === '今日ここまでで保存') {
+  if (trimmed === ACTIVITY_ACTIONS.SAVE || trimmed === '今日ここまでで保存') {
     const saved = await saveActivityDraftToLog(openActivityDraft, user);
     const level = chooseExerciseLevel(saved);
     const replySet = buildExerciseReplySet({
@@ -1190,7 +1205,10 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
 
     await replyMessage(
       replyToken,
-      textMessageWithQuickReplies(formatActivityDraftSummary(updated.pending_activity_json), ['この内容で保存', '追加あり', 'やめる'])
+      textMessageWithQuickReplies(
+        formatActivityDraftSummary(updated.pending_activity_json),
+        [ACTIVITY_ACTIONS.SAVE, ACTIVITY_ACTIONS.ADD, ACTIVITY_ACTIONS.CANCEL]
+      )
     );
     return true;
   }
@@ -1200,7 +1218,7 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
 
 // ---------- Blood support ----------
 function evaluateBloodTrendMode(savedRow, recentRows) {
-  const previous = (recentRows || []).find((r) => r.measured_at !== savedRow.measured_at);
+  const previous = (recentRows || []).find((r) => formatDateOnly(r.measured_at) !== formatDateOnly(savedRow.measured_at));
   if (!previous) return 'stable';
 
   const rules = [
@@ -1829,7 +1847,7 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
 
       const recentRows = await getRecentLabResults(supabase, user.id, 6);
       const savedRow =
-        recentRows.find((r) => r.measured_at === selectedDate) || {
+        recentRows.find((r) => formatDateOnly(r.measured_at) === formatDateOnly(selectedDate)) || {
           measured_at: selectedDate,
           ...(openDraft.working_data_json?.[selectedDate] || {}),
         };
@@ -1862,6 +1880,54 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
   return false;
 }
 
+// ---------- Draft priority ----------
+function getDraftTimestamp(draft) {
+  if (!draft) return 0;
+  return new Date(draft.updated_at || draft.created_at || 0).getTime();
+}
+
+function chooseActiveDraftType(text, drafts) {
+  const trimmed = String(text || '').trim();
+
+  if (
+    trimmed === MEAL_ACTIONS.SINGLE ||
+    trimmed === MEAL_ACTIONS.ADD ||
+    trimmed === MEAL_ACTIONS.CANCEL ||
+    trimmed === MEAL_ACTIONS.DUPLICATE ||
+    trimmed === MEAL_ACTIONS.EXTRA ||
+    trimmed === MEAL_ACTIONS.SAVE
+  ) return 'meal';
+
+  if (
+    trimmed === ACTIVITY_ACTIONS.SAVE ||
+    trimmed === ACTIVITY_ACTIONS.ADD ||
+    trimmed === ACTIVITY_ACTIONS.CANCEL
+  ) return 'activity';
+
+  if (
+    trimmed === '追加あり' ||
+    trimmed === 'やめる'
+  ) {
+    const mealTs = getDraftTimestamp(drafts.meal);
+    const activityTs = getDraftTimestamp(drafts.activity);
+    if (activityTs >= mealTs) return drafts.activity ? 'activity' : drafts.meal ? 'meal' : null;
+    return drafts.meal ? 'meal' : drafts.activity ? 'activity' : null;
+  }
+
+  if (drafts.lab?.active_item_name) return 'lab';
+
+  const candidates = [
+    drafts.lab ? { type: 'lab', ts: getDraftTimestamp(drafts.lab) } : null,
+    drafts.meal ? { type: 'meal', ts: getDraftTimestamp(drafts.meal) } : null,
+    drafts.activity ? { type: 'activity', ts: getDraftTimestamp(drafts.activity) } : null,
+  ].filter(Boolean);
+
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => b.ts - a.ts);
+  return candidates[0].type;
+}
+
 // ---------- Text flow ----------
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
@@ -1869,16 +1935,29 @@ async function handleTextMessage(event, user) {
 
   try {
     const openLabDraft = await getOpenLabDraft(supabase, user.id);
-    const consumedByLabFlow = await handleLabDraftTextFlow(event.replyToken, user, text, openLabDraft);
-    if (consumedByLabFlow) return;
-
     const openMealDraft = await getOpenMealDraft(user.id);
-    const consumedByMealFlow = await handleMealDraftTextFlow(event.replyToken, user, text, openMealDraft);
-    if (consumedByMealFlow) return;
-
     const openActivityDraft = await getOpenActivityDraft(user.id);
-    const consumedByActivityFlow = await handleActivityDraftTextFlow(event.replyToken, user, text, openActivityDraft);
-    if (consumedByActivityFlow) return;
+
+    const activeDraftType = chooseActiveDraftType(text, {
+      lab: openLabDraft,
+      meal: openMealDraft,
+      activity: openActivityDraft,
+    });
+
+    if (activeDraftType === 'lab') {
+      const consumed = await handleLabDraftTextFlow(event.replyToken, user, text, openLabDraft);
+      if (consumed) return;
+    }
+
+    if (activeDraftType === 'meal') {
+      const consumed = await handleMealDraftTextFlow(event.replyToken, user, text, openMealDraft);
+      if (consumed) return;
+    }
+
+    if (activeDraftType === 'activity') {
+      const consumed = await handleActivityDraftTextFlow(event.replyToken, user, text, openActivityDraft);
+      if (consumed) return;
+    }
 
     const consumedByIntake = await handleIntakeTextFlow(event.replyToken, user, text);
     if (consumedByIntake) return;
@@ -1988,7 +2067,10 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(formatActivityDraftSummary(draft.pending_activity_json), ['この内容で保存', '追加あり', 'やめる'])
+        textMessageWithQuickReplies(
+          formatActivityDraftSummary(draft.pending_activity_json),
+          [ACTIVITY_ACTIONS.SAVE, ACTIVITY_ACTIONS.ADD, ACTIVITY_ACTIONS.CANCEL]
+        )
       );
       return;
     }
@@ -2120,7 +2202,7 @@ async function getMemoryHint(userId) {
   }
 }
 
-async function saveMemoryCandidate(userId, userText, aiReply) {
+async function saveMemoryCandidate(userId, userText) {
   const simpleRules = [
     { type: 'food', pattern: /(甘い物|ケーキ|チョコ|お菓子)/, value: '甘い物が好きそう' },
     { type: 'exercise', pattern: /(散歩|ウォーキング|スクワット|腹筋|腕立て)/, value: '運動を少しずつ続けられそう' },
@@ -2141,7 +2223,7 @@ async function saveMemoryCandidate(userId, userText, aiReply) {
           last_used_at: null,
         });
       } catch {
-        // ignore memory insert failures in v1
+        // ignore
       }
       return;
     }
@@ -2163,16 +2245,11 @@ async function buildDailySummary(userId, dateYmd) {
   if (actsRes.error) throw actsRes.error;
   if (latestMetricRes.error) throw latestMetricRes.error;
 
-  const totalIntake = sumBy(mealsRes.data || [], 'estimated_kcal');
-  const totalActivity = sumBy(actsRes.data || [], 'estimated_activity_kcal');
-  const steps = sumBy(actsRes.data || [], 'steps');
-  const walkingMinutes = sumBy(actsRes.data || [], 'walking_minutes');
-
   return {
-    total_intake_kcal: round1(totalIntake),
-    total_activity_kcal: round1(totalActivity),
-    steps: round0(steps),
-    walking_minutes: round0(walkingMinutes),
+    total_intake_kcal: round1(sumBy(mealsRes.data || [], 'estimated_kcal')),
+    total_activity_kcal: round1(sumBy(actsRes.data || [], 'estimated_activity_kcal')),
+    steps: round0(sumBy(actsRes.data || [], 'steps')),
+    walking_minutes: round0(sumBy(actsRes.data || [], 'walking_minutes')),
     latest_weight_kg: latestMetricRes.data?.weight_kg || null,
   };
 }
@@ -2513,11 +2590,17 @@ function loadAiPrompt() {
   ].join('\n');
 }
 
-function currentDateYmdInTZ(_tz) {
+function formatDateOnly(value) {
+  if (!value) return '';
+  const s = String(value);
+  return s.slice(0, 10).replace(/-/g, '/');
+}
+
+function currentDateYmdInTZ() {
   return toIsoStringInTZ(new Date(), TZ).slice(0, 10);
 }
 
-function toIsoStringInTZ(date, _tz) {
+function toIsoStringInTZ(date) {
   const d = new Date(date);
   const fmtDate = new Intl.DateTimeFormat('sv-SE', {
     timeZone: TZ,
