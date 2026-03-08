@@ -23,9 +23,30 @@ function normalizeDateInput(input) {
 }
 
 function normalizeNumberInput(input) {
-  const s = String(input || "").trim().replace(/,/g, "");
-  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
-  return s;
+  if (input === undefined || input === null) return null;
+  if (typeof input === "number") return Number.isFinite(input) ? String(input) : null;
+
+  const s = String(input)
+    .trim()
+    .replace(/,/g, "")
+    .replace(/　/g, " ");
+
+  if (!s) return null;
+
+  // 例:
+  // "151 H" -> 151
+  // "164L" -> 164
+  // "5.6" -> 5.6
+  // "0.79 mg/dL" -> 0.79
+  // "↑151" -> 151
+  // "  67  " -> 67
+  const match = s.match(/-?\d+(\.\d+)?/);
+  if (!match) return null;
+
+  const num = Number(match[0]);
+  if (!Number.isFinite(num)) return null;
+
+  return String(num);
 }
 
 function renderPanelSummary(panelDate, items) {
@@ -38,7 +59,7 @@ function renderPanelSummary(panelDate, items) {
   lines.push("");
   lines.push("【読み取れた項目】");
 
-  const order = ["hba1c","fasting_glucose","ldl","hdl","triglycerides","ast","alt","ggt","uric_acid","creatinine"];
+  const order = ["hba1c", "fasting_glucose", "ldl", "hdl", "triglycerides", "ast", "alt", "ggt", "uric_acid", "creatinine"];
   for (const key of order) {
     if (items?.[key] != null && items[key] !== "") {
       lines.push(`${LAB_ITEM_LABELS[key]}: ${items[key]}`);
@@ -53,7 +74,7 @@ function renderPanelSummary(panelDate, items) {
 
 function buildLabQuickReplyMain(items = {}) {
   const labels = ["この内容で保存", "日付を修正"];
-  const itemOrder = ["hba1c","ldl","hdl","triglycerides","ast","alt","ggt"];
+  const itemOrder = ["hba1c", "ldl", "hdl", "triglycerides", "ast", "alt", "ggt"];
   for (const key of itemOrder) {
     if (items[key] != null && items[key] !== "") labels.push(`${LAB_ITEM_LABELS[key]}を修正`);
   }
@@ -150,32 +171,35 @@ async function applyLabCorrection(supabase, session, correctedValue) {
 
 async function confirmLabDraftToResults(supabase, session, panelDate) {
   const items = (session.working_data_json || {})[panelDate] || {};
+
   const row = {
     user_id: session.user_id,
     measured_at: panelDate,
-    hba1c: items.hba1c ?? null,
-    fasting_glucose: items.fasting_glucose ?? null,
-    ldl: items.ldl ?? null,
-    hdl: items.hdl ?? null,
-    triglycerides: items.triglycerides ?? null,
-    ast: items.ast ?? null,
-    alt: items.alt ?? null,
-    ggt: items.ggt ?? null,
-    uric_acid: items.uric_acid ?? null,
-    creatinine: items.creatinine ?? null,
+    hba1c: normalizeNumberInput(items.hba1c),
+    fasting_glucose: normalizeNumberInput(items.fasting_glucose),
+    ldl: normalizeNumberInput(items.ldl),
+    hdl: normalizeNumberInput(items.hdl),
+    triglycerides: normalizeNumberInput(items.triglycerides),
+    ast: normalizeNumberInput(items.ast),
+    alt: normalizeNumberInput(items.alt),
+    ggt: normalizeNumberInput(items.ggt),
+    uric_acid: normalizeNumberInput(items.uric_acid),
+    creatinine: normalizeNumberInput(items.creatinine),
     source_image_url: session.source_image_url ?? null,
     import_session_id: session.id,
     is_user_confirmed: true,
     ai_summary: "ユーザー確認後に保存された血液検査結果です。",
   };
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("lab_results")
     .select("id")
     .eq("user_id", session.user_id)
     .eq("measured_at", panelDate)
     .limit(1)
     .maybeSingle();
+
+  if (existingErr) throw existingErr;
 
   if (existing?.id) {
     const { error: updateErr } = await supabase
@@ -214,4 +238,3 @@ module.exports = {
   applyLabCorrection,
   confirmLabDraftToResults,
 };
-
