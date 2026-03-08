@@ -16,7 +16,23 @@ const {
   setActiveLabCorrection,
   applyLabCorrection,
   confirmLabDraftToResults,
+  getRecentLabResults,
+  buildPostSaveComparisonMessage,
+  buildLabHistoryText,
 } = require('./blood_test_flow_helpers');
+const {
+  getPraiseMessage,
+  getSoftNudgeMessage,
+  getExercisePromptMessage,
+  getBloodLinkMessage,
+  getProgressionMessage,
+  getDailyMenuSuggestion,
+  getMealPraiseMessage,
+  getMealBalanceComment,
+  getMealFutureLink,
+  buildBloodExamCommentParts,
+  buildExerciseReplySet,
+} = require('./ushigome_comment_library');
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -633,7 +649,9 @@ async function maybePromptIntake(replyToken, user, text) {
     isWeeklyReportCommand(trimmed.toLowerCase()) ||
     isMonthlyReportCommand(trimmed.toLowerCase()) ||
     isProfileCommand(trimmed.toLowerCase()) ||
-    isBmrCommand(trimmed.toLowerCase())
+    isBmrCommand(trimmed.toLowerCase()) ||
+    isLabHistoryCommand(trimmed.toLowerCase()) ||
+    isExerciseMenuCommand(trimmed.toLowerCase())
   ) return false;
 
   const open = await getOpenIntakeSession(user.id);
@@ -647,6 +665,593 @@ async function maybePromptIntake(replyToken, user, text) {
     )
   );
   return true;
+}
+
+// ---------- Meal draft flow ----------
+async function getOpenMealDraft(userId) {
+  const { data, error } = await supabase
+    .from('meal_import_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .in('status', ['draft', 'ready_to_confirm'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) return null;
+  return data;
+}
+
+async function createMealDraftSession(payload) {
+  const { data, error } = await supabase
+    .from('meal_import_sessions')
+    .insert(payload)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function updateMealDraftSession(sessionId, patch) {
+  const { data, error } = await supabase
+    .from('meal_import_sessions')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', sessionId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function cancelMealDraftSession(sessionId) {
+  const { error } = await supabase
+    .from('meal_import_sessions')
+    .update({
+      status: 'cancelled',
+      awaiting_action: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', sessionId);
+  if (error) throw error;
+}
+
+function normalizeFoodName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[　・、,]/g, '')
+    .trim();
+}
+
+function scoreMealAnalysis(analysis) {
+  if (!analysis || typeof analysis !== 'object') return 0;
+  const itemCount = Array.isArray(analysis.food_items) ? analysis.food_items.length : 0;
+  const confidence = Number(analysis.confidence) || 0;
+  const hasRange = analysis.kcal_min != null && analysis.kcal_max != null ? 1 : 0;
+  return itemCount * 10 + confidence * 5 + hasRange;
+}
+
+function chooseBestMealAnalysis(analyses = []) {
+  const valid = (analyses || []).filter(Boolean);
+  if (!valid.length) return null;
+  return valid.sort((a, b) => scoreMealAnalysis(b) - scoreMealAnalysis(a))[0];
+}
+
+function mergeMealAnalyses(analyses = []) {
+  const valid = (analyses || []).filter(Boolean);
+  if (!valid.length) return null;
+  if (valid.length === 1) return valid[0];
+
+  const foodMap = new Map();
+  let estimatedKcal = 0;
+  let kcalMin = 0;
+  let kcalMax = 0;
+  let protein = 0;
+  let fat = 0;
+  let carbs = 0;
+  let confidenceSum = 0;
+  const labels = [];
+
+  for (const analysis of valid) {
+    if (analysis.meal_label) labels.push(String(analysis.meal_label).trim());
+    estimatedKcal += Number(analysis.estimated_kcal) || 0;
+    kcalMin += Number(analysis.kcal_min) || 0;
+    kcalMax += Number(analysis.kcal_max) || 0;
+    protein += Number(analysis.protein_g) || 0;
+    fat += Number(analysis.fat_g) || 0;
+    carbs += Number(analysis.carbs_g) || 0;
+    confidenceSum += Number(analysis.confidence) || 0;
+
+    const items = Array.isArray(analysis.food_items) ? analysis.food_items : [];
+    for (const item of items) {
+      const key = normalizeFoodName(item?.name);
+      if (!key) continue;
+      const prev = foodMap.get(key);
+      if (!prev) {
+        foodMap.set(key, {
+          name: item.name,
+          estimated_amount: item.estimated_amount || '',
+          estimated_kcal: Number(item.estimated_kcal) || null,
+        });
+      } else {
+        const prevKcal = Number(prev.estimated_kcal) || 0;
+        const addKcal = Number(item.estimated_kcal) || 0;
+        prev.estimated_kcal = prevKcal + addKcal || prev.estimated_kcal;
+        if (item.estimated_amount && !String(prev.estimated_amount || '').includes(String(item.estimated_amount))) {
+          prev.estimated_amount = [prev.estimated_amount, item.estimated_amount].filter(Boolean).join(' + ');
+        }
+      }
+    }
+  }
+
+  const uniqueLabels = [...new Set(labels.filter(Boolean))];
+  return {
+    meal_label: uniqueLabels.join(' + ') || '食事',
+    food_items: [...foodMap.values()],
+    estimated_kcal: round1(estimatedKcal),
+    kcal_min: round1(kcalMin),
+    kcal_max: round1(kcalMax),
+    protein_g: round1(protein),
+    fat_g: round1(fat),
+    carbs_g: round1(carbs),
+    confidence: clamp01(round1(confidenceSum / Math.max(valid.length, 1))),
+    ai_comment: '複数の写真をまとめて推定しました。',
+  };
+}
+
+function isLikelyDuplicateMealAnalysis(a, b) {
+  if (!a || !b) return false;
+
+  const labelA = normalizeFoodName(a.meal_label);
+  const labelB = normalizeFoodName(b.meal_label);
+  const itemsA = new Set((a.food_items || []).map((x) => normalizeFoodName(x?.name)).filter(Boolean));
+  const itemsB = new Set((b.food_items || []).map((x) => normalizeFoodName(x?.name)).filter(Boolean));
+
+  let overlap = 0;
+  for (const name of itemsA) {
+    if (itemsB.has(name)) overlap += 1;
+  }
+
+  const smaller = Math.max(Math.min(itemsA.size || 1, itemsB.size || 1), 1);
+  const overlapRatio = overlap / smaller;
+  const kcalA = Number(a.estimated_kcal) || 0;
+  const kcalB = Number(b.estimated_kcal) || 0;
+  const kcalRatio = kcalA > 0 && kcalB > 0 ? Math.min(kcalA, kcalB) / Math.max(kcalA, kcalB) : 0;
+
+  if (labelA && labelB && labelA === labelB && overlapRatio >= 0.5) return true;
+  if (overlapRatio >= 0.7 && kcalRatio >= 0.65) return true;
+  return false;
+}
+
+function extractMealAnalysesFromSession(session) {
+  const images = Array.isArray(session?.images_json) ? session.images_json : [];
+  return images.map((x) => x.analysis).filter(Boolean);
+}
+
+function summarizeMealAnalysis(analysis) {
+  if (!analysis) return '食事内容をまとめました。';
+  const praise = getMealPraiseMessage();
+  const balanceComment = (Number(analysis.confidence) || 0) < 0.5
+    ? getMealBalanceComment('careful')
+    : getMealBalanceComment('positive');
+  const futureLink = getMealFutureLink();
+
+  const lines = [
+    praise,
+    `料理: ${safeText(analysis.meal_label || '食事', 80)}`,
+    `推定カロリー: ${formatKcalRange(analysis.estimated_kcal, analysis.kcal_min, analysis.kcal_max)}`,
+    analysis.protein_g || analysis.fat_g || analysis.carbs_g
+      ? `PFC: P${fmt(analysis.protein_g)}g / F${fmt(analysis.fat_g)}g / C${fmt(analysis.carbs_g)}g`
+      : null,
+    Array.isArray(analysis.food_items) && analysis.food_items.length
+      ? `内容: ${(analysis.food_items || []).slice(0, 6).map((x) => x.name).filter(Boolean).join(' / ')}`
+      : null,
+    balanceComment,
+    futureLink,
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
+function mealConfirmButtonsForStage(stage = 'single') {
+  if (stage === 'duplicate') {
+    return ['同じ食事の別角度', '追加料理あり', 'やめる'];
+  }
+  if (stage === 'ready_to_confirm') {
+    return ['この内容で保存', 'もう1枚追加', 'やめる'];
+  }
+  return ['この1枚で解析', 'もう1枚追加', 'やめる'];
+}
+
+async function saveMealDraftToLog(session, user) {
+  const analysis = session?.merged_analysis_json || chooseBestMealAnalysis(extractMealAnalysesFromSession(session));
+  if (!analysis) throw new Error('Meal draft analysis not found');
+
+  const insertPayload = {
+    user_id: user.id,
+    source_message_id: Array.isArray(session.source_message_ids) ? session.source_message_ids[0] || null : null,
+    eaten_at: toIsoStringInTZ(new Date(), TZ),
+    meal_label: safeText(analysis.meal_label || '食事', 100),
+    food_items: Array.isArray(analysis.food_items) ? analysis.food_items : [],
+    estimated_kcal: toNumberOrNull(analysis.estimated_kcal),
+    kcal_min: toNumberOrNull(analysis.kcal_min),
+    kcal_max: toNumberOrNull(analysis.kcal_max),
+    protein_g: toNumberOrNull(analysis.protein_g),
+    fat_g: toNumberOrNull(analysis.fat_g),
+    carbs_g: toNumberOrNull(analysis.carbs_g),
+    confidence: clamp01(toNumberOrNull(analysis.confidence)),
+    ai_comment: safeText(analysis.ai_comment || '食事を記録しました。', 1000),
+    raw_model_json: analysis,
+    import_session_id: session.id,
+    source_image_count: Number(session.image_count) || 1,
+  };
+
+  const { error } = await supabase.from('meal_logs').insert(insertPayload);
+  if (error) throw error;
+
+  await updateMealDraftSession(session.id, {
+    status: 'confirmed',
+    awaiting_action: null,
+  });
+
+  return insertPayload;
+}
+
+async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
+  const trimmed = String(text || '').trim();
+  if (!openMealDraft) return false;
+
+  if (trimmed === 'やめる') {
+    await cancelMealDraftSession(openMealDraft.id);
+    await replyMessage(replyToken, '食事の下書きは取り消しました。またいつでも送ってくださいね。');
+    return true;
+  }
+
+  if (trimmed === 'もう1枚追加' || trimmed === '追加あり' || trimmed === 'まだ追加する') {
+    await updateMealDraftSession(openMealDraft.id, {
+      awaiting_action: 'waiting_more_image',
+      status: 'draft',
+    });
+    await replyMessage(replyToken, 'ありがとうございます。追加の食事写真を送ってください。');
+    return true;
+  }
+
+  if (trimmed === 'この1枚で解析') {
+    const analysis =
+      openMealDraft.merged_analysis_json ||
+      chooseBestMealAnalysis(extractMealAnalysesFromSession(openMealDraft));
+    const updated = await updateMealDraftSession(openMealDraft.id, {
+      merged_analysis_json: analysis,
+      awaiting_action: 'ready_to_confirm',
+      status: 'ready_to_confirm',
+      selected_mode: 'single',
+      duplicate_candidate: false,
+    });
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        `食事内容をまとめました。\n\n${summarizeMealAnalysis(updated.merged_analysis_json)}`,
+        mealConfirmButtonsForStage('ready_to_confirm')
+      )
+    );
+    return true;
+  }
+
+  if (trimmed === '同じ食事の別角度' || trimmed === '別角度です') {
+    const analysis = chooseBestMealAnalysis(extractMealAnalysesFromSession(openMealDraft));
+    const updated = await updateMealDraftSession(openMealDraft.id, {
+      merged_analysis_json: analysis,
+      awaiting_action: 'ready_to_confirm',
+      status: 'ready_to_confirm',
+      selected_mode: 'duplicate_angle',
+      duplicate_candidate: false,
+    });
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        `同じ食事の別角度としてまとめました。\n\n${summarizeMealAnalysis(updated.merged_analysis_json)}`,
+        mealConfirmButtonsForStage('ready_to_confirm')
+      )
+    );
+    return true;
+  }
+
+  if (trimmed === '追加料理あり' || trimmed === 'この内容で解析' || trimmed === 'この2枚で解析') {
+    const merged = mergeMealAnalyses(extractMealAnalysesFromSession(openMealDraft));
+    const updated = await updateMealDraftSession(openMealDraft.id, {
+      merged_analysis_json: merged,
+      awaiting_action: 'ready_to_confirm',
+      status: 'ready_to_confirm',
+      selected_mode: 'merge',
+      duplicate_candidate: false,
+    });
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        `複数枚をまとめて解析しました。\n\n${summarizeMealAnalysis(updated.merged_analysis_json)}`,
+        mealConfirmButtonsForStage('ready_to_confirm')
+      )
+    );
+    return true;
+  }
+
+  if (trimmed === 'この内容で保存') {
+    const saved = await saveMealDraftToLog(openMealDraft, user);
+    const daySummary = await buildDailySummary(user.id, saved.eaten_at.slice(0, 10));
+    const weekly = await buildWeeklySummary(user.id, saved.eaten_at);
+
+    const lines = [
+      getMealPraiseMessage(),
+      '📸 食事を記録しました。',
+      `料理: ${saved.meal_label}`,
+      `推定カロリー: ${formatKcalRange(saved.estimated_kcal, saved.kcal_min, saved.kcal_max)}`,
+      saved.protein_g || saved.fat_g || saved.carbs_g
+        ? `PFC: P${fmt(saved.protein_g)}g / F${fmt(saved.fat_g)}g / C${fmt(saved.carbs_g)}g`
+        : null,
+      getMealFutureLink(),
+      '',
+      `本日摂取合計: ${fmt(daySummary.total_intake_kcal)} kcal`,
+      `今週摂取合計: ${fmt(weekly.total_intake_kcal)} kcal`,
+    ].filter(Boolean);
+
+    await replyMessage(replyToken, lines.join('\n'));
+    return true;
+  }
+
+  if (openMealDraft.awaiting_action === 'waiting_more_image') {
+    await replyMessage(replyToken, '追加の写真を待っています。写真を送るか、「この内容で保存」または「やめる」を選んでください。');
+    return true;
+  }
+
+  return false;
+}
+
+// ---------- Activity draft flow ----------
+async function getOpenActivityDraft(userId) {
+  const { data, error } = await supabase
+    .from('activity_import_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'draft')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) return null;
+  return data;
+}
+
+async function createActivityDraftSession(payload) {
+  const { data, error } = await supabase
+    .from('activity_import_sessions')
+    .insert(payload)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function updateActivityDraftSession(sessionId, patch) {
+  const { data, error } = await supabase
+    .from('activity_import_sessions')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', sessionId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function cancelActivityDraftSession(sessionId) {
+  const { error } = await supabase
+    .from('activity_import_sessions')
+    .update({
+      status: 'cancelled',
+      awaiting_action: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', sessionId);
+  if (error) throw error;
+}
+
+function mergeActivityPayload(base = {}, extra = {}) {
+  const mergedDetail = {
+    ...(base.raw_detail_json || {}),
+    ...(extra.raw_detail_json || {}),
+  };
+
+  const merged = {
+    steps: round0((Number(base.steps) || 0) + (Number(extra.steps) || 0)) || null,
+    walking_minutes: round1((Number(base.walking_minutes) || 0) + (Number(extra.walking_minutes) || 0)) || null,
+    estimated_activity_kcal: round1((Number(base.estimated_activity_kcal) || 0) + (Number(extra.estimated_activity_kcal) || 0)) || null,
+    exercise_summary: [base.exercise_summary, extra.exercise_summary].filter(Boolean).join(' / '),
+    raw_detail_json: mergedDetail,
+  };
+
+  if (!merged.exercise_summary) merged.exercise_summary = null;
+  return merged;
+}
+
+function formatActivityDraftSummary(activity) {
+  const lines = [
+    '今日の運動内容をまとめました。',
+    activity.steps ? `歩数: ${fmt(activity.steps)} 歩` : null,
+    activity.walking_minutes ? `歩行・散歩: ${fmt(activity.walking_minutes)} 分` : null,
+    activity.exercise_summary ? `運動メモ: ${activity.exercise_summary}` : null,
+    activity.estimated_activity_kcal != null ? `推定活動消費: ${fmt(activity.estimated_activity_kcal)} kcal` : null,
+    '',
+    'この内容で保存しますか？追加があれば続けて送れます。',
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
+async function saveActivityDraftToLog(session, user) {
+  const pending = session?.pending_activity_json || {};
+  const insertPayload = {
+    user_id: user.id,
+    logged_at: toIsoStringInTZ(new Date(), TZ),
+    steps: toNumberOrNull(pending.steps),
+    walking_minutes: toNumberOrNull(pending.walking_minutes),
+    estimated_activity_kcal: toNumberOrNull(pending.estimated_activity_kcal),
+    exercise_summary: safeText(pending.exercise_summary || '', 1000) || null,
+    raw_detail_json: pending.raw_detail_json || null,
+  };
+
+  const { error } = await supabase.from('activity_logs').insert(insertPayload);
+  if (error) throw error;
+
+  await updateActivityDraftSession(session.id, {
+    status: 'confirmed',
+    awaiting_action: null,
+  });
+
+  return insertPayload;
+}
+
+async function handleActivityDraftTextFlow(replyToken, user, text, openActivityDraft) {
+  const trimmed = String(text || '').trim();
+
+  if (!openActivityDraft) return false;
+
+  if (trimmed === 'やめる') {
+    await cancelActivityDraftSession(openActivityDraft.id);
+    await replyMessage(replyToken, '運動の下書きは取り消しました。またできた時に教えてくださいね。');
+    return true;
+  }
+
+  if (trimmed === '追加あり') {
+    await updateActivityDraftSession(openActivityDraft.id, { awaiting_action: 'waiting_more_input' });
+    await replyMessage(replyToken, 'ありがとうございます。追加の運動内容を送ってください。例: スクワット 5回');
+    return true;
+  }
+
+  if (trimmed === 'この内容で保存' || trimmed === '今日ここまでで保存') {
+    const saved = await saveActivityDraftToLog(openActivityDraft, user);
+    const level = chooseExerciseLevel(saved);
+    const replySet = buildExerciseReplySet({
+      aiType: user.ai_type || 'gentle',
+      category: chooseExercisePraiseCategory(saved),
+      level,
+    });
+
+    await replyMessage(
+      replyToken,
+      [
+        replySet.praise,
+        '活動を記録しました。',
+        saved.exercise_summary ? `内容: ${saved.exercise_summary}` : null,
+        saved.steps ? `歩数: ${fmt(saved.steps)} 歩` : null,
+        saved.walking_minutes ? `歩行・散歩: ${fmt(saved.walking_minutes)} 分` : null,
+        saved.estimated_activity_kcal != null ? `推定活動消費: ${fmt(saved.estimated_activity_kcal)} kcal` : null,
+        replySet.blood,
+        replySet.progress,
+      ].filter(Boolean).join('\n')
+    );
+    return true;
+  }
+
+  if (openActivityDraft.awaiting_action === 'waiting_more_input' || isActivityCommand(trimmed.toLowerCase())) {
+    const extra = parseActivity(trimmed);
+    const hasExtra =
+      extra.steps != null ||
+      extra.walking_minutes != null ||
+      extra.estimated_activity_kcal != null ||
+      extra.exercise_summary;
+
+    if (!hasExtra) {
+      if (openActivityDraft.awaiting_action === 'waiting_more_input') {
+        await replyMessage(replyToken, '追加の運動内容が読み取れませんでした。例: スクワット 5回 / 歩数 3000 / スロージョギング 3分');
+        return true;
+      }
+      return false;
+    }
+
+    const current = openActivityDraft.pending_activity_json || {};
+    let merged = mergeActivityPayload(current, extra);
+
+    if (merged.estimated_activity_kcal == null) {
+      merged.estimated_activity_kcal = estimateActivityKcalWithStrength(
+        merged.steps,
+        merged.walking_minutes,
+        user.weight_kg,
+        merged.raw_detail_json || {}
+      );
+    }
+
+    const updated = await updateActivityDraftSession(openActivityDraft.id, {
+      pending_activity_json: merged,
+      awaiting_action: null,
+    });
+
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(formatActivityDraftSummary(updated.pending_activity_json), ['この内容で保存', '追加あり', 'やめる'])
+    );
+    return true;
+  }
+
+  return false;
+}
+
+// ---------- Blood support ----------
+function evaluateBloodTrendMode(savedRow, recentRows) {
+  const previous = (recentRows || []).find((r) => r.measured_at !== savedRow.measured_at);
+  if (!previous) return 'stable';
+
+  const rules = [
+    { key: 'hba1c', better: 'lower' },
+    { key: 'ldl', better: 'lower' },
+    { key: 'fasting_glucose', better: 'lower' },
+    { key: 'triglycerides', better: 'lower' },
+    { key: 'uric_acid', better: 'lower' },
+    { key: 'creatinine', better: 'lower' },
+    { key: 'hdl', better: 'higher' },
+  ];
+
+  let improved = 0;
+  let worsened = 0;
+
+  for (const rule of rules) {
+    const curr = toNumberOrNull(savedRow?.[rule.key]);
+    const prev = toNumberOrNull(previous?.[rule.key]);
+    if (curr == null || prev == null || curr === prev) continue;
+
+    if (rule.better === 'lower') {
+      if (curr < prev) improved += 1;
+      else worsened += 1;
+    } else {
+      if (curr > prev) improved += 1;
+      else worsened += 1;
+    }
+  }
+
+  if (improved > worsened) return 'positive';
+  if (worsened > improved) return 'careful';
+  return 'stable';
+}
+
+function buildEnhancedBloodSaveMessage(savedRow, recentRows) {
+  const comparisonText = buildPostSaveComparisonMessage(savedRow, recentRows);
+  const mode = evaluateBloodTrendMode(savedRow, recentRows);
+  const parts = buildBloodExamCommentParts(mode);
+
+  return [
+    parts.opening,
+    '',
+    comparisonText,
+    '',
+    parts.body,
+    parts.medical,
+    parts.daily,
+    parts.future1,
+    parts.future3,
+    parts.next,
+  ].filter(Boolean).join('\n');
 }
 
 // ---------- Image flow ----------
@@ -687,45 +1292,86 @@ async function handleImageMessage(event, user) {
 
 async function handleMealImage({ replyToken, user, messageId, buffer, mime }) {
   const analysis = await analyzeMealImageWithGemini(buffer, mime);
-  const eatenAt = toIsoStringInTZ(new Date(), TZ);
-
-  const mealInsert = {
-    user_id: user.id,
-    source_message_id: messageId,
-    eaten_at: eatenAt,
-    meal_label: safeText(analysis.meal_label || '食事', 100),
-    food_items: Array.isArray(analysis.food_items) ? analysis.food_items : [],
-    estimated_kcal: toNumberOrNull(analysis.estimated_kcal),
-    kcal_min: toNumberOrNull(analysis.kcal_min),
-    kcal_max: toNumberOrNull(analysis.kcal_max),
-    protein_g: toNumberOrNull(analysis.protein_g),
-    fat_g: toNumberOrNull(analysis.fat_g),
-    carbs_g: toNumberOrNull(analysis.carbs_g),
-    confidence: clamp01(toNumberOrNull(analysis.confidence)),
-    ai_comment: safeText(analysis.ai_comment, 1000),
-    raw_model_json: analysis,
+  const nowIso = new Date().toISOString();
+  const currentImage = {
+    messageId,
+    receivedAt: nowIso,
+    analysis,
   };
 
-  const { error: mealError } = await supabase.from('meal_logs').insert(mealInsert);
-  if (mealError) throw mealError;
+  const openMealDraft = await getOpenMealDraft(user.id);
 
-  const daySummary = await buildDailySummary(user.id, eatenAt.slice(0, 10));
-  const weekly = await buildWeeklySummary(user.id, eatenAt);
+  if (!openMealDraft) {
+    const session = await createMealDraftSession({
+      user_id: user.id,
+      line_user_id: user.line_user_id,
+      status: 'draft',
+      awaiting_action: 'initial_decision',
+      selected_mode: null,
+      source_message_ids: [messageId],
+      images_json: [currentImage],
+      merged_analysis_json: analysis,
+      image_count: 1,
+      duplicate_candidate: false,
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    });
 
-  const lines = [
-    '📸 食事を記録しました。',
-    `料理: ${mealInsert.meal_label}`,
-    `推定カロリー: ${formatKcalRange(mealInsert.estimated_kcal, mealInsert.kcal_min, mealInsert.kcal_max)}`,
-    mealInsert.protein_g || mealInsert.fat_g || mealInsert.carbs_g
-      ? `PFC: P${fmt(mealInsert.protein_g)}g / F${fmt(mealInsert.fat_g)}g / C${fmt(mealInsert.carbs_g)}g`
-      : null,
-    mealInsert.ai_comment ? `ひとこと: ${mealInsert.ai_comment}` : null,
-    '',
-    `本日摂取合計: ${fmt(daySummary.total_intake_kcal)} kcal`,
-    `今週摂取合計: ${fmt(weekly.total_intake_kcal)} kcal`,
-  ].filter(Boolean);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        `食事写真を受け取りました。\n\n${summarizeMealAnalysis(session.merged_analysis_json)}\n\n今回の食事はこの1枚ですか？`,
+        mealConfirmButtonsForStage('single')
+      )
+    );
+    return;
+  }
 
-  await replyMessage(replyToken, lines.join('\n'));
+  const existingImages = Array.isArray(openMealDraft.images_json) ? openMealDraft.images_json : [];
+  const allImages = [...existingImages, currentImage];
+  const allAnalyses = allImages.map((x) => x.analysis).filter(Boolean);
+  const baseAnalysis = openMealDraft.merged_analysis_json || chooseBestMealAnalysis(extractMealAnalysesFromSession(openMealDraft));
+  const likelyDuplicate = isLikelyDuplicateMealAnalysis(baseAnalysis, analysis);
+
+  if (likelyDuplicate) {
+    const updated = await updateMealDraftSession(openMealDraft.id, {
+      images_json: allImages,
+      source_message_ids: [...new Set([...(openMealDraft.source_message_ids || []), messageId])],
+      image_count: allImages.length,
+      awaiting_action: 'awaiting_duplicate_decision',
+      duplicate_candidate: true,
+      status: 'draft',
+      merged_analysis_json: chooseBestMealAnalysis(allAnalyses),
+    });
+
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        '追加の食事写真を受け取りました。\n同じ食事の別角度の可能性があります。どちらに近いですか？',
+        mealConfirmButtonsForStage('duplicate')
+      )
+    );
+    return;
+  }
+
+  const merged = mergeMealAnalyses(allAnalyses);
+  const updated = await updateMealDraftSession(openMealDraft.id, {
+    images_json: allImages,
+    source_message_ids: [...new Set([...(openMealDraft.source_message_ids || []), messageId])],
+    image_count: allImages.length,
+    awaiting_action: 'ready_to_confirm',
+    duplicate_candidate: false,
+    status: 'ready_to_confirm',
+    selected_mode: 'merge',
+    merged_analysis_json: merged,
+  });
+
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies(
+      `追加の食事写真をまとめました。\n\n${summarizeMealAnalysis(updated.merged_analysis_json)}`,
+      mealConfirmButtonsForStage('ready_to_confirm')
+    )
+  );
 }
 
 async function handleBloodTestImage({ replyToken, user, messageId, buffer, mime }) {
@@ -876,12 +1522,15 @@ async function analyzeMealImageWithGemini(buffer, mimeType) {
 
   const prompt = [
     'あなたは日本向けの食事カロリー概算アシスタントです。',
-    '写真の料理をできるだけ分解して見積もってください。',
-    '1品ごとに food_items にまとめてください。',
-    '見えない油・ソース・調味料は過小評価しないでください。',
-    '不確実な場合は幅(kcal_min, kcal_max)を広めにしてください。',
+    '写真の料理を、主食・主菜・副菜・飲み物・調味料に分ける意識でできるだけ分解して見積もってください。',
+    'food_items には、見えている料理や食材を重複なく整理してください。',
+    '同じ写真内の同じ料理を二重計上しないでください。',
+    '食器サイズ、トレー、カトラリー、手などから量の目安を推定してください。',
+    '見えにくい油・ソース・ドレッシング・砂糖入り飲料は過小評価しないでください。',
+    '外食・揚げ物・炒め物は、kcal_min と kcal_max をやや広めに取ってください。',
     'meal_label は短く自然な日本語で返してください。',
     'confidence は 0.0〜1.0 です。',
+    'ai_comment は利用者向けにやさしく一言で返してください。',
     '必ずJSONだけを返してください。',
   ].join('\n');
 
@@ -1177,7 +1826,19 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
 
     if (trimmed === 'この内容で保存') {
       await confirmLabDraftToResults(supabase, openDraft, selectedDate);
-      await replyMessage(replyToken, '保存しました。これで今後の変化も見やすくなりますね。');
+
+      const recentRows = await getRecentLabResults(supabase, user.id, 6);
+      const savedRow =
+        recentRows.find((r) => r.measured_at === selectedDate) || {
+          measured_at: selectedDate,
+          ...(openDraft.working_data_json?.[selectedDate] || {}),
+        };
+
+      const message = buildEnhancedBloodSaveMessage(savedRow, recentRows);
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(message, ['HbA1c推移', 'LDL推移', '血糖推移', '尿酸推移', 'クレアチニン推移'])
+      );
       return true;
     }
 
@@ -1207,12 +1868,48 @@ async function handleTextMessage(event, user) {
   const lower = text.toLowerCase();
 
   try {
-    const openDraft = await getOpenLabDraft(supabase, user.id);
-    const consumedByLabFlow = await handleLabDraftTextFlow(event.replyToken, user, text, openDraft);
+    const openLabDraft = await getOpenLabDraft(supabase, user.id);
+    const consumedByLabFlow = await handleLabDraftTextFlow(event.replyToken, user, text, openLabDraft);
     if (consumedByLabFlow) return;
+
+    const openMealDraft = await getOpenMealDraft(user.id);
+    const consumedByMealFlow = await handleMealDraftTextFlow(event.replyToken, user, text, openMealDraft);
+    if (consumedByMealFlow) return;
+
+    const openActivityDraft = await getOpenActivityDraft(user.id);
+    const consumedByActivityFlow = await handleActivityDraftTextFlow(event.replyToken, user, text, openActivityDraft);
+    if (consumedByActivityFlow) return;
 
     const consumedByIntake = await handleIntakeTextFlow(event.replyToken, user, text);
     if (consumedByIntake) return;
+
+    if (isExerciseMenuCommand(lower)) {
+      const prompt = getExercisePromptMessage(user.ai_type || 'gentle');
+      const menu = getDailyMenuSuggestion(guessExerciseMenuLevel(user));
+      await replyMessage(event.replyToken, [prompt, menu].filter(Boolean).join('\n'));
+      return;
+    }
+
+    if (text === '運動してない' || text === '今日は運動してない') {
+      await replyMessage(event.replyToken, getSoftNudgeMessage(user.ai_type || 'gentle'));
+      return;
+    }
+
+    if (isLabHistoryCommand(lower)) {
+      const historyConfig = getLabHistoryConfig(text);
+      if (!historyConfig) {
+        await replyMessage(
+          event.replyToken,
+          '使い方の例:\n・HbA1c推移\n・LDL推移\n・血糖推移\n・尿酸推移\n・クレアチニン推移'
+        );
+        return;
+      }
+
+      const rows = await getRecentLabResults(supabase, user.id, 10);
+      const historyText = buildLabHistoryText(rows, historyConfig.key, historyConfig.label);
+      await replyMessage(event.replyToken, historyText);
+      return;
+    }
 
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage());
@@ -1260,24 +1957,38 @@ async function handleTextMessage(event, user) {
 
     if (isActivityCommand(lower)) {
       const activity = parseActivity(text);
-      if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal) {
-        await replyMessage(event.replyToken, '例: 歩数 8234 散歩 45分 消費 210');
+      if (
+        !activity.steps &&
+        !activity.walking_minutes &&
+        !activity.estimated_activity_kcal &&
+        !activity.exercise_summary
+      ) {
+        await replyMessage(event.replyToken, '例: 歩数 8234 散歩 45分 / スクワット 10回 / 腹筋 5回 / 膝つき腕立て 3回');
         return;
       }
-      activity.user_id = user.id;
-      activity.logged_at = toIsoStringInTZ(new Date(), TZ);
+
       if (!activity.estimated_activity_kcal) {
-        activity.estimated_activity_kcal = estimateActivityKcal(
+        activity.estimated_activity_kcal = estimateActivityKcalWithStrength(
           activity.steps,
           activity.walking_minutes,
-          user.weight_kg
+          user.weight_kg,
+          activity.raw_detail_json || {}
         );
       }
-      const { error } = await supabase.from('activity_logs').insert(activity);
-      if (error) throw error;
+
+      const draft = await createActivityDraftSession({
+        user_id: user.id,
+        line_user_id: user.line_user_id,
+        status: 'draft',
+        awaiting_action: null,
+        source_message_ids: [],
+        pending_activity_json: activity,
+        expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      });
+
       await replyMessage(
         event.replyToken,
-        `活動を記録しました。推定活動消費 ${fmt(activity.estimated_activity_kcal)} kcal です。`
+        textMessageWithQuickReplies(formatActivityDraftSummary(draft.pending_activity_json), ['この内容で保存', '追加あり', 'やめる'])
       );
       return;
     }
@@ -1315,7 +2026,7 @@ async function handleTextMessage(event, user) {
       if (Object.keys(lab).length === 0) {
         await replyMessage(
           event.replyToken,
-          '例: 血液 HbA1c 6.1 LDL 140 HDL 52 TG 180 AST 28 ALT 35 γGT 40'
+          '例: 血液 HbA1c 6.1 LDL 140 HDL 52 TG 180 AST 28 ALT 35 γGT 40 尿酸 5.8 クレアチニン 0.78'
         );
         return;
       }
@@ -1323,7 +2034,10 @@ async function handleTextMessage(event, user) {
       lab.measured_at = toIsoStringInTZ(new Date(), TZ);
       const { error } = await supabase.from('lab_results').insert(lab);
       if (error) throw error;
-      await replyMessage(event.replyToken, '血液検査の値を記録しました。');
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies('血液検査の値を記録しました。', ['HbA1c推移', 'LDL推移', '血糖推移', '尿酸推移', 'クレアチニン推移'])
+      );
       return;
     }
 
@@ -1409,7 +2123,7 @@ async function getMemoryHint(userId) {
 async function saveMemoryCandidate(userId, userText, aiReply) {
   const simpleRules = [
     { type: 'food', pattern: /(甘い物|ケーキ|チョコ|お菓子)/, value: '甘い物が好きそう' },
-    { type: 'exercise', pattern: /(散歩|ウォーキング)/, value: '散歩・ウォーキングが続きやすそう' },
+    { type: 'exercise', pattern: /(散歩|ウォーキング|スクワット|腹筋|腕立て)/, value: '運動を少しずつ続けられそう' },
     { type: 'life', pattern: /(孫|子ども|家族)/, value: '家族の話題を大切にしている' },
     { type: 'emotion', pattern: /(不安|落ち込|疲れ)/, value: '気持ちを丁寧に受け止めると安心しやすい' },
   ];
@@ -1623,10 +2337,37 @@ function parseWeightBodyFat(text) {
 }
 
 function parseActivity(text) {
+  const detail = {};
+  const steps = toNumberOrNull(findNumber(text, /歩数\s*([0-9]+(?:\.[0-9]+)?)/i));
+  const walkingMinutes = toNumberOrNull(findNumber(text, /(散歩|歩行|ウォーキング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i, 2));
+  const slowJogMinutes = toNumberOrNull(findNumber(text, /(スロージョギング|ジョギング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i, 2));
+  const explicitKcal = toNumberOrNull(findNumber(text, /(消費|活動消費)\s*([0-9]+(?:\.[0-9]+)?)/i, 2));
+
+  const squat = toNumberOrNull(findNumber(text, /スクワット\s*([0-9]+(?:\.[0-9]+)?)\s*回/i));
+  const situp = toNumberOrNull(findNumber(text, /(腹筋|シットアップ)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i, 2));
+  const pushup = toNumberOrNull(findNumber(text, /腕立て\s*([0-9]+(?:\.[0-9]+)?)\s*回/i));
+  const kneePushup = toNumberOrNull(findNumber(text, /膝つき腕立て\s*([0-9]+(?:\.[0-9]+)?)\s*回/i));
+
+  if (squat != null) detail.squat_reps = squat;
+  if (situp != null) detail.situp_reps = situp;
+  if (pushup != null) detail.pushup_reps = pushup;
+  if (kneePushup != null) detail.knee_pushup_reps = kneePushup;
+  if (slowJogMinutes != null) detail.slow_jogging_minutes = slowJogMinutes;
+
+  const summaryParts = [
+    squat != null ? `スクワット ${fmt(squat)}回` : null,
+    situp != null ? `腹筋 ${fmt(situp)}回` : null,
+    pushup != null ? `腕立て ${fmt(pushup)}回` : null,
+    kneePushup != null ? `膝つき腕立て ${fmt(kneePushup)}回` : null,
+    slowJogMinutes != null ? `スロージョギング ${fmt(slowJogMinutes)}分` : null,
+  ].filter(Boolean);
+
   return {
-    steps: toNumberOrNull(findNumber(text, /歩数\s*([0-9]+(?:\.[0-9]+)?)/i)),
-    walking_minutes: toNumberOrNull(findNumber(text, /(散歩|歩行|ウォーキング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i, 2)),
-    estimated_activity_kcal: toNumberOrNull(findNumber(text, /(消費|活動消費)\s*([0-9]+(?:\.[0-9]+)?)/i, 2)),
+    steps,
+    walking_minutes: walkingMinutes,
+    estimated_activity_kcal: explicitKcal,
+    exercise_summary: summaryParts.join(' / ') || null,
+    raw_detail_json: Object.keys(detail).length ? detail : null,
   };
 }
 
@@ -1657,6 +2398,8 @@ function parseLabValues(text) {
     ast: /ast\s*([0-9]+(?:\.[0-9]+)?)/i,
     alt: /alt\s*([0-9]+(?:\.[0-9]+)?)/i,
     ggt: /(γgt|ggt|gamma)\s*([0-9]+(?:\.[0-9]+)?)/i,
+    uric_acid: /(尿酸|ua)\s*([0-9]+(?:\.[0-9]+)?)/i,
+    creatinine: /(クレアチニン|creatinine|cre)\s*([0-9]+(?:\.[0-9]+)?)/i,
   };
 
   const result = {};
@@ -1684,7 +2427,19 @@ function isWeightCommand(text) {
   return text.includes('体重') || text.includes('体脂肪') || text.includes('bmi');
 }
 function isActivityCommand(text) {
-  return text.includes('歩数') || text.includes('散歩') || text.includes('ウォーキング') || text.includes('歩行') || text.includes('消費');
+  return (
+    text.includes('歩数') ||
+    text.includes('散歩') ||
+    text.includes('ウォーキング') ||
+    text.includes('歩行') ||
+    text.includes('消費') ||
+    text.includes('スクワット') ||
+    text.includes('腹筋') ||
+    text.includes('腕立て') ||
+    text.includes('膝つき腕立て') ||
+    text.includes('スロージョギング') ||
+    text.includes('ジョギング')
+  );
 }
 function isSleepCommand(text) {
   return text.includes('睡眠');
@@ -1693,10 +2448,26 @@ function isHydrationCommand(text) {
   return text.includes('水分');
 }
 function isLabCommand(text) {
-  return text.includes('血液') || text.includes('hba1c') || text.includes('ldl') || text.includes('hdl') || text.includes('tg');
+  return text.includes('血液') || text.includes('hba1c') || text.includes('ldl') || text.includes('hdl') || text.includes('tg') || text.includes('尿酸') || text.includes('クレアチニン');
 }
 function isBmrCommand(text) {
   return text.includes('基礎代謝') || text.includes('bmr');
+}
+function isLabHistoryCommand(text) {
+  return ['hba1c推移', 'ldl推移', '血糖推移', '尿酸推移', 'クレアチニン推移'].some((x) => text.includes(x));
+}
+function isExerciseMenuCommand(text) {
+  return text.includes('運動メニュー') || text.includes('今日の運動') || text.includes('運動提案');
+}
+
+function getLabHistoryConfig(text) {
+  const normalized = String(text || '').trim().toLowerCase();
+  if (normalized.includes('hba1c推移')) return { key: 'hba1c', label: 'HbA1c' };
+  if (normalized.includes('ldl推移')) return { key: 'ldl', label: 'LDL' };
+  if (normalized.includes('血糖推移')) return { key: 'fasting_glucose', label: '血糖' };
+  if (normalized.includes('尿酸推移')) return { key: 'uric_acid', label: '尿酸' };
+  if (normalized.includes('クレアチニン推移')) return { key: 'creatinine', label: 'クレアチニン' };
+  return null;
 }
 
 function helpMessage() {
@@ -1706,9 +2477,13 @@ function helpMessage() {
     '・体重 68.2',
     '・体重 68.2 体脂肪 24.1 BMI 22.4',
     '・歩数 8234 散歩 45分',
+    '・スクワット 10回',
+    '・膝つき腕立て 5回',
     '・睡眠 6.5時間',
     '・水分 1.5L',
-    '・血液 HbA1c 6.1 LDL 140 HDL 52 TG 180',
+    '・血液 HbA1c 6.1 LDL 140 HDL 52 TG 180 尿酸 5.8 クレアチニン 0.78',
+    '・HbA1c推移 / LDL推移 / 血糖推移 / 尿酸推移 / クレアチニン推移',
+    '・運動メニュー',
     '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58',
     '・週報 / 月報',
     '・食事写真 / 血液検査画像 / 体重計画像も送れます',
@@ -1777,9 +2552,47 @@ function daysInMonth(date) {
 
 function estimateActivityKcal(steps, walkingMinutes, weightKg) {
   const weight = weightKg || 60;
-  const stepKcal = steps ? steps * 0.04 : 0;
-  const walkKcal = walkingMinutes ? walkingMinutes * (weight * 0.035) : 0;
+  const stepKcal = steps ? Number(steps) * 0.04 : 0;
+  const walkKcal = walkingMinutes ? Number(walkingMinutes) * (weight * 0.035) : 0;
   return round1(Math.max(stepKcal, walkKcal));
+}
+
+function estimateActivityKcalWithStrength(steps, walkingMinutes, weightKg, rawDetail = {}) {
+  const base = Number(estimateActivityKcal(steps, walkingMinutes, weightKg)) || 0;
+  const weight = Number(weightKg) || 60;
+
+  const squatKcal = (Number(rawDetail.squat_reps) || 0) * 0.32;
+  const situpKcal = (Number(rawDetail.situp_reps) || 0) * 0.25;
+  const pushupKcal = (Number(rawDetail.pushup_reps) || 0) * 0.4;
+  const kneePushupKcal = (Number(rawDetail.knee_pushup_reps) || 0) * 0.28;
+  const slowJogKcal = (Number(rawDetail.slow_jogging_minutes) || 0) * (weight * 0.09);
+
+  return round1(base + squatKcal + situpKcal + pushupKcal + kneePushupKcal + slowJogKcal);
+}
+
+function chooseExercisePraiseCategory(activity) {
+  const total = (Number(activity.steps) || 0) + (Number(activity.walking_minutes) || 0) + (Number(activity.estimated_activity_kcal) || 0);
+  if (activity.exercise_summary && total > 0) return 'praise_done';
+  if (activity.exercise_summary || (Number(activity.walking_minutes) || 0) > 0) return 'praise_small';
+  return 'praise_done';
+}
+
+function chooseExerciseLevel(activity) {
+  const steps = Number(activity.steps) || 0;
+  const walk = Number(activity.walking_minutes) || 0;
+  const kcal = Number(activity.estimated_activity_kcal) || 0;
+  const hasStrength = !!activity.exercise_summary;
+
+  if (steps >= 8000 || walk >= 30 || kcal >= 250) return 'active';
+  if (steps >= 4000 || walk >= 15 || kcal >= 120 || hasStrength) return 'moderate';
+  if (steps >= 1500 || walk >= 5) return 'easy';
+  return 'starter';
+}
+
+function guessExerciseMenuLevel(user) {
+  if (!user) return 'starter';
+  if (user.ai_type === 'energetic') return 'easy';
+  return 'starter';
 }
 
 function calculateBMR(user) {
@@ -1865,4 +2678,3 @@ async function retry(fn, retries = 2, delayMs = 500) {
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
-
