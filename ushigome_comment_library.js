@@ -188,7 +188,7 @@ const COACH_COMMENT_LIBRARY = {
       '今日は負担の少ない範囲で、ひとつだけ動きを入れてみますか？',
       '毎日完璧でなくても、数日おきにつながるだけで流れは作れます。',
       'まずは低負荷で続けやすい形を優先していきましょう。',
-      'スクワットや軽い腕立てでも、積み重ねると意味が出やすいです。',
+      'スクワットや軽い腕立ても、積み重ねると意味が出やすいです。',
     ],
     casual: [
       '今日はちょこっとだけ動いときます？',
@@ -255,61 +255,128 @@ const COACH_COMMENT_LIBRARY = {
       '少し余裕がある日は回数より丁寧さを意識してみましょう',
     ],
   },
+
+  blood_exam_opening: [
+    '今回も血液検査を見せてくれてありがとうございます。',
+    'ここまで記録を続けてくれているのが、まず本当に大きいです。',
+    'こうして数値を一緒に見返せるのは、とても良い流れですね。',
+    '検査結果をちゃんと確認していけるの、すごく大切な積み重ねです。',
+    '今回の結果も一緒に整理していきましょうね。',
+  ],
+
+  blood_exam_positive: [
+    '全体として見ると、良い流れを感じる項目があります。',
+    '少しずつでも体が応えてきている感じがありますね。',
+    '数字だけでなく流れとして良い方向が見えてきています。',
+    '小さい変化でも、積み重ねとしてはかなり価値があります。',
+    '今回の結果には、続けてきた意味が少し見えてきています。',
+  ],
+
+  blood_exam_stable: [
+    '大きく崩れず維持できているのも立派です。',
+    '安定している項目があるのはとても良いことです。',
+    '横ばいでも、整える土台を守れている感じがあります。',
+    'こういう安定が次の改善につながりやすいです。',
+    '派手な変化ではなくても、落ち着いて見られるのは良い流れです。',
+  ],
+
+  blood_exam_careful: [
+    '少し気になる動きはありますが、ここで流れが見えたのは大きいです。',
+    '今回の数値には、生活を整えるヒントが含まれていそうです。',
+    'ここで気付けたこと自体が次につながります。',
+    'すぐに悲観しなくて大丈夫ですが、少し丁寧に見ていきたいですね。',
+    '整え方によって変わる余地がありそうです。',
+  ],
+
+  blood_exam_medical_soft: [
+    'HbA1cや脂質は、1日で大きく変わるというより少しずつ動いていくことが多いです。',
+    '睡眠や活動量、食事の積み重ねが数値の流れに影響することがあります。',
+    '軽い運動の継続でも、血糖や中性脂肪には良い影響が出やすいです。',
+    'LDLやHbA1cは、短期よりも1〜3か月単位で流れを見るのが大切です。',
+    '水分や体重、食事内容が尿酸の流れに関係することもあります。',
+    '肝機能系の数値は、体重や生活リズムの影響を受けることもあります。',
+  ],
+
+  blood_exam_daily_life_link: [
+    'こうした変化が続くと、体の重さやだるさが少しラクになる方もいます。',
+    '数字が整ってくると、食後の重さや疲れ方にも変化が出ることがあります。',
+    'むくみ感や日中の過ごしやすさに良い影響が出る方もいます。',
+    '数値だけでなく、日常の体感にもつながっていきやすいです。',
+    'こういう流れは、生活のしやすさにも少しずつ返ってきやすいです。',
+  ],
+
+  blood_exam_future_1m: [
+    '今の流れを続けられると、1か月後にはもう少し安定感が見えやすいです。',
+    'ここから1か月は、流れを整えるにはとても大事な時期です。',
+    '今の意識が続けば、次の1か月でも小さな変化を感じやすいと思います。',
+    '1か月後には、今より少し安心して見られる項目が増える可能性があります。',
+    'この調子でいけると、1か月後の見え方が変わってきそうです。',
+  ],
+
+  blood_exam_future_3m: [
+    '3か月くらいで見ると、よりはっきりした傾向が見えやすくなります。',
+    '今の積み重ねは、3か月後の数字に返ってくる可能性があります。',
+    '焦らず続けられると、3か月後にはかなり意味のある比較がしやすくなります。',
+    '3か月単位で見た時に、体の土台が整ってきた実感につながりやすいです。',
+    '今の流れが続くと、3か月後の検査が楽しみになってきますね。',
+  ],
+
+  blood_exam_next_step: [
+    '次は睡眠か水分のどちらか1つを少し整えてみるのがおすすめです。',
+    '今の運動を無理なく続けるだけでも、良い後押しになりそうです。',
+    '食事のタイミングを少し整えるだけでも流れが変わることがあります。',
+    'まずは今できていることを続けるのが一番大事です。',
+    '次の1か月は、無理なく続けられる形を大切にしていきましょう。',
+  ],
+
+  meal_record_praise: [
+    '食事をちゃんと見せてくれるの、すごく大事です😊',
+    '記録してくれるから流れが見えてきますね👍',
+    'こういう食事の共有、本当に力になります。',
+    '見せてくれてありがとう、かなり助かります。',
+    '食事を言葉や写真で残せるの、すごく良い習慣です。',
+  ],
+
+  meal_balance_positive: [
+    '全体としてバランスは悪くなさそうです。',
+    'たんぱく質を意識できていそうなのが良いですね。',
+    '思ったより整っている印象があります。',
+    '食べ方としてはかなり悪くないです。',
+    'ちゃんと考えて選べている感じがあります。',
+  ],
+
+  meal_balance_careful: [
+    '少し脂質が高めになりやすい組み合わせかもしれません。',
+    '見えない油やソースは少し多めに見ておくと安心です。',
+    '外食系は想像よりカロリーが乗りやすいことがあります。',
+    '量は多すぎなくても、調味料で増えやすいことがあります。',
+    '全体としては悪くないですが、少し調整余地はありそうです。',
+  ],
+
+  meal_future_link: [
+    'こういう食事の積み重ねが、血糖や脂質の流れにもつながってきます。',
+    '食事の選び方が整うと、1〜2か月後の数字にも出やすくなります。',
+    'こういう意識の積み重ねが、体の軽さにも返ってきやすいです。',
+    '大きく変えなくても、少しずつ整うだけで流れは変わります。',
+    '今の意識はちゃんと未来の体につながっています。',
+  ],
+
+  no_repeat_rules: {
+    avoid_same_category_streak: true,
+    avoid_exact_repeat_recent: true,
+    max_same_phrase_window: 5,
+  },
 };
 
-function randomPick(list = []) {
+function randomPick(list = [], exclude = []) {
   if (!Array.isArray(list) || list.length === 0) return '';
-  return list[Math.floor(Math.random() * list.length)];
+  const ex = Array.isArray(exclude) ? exclude : [];
+  const filtered = list.filter((item) => !ex.includes(item));
+  const source = filtered.length ? filtered : list;
+  return source[Math.floor(Math.random() * source.length)];
 }
 
-function randomPicks(list = [], count = 2) {
+function randomPicks(list = [], count = 2, exclude = []) {
   if (!Array.isArray(list) || list.length === 0) return [];
-  const copy = [...list];
-  const result = [];
-  while (copy.length > 0 && result.length < count) {
-    const index = Math.floor(Math.random() * copy.length);
-    result.push(copy.splice(index, 1)[0]);
-  }
-  return result;
-}
-
-function getPraiseMessage(category = 'praise_done') {
-  return randomPick(COACH_COMMENT_LIBRARY[category] || []);
-}
-
-function getSoftNudgeMessage(aiType = 'gentle') {
-  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || []);
-  const soft = randomPick(COACH_COMMENT_LIBRARY.soft_nudge || []);
-  return [typePrompt, soft].filter(Boolean).join('\n');
-}
-
-function getExercisePromptMessage(aiType = 'gentle') {
-  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || []);
-  const basePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_soft || []);
-  return [typePrompt, basePrompt].filter(Boolean).join('\n');
-}
-
-function getBloodLinkMessage() {
-  return randomPick(COACH_COMMENT_LIBRARY.blood_link_comments || []);
-}
-
-function getProgressionMessage() {
-  return randomPick(COACH_COMMENT_LIBRARY.strength_progression_comments || []);
-}
-
-function getDailyMenuSuggestion(level = 'starter') {
-  const list = COACH_COMMENT_LIBRARY.daily_menu_suggestions[level] || COACH_COMMENT_LIBRARY.daily_menu_suggestions.starter;
-  return randomPick(list);
-}
-
-module.exports = {
-  COACH_COMMENT_LIBRARY,
-  randomPick,
-  randomPicks,
-  getPraiseMessage,
-  getSoftNudgeMessage,
-  getExercisePromptMessage,
-  getBloodLinkMessage,
-  getProgressionMessage,
-  getDailyMenuSuggestion,
-};
+  const ex = Array.isArray(exclude) ? exclude : [];
+  const pool = li
