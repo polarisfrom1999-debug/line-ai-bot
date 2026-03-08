@@ -188,7 +188,7 @@ const COACH_COMMENT_LIBRARY = {
       '今日は負担の少ない範囲で、ひとつだけ動きを入れてみますか？',
       '毎日完璧でなくても、数日おきにつながるだけで流れは作れます。',
       'まずは低負荷で続けやすい形を優先していきましょう。',
-      'スクワットや軽い腕立ても、積み重ねると意味が出やすいです。',
+      'スクワットや軽い腕立てでも、積み重ねると意味が出やすいです。',
     ],
     casual: [
       '今日はちょこっとだけ動いときます？',
@@ -379,4 +379,118 @@ function randomPick(list = [], exclude = []) {
 function randomPicks(list = [], count = 2, exclude = []) {
   if (!Array.isArray(list) || list.length === 0) return [];
   const ex = Array.isArray(exclude) ? exclude : [];
-  const pool = li
+  const pool = list.filter((item) => !ex.includes(item));
+  const source = pool.length ? [...pool] : [...list];
+  const result = [];
+  while (source.length > 0 && result.length < count) {
+    const index = Math.floor(Math.random() * source.length);
+    result.push(source.splice(index, 1)[0]);
+  }
+  return result;
+}
+
+function getPraiseMessage(category = 'praise_done', exclude = []) {
+  return randomPick(COACH_COMMENT_LIBRARY[category] || [], exclude);
+}
+
+function getSoftNudgeMessage(aiType = 'gentle', exclude = []) {
+  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || [], exclude);
+  const soft = randomPick(COACH_COMMENT_LIBRARY.soft_nudge || [], [typePrompt, ...exclude]);
+  return [typePrompt, soft].filter(Boolean).join('\n');
+}
+
+function getExercisePromptMessage(aiType = 'gentle', exclude = []) {
+  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || [], exclude);
+  const basePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_soft || [], [typePrompt, ...exclude]);
+  return [typePrompt, basePrompt].filter(Boolean).join('\n');
+}
+
+function getBloodLinkMessage(exclude = []) {
+  return randomPick(COACH_COMMENT_LIBRARY.blood_link_comments || [], exclude);
+}
+
+function getProgressionMessage(exclude = []) {
+  return randomPick(COACH_COMMENT_LIBRARY.strength_progression_comments || [], exclude);
+}
+
+function getDailyMenuSuggestion(level = 'starter', exclude = []) {
+  const list = COACH_COMMENT_LIBRARY.daily_menu_suggestions[level] || COACH_COMMENT_LIBRARY.daily_menu_suggestions.starter;
+  return randomPick(list, exclude);
+}
+
+function getMealPraiseMessage(exclude = []) {
+  return randomPick(COACH_COMMENT_LIBRARY.meal_record_praise || [], exclude);
+}
+
+function getMealBalanceComment(type = 'positive', exclude = []) {
+  if (type === 'careful') return randomPick(COACH_COMMENT_LIBRARY.meal_balance_careful || [], exclude);
+  return randomPick(COACH_COMMENT_LIBRARY.meal_balance_positive || [], exclude);
+}
+
+function getMealFutureLink(exclude = []) {
+  return randomPick(COACH_COMMENT_LIBRARY.meal_future_link || [], exclude);
+}
+
+function buildBloodExamCommentParts(mode = 'positive', exclude = []) {
+  const opening = randomPick(COACH_COMMENT_LIBRARY.blood_exam_opening || [], exclude);
+  const body =
+    mode === 'careful'
+      ? randomPick(COACH_COMMENT_LIBRARY.blood_exam_careful || [], [opening, ...exclude])
+      : mode === 'stable'
+        ? randomPick(COACH_COMMENT_LIBRARY.blood_exam_stable || [], [opening, ...exclude])
+        : randomPick(COACH_COMMENT_LIBRARY.blood_exam_positive || [], [opening, ...exclude]);
+
+  const medical = randomPick(COACH_COMMENT_LIBRARY.blood_exam_medical_soft || [], [opening, body, ...exclude]);
+  const daily = randomPick(COACH_COMMENT_LIBRARY.blood_exam_daily_life_link || [], [opening, body, medical, ...exclude]);
+  const future1 = randomPick(COACH_COMMENT_LIBRARY.blood_exam_future_1m || [], [opening, body, medical, daily, ...exclude]);
+  const future3 = randomPick(COACH_COMMENT_LIBRARY.blood_exam_future_3m || [], [opening, body, medical, daily, future1, ...exclude]);
+  const next = randomPick(COACH_COMMENT_LIBRARY.blood_exam_next_step || [], [opening, body, medical, daily, future1, future3, ...exclude]);
+
+  return {
+    opening,
+    body,
+    medical,
+    daily,
+    future1,
+    future3,
+    next,
+  };
+}
+
+function buildExerciseReplySet(options = {}) {
+  const {
+    aiType = 'gentle',
+    category = 'praise_done',
+    level = 'starter',
+    exclude = [],
+  } = options;
+
+  const praise = getPraiseMessage(category, exclude);
+  const blood = getBloodLinkMessage([praise, ...exclude]);
+  const progress = getProgressionMessage([praise, blood, ...exclude]);
+  const menu = getDailyMenuSuggestion(level, [praise, blood, progress, ...exclude]);
+
+  return {
+    praise,
+    blood,
+    progress,
+    menu,
+  };
+}
+
+module.exports = {
+  COACH_COMMENT_LIBRARY,
+  randomPick,
+  randomPicks,
+  getPraiseMessage,
+  getSoftNudgeMessage,
+  getExercisePromptMessage,
+  getBloodLinkMessage,
+  getProgressionMessage,
+  getDailyMenuSuggestion,
+  getMealPraiseMessage,
+  getMealBalanceComment,
+  getMealFutureLink,
+  buildBloodExamCommentParts,
+  buildExerciseReplySet,
+};
