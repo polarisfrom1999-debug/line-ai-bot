@@ -128,6 +128,11 @@ const MEAL_WORD_HINTS = [
   '鶏', '豚', '牛', 'ハンバーグ', 'カレー', 'シチュー', '餃子', '唐揚げ',
   'ケーキ', 'チョコ', 'クッキー', 'アイス', 'ヨーグルト', 'バナナ', 'りんご',
   'コーヒー', '紅茶', 'ラテ', 'ジュース', '牛乳', 'チーズ', '食パン', 'トースト',
+  '大福', 'まんじゅう', '饅頭', 'どら焼き', 'たい焼き', 'おはぎ', '羊羹', 'ようかん',
+  '最中', 'もなか', '団子', 'だんご', 'せんべい', '煎餅', 'あんみつ', 'ぜんざい',
+  '和菓子', 'あんこ', 'もち', '餅', '柏餅', '桜餅', 'みたらし団子',
+  'ガパオ', 'パッタイ', 'お好み焼き', '広島焼き', '機内食', '弁当', '定食',
+  'スタバ', 'モンスーン', 'コンビニ',
 ];
 
 const EXERCISE_WORD_HINTS = [
@@ -135,7 +140,7 @@ const EXERCISE_WORD_HINTS = [
   'ジョギング', 'ランニング', 'スロージョギング', '走った', '走りました',
   '階段', '自転車', 'バイク', '筋トレ', '運動', 'ストレッチ',
   'スクワット', '腹筋', '腕立て', '膝つき腕立て', 'プランク',
-  'ラジオ体操', '体操', 'ヨガ',
+  'ラジオ体操', '体操', 'ヨガ', '体幹', 'もも上げ', '開脚', '伸ばした',
 ];
 
 // ---------- Express ----------
@@ -311,21 +316,19 @@ async function ensureUser(lineUserId) {
 
 function getUserDisplayName(user) {
   const name = String(user?.display_name || '').trim();
-  if (!name) return '';
-  return name;
+  return name || '';
 }
 
 function prefixWithName(user, message) {
   const name = getUserDisplayName(user);
-  if (!name) return message;
-  const clean = String(message || '').trim();
-  if (!clean) return clean;
-  return `${name}さん、${clean}`;
+  const text = String(message || '').trim();
+  if (!text) return text;
+  if (!name) return text;
+  return `${name}さん、${text}`;
 }
 
 function parseDisplayName(text) {
   const trimmed = String(text || '').trim();
-
   const patterns = [
     /^名前[は：:\s]*([^\s]{1,40})$/i,
     /^名前[：:\s]+([^\s]{1,40})$/i,
@@ -796,7 +799,9 @@ function scoreMealAnalysis(analysis) {
   const itemCount = Array.isArray(analysis.food_items) ? analysis.food_items.length : 0;
   const confidence = Number(analysis.confidence) || 0;
   const hasRange = analysis.kcal_min != null && analysis.kcal_max != null ? 1 : 0;
-  return itemCount * 10 + confidence * 5 + hasRange;
+  const hasStore = analysis.restaurant_name_candidate ? 1 : 0;
+  const hasMenu = analysis.menu_name_candidate ? 1 : 0;
+  return itemCount * 10 + confidence * 5 + hasRange + hasStore + hasMenu;
 }
 
 function chooseBestMealAnalysis(analyses = []) {
@@ -831,9 +836,18 @@ function mergeMealAnalyses(analyses = []) {
   let carbs = 0;
   let confidenceSum = 0;
   const labels = [];
+  const menuCandidates = [];
+  const restaurantCandidates = [];
+  const evidenceList = [];
+  let cuisineType = '';
 
   for (const analysis of valid) {
     if (analysis.meal_label) labels.push(String(analysis.meal_label).trim());
+    if (analysis.menu_name_candidate) menuCandidates.push(String(analysis.menu_name_candidate).trim());
+    if (analysis.restaurant_name_candidate) restaurantCandidates.push(String(analysis.restaurant_name_candidate).trim());
+    if (analysis.visual_evidence) evidenceList.push(String(analysis.visual_evidence).trim());
+    if (!cuisineType && analysis.cuisine_type) cuisineType = analysis.cuisine_type;
+
     estimatedKcal += Number(analysis.estimated_kcal) || 0;
     kcalMin += Number(analysis.kcal_min) || 0;
     kcalMax += Number(analysis.kcal_max) || 0;
@@ -865,8 +879,16 @@ function mergeMealAnalyses(analyses = []) {
   }
 
   const uniqueLabels = [...new Set(labels.filter(Boolean))];
+  const uniqueMenus = [...new Set(menuCandidates.filter(Boolean))];
+  const uniqueRestaurants = [...new Set(restaurantCandidates.filter(Boolean))];
+  const uniqueEvidence = [...new Set(evidenceList.filter(Boolean))];
+
   return {
     meal_label: uniqueLabels.join(' + ') || '食事',
+    menu_name_candidate: uniqueMenus[0] || null,
+    restaurant_name_candidate: uniqueRestaurants[0] || null,
+    visual_evidence: uniqueEvidence.slice(0, 3).join(' / ') || null,
+    cuisine_type: cuisineType || null,
     food_items: [...foodMap.values()],
     estimated_kcal: round1(estimatedKcal),
     kcal_min: round1(kcalMin),
@@ -918,6 +940,7 @@ function extractMealAnalysesFromSession(session) {
 
 function summarizeMealAnalysis(analysis) {
   if (!analysis) return '食事内容をまとめました。';
+
   const praise = getMealPraiseMessage();
   const balanceComment = (Number(analysis.confidence) || 0) < 0.5
     ? getMealBalanceComment('careful')
@@ -926,6 +949,8 @@ function summarizeMealAnalysis(analysis) {
 
   const lines = [
     praise,
+    analysis.restaurant_name_candidate ? `候補のお店: ${safeText(analysis.restaurant_name_candidate, 80)}` : null,
+    analysis.menu_name_candidate ? `候補メニュー: ${safeText(analysis.menu_name_candidate, 80)}` : null,
     `料理: ${safeText(analysis.meal_label || '食事', 80)}`,
     `推定カロリー: ${formatKcalRange(analysis.estimated_kcal, analysis.kcal_min, analysis.kcal_max)}`,
     analysis.protein_g || analysis.fat_g || analysis.carbs_g
@@ -934,6 +959,7 @@ function summarizeMealAnalysis(analysis) {
     Array.isArray(analysis.food_items) && analysis.food_items.length
       ? `内容: ${(analysis.food_items || []).slice(0, 8).map((x) => x.name).filter(Boolean).join(' / ')}`
       : null,
+    analysis.visual_evidence ? `読み取り根拠: ${safeText(analysis.visual_evidence, 150)}` : null,
     balanceComment,
     futureLink,
   ].filter(Boolean);
@@ -991,6 +1017,12 @@ async function analyzeMealTextWithGemini(text) {
   const schema = {
     type: 'object',
     properties: {
+      restaurant_name_candidate: { type: 'string' },
+      restaurant_confidence: { type: 'number' },
+      menu_name_candidate: { type: 'string' },
+      menu_confidence: { type: 'number' },
+      cuisine_type: { type: 'string' },
+      visual_evidence: { type: 'string' },
       meal_label: { type: 'string' },
       food_items: {
         type: 'array',
@@ -1020,7 +1052,10 @@ async function analyzeMealTextWithGemini(text) {
     'あなたは日本向けの食事カロリー概算アシスタントです。',
     'ユーザーが文章で食事内容を送ってきます。',
     '文章から食べた内容を整理し、概算カロリーとPFCを推定してください。',
-    '食べた物が曖昧な場合は保守的に推定してください。',
+    '特に日本の単品食品、和菓子、洋菓子、飲み物、軽食を見落とさないでください。',
+    '例: 大福, どら焼き, たい焼き, 羊羹, 団子, まんじゅう, せんべい, あんみつ, ぜんざい。',
+    '店名やチェーン名、メニュー名が含まれていれば候補として出してください。',
+    '食べた物が短文でも、1品だけでも、食品として自然なら食事項目として扱ってください。',
     'meal_label は短く自然な日本語にしてください。',
     'food_items には重複なくまとめてください。',
     '必ずJSONだけを返してください。',
@@ -1029,7 +1064,45 @@ async function analyzeMealTextWithGemini(text) {
   ].join('\n');
 
   const parsed = await generateJsonOnly(prompt, schema, 0.2);
+
+  const fallbackFoods = [
+    '大福', 'まんじゅう', '饅頭', 'どら焼き', 'たい焼き', 'おはぎ', '羊羹', 'ようかん',
+    '最中', 'もなか', '団子', 'だんご', 'せんべい', '煎餅', 'あんみつ', 'ぜんざい',
+    '和菓子', 'あんこ', 'もち', '餅', '柏餅', '桜餅', 'みたらし団子',
+    'ケーキ', 'チョコ', 'クッキー', 'アイス', 'ヨーグルト', 'バナナ', 'りんご',
+  ];
+
+  if ((!parsed.food_items || parsed.food_items.length === 0) && String(text || '').trim()) {
+    const hit = fallbackFoods.find((x) => String(text).includes(x));
+    if (hit) {
+      return {
+        restaurant_name_candidate: null,
+        restaurant_confidence: null,
+        menu_name_candidate: hit,
+        menu_confidence: 0.7,
+        cuisine_type: '間食',
+        visual_evidence: '文章内の食品名から推定',
+        meal_label: hit,
+        food_items: [{ name: hit, estimated_amount: '1個', estimated_kcal: hit === '大福' ? 120 : 100 }],
+        estimated_kcal: hit === '大福' ? 120 : 100,
+        kcal_min: hit === '大福' ? 90 : 70,
+        kcal_max: hit === '大福' ? 180 : 150,
+        protein_g: null,
+        fat_g: null,
+        carbs_g: null,
+        confidence: 0.6,
+        ai_comment: `${hit}として読み取りました。`,
+      };
+    }
+  }
+
   return {
+    restaurant_name_candidate: safeText(parsed.restaurant_name_candidate, 80) || null,
+    restaurant_confidence: toNumberOrNull(parsed.restaurant_confidence),
+    menu_name_candidate: safeText(parsed.menu_name_candidate, 80) || null,
+    menu_confidence: toNumberOrNull(parsed.menu_confidence),
+    cuisine_type: safeText(parsed.cuisine_type, 50) || null,
+    visual_evidence: safeText(parsed.visual_evidence, 150) || '文章内の内容から推定',
     meal_label: parsed.meal_label || '食事',
     food_items: Array.isArray(parsed.food_items) ? parsed.food_items : [],
     estimated_kcal: toNumberOrNull(parsed.estimated_kcal),
@@ -1117,7 +1190,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
       awaiting_action: 'waiting_more_text',
       status: 'draft',
     });
-    await replyMessage(replyToken, 'ありがとうございます。追加で食べた内容を文章で送ってください。例: ケーキ1個 / 食パン1枚とチーズ1枚');
+    await replyMessage(replyToken, 'ありがとうございます。追加で食べた内容を文章で送ってください。例: ケーキ1個 / 大福1個 / 食パン1枚とチーズ1枚');
     return true;
   }
 
@@ -1236,7 +1309,7 @@ async function handleMealDraftTextFlow(replyToken, user, text, openMealDraft) {
   if (openMealDraft.awaiting_action === 'waiting_more_text' || seemsMealTextCandidate(trimmed)) {
     if (!seemsMealTextCandidate(trimmed)) {
       if (openMealDraft.awaiting_action === 'waiting_more_text') {
-        await replyMessage(replyToken, '追加の食事内容が読み取れませんでした。例: ケーキ1個 / 食パン1枚とチーズ1枚');
+        await replyMessage(replyToken, '追加の食事内容が読み取れませんでした。例: ケーキ1個 / 大福1個 / 食パン1枚とチーズ1枚');
         return true;
       }
       return false;
@@ -1323,6 +1396,10 @@ async function cancelActivityDraftSession(sessionId) {
   if (error) throw error;
 }
 
+function normalizeExerciseKey(label) {
+  return String(label || '').toLowerCase().replace(/\s+/g, '').trim();
+}
+
 function summarizeActivityPhrases(summary) {
   return String(summary || '')
     .split(' / ')
@@ -1361,12 +1438,12 @@ function mergeActivityDetails(base = [], extra = []) {
   return merged;
 }
 
-function normalizeExerciseKey(label) {
-  return String(label || '').toLowerCase().replace(/\s+/g, '').trim();
-}
-
 function mergeActivityPayload(base = {}, extra = {}) {
-  const mergedDetails = mergeActivityDetails(base.activity_items || [], extra.activity_items || []);
+  const mergedDetails = mergeActivityDetails(
+    base.raw_detail_json?.activity_items || [],
+    extra.raw_detail_json?.activity_items || []
+  );
+
   const summarySet = dedupeActivityPhrases([
     ...summarizeActivityPhrases(base.exercise_summary),
     ...summarizeActivityPhrases(extra.exercise_summary),
@@ -1384,11 +1461,24 @@ function mergeActivityPayload(base = {}, extra = {}) {
 }
 
 function formatActivityDraftSummary(activity) {
+  const items = Array.isArray(activity?.raw_detail_json?.activity_items)
+    ? activity.raw_detail_json.activity_items
+    : [];
+
+  const detailLines = items
+    .slice(0, 8)
+    .map((item) => {
+      if (item.minutes != null) return `${item.label}: ${fmt(item.minutes)}分`;
+      if (item.reps != null) return `${item.label}: ${fmt(item.reps)}回`;
+      return item.label;
+    });
+
   const lines = [
     '今日の運動内容をまとめました。',
     activity.steps ? `歩数: ${fmt(activity.steps)} 歩` : null,
     activity.walking_minutes ? `歩行・散歩: ${fmt(activity.walking_minutes)} 分` : null,
     activity.exercise_summary ? `運動メモ: ${activity.exercise_summary}` : null,
+    detailLines.length ? `内訳: ${detailLines.join(' / ')}` : null,
     activity.estimated_activity_kcal != null ? `推定活動消費: ${fmt(activity.estimated_activity_kcal)} kcal` : null,
     '',
     'この内容で保存しますか？追加があれば続けて送れます。',
@@ -1430,6 +1520,7 @@ function calcGenericExerciseKcal(label, minutes, reps, weightKg) {
     if (lower.includes('自転車')) return round1(minutes * weight * 0.06);
     if (lower.includes('階段')) return round1(minutes * weight * 0.08);
     if (lower.includes('ストレッチ') || lower.includes('ヨガ') || lower.includes('体操')) return round1(minutes * weight * 0.025);
+    if (lower.includes('プランク') || lower.includes('体幹')) return round1(minutes * weight * 0.05);
     return round1(minutes * weight * 0.045);
   }
 
@@ -1438,8 +1529,10 @@ function calcGenericExerciseKcal(label, minutes, reps, weightKg) {
     if (lower.includes('腹筋')) return round1(reps * 0.25);
     if (lower.includes('膝つき腕立て')) return round1(reps * 0.28);
     if (lower.includes('腕立て')) return round1(reps * 0.4);
+    if (lower.includes('もも上げ')) return round1(reps * 0.18);
+    if (lower.includes('開脚')) return round1(reps * 0.08);
     if (lower.includes('階段')) return round1(reps * 0.45);
-    return round1(reps * 0.18);
+    return round1(reps * 0.15);
   }
 
   return null;
@@ -1462,6 +1555,8 @@ function parseGenericActivityItems(text, weightKg) {
     { regex: /(ヨガ)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
     { regex: /(ラジオ体操)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
     { regex: /(体操)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
+    { regex: /(プランク)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
+    { regex: /(体幹)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
   ];
 
   for (const p of minutePatterns) {
@@ -1482,6 +1577,8 @@ function parseGenericActivityItems(text, weightKg) {
     { regex: /(腹筋)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
     { regex: /(膝つき腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
     { regex: /(腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { regex: /(もも上げ)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { regex: /(開脚)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
     { regex: /(階段)\s*([0-9]+(?:\.[0-9]+)?)\s*段/i },
   ];
 
@@ -1499,7 +1596,7 @@ function parseGenericActivityItems(text, weightKg) {
   }
 
   if (!items.length) {
-    if (/買い物で.*歩/i.test(t) || /結構歩/i.test(t)) {
+    if (/少し歩/i.test(t) || /ちょっと歩/i.test(t) || /買い物で.*歩/i.test(t) || /結構歩/i.test(t)) {
       items.push({
         label: '歩行',
         minutes: 10,
@@ -1512,6 +1609,55 @@ function parseGenericActivityItems(text, weightKg) {
         minutes: 3,
         reps: null,
         kcal: calcGenericExerciseKcal('階段', 3, null, weightKg),
+      });
+    } else if (/ストレッチした|伸ばした|ほぐした/i.test(t)) {
+      items.push({
+        label: 'ストレッチ',
+        minutes: 5,
+        reps: null,
+        kcal: calcGenericExerciseKcal('ストレッチ', 5, null, weightKg),
+      });
+    } else if (/ヨガした/i.test(t)) {
+      items.push({
+        label: 'ヨガ',
+        minutes: 10,
+        reps: null,
+        kcal: calcGenericExerciseKcal('ヨガ', 10, null, weightKg),
+      });
+    } else if (/プランクした/i.test(t)) {
+      items.push({
+        label: 'プランク',
+        minutes: 1,
+        reps: null,
+        kcal: calcGenericExerciseKcal('プランク', 1, null, weightKg),
+      });
+    } else if (/ジョギングした|走った/i.test(t)) {
+      items.push({
+        label: 'ジョギング',
+        minutes: 10,
+        reps: null,
+        kcal: calcGenericExerciseKcal('ジョギング', 10, null, weightKg),
+      });
+    } else if (/スクワットした/i.test(t)) {
+      items.push({
+        label: 'スクワット',
+        minutes: null,
+        reps: 5,
+        kcal: calcGenericExerciseKcal('スクワット', null, 5, weightKg),
+      });
+    } else if (/腹筋した/i.test(t)) {
+      items.push({
+        label: '腹筋',
+        minutes: null,
+        reps: 5,
+        kcal: calcGenericExerciseKcal('腹筋', null, 5, weightKg),
+      });
+    } else if (/腕立てした/i.test(t)) {
+      items.push({
+        label: '腕立て',
+        minutes: null,
+        reps: 3,
+        kcal: calcGenericExerciseKcal('腕立て', null, 3, weightKg),
       });
     }
   }
@@ -1530,10 +1676,6 @@ function parseActivity(text, weightKg = 60) {
     .filter(Boolean)
     .join(' / ');
 
-  const rawDetailJson = {
-    activity_items: activityItems,
-  };
-
   const itemKcal = activityItems.reduce((sum, x) => sum + (Number(x.kcal) || 0), 0);
 
   return {
@@ -1541,8 +1683,9 @@ function parseActivity(text, weightKg = 60) {
     walking_minutes: walkingMinutes,
     estimated_activity_kcal: explicitKcal != null ? explicitKcal : round1(itemKcal || 0) || null,
     exercise_summary: summary || null,
-    raw_detail_json: rawDetailJson,
-    activity_items: activityItems,
+    raw_detail_json: {
+      activity_items: activityItems,
+    },
   };
 }
 
@@ -1573,7 +1716,7 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
 
   if (trimmed === ACTIVITY_ACTIONS.ADD || trimmed === '追加あり') {
     await updateActivityDraftSession(openActivityDraft.id, { awaiting_action: 'waiting_more_input' });
-    await replyMessage(replyToken, 'ありがとうございます。追加の運動内容を送ってください。例: ジョギング 10分 / スクワット 5回');
+    await replyMessage(replyToken, 'ありがとうございます。追加の運動内容を送ってください。例: ジョギング 10分 / ストレッチ 5分 / スクワット 5回');
     return true;
   }
 
@@ -1612,7 +1755,7 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
 
     if (!hasExtra) {
       if (openActivityDraft.awaiting_action === 'waiting_more_input') {
-        await replyMessage(replyToken, '追加の運動内容が読み取れませんでした。例: ジョギング 10分 / スクワット 5回 / 階段 3分');
+        await replyMessage(replyToken, '追加の運動内容が読み取れませんでした。例: ジョギング 10分 / ストレッチ 5分 / スクワット 5回 / 少し歩いた');
         return true;
       }
       return false;
@@ -1628,10 +1771,6 @@ async function handleActivityDraftTextFlow(replyToken, user, text, openActivityD
       merged.raw_detail_json || {}
     );
 
-    const manualExtraKcal =
-      Number(current.manual_extra_kcal || 0) + Number(extra.estimated_activity_kcal || 0);
-
-    merged.manual_extra_kcal = manualExtraKcal > 0 ? round1(manualExtraKcal) : null;
     merged.estimated_activity_kcal = round1(Math.max(recalculated || 0, 0));
 
     const updated = await updateActivityDraftSession(openActivityDraft.id, {
@@ -1958,6 +2097,14 @@ async function analyzeMealImageWithGemini(buffer, mimeType) {
   const schema = {
     type: 'object',
     properties: {
+      restaurant_name_candidate: { type: 'string' },
+      restaurant_confidence: { type: 'number' },
+      menu_name_candidate: { type: 'string' },
+      menu_confidence: { type: 'number' },
+      cuisine_type: { type: 'string' },
+      visual_evidence: { type: 'string' },
+      brand_text_detected: { type: 'string' },
+      portion_comment: { type: 'string' },
       meal_label: { type: 'string' },
       food_items: {
         type: 'array',
@@ -1988,6 +2135,9 @@ async function analyzeMealImageWithGemini(buffer, mimeType) {
     '写真の料理を、主食・主菜・副菜・飲み物・調味料に分ける意識でできるだけ分解して見積もってください。',
     'food_items には、見えている料理や食材を重複なく整理してください。',
     '同じ写真内の同じ料理を二重計上しないでください。',
+    '店名ロゴ、皿の文字、パッケージ文字、特徴的な盛り付け、料理の構成から、店名候補やメニュー候補があれば出してください。',
+    '店名候補やメニュー候補は断定ではなく候補として返してください。',
+    'visual_evidence には、そう判断した根拠を短く書いてください。',
     '食器サイズ、トレー、カトラリー、手などから量の目安を推定してください。',
     '見えにくい油・ソース・ドレッシング・砂糖入り飲料は過小評価しないでください。',
     '外食・揚げ物・炒め物は、kcal_min と kcal_max をやや広めに取ってください。',
@@ -2010,6 +2160,14 @@ async function analyzeMealImageWithGemini(buffer, mimeType) {
   }
 
   return {
+    restaurant_name_candidate: safeText(parsed.restaurant_name_candidate, 80) || null,
+    restaurant_confidence: toNumberOrNull(parsed.restaurant_confidence),
+    menu_name_candidate: safeText(parsed.menu_name_candidate, 80) || null,
+    menu_confidence: toNumberOrNull(parsed.menu_confidence),
+    cuisine_type: safeText(parsed.cuisine_type, 50) || null,
+    visual_evidence: safeText(parsed.visual_evidence || parsed.brand_text_detected || parsed.portion_comment, 180) || null,
+    brand_text_detected: safeText(parsed.brand_text_detected, 80) || null,
+    portion_comment: safeText(parsed.portion_comment, 80) || null,
     meal_label: parsed.meal_label || '食事',
     food_items: Array.isArray(parsed.food_items) ? parsed.food_items : [],
     estimated_kcal: toNumberOrNull(parsed.estimated_kcal),
@@ -2377,7 +2535,7 @@ function chooseActiveDraftType(text, drafts) {
   return candidates[0].type;
 }
 
-// ---------- Parsing / Commands ----------
+// ---------- Parse / commands ----------
 function parseProfile(text) {
   const result = {};
   const sex = findOne(text, [/(男性|男)/, /(女性|女)/]);
@@ -2500,15 +2658,18 @@ function helpMessage() {
     '・体重 68.2',
     '・体重 68.2 体脂肪 24.1 BMI 22.4',
     '・ジョギング 20分',
+    '・ストレッチ 5分',
+    '・プランク 1分',
     '・スクワット 10回',
     '・腹筋 5回',
     '・膝つき腕立て 3回',
     '・歩数 8234 散歩 45分',
+    '・少し歩いた',
     '・睡眠 6.5時間',
     '・水分 1.5L',
     '・血液 HbA1c 6.1 LDL 140 HDL 52 TG 180 尿酸 5.8 クレアチニン 0.78',
     '・朝食 食パン1枚 チーズ1枚 コーヒー',
-    '・ケーキ1個食べた',
+    '・大福1個食べた',
     '・HbA1c推移 / LDL推移 / 血糖推移 / 尿酸推移 / クレアチニン推移',
     '・運動メニュー',
     '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58',
@@ -2646,7 +2807,7 @@ async function handleTextMessage(event, user) {
         !activity.estimated_activity_kcal &&
         !activity.exercise_summary
       ) {
-        await replyMessage(event.replyToken, '例: ジョギング 20分 / スクワット 10回 / 腹筋 5回 / 階段 3分');
+        await replyMessage(event.replyToken, '例: ジョギング 20分 / ストレッチ 5分 / スクワット 10回 / 少し歩いた');
         return;
       }
 
@@ -2844,8 +3005,8 @@ async function getMemoryHint(userId) {
 
 async function saveMemoryCandidate(userId, userText) {
   const simpleRules = [
-    { type: 'food', pattern: /(甘い物|ケーキ|チョコ|お菓子)/, value: '甘い物が好きそう' },
-    { type: 'exercise', pattern: /(散歩|ウォーキング|スクワット|腹筋|腕立て|ジョギング|ランニング)/, value: '運動を少しずつ続けられそう' },
+    { type: 'food', pattern: /(甘い物|ケーキ|チョコ|お菓子|大福|どら焼き)/, value: '甘い物が好きそう' },
+    { type: 'exercise', pattern: /(散歩|ウォーキング|スクワット|腹筋|腕立て|ジョギング|ランニング|ストレッチ)/, value: '運動を少しずつ続けられそう' },
     { type: 'life', pattern: /(孫|子ども|家族)/, value: '家族の話題を大切にしている' },
     { type: 'emotion', pattern: /(不安|落ち込|疲れ)/, value: '気持ちを丁寧に受け止めると安心しやすい' },
   ];
@@ -2870,7 +3031,7 @@ async function saveMemoryCandidate(userId, userText) {
   }
 }
 
-// ---------- Calculation helpers ----------
+// ---------- Misc helpers ----------
 function chooseExercisePraiseCategory(activity) {
   const total = (Number(activity.steps) || 0) + (Number(activity.walking_minutes) || 0) + (Number(activity.estimated_activity_kcal) || 0);
   if (activity.exercise_summary && total > 0) return 'praise_done';
@@ -2905,7 +3066,6 @@ function calculateBMR(user) {
   return round1(10 * w + 6.25 * h - 5 * a - 161);
 }
 
-// ---------- Formatting ----------
 function formatDateOnly(value) {
   if (!value) return '';
   return String(value).slice(0, 10).replace(/-/g, '/');
@@ -3158,7 +3318,7 @@ function formatMonthlyReply(summary) {
   ].join('\n');
 }
 
-// ---------- Load prompt ----------
+// ---------- Prompt load ----------
 function loadAiPrompt() {
   try {
     if (fs.existsSync(AI_PROMPT_PATH)) {
