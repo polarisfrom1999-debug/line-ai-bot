@@ -66,8 +66,11 @@ const {
   isPredictionIntent,
 } = require('./services/prediction_service');
 const {
-  normalizeLabQuickReplyInput,
-  getPanelDateKeys,
+  buildLabGraphMessage,
+  buildEnergyGraphMessage,
+  buildGraphMenuQuickReplies,
+} = require('./services/graph_service');
+const {
   findPanelDateFromInput,
   mapCorrectionLabelToField,
   buildLabDraftSummaryMessage,
@@ -242,7 +245,9 @@ function helpMessage() {
     '・1分メニュー',
     '・3分メニュー',
     '・予測',
-    '・このまま続けたら',
+    '・グラフ',
+    '・血液検査グラフ',
+    '・食事活動グラフ',
     '・食事写真も送れます',
     '・血液検査画像も送れます',
   ].join('\n');
@@ -304,6 +309,27 @@ function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
 
+function buildDailySeries(rows, field, days = 7) {
+  const today = new Date();
+  const map = new Map();
+
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const ymd = d.toISOString().slice(0, 10);
+    map.set(ymd, 0);
+  }
+
+  for (const row of rows || []) {
+    const dt = String(row?.[field] || '').slice(0, 10);
+    if (!map.has(dt)) continue;
+    const prev = map.get(dt) || 0;
+    map.set(dt, prev + (Number(row?.estimated_kcal || row?.estimated_activity_kcal || 0) || 0));
+  }
+
+  return Array.from(map.entries()).map(([date, value]) => ({ date, value }));
+}
+
 async function getTodayEnergyTotals(userId) {
   const dateYmd = currentDateYmdInTZ(TZ);
   const start = `${dateYmd}T00:00:00+09:00`;
@@ -321,6 +347,47 @@ async function getTodayEnergyTotals(userId) {
     intake_kcal: sumBy(mealsRes.data || [], 'estimated_kcal'),
     activity_kcal: sumBy(actsRes.data || [], 'estimated_activity_kcal'),
   };
+}
+
+async function getSevenDayEnergyRows(userId) {
+  const dateTo = currentDateYmdInTZ(TZ);
+  const endDate = new Date(`${dateTo}T23:59:59+09:00`);
+  const startDate = new Date(endDate);
+  startDate.setDate(endDate.getDate() - 6);
+
+  const startIso = startDate.toISOString();
+  const endIso = endDate.toISOString();
+
+  const [mealsRes, actsRes] = await Promise.all([
+    supabase
+      .from('meal_logs')
+      .select('eaten_at, estimated_kcal')
+      .eq('user_id', userId)
+      .gte('eaten_at', startIso)
+      .lte('eaten_at', endIso),
+    supabase
+      .from('activity_logs')
+      .select('logged_at, estimated_activity_kcal')
+      .eq('user_id', userId)
+      .gte('logged_at', startIso)
+      .lte('logged_at', endIso),
+  ]);
+
+  if (mealsRes.error) throw mealsRes.error;
+  if (actsRes.error) throw actsRes.error;
+
+  const intakeSeries = buildDailySeries(mealsRes.data || [], 'eaten_at', 7);
+  const activitySeries = buildDailySeries(actsRes.data || [], 'logged_at', 7);
+
+  return intakeSeries.map((row, idx) => {
+    const activity = activitySeries[idx]?.value || 0;
+    return {
+      date: row.date,
+      intake_kcal: row.value,
+      activity_kcal: activity,
+      net_kcal: row.value - activity,
+    };
+  });
 }
 
 async function saveMealToLog(userId, meal) {
@@ -776,7 +843,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`), [...buildExerciseFollowupQuickReplies(), '予測']),
+        textMessageWithQuickReplies(prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`), [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -827,7 +894,7 @@ async function handleTextMessage(event, user) {
       }
 
       if (text === 'この内容で保存' || text === 'この日だけ保存') {
-        const selectedDate = openLabDraft.selected_date || getPanelDateKeys(openLabDraft)[0];
+        const selectedDate = openLabDraft.selected_date || String(Object.keys(openLabDraft.working_data_json || {}).sort().pop() || '');
         await confirmLabDraftToResults(supabase, openLabDraft, selectedDate);
 
         const recentRows = await getRecentLabResults(supabase, user.id, 10);
@@ -857,7 +924,7 @@ async function handleTextMessage(event, user) {
 
       const field = mapCorrectionLabelToField(text);
       if (field) {
-        const selectedDate = openLabDraft.selected_date || getPanelDateKeys(openLabDraft)[0];
+        const selectedDate = openLabDraft.selected_date || String(Object.keys(openLabDraft.working_data_json || {}).sort().pop() || '');
         await setActiveLabCorrection(supabase, openLabDraft.id, field, selectedDate);
         await replyMessage(event.replyToken, buildLabCorrectionGuide(field), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
@@ -873,6 +940,34 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (text === 'グラフ') {
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, '見たいグラフを選んでください。'), buildGraphMenuQuickReplies()),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '食事活動グラフ') {
+      const dayRows = await getSevenDayEnergyRows(user.id);
+      const graph = buildEnergyGraphMessage(dayRows);
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['予測', '血液検査グラフ', '今日はここまで'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (text === '血液検査グラフ' || text === 'HbA1cグラフ' || text === 'LDLグラフ') {
+      const recentRows = await getRecentLabResults(supabase, user.id, 12);
+      const metric = text === 'LDLグラフ' ? 'ldl' : 'hba1c';
+      const graph = buildLabGraphMessage(recentRows, metric);
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
     if (isPredictionIntent(text) || text === '予測') {
       const totals = await getTodayEnergyTotals(user.id);
       const prediction = buildPredictionText({
@@ -885,18 +980,27 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, prediction.text), prediction.quickReplies),
+        textMessageWithQuickReplies(prefixWithName(user, prediction.text), [...prediction.quickReplies, 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
     }
 
-    if (text === '体重推移を見たい' || text === '血液検査の流れを見たい') {
+    if (text === '体重推移を見たい') {
       await replyMessage(
         event.replyToken,
-        prefixWithName(user, '次はグラフ化を入れると、ここがもっと見やすくなります。今は流れの見通しまで出せる状態です。'),
+        prefixWithName(user, '体重グラフは、次に体重履歴保存を入れると見られるようになります。今は血液検査グラフと食事活動グラフが使えます。'),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      return;
+    }
+
+    if (text === '血液検査の流れを見たい') {
+      const recentRows = await getRecentLabResults(supabase, user.id, 12);
+      const graph = buildLabGraphMessage(recentRows, 'hba1c');
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '食事活動グラフ', '予測'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -1031,7 +1135,7 @@ async function handleTextMessage(event, user) {
       if (text === 'できた') {
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', '今日はここまで']),
+          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', 'グラフ', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -1094,7 +1198,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測']),
+        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
