@@ -10,6 +10,7 @@ const { ensureUser, refreshUserById } = require('./services/user_service');
 const {
   verifyLineSignature,
   replyMessage,
+  getLineImageContent,
 } = require('./services/line_service');
 const { generateTextOnly } = require('./services/gemini_service');
 const {
@@ -38,6 +39,9 @@ const {
   buildMealConfirmationMessage,
 } = require('./services/meal_ai_service');
 const {
+  analyzeMealImageWithAI,
+} = require('./services/meal_image_ai_service');
+const {
   applyMealCorrection,
   buildMealCorrectionConfirmationMessage,
 } = require('./services/meal_correction_service');
@@ -58,7 +62,6 @@ const TZ = env.TZ;
 const AI_PROMPT_PATH = './prompts/ai_ushigome_prompt.txt';
 
 // 直近の食事下書き（簡易版）
-// 本番の最小構成としてメモリ保持。将来はDBセッション化。
 const recentMealDrafts = new Map();
 
 function loadAiPrompt() {
@@ -130,9 +133,14 @@ async function processEvent(event) {
     return;
   }
 
+  if (event.message.type === 'image') {
+    await handleImageMessage(event, user);
+    return;
+  }
+
   await replyMessage(
     event.replyToken,
-    '今はテキスト入力を中心に対応しています。',
+    '今はテキストと食事写真を中心に対応しています。',
     env.LINE_CHANNEL_ACCESS_TOKEN
   );
 }
@@ -199,6 +207,7 @@ function helpMessage() {
     '・大福は2個です',
     '・この内容で食事保存',
     '・食事をキャンセル',
+    '・食事写真も送れます',
   ].join('\n');
 }
 
@@ -328,6 +337,42 @@ async function defaultChatReply(user, userText) {
 
   const reply = await generateTextOnly(prompt, 0.7);
   return prefixWithName(user, safeText(reply, 1800) || 'ありがとうございます。もう少し詳しく教えてくださいね。');
+}
+
+async function handleImageMessage(event, user) {
+  try {
+    const { buffer, mimeType } = await getLineImageContent(
+      event.message.id,
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+
+    const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
+
+    if (!analyzedMeal.is_meal) {
+      await replyMessage(
+        event.replyToken,
+        '食事写真としてはっきり読み取れませんでした。食事なら、もう少し料理や飲み物が見やすい写真を送ってください。',
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    setMealDraft(user.line_user_id, analyzedMeal);
+
+    const mealMessage = `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば「この内容で食事保存」と送ってください。`;
+    await replyMessage(
+      event.replyToken,
+      prefixWithName(user, mealMessage),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+  } catch (error) {
+    console.error('❌ handleImageMessage error:', error?.stack || error?.message || error);
+    await replyMessage(
+      event.replyToken,
+      '画像の処理でエラーが起きました。もう一度写真を送るか、食事内容を文章で送ってください。',
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+  }
 }
 
 async function handleTextMessage(event, user) {
