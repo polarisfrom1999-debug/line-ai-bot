@@ -10,6 +10,7 @@ function detectPainArea(text) {
   if (/首|頚|くび/.test(t)) return '首';
   if (/足首/.test(t)) return '足首';
   if (/ふくらはぎ/.test(t)) return 'ふくらはぎ';
+  if (/太もも|もも/.test(t)) return '太もも';
   if (/背中/.test(t)) return '背中';
   return '全身';
 }
@@ -18,8 +19,42 @@ function detectPainType(text) {
   const t = String(text || '');
 
   if (/しびれ|痺れ/.test(t)) return 'しびれ';
-  if (/硬い|かたい|重い|重だるい|だるい/.test(t)) return '硬さ・重だるさ';
+  if (/重い|重だるい|だるい|張る|張り/.test(t)) return '重だるさ';
+  if (/硬い|かたい|固い/.test(t)) return '硬さ';
+  if (/違和感/.test(t)) return '違和感';
   return '痛み';
+}
+
+function detectPainTiming(text) {
+  const t = String(text || '');
+
+  if (/急に|さっきから|突然/.test(t)) return 'acute';
+  if (/朝から|朝は/.test(t)) return 'morning';
+  if (/夜|夜中|寝ると|寝返り/.test(t)) return 'night';
+  if (/ずっと|前から|慢性|いつも/.test(t)) return 'chronic';
+  return 'unknown';
+}
+
+function detectAggravatingFactor(text) {
+  const t = String(text || '');
+
+  if (/歩くと|歩いて/.test(t)) return 'walking';
+  if (/座ると|座って/.test(t)) return 'sitting';
+  if (/立つと|立ち上がると|立ち上がり/.test(t)) return 'standing_up';
+  if (/曲げると|かがむと/.test(t)) return 'bending';
+  if (/伸ばすと|反ると/.test(t)) return 'extending';
+  if (/上げると/.test(t)) return 'raising';
+  if (/開くと/.test(t)) return 'opening';
+  return 'unknown';
+}
+
+function detectReliefFactor(text) {
+  const t = String(text || '');
+
+  if (/少し動くと楽|動くと少し楽|歩くと楽/.test(t)) return 'move_relief';
+  if (/休むと楽|横になると楽/.test(t)) return 'rest_relief';
+  if (/温めると楽/.test(t)) return 'heat_relief';
+  return 'unknown';
 }
 
 function isUrgentPainText(text) {
@@ -30,15 +65,18 @@ function isUrgentPainText(text) {
     '激痛',
     'かなり痛い',
     'すごく痛い',
+    '強く痛い',
     '眠れない',
+    '夜も痛い',
     '歩けない',
     '立てない',
     '力が入らない',
     'しびれが強い',
     'しびれがひどい',
+    'どんどん悪化',
+    '悪化している',
     '腫れている',
     '腫れた',
-    '夜も痛い',
   ].some((w) => t.includes(w));
 }
 
@@ -55,12 +93,17 @@ function isPainLikeText(text) {
     '重だるい',
     'だるい',
     '張る',
+    '張り',
     '違和感',
     'つらい',
     '辛い',
     '硬い',
     'かたい',
+    '固い',
     '動かしづらい',
+    '歩幅が出ない',
+    '上がらない',
+    '伸びない',
   ].some((w) => t.includes(w));
 }
 
@@ -74,15 +117,27 @@ function isStretchIntent(text) {
     '伸ばしたい',
     '可動域',
     '柔らかくしたい',
+    '動かしたい',
+    '整えたい',
   ].some((w) => t.includes(w));
 }
 
-function buildPainQuickReplies(area, urgent = false) {
+function buildPainQuickReplies(area, urgent = false, type = '痛み') {
   if (urgent) {
     return [
       '牛込先生に相談したい',
       '今日は休む',
       '落ち着いたらストレッチ',
+    ];
+  }
+
+  if (type === 'しびれ') {
+    return [
+      '少ししびれる',
+      'しびれが広がる',
+      '歩くとつらい',
+      'ストレッチしたい',
+      '牛込先生に相談したい',
     ];
   }
 
@@ -100,6 +155,9 @@ function buildPainQuickReplies(area, urgent = false) {
   }
   if (area === '首') {
     return ['振り向くとつらい', '重だるい', '肩も張る', 'ストレッチしたい', '牛込先生に相談したい'];
+  }
+  if (area === 'ふくらはぎ' || area === '足首') {
+    return ['歩くとつらい', '張っている', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
   }
 
   return ['少しつらい', '動くとつらい', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
@@ -121,28 +179,62 @@ function buildStretchQuickReplies(area) {
   if (area === '首') {
     return ['首肩をゆるめる', '胸を開く', '1分だけやる', '今日は説明だけ'];
   }
+  if (area === 'ふくらはぎ' || area === '足首') {
+    return ['ふくらはぎを伸ばす', '足首を動かす', '1分だけやる', '今日は説明だけ'];
+  }
 
   return ['全身軽め', '股関節をやる', '肩まわりをやる', '今日は説明だけ'];
+}
+
+function buildBridgeMessage(area, type, aggravating, relief) {
+  if (type === 'しびれ') {
+    return 'しびれは無理に我慢しすぎず、変化を丁寧に見ていくことが大事です。強くなるときは早めに直接相談してください。';
+  }
+
+  if (area === '股関節') {
+    return '股関節まわりが整うと、歩きやすさや姿勢、代謝にもつながりやすいです。';
+  }
+
+  if (area === '膝') {
+    return '膝まわりだけでなく、股関節やふくらはぎの動きが整うと、歩きやすさや活動量にもつながりやすいです。';
+  }
+
+  if (area === '腰') {
+    if (aggravating === 'sitting') {
+      return '同じ姿勢で固まりやすくなっているかもしれません。軽く動きを作るだけでも楽になりやすいです。';
+    }
+    if (relief === 'move_relief') {
+      return '少し動くと楽になるなら、固まりすぎないようにやさしく動かす方向が合いそうです。';
+    }
+    return '腰まわりが少し動きやすくなると、姿勢や歩きやすさ、代謝にもつながりやすいです。';
+  }
+
+  if (area === '肩' || area === '首') {
+    return '肩や首まわりが少し楽になると、姿勢や呼吸のしやすさにもつながりやすいです。';
+  }
+
+  if (area === 'ふくらはぎ' || area === '足首') {
+    return 'ふくらはぎや足首が整うと、歩きやすさや膝への負担軽減にもつながりやすいです。';
+  }
+
+  return '動きやすさが少しずつ整うと、活動量や代謝にもつながりやすいです。';
 }
 
 function buildPainSupportResponse(text, previousArea = null) {
   const area = previousArea || detectPainArea(text);
   const type = detectPainType(text);
   const urgent = isUrgentPainText(text);
+  const timing = detectPainTiming(text);
+  const aggravating = detectAggravatingFactor(text);
+  const relief = detectReliefFactor(text);
 
   const opening = urgent
     ? `${area}の${type}が強そうですね。まずは無理をしないことを優先しましょう。`
-    : `${area}の${type}があるんですね。今日は無理に頑張りすぎず、整える方向でいきましょう。`;
+    : timing === 'chronic'
+      ? `${area}の${type}が続いているんですね。今日は無理に頑張りすぎず、整える方向でいきましょう。`
+      : `${area}の${type}があるんですね。今日は無理に頑張りすぎず、整える方向でいきましょう。`;
 
-  const bridge = area === '股関節'
-    ? '股関節まわりが整うと、歩きやすさや姿勢、代謝にもつながりやすいです。'
-    : area === '膝'
-      ? '膝まわりだけでなく、股関節やふくらはぎの動きが整うと、歩きやすさや活動量にもつながりやすいです。'
-      : area === '腰'
-        ? '腰まわりが少し動きやすくなると、姿勢や歩きやすさ、代謝にもつながりやすいです。'
-        : area === '肩' || area === '首'
-          ? '肩や首まわりが少し楽になると、姿勢や呼吸のしやすさにもつながりやすいです。'
-          : '動きやすさが少しずつ整うと、活動量や代謝にもつながりやすいです。';
+  const bridge = buildBridgeMessage(area, type, aggravating, relief);
 
   const lines = [
     opening,
@@ -152,9 +244,12 @@ function buildPainSupportResponse(text, previousArea = null) {
 
   return {
     area,
+    type,
     urgent,
+    aggravating,
+    relief,
     message: lines.join('\n'),
-    quickReplies: buildPainQuickReplies(area, urgent),
+    quickReplies: buildPainQuickReplies(area, urgent, type),
   };
 }
 
@@ -169,7 +264,9 @@ function buildStretchSupportResponse(area = '全身') {
           ? '肩まわりは少しほぐれてくると姿勢や呼吸にもつながりやすいです。軽くいきましょう。'
           : area === '首'
             ? '首肩まわりはやさしく動かすだけでも軽さにつながることがあります。今日は無理なくいきましょう。'
-            : '軽いストレッチや体操でも、可動域が広がると動きやすさや代謝につながりやすいです。';
+            : area === 'ふくらはぎ' || area === '足首'
+              ? 'ふくらはぎや足首が少し動きやすくなると、歩きやすさや膝の負担軽減にもつながりやすいです。'
+              : '軽いストレッチや体操でも、可動域が広がると動きやすさや代謝につながりやすいです。';
 
   return {
     area,
