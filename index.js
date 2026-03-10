@@ -377,6 +377,129 @@ async function defaultChatReply(user, userText) {
   return prefixWithName(user, safeText(reply, 1800) || 'ありがとうございます。もう少し詳しく教えてくださいね。');
 }
 
+function buildPainSituationResponse(text, area = '全身') {
+  const map = {
+    '少し動くと楽': {
+      message: [
+        `${area}は、少し動くと楽になる感じなんですね。`,
+        '固まりすぎるより、やさしく動かした方が流れが良くなりやすそうです。',
+        area === '膝'
+          ? '膝だけでなく、股関節やふくらはぎも少し整えると歩きやすさにもつながりやすいです。'
+          : '少しずつ動きやすさが出ると、活動量や代謝にもつながりやすいです。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '1分だけやる', '今日はここまで', '牛込先生に相談したい'],
+    },
+    '歩くとつらい': {
+      message: [
+        `${area}は歩くとつらいんですね。`,
+        '今日は頑張って動くより、まず負担を減らしながら整える方向が良さそうです。',
+        CONSULT_MESSAGE,
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '少し動くと楽', '今日は休む', '牛込先生に相談したい'],
+    },
+    '立ち上がりでつらい': {
+      message: [
+        `立ち上がりで${area}がつらいんですね。`,
+        area === '膝'
+          ? '膝だけでなく、股関節や太もも前の硬さも関係しやすいです。'
+          : '動き始めの硬さが関係しているかもしれません。',
+        'まずは無理なく整える方へいきましょう。',
+      ].join('\n'),
+      quickReplies: ['股関節をゆるめる', 'ストレッチしたい', '今日はここまで', '牛込先生に相談したい'],
+    },
+    '朝から重い': {
+      message: [
+        `${area}が朝から重い感じなんですね。`,
+        'まずは強い運動より、軽く動かして流れを作る方が合いそうです。',
+        '少し整うだけでも、そのあとの歩きやすさや代謝につながりやすいです。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '1分だけやる', '少し動くと楽', '牛込先生に相談したい'],
+    },
+    '座るとつらい': {
+      message: [
+        `座ると${area}がつらいんですね。`,
+        '同じ姿勢が続いて固まりやすくなっているかもしれません。',
+        '今日はやさしく動きを作る方向でいきましょう。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '少し動くと楽', '今日はここまで', '牛込先生に相談したい'],
+    },
+    '開くとつらい': {
+      message: [
+        `${area}を開くとつらいんですね。`,
+        '無理に広げすぎず、やさしく可動域を作る方向が良さそうです。',
+        '少しずつ整うと歩きやすさや姿勢にもつながりやすいです。',
+      ].join('\n'),
+      quickReplies: ['股関節を開く', 'お尻をゆるめる', '今日は説明だけ', '牛込先生に相談したい'],
+    },
+    '歩幅が出ない': {
+      message: [
+        '歩幅が出にくいんですね。',
+        '股関節やふくらはぎの硬さが関係していることもあります。',
+        'そこが少し整うと、歩きやすさや活動量にもつながりやすいです。',
+      ].join('\n'),
+      quickReplies: ['股関節をゆるめる', 'ふくらはぎを伸ばす', 'ストレッチしたい', '牛込先生に相談したい'],
+    },
+    '少し硬い': {
+      message: [
+        `${area}が少し硬い感じなんですね。`,
+        '今の段階なら、やさしく動かすだけでも十分変わりやすいです。',
+        '可動域が少し広がると、動きやすさや代謝にもつながります。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '1分だけやる', '今日は説明だけ', '牛込先生に相談したい'],
+    },
+    '上げるとつらい': {
+      message: [
+        `${area}を上げるとつらいんですね。`,
+        '今日は無理に頑張らず、肩まわりや胸まわりを少しゆるめる方向が良さそうです。',
+        CONSULT_MESSAGE,
+      ].join('\n'),
+      quickReplies: ['肩まわりをほぐす', '胸を開く', '今日は休む', '牛込先生に相談したい'],
+    },
+    '後ろに回しづらい': {
+      message: [
+        `${area}を後ろに回しづらいんですね。`,
+        '肩だけでなく胸まわりの硬さも関係しやすいです。',
+        'やさしく整えていきましょう。',
+      ].join('\n'),
+      quickReplies: ['肩まわりをほぐす', '胸を開く', '今日は説明だけ', '牛込先生に相談したい'],
+    },
+    '重だるい': {
+      message: [
+        `${area}が重だるい感じなんですね。`,
+        '今日は強く頑張るより、軽く動かして流れを作る方が合いそうです。',
+        '無理なくいきましょう。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '1分だけやる', '今日はここまで', '牛込先生に相談したい'],
+    },
+    '肩も張る': {
+      message: [
+        '肩の張りもあるんですね。',
+        '首肩だけでなく、胸まわりや呼吸の浅さが関係していることもあります。',
+        'やさしくゆるめていきましょう。',
+      ].join('\n'),
+      quickReplies: ['首肩をゆるめる', '胸を開く', 'ストレッチしたい', '牛込先生に相談したい'],
+    },
+    '少しつらい': {
+      message: [
+        `${area}が少しつらいんですね。`,
+        '今は無理を重ねず、軽く整える方向が良さそうです。',
+        '小さく動けると、そのあとが楽になりやすいです。',
+      ].join('\n'),
+      quickReplies: ['ストレッチしたい', '少し動くと楽', '今日はここまで', '牛込先生に相談したい'],
+    },
+    '動くとつらい': {
+      message: [
+        `動くと${area}がつらいんですね。`,
+        '今日は無理に頑張らず、負担を増やさないことを優先しましょう。',
+        CONSULT_MESSAGE,
+      ].join('\n'),
+      quickReplies: ['今日は休む', 'ストレッチしたい', '牛込先生に相談したい'],
+    },
+  };
+
+  return map[text] || null;
+}
+
 async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(
@@ -626,10 +749,7 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (
-      text === '飲み物を訂正' ||
-      text === '量を訂正'
-    ) {
+    if (text === '飲み物を訂正' || text === '量を訂正') {
       await replyMessage(
         event.replyToken,
         'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です',
@@ -687,26 +807,29 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isPainLikeText(text)) {
-      const area = detectPainArea(text);
-      setSupportContext(user.line_user_id, { area, mode: 'pain' });
-
-      const painResponse = buildPainSupportResponse(text, area);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, painResponse.message),
-          painResponse.quickReplies
-        ),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
     if (
       ['朝から重い', '座るとつらい', '少し動くと楽', '歩くとつらい', '立ち上がりでつらい', '開くとつらい', '歩幅が出ない', '少し硬い', '上げるとつらい', '後ろに回しづらい', '重だるい', '肩も張る', '少しつらい', '動くとつらい'].includes(text)
     ) {
       const area = contextArea || '全身';
+      const followup = buildPainSituationResponse(text, area);
+
+      if (followup) {
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(
+            prefixWithName(user, followup.message),
+            followup.quickReplies
+          ),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+    }
+
+    if (isPainLikeText(text)) {
+      const area = detectPainArea(text);
+      setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
       const painResponse = buildPainSupportResponse(text, area);
       await replyMessage(
         event.replyToken,
