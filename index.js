@@ -62,6 +62,10 @@ const {
   isVideoIntent,
 } = require('./services/video_support_service');
 const {
+  buildPredictionText,
+  isPredictionIntent,
+} = require('./services/prediction_service');
+const {
   normalizeLabQuickReplyInput,
   getPanelDateKeys,
   findPanelDateFromInput,
@@ -237,6 +241,8 @@ function helpMessage() {
     '・動画で見たい',
     '・1分メニュー',
     '・3分メニュー',
+    '・予測',
+    '・このまま続けたら',
     '・食事写真も送れます',
     '・血液検査画像も送れます',
   ].join('\n');
@@ -770,7 +776,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`), buildExerciseFollowupQuickReplies()),
+        textMessageWithQuickReplies(prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`), [...buildExerciseFollowupQuickReplies(), '予測']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -864,6 +870,33 @@ async function handleTextMessage(event, user) {
     if (text === '牛込先生に相談したい') {
       clearMealDraft(user.line_user_id);
       await replyMessage(event.replyToken, prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isPredictionIntent(text) || text === '予測') {
+      const totals = await getTodayEnergyTotals(user.id);
+      const prediction = buildPredictionText({
+        estimatedBmr: user.estimated_bmr || 0,
+        estimatedTdee: user.estimated_tdee || 0,
+        intakeKcal: totals.intake_kcal || 0,
+        activityKcal: totals.activity_kcal || 0,
+        currentWeightKg: user.weight_kg || null,
+      });
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, prediction.text), prediction.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '体重推移を見たい' || text === '血液検査の流れを見たい') {
+      await replyMessage(
+        event.replyToken,
+        prefixWithName(user, '次はグラフ化を入れると、ここがもっと見やすくなります。今は流れの見通しまで出せる状態です。'),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
       return;
     }
 
@@ -998,7 +1031,7 @@ async function handleTextMessage(event, user) {
       if (text === 'できた') {
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '今日はここまで']),
+          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -1061,7 +1094,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい']),
+        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
