@@ -38,6 +38,10 @@ const {
   buildMealConfirmationMessage,
 } = require('./services/meal_ai_service');
 const {
+  applyMealCorrection,
+  buildMealCorrectionConfirmationMessage,
+} = require('./services/meal_correction_service');
+const {
   safeText,
   fmt,
 } = require('./utils/formatters');
@@ -51,6 +55,10 @@ const PORT = env.PORT;
 const TZ = env.TZ;
 
 const AI_PROMPT_PATH = './prompts/ai_ushigome_prompt.txt';
+
+// 直近の食事解析結果を簡易保持
+// 将来的にはDBセッション化予定
+const recentMealDrafts = new Map();
 
 function loadAiPrompt() {
   try {
@@ -165,6 +173,9 @@ function helpMessage() {
     '・朝食 食パン1枚 チーズ1枚 コーヒー',
     '・大福1個食べた',
     '・ジャスミンティーを飲んだ',
+    '・ジャスミンティーです',
+    '・お酒ではないです',
+    '・大福は2個です',
   ].join('\n');
 }
 
@@ -173,6 +184,56 @@ function buildAiTypePrompt(aiType) {
   if (aiType === 'analytical') return '話し方は落ち着いて、理由や傾向をわかりやすく伝えてください。';
   if (aiType === 'casual') return '話し方は親しみやすく、気軽に話せる雰囲気にしてください。';
   return '話し方はやさしく包み込むように、安心感を大切にしてください。';
+}
+
+function getMealDraft(lineUserId) {
+  const draft = recentMealDrafts.get(lineUserId);
+  if (!draft) return null;
+
+  const ageMs = Date.now() - Number(draft.updatedAt || 0);
+  if (ageMs > 30 * 60 * 1000) {
+    recentMealDrafts.delete(lineUserId);
+    return null;
+  }
+
+  return draft;
+}
+
+function setMealDraft(lineUserId, mealResult) {
+  recentMealDrafts.set(lineUserId, {
+    meal: mealResult,
+    updatedAt: Date.now(),
+  });
+}
+
+function clearMealDraft(lineUserId) {
+  recentMealDrafts.delete(lineUserId);
+}
+
+function seemsMealCorrectionText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+
+  return [
+    'です',
+    'ではない',
+    'じゃない',
+    '違います',
+    'ちがいます',
+    '個です',
+    '杯です',
+    '本です',
+    'お酒ではない',
+    'お茶です',
+    '水です',
+    'ノンアル',
+    'ジャスミンティー',
+    '烏龍茶',
+    'ウーロン茶',
+    '緑茶',
+    '麦茶',
+    '紅茶',
+  ].some((w) => t.includes(w));
 }
 
 async function defaultChatReply(user, userText) {
@@ -316,8 +377,24 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    const currentMealDraft = getMealDraft(user.line_user_id);
+
+    if (currentMealDraft && seemsMealCorrectionText(text)) {
+      const correctedMeal = await applyMealCorrection(currentMealDraft.meal, text);
+      setMealDraft(user.line_user_id, correctedMeal);
+
+      await replyMessage(
+        event.replyToken,
+        prefixWithName(user, buildMealCorrectionConfirmationMessage(correctedMeal)),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     if (seemsMealTextCandidate(text)) {
       const analyzedMeal = await analyzeMealTextWithAI(text);
+      setMealDraft(user.line_user_id, analyzedMeal);
+
       const mealMessage = buildMealConfirmationMessage(analyzedMeal);
 
       await replyMessage(
@@ -336,6 +413,16 @@ async function handleTextMessage(event, user) {
       await replyMessage(
         event.replyToken,
         buildMealTextGuide(),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '食事をキャンセル' || text === '食事やめる') {
+      clearMealDraft(user.line_user_id);
+      await replyMessage(
+        event.replyToken,
+        '食事の確認中データを取り消しました。',
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
