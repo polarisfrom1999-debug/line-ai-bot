@@ -30,6 +30,14 @@ const {
   buildEnergySummaryText,
 } = require('./services/energy_service');
 const {
+  seemsMealTextCandidate,
+  buildMealTextGuide,
+} = require('./services/meal_service');
+const {
+  analyzeMealTextWithAI,
+  buildMealConfirmationMessage,
+} = require('./services/meal_ai_service');
+const {
   safeText,
   fmt,
 } = require('./utils/formatters');
@@ -154,6 +162,9 @@ function helpMessage() {
     '・膝つき腕立て 3回',
     '・歩数 8234 散歩 45分',
     '・少し歩いた',
+    '・朝食 食パン1枚 チーズ1枚 コーヒー',
+    '・大福1個食べた',
+    '・ジャスミンティーを飲んだ',
   ].join('\n');
 }
 
@@ -300,6 +311,31 @@ async function handleTextMessage(event, user) {
       await replyMessage(
         event.replyToken,
         prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (seemsMealTextCandidate(text)) {
+      const analyzedMeal = await analyzeMealTextWithAI(text);
+      const mealMessage = buildMealConfirmationMessage(analyzedMeal);
+
+      await replyMessage(
+        event.replyToken,
+        prefixWithName(user, mealMessage),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (
+      text.includes('食事') ||
+      text.includes('食べた') ||
+      text.includes('飲んだ')
+    ) {
+      await replyMessage(
+        event.replyToken,
+        buildMealTextGuide(),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
