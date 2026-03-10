@@ -672,6 +672,170 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    // -----------------------------
+    // 相談・痛み・ストレッチ系を最優先で処理
+    // -----------------------------
+    const supportContext = getSupportContext(user.line_user_id);
+    const contextArea = supportContext?.area || null;
+
+    if (text === '牛込先生に相談したい') {
+      clearMealDraft(user.line_user_id);
+      await replyMessage(
+        event.replyToken,
+        prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (isStretchIntent(text) || text === 'ストレッチしたい') {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || detectPainArea(text);
+      setSupportContext(user.line_user_id, { area, mode: 'stretch' });
+
+      const stretchResponse = buildStretchSupportResponse(area);
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, stretchResponse.message),
+          stretchResponse.quickReplies
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (
+      ['腰まわりをやる', '股関節もやる', '股関節をゆるめる', 'ふくらはぎを伸ばす', '股関節を開く', 'お尻をゆるめる', '肩まわりをほぐす', '胸を開く', '首肩をゆるめる', '全身軽め', '1分だけやる', '今日は説明だけ'].includes(text)
+    ) {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const message = [
+        `${text}の流れで大丈夫です。今日は無理なく、小さくで十分です。`,
+        area !== '全身' ? `${area}まわりが少し整うと、動きやすさや代謝にもつながりやすいです。` : '軽く動かすだけでも、可動域や代謝の土台につながります。',
+        CONSULT_MESSAGE,
+      ].join('\n');
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, message),
+          ['できた', 'まだ少しやる', '今日はここまで', '牛込先生に相談したい']
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (
+      ['朝から重い', '座るとつらい', '少し動くと楽', '歩くとつらい', '立ち上がりでつらい', '開くとつらい', '歩幅が出ない', '少し硬い', '上げるとつらい', '後ろに回しづらい', '重だるい', '肩も張る', '少しつらい', '動くとつらい'].includes(text)
+    ) {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const followup = buildPainSituationResponse(text, area);
+
+      if (followup) {
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(
+            prefixWithName(user, followup.message),
+            followup.quickReplies
+          ),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+    }
+
+    if (isPainLikeText(text)) {
+      clearMealDraft(user.line_user_id);
+      const area = detectPainArea(text);
+      setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
+      const painResponse = buildPainSupportResponse(text, area);
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, painResponse.message),
+          painResponse.quickReplies
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (
+      ['今日はここまで', 'まだ少しやる', 'できた', '次の食事を記録', '少し歩いた', '股関節を整えたい', '腰が重い'].includes(text)
+    ) {
+      if (text === '今日はここまで') {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, '今日はここまでで大丈夫です。小さく続けることが一番力になります。'),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (text === 'できた') {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (text === 'まだ少しやる') {
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(
+            prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。'),
+            ['1分だけやる', 'ストレッチしたい', '今日はここまで']
+          ),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (text === '腰が重い' || text === '股関節を整えたい') {
+        clearMealDraft(user.line_user_id);
+        const area = text === '腰が重い' ? '腰' : '股関節';
+        setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
+        const painResponse = buildPainSupportResponse(text, area);
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(
+            prefixWithName(user, painResponse.message),
+            painResponse.quickReplies
+          ),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (text === '少し歩いた') {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, '少し歩けたのは大事です。そこから代謝や流れが変わっていきます。'),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (text === '次の食事を記録') {
+        await replyMessage(
+          event.replyToken,
+          buildMealTextGuide(),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+    }
+
+    // -----------------------------
+    // ここから食事系
+    // -----------------------------
     const currentMealDraft = getMealDraft(user.line_user_id);
 
     if (currentMealDraft && isMealSaveCommand(text)) {
@@ -756,158 +920,6 @@ async function handleTextMessage(event, user) {
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
-    }
-
-    if (text === '牛込先生に相談したい') {
-      await replyMessage(
-        event.replyToken,
-        `ありがとうございます。\n${CONSULT_MESSAGE}`,
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    const supportContext = getSupportContext(user.line_user_id);
-    const contextArea = supportContext?.area || null;
-
-    if (isStretchIntent(text) || text === 'ストレッチしたい') {
-      const area = contextArea || detectPainArea(text);
-      setSupportContext(user.line_user_id, { area, mode: 'stretch' });
-
-      const stretchResponse = buildStretchSupportResponse(area);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, stretchResponse.message),
-          stretchResponse.quickReplies
-        ),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    if (
-      ['腰まわりをやる', '股関節もやる', '股関節をゆるめる', 'ふくらはぎを伸ばす', '股関節を開く', 'お尻をゆるめる', '肩まわりをほぐす', '胸を開く', '首肩をゆるめる', '全身軽め', '1分だけやる', '今日は説明だけ'].includes(text)
-    ) {
-      const area = contextArea || '全身';
-      const message = [
-        `${text}の流れで大丈夫です。今日は無理なく、小さくで十分です。`,
-        area !== '全身' ? `${area}まわりが少し整うと、動きやすさや代謝にもつながりやすいです。` : '軽く動かすだけでも、可動域や代謝の土台につながります。',
-        CONSULT_MESSAGE,
-      ].join('\n');
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, message),
-          ['できた', 'まだ少しやる', '今日はここまで', '牛込先生に相談したい']
-        ),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    if (
-      ['朝から重い', '座るとつらい', '少し動くと楽', '歩くとつらい', '立ち上がりでつらい', '開くとつらい', '歩幅が出ない', '少し硬い', '上げるとつらい', '後ろに回しづらい', '重だるい', '肩も張る', '少しつらい', '動くとつらい'].includes(text)
-    ) {
-      const area = contextArea || '全身';
-      const followup = buildPainSituationResponse(text, area);
-
-      if (followup) {
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(
-            prefixWithName(user, followup.message),
-            followup.quickReplies
-          ),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-    }
-
-    if (isPainLikeText(text)) {
-      const area = detectPainArea(text);
-      setSupportContext(user.line_user_id, { area, mode: 'pain' });
-
-      const painResponse = buildPainSupportResponse(text, area);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, painResponse.message),
-          painResponse.quickReplies
-        ),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    if (
-      ['今日はここまで', 'まだ少しやる', 'できた', '次の食事を記録', '少し歩いた', '股関節を整えたい', '腰が重い'].includes(text)
-    ) {
-      if (text === '今日はここまで') {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, '今日はここまでで大丈夫です。小さく続けることが一番力になります。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (text === 'できた') {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (text === 'まだ少しやる') {
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(
-            prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。'),
-            ['1分だけやる', 'ストレッチしたい', '今日はここまで']
-          ),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (text === '腰が重い' || text === '股関節を整えたい') {
-        const area = text === '腰が重い' ? '腰' : '股関節';
-        setSupportContext(user.line_user_id, { area, mode: 'pain' });
-
-        const painResponse = buildPainSupportResponse(text, area);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(
-            prefixWithName(user, painResponse.message),
-            painResponse.quickReplies
-          ),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (text === '少し歩いた') {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, '少し歩けたのは大事です。そこから代謝や流れが変わっていきます。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (text === '次の食事を記録') {
-        await replyMessage(
-          event.replyToken,
-          buildMealTextGuide(),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
     }
 
     if (
