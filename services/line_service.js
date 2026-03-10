@@ -79,9 +79,38 @@ async function replyMessage(replyToken, messages, accessToken) {
   });
 }
 
+async function getLineImageContent(messageId, accessToken) {
+  const response = await axios.get(
+    `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+    {
+      responseType: 'arraybuffer',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      timeout: 60000,
+      maxContentLength: 20 * 1024 * 1024,
+      maxBodyLength: 20 * 1024 * 1024,
+    }
+  );
+
+  const mimeHeader = response.headers['content-type'] || 'image/jpeg';
+  const mimeType = String(mimeHeader).includes('image/') ? String(mimeHeader) : 'image/jpeg';
+  const buffer = Buffer.from(response.data);
+
+  if (!buffer || !buffer.length) {
+    throw new Error('LINE image content is empty');
+  }
+
+  return {
+    buffer,
+    mimeType,
+  };
+}
+
 module.exports = {
   verifyLineSignature,
   normalizeLineMessages,
   textMessageWithQuickReplies,
   replyMessage,
+  getLineImageContent,
 };
