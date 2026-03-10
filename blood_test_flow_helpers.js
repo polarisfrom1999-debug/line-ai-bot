@@ -12,6 +12,11 @@ const LAB_ITEM_LABELS = {
   creatinine: 'クレアチニン',
 };
 
+function formatDateOnly(value) {
+  if (!value) return '';
+  return String(value).slice(0, 10).replace(/-/g, '/');
+}
+
 function normalizeDateInput(input) {
   const s = String(input || '').trim().replace(/\./g, '/').replace(/-/g, '/');
   const m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
@@ -23,37 +28,18 @@ function normalizeDateInput(input) {
 }
 
 function normalizeNumberInput(input) {
-  if (input === undefined || input === null) return null;
-  if (typeof input === 'number') return Number.isFinite(input) ? String(input) : null;
-
-  const s = String(input)
+  const s = String(input || '')
     .trim()
     .replace(/,/g, '')
-    .replace(/　/g, ' ');
-
-  if (!s) return null;
-
-  const match = s.match(/-?\d+(\.\d+)?/);
-  if (!match) return null;
-
-  const num = Number(match[0]);
-  if (!Number.isFinite(num)) return null;
-
-  return String(num);
+    .replace(/\s*[A-Za-zＨＬHL]+\s*$/u, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  return s;
 }
 
-function toNumberOrNull(input) {
-  const normalized = normalizeNumberInput(input);
-  if (normalized == null) return null;
-  const num = Number(normalized);
-  return Number.isFinite(num) ? num : null;
-}
-
-function formatMaybeNumber(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return String(value);
-  return Number.isInteger(num) ? String(num) : String(num);
+function toNumberOrNull(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function renderPanelSummary(panelDate, items) {
@@ -62,11 +48,23 @@ function renderPanelSummary(panelDate, items) {
   lines.push('少し見えにくい所もあるので、まずは一緒に確認させてくださいね。');
   lines.push('');
   lines.push('【検査日】');
-  lines.push(String(panelDate).replace(/-/g, '/'));
+  lines.push(formatDateOnly(panelDate));
   lines.push('');
   lines.push('【読み取れた項目】');
 
-  const order = ['hba1c', 'fasting_glucose', 'ldl', 'hdl', 'triglycerides', 'ast', 'alt', 'ggt', 'uric_acid', 'creatinine'];
+  const order = [
+    'hba1c',
+    'fasting_glucose',
+    'ldl',
+    'hdl',
+    'triglycerides',
+    'ast',
+    'alt',
+    'ggt',
+    'uric_acid',
+    'creatinine',
+  ];
+
   for (const key of order) {
     if (items?.[key] != null && items[key] !== '') {
       lines.push(`${LAB_ITEM_LABELS[key]}: ${items[key]}`);
@@ -81,10 +79,26 @@ function renderPanelSummary(panelDate, items) {
 
 function buildLabQuickReplyMain(items = {}) {
   const labels = ['この内容で保存', '日付を修正'];
-  const itemOrder = ['hba1c', 'fasting_glucose', 'ldl', 'hdl', 'triglycerides', 'ast', 'alt', 'ggt', 'uric_acid', 'creatinine'];
+
+  const itemOrder = [
+    'hba1c',
+    'fasting_glucose',
+    'ldl',
+    'hdl',
+    'triglycerides',
+    'ast',
+    'alt',
+    'ggt',
+    'uric_acid',
+    'creatinine',
+  ];
+
   for (const key of itemOrder) {
-    if (items[key] != null && items[key] !== '') labels.push(`${LAB_ITEM_LABELS[key]}を修正`);
+    if (items[key] != null && items[key] !== '') {
+      labels.push(`${LAB_ITEM_LABELS[key]}を修正`);
+    }
   }
+
   labels.push('他の項目を修正');
   return labels.slice(0, 13);
 }
@@ -108,6 +122,7 @@ async function getOpenLabDraft(supabase, userId) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
   if (error) throw error;
   return data || null;
 }
@@ -117,6 +132,7 @@ async function setActiveLabCorrection(supabase, sessionId, itemName, panelDate) 
     .from('lab_import_sessions')
     .update({ active_item_name: itemName, active_panel_date: panelDate })
     .eq('id', sessionId);
+
   if (error) throw error;
 }
 
@@ -125,13 +141,17 @@ async function clearActiveLabCorrection(supabase, sessionId) {
     .from('lab_import_sessions')
     .update({ active_item_name: null, active_panel_date: null })
     .eq('id', sessionId);
+
   if (error) throw error;
 }
 
 async function applyLabCorrection(supabase, session, correctedValue) {
   const itemName = session.active_item_name;
   let panelDate = session.active_panel_date;
-  if (!itemName || !panelDate) throw new Error('No active correction target');
+
+  if (!itemName || !panelDate) {
+    throw new Error('No active correction target');
+  }
 
   const working = JSON.parse(JSON.stringify(session.working_data_json || {}));
   if (!working[panelDate]) working[panelDate] = {};
@@ -139,6 +159,7 @@ async function applyLabCorrection(supabase, session, correctedValue) {
   if (itemName === 'measured_at') {
     const date = normalizeDateInput(correctedValue);
     if (!date) throw new Error('INVALID_DATE');
+
     const existing = working[panelDate];
     delete working[panelDate];
     working[date] = existing;
@@ -155,6 +176,7 @@ async function applyLabCorrection(supabase, session, correctedValue) {
       working_data_json: working,
       active_item_name: null,
       active_panel_date: null,
+      selected_date: panelDate,
     })
     .eq('id', session.id)
     .select('*')
@@ -177,36 +199,38 @@ async function applyLabCorrection(supabase, session, correctedValue) {
 }
 
 async function confirmLabDraftToResults(supabase, session, panelDate) {
-  const items = (session.working_data_json || {})[panelDate] || {};
+  const cleanDate = String(panelDate).slice(0, 10);
+  const items = (session.working_data_json || {})[panelDate] || (session.working_data_json || {})[cleanDate] || {};
 
   const row = {
     user_id: session.user_id,
-    measured_at: panelDate,
-    hba1c: normalizeNumberInput(items.hba1c),
-    fasting_glucose: normalizeNumberInput(items.fasting_glucose),
-    ldl: normalizeNumberInput(items.ldl),
-    hdl: normalizeNumberInput(items.hdl),
-    triglycerides: normalizeNumberInput(items.triglycerides),
-    ast: normalizeNumberInput(items.ast),
-    alt: normalizeNumberInput(items.alt),
-    ggt: normalizeNumberInput(items.ggt),
-    uric_acid: normalizeNumberInput(items.uric_acid),
-    creatinine: normalizeNumberInput(items.creatinine),
+    measured_at: cleanDate,
+    hba1c: toNumberOrNull(items.hba1c),
+    fasting_glucose: toNumberOrNull(items.fasting_glucose),
+    ldl: toNumberOrNull(items.ldl),
+    hdl: toNumberOrNull(items.hdl),
+    triglycerides: toNumberOrNull(items.triglycerides),
+    ast: toNumberOrNull(items.ast),
+    alt: toNumberOrNull(items.alt),
+    ggt: toNumberOrNull(items.ggt),
+    uric_acid: toNumberOrNull(items.uric_acid),
+    creatinine: toNumberOrNull(items.creatinine),
     source_image_url: session.source_image_url ?? null,
     import_session_id: session.id,
     is_user_confirmed: true,
     ai_summary: 'ユーザー確認後に保存された血液検査結果です。',
   };
 
-  const { data: existing, error: existingErr } = await supabase
+  const { data: existing, error: findError } = await supabase
     .from('lab_results')
-    .select('id')
+    .select('id, measured_at')
     .eq('user_id', session.user_id)
-    .eq('measured_at', panelDate)
+    .gte('measured_at', `${cleanDate}T00:00:00`)
+    .lt('measured_at', `${cleanDate}T23:59:59`)
     .limit(1)
     .maybeSingle();
 
-  if (existingErr) throw existingErr;
+  if (findError) throw findError;
 
   if (existing?.id) {
     const { error: updateErr } = await supabase
@@ -223,7 +247,7 @@ async function confirmLabDraftToResults(supabase, session, panelDate) {
     .from('lab_import_sessions')
     .update({
       status: 'confirmed',
-      selected_date: panelDate,
+      selected_date: cleanDate,
       active_item_name: null,
       active_panel_date: null,
     })
@@ -235,7 +259,7 @@ async function confirmLabDraftToResults(supabase, session, panelDate) {
 async function getRecentLabResults(supabase, userId, limit = 6) {
   const { data, error } = await supabase
     .from('lab_results')
-    .select('measured_at,hba1c,fasting_glucose,ldl,hdl,triglycerides,ast,alt,ggt,uric_acid,creatinine')
+    .select('*')
     .eq('user_id', userId)
     .order('measured_at', { ascending: false })
     .limit(limit);
@@ -244,98 +268,92 @@ async function getRecentLabResults(supabase, userId, limit = 6) {
   return data || [];
 }
 
-function pickComparisonItems(current, previous) {
-  const targets = [
-    { key: 'hba1c', label: 'HbA1c', better: 'lower' },
-    { key: 'ldl', label: 'LDL', better: 'lower' },
-    { key: 'fasting_glucose', label: '血糖', better: 'lower' },
-    { key: 'uric_acid', label: '尿酸', better: 'lower' },
-    { key: 'creatinine', label: 'クレアチニン', better: 'lower' },
-    { key: 'hdl', label: 'HDL', better: 'higher' },
-    { key: 'triglycerides', label: 'TG', better: 'lower' },
-  ];
+function compareValue(curr, prev, lowerIsBetter = true) {
+  const c = toNumberOrNull(curr);
+  const p = toNumberOrNull(prev);
+  if (c == null || p == null) return null;
+  if (c === p) return 'same';
 
-  const comments = [];
-
-  for (const target of targets) {
-    const curr = toNumberOrNull(current?.[target.key]);
-    const prev = toNumberOrNull(previous?.[target.key]);
-    if (curr == null || prev == null) continue;
-    if (curr === prev) continue;
-
-    const diff = Number((curr - prev).toFixed(2));
-    const absDiff = Math.abs(diff);
-    if (absDiff === 0) continue;
-
-    if (target.better === 'lower') {
-      if (diff < 0) {
-        comments.push(`${target.label}は前回の${formatMaybeNumber(prev)}から${formatMaybeNumber(curr)}へ下がっていて良い流れです。`);
-      } else {
-        comments.push(`${target.label}は前回の${formatMaybeNumber(prev)}から${formatMaybeNumber(curr)}へ上がっています。`);
-      }
-    } else {
-      if (diff > 0) {
-        comments.push(`${target.label}は前回の${formatMaybeNumber(prev)}から${formatMaybeNumber(curr)}へ上がっていて良い変化です。`);
-      } else {
-        comments.push(`${target.label}は前回の${formatMaybeNumber(prev)}から${formatMaybeNumber(curr)}へ下がっています。`);
-      }
-    }
+  if (lowerIsBetter) {
+    return c < p ? 'improved' : 'worsened';
   }
-
-  return comments.slice(0, 3);
+  return c > p ? 'improved' : 'worsened';
 }
 
 function buildPostSaveComparisonMessage(savedRow, recentRows) {
-  const rows = Array.isArray(recentRows) ? recentRows : [];
-  if (!rows.length) {
-    return '保存しました。これで今後の変化も見やすくなりますね。';
-  }
+  const currentDate = String(savedRow?.measured_at || '').slice(0, 10);
 
-  const currentDate = savedRow?.measured_at || null;
-  const previous = rows.find((r) => r.measured_at !== currentDate);
+  const previous = (recentRows || []).find(
+    (r) => String(r.measured_at || '').slice(0, 10) !== currentDate
+  );
 
-  if (!previous) {
-    return '保存しました。まだ比較回数は少ないですが、これから変化を追いやすくなりますね。';
-  }
-
-  const comments = pickComparisonItems(savedRow, previous);
   const lines = [];
   lines.push('保存しました。これで今後の変化も見やすくなりますね。');
   lines.push('');
-  lines.push(`前回: ${String(previous.measured_at).replace(/-/g, '/')}`);
-  lines.push(`今回: ${String(savedRow.measured_at).replace(/-/g, '/')}`);
+  lines.push(`前回: ${previous ? formatDateOnly(previous.measured_at) : '比較データなし'}`);
+  lines.push(`今回: ${formatDateOnly(savedRow.measured_at)}`);
+  lines.push('');
 
-  if (comments.length) {
-    lines.push('');
-    lines.push('【前回との比較】');
-    for (const c of comments) lines.push(`・${c}`);
-  } else {
-    lines.push('');
+  if (!previous) {
     lines.push('前回と比較できる主要項目はまだ少ないですが、データはしっかり蓄積されています。');
+    return lines.join('\n');
   }
 
+  const comments = [];
+
+  const rules = [
+    { key: 'hba1c', label: 'HbA1c', lowerIsBetter: true },
+    { key: 'fasting_glucose', label: '血糖', lowerIsBetter: true },
+    { key: 'ldl', label: 'LDL', lowerIsBetter: true },
+    { key: 'hdl', label: 'HDL', lowerIsBetter: false },
+    { key: 'triglycerides', label: 'TG', lowerIsBetter: true },
+    { key: 'uric_acid', label: '尿酸', lowerIsBetter: true },
+    { key: 'creatinine', label: 'クレアチニン', lowerIsBetter: true },
+  ];
+
+  for (const rule of rules) {
+    const curr = toNumberOrNull(savedRow?.[rule.key]);
+    const prev = toNumberOrNull(previous?.[rule.key]);
+    if (curr == null || prev == null) continue;
+
+    const result = compareValue(curr, prev, rule.lowerIsBetter);
+    if (result === 'improved') {
+      comments.push(`${rule.label}は ${prev} → ${curr} で良い変化が見えています。`);
+    } else if (result === 'worsened') {
+      comments.push(`${rule.label}は ${prev} → ${curr} でした。ここは次回また一緒に流れを見ていきましょう。`);
+    } else {
+      comments.push(`${rule.label}は ${prev} → ${curr} で大きく崩さず維持できています。`);
+    }
+  }
+
+  if (!comments.length) {
+    lines.push('前回と比較できる主要項目はまだ少ないですが、データはしっかり蓄積されています。');
+    return lines.join('\n');
+  }
+
+  lines.push(...comments.slice(0, 4));
   return lines.join('\n');
 }
 
-function buildLabHistoryText(rows, itemKey, label) {
-  const valid = (rows || [])
-    .filter((r) => r && r.measured_at && r[itemKey] != null)
+function buildLabHistoryText(rows, key, label) {
+  const validRows = (rows || [])
+    .filter((row) => row && row[key] != null)
     .sort((a, b) => String(a.measured_at).localeCompare(String(b.measured_at)));
 
-  if (!valid.length) {
-    return `${label}の推移データはまだありません。`;
+  if (!validRows.length) {
+    return `【${label}の推移】\nまだデータがありません。`;
   }
 
-  const lines = [];
-  lines.push(`【${label}の推移】`);
-  for (const row of valid) {
-    lines.push(`${String(row.measured_at).replace(/-/g, '/')}: ${formatMaybeNumber(row[itemKey])}`);
+  const lines = [`【${label}の推移】`];
+  for (const row of validRows) {
+    lines.push(`${formatDateOnly(row.measured_at)}: ${row[key]}`);
   }
   return lines.join('\n');
 }
 
 module.exports = {
   LAB_ITEM_LABELS,
+  formatDateOnly,
   normalizeDateInput,
   normalizeNumberInput,
   renderPanelSummary,
