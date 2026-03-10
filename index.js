@@ -16,9 +16,11 @@ const {
   setActiveLabCorrection,
   applyLabCorrection,
   confirmLabDraftToResults,
+  confirmAllLabDraftToResults,
   getRecentLabResults,
   buildPostSaveComparisonMessage,
   buildLabHistoryText,
+  formatDateOnly,
 } = require('./blood_test_flow_helpers');
 const {
   getSoftNudgeMessage,
@@ -2026,7 +2028,13 @@ async function handleBloodTestImage({ replyToken, user, messageId, buffer, mime 
 
   const items = workingData[firstDate] || {};
   const text = renderPanelSummary(firstDate, items);
-  await replyMessage(replyToken, textMessageWithQuickReplies(text, buildLabQuickReplyMain(items)));
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies(
+      text,
+      buildLabQuickReplyMain(items, dates.length > 1)
+    )
+  );
 }
 
 async function handleBodyScaleImage({ replyToken, user, messageId, buffer, mime }) {
@@ -2404,11 +2412,14 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
       const panelDate = updated.selected_date || getPanelDateKeys(updated)[0];
       const items = (updated.working_data_json || {})[panelDate] || {};
       const summary = renderPanelSummary(panelDate, items);
+      const hasMultipleDates = getPanelDateKeys(updated).length > 1;
+      const saveLabel = hasMultipleDates ? 'この日だけ保存' : 'この内容で保存';
+
       await replyMessage(
         replyToken,
         textMessageWithQuickReplies(
           `ありがとうございます。修正しました。\n\n${summary}`,
-          ['この内容で保存', ...buildLabQuickReplyMain(items).filter((x) => x !== 'この内容で保存')]
+          [saveLabel, ...buildLabQuickReplyMain(items, hasMultipleDates).filter((x) => x !== saveLabel)]
         )
       );
       return true;
@@ -2439,19 +2450,27 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
 
         const items = (updated.working_data_json || {})[chosenDate] || {};
         const summary = renderPanelSummary(chosenDate, items);
-        await replyMessage(replyToken, textMessageWithQuickReplies(summary, buildLabQuickReplyMain(items)));
+        const hasMultipleDates = getPanelDateKeys(updated).length > 1;
+
+        await replyMessage(
+          replyToken,
+          textMessageWithQuickReplies(
+            summary,
+            buildLabQuickReplyMain(items, hasMultipleDates)
+          )
+        );
         return true;
       }
     }
 
     const selectedDate = openDraft.selected_date || getPanelDateKeys(openDraft)[0];
 
-    if (trimmed === 'この内容で保存') {
+    if (trimmed === 'この内容で保存' || trimmed === 'この日だけ保存') {
       await confirmLabDraftToResults(supabase, openDraft, selectedDate);
 
-      const recentRows = await getRecentLabResults(supabase, user.id, 6);
+      const recentRows = await getRecentLabResults(supabase, user.id, 10);
       const savedRow =
-        recentRows.find((r) => formatDateOnly(r.measured_at) === formatDateOnly(selectedDate)) || {
+        recentRows.find((r) => String(r.measured_at).slice(0, 10) === String(selectedDate).slice(0, 10)) || {
           measured_at: selectedDate,
           ...(openDraft.working_data_json?.[selectedDate] || {}),
         };
@@ -2459,7 +2478,24 @@ async function handleLabDraftTextFlow(replyToken, user, text, openDraft) {
       const message = buildEnhancedBloodSaveMessage(savedRow, recentRows);
       await replyMessage(
         replyToken,
-        textMessageWithQuickReplies(message, ['HbA1c推移', 'LDL推移', '血糖推移', '尿酸推移', 'クレアチニン推移'])
+        textMessageWithQuickReplies(
+          message,
+          ['HbA1c推移', 'LDL推移', '血糖推移', '尿酸推移', 'クレアチニン推移']
+        )
+      );
+      return true;
+    }
+
+    if (trimmed === '読み取れた日付を全部保存') {
+      await confirmAllLabDraftToResults(supabase, openDraft);
+
+      const totalCount = Object.keys(openDraft.working_data_json || {}).length;
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(
+          `読み取れた ${totalCount} 件の日付をまとめて保存しました。\nこれで過去からの流れも見やすくなりますね。`,
+          ['HbA1c推移', 'LDL推移', '血糖推移', '尿酸推移', 'クレアチニン推移']
+        )
       );
       return true;
     }
@@ -3064,11 +3100,6 @@ function calculateBMR(user) {
   const a = Number(user.age);
   if (user.sex === 'male') return round1(10 * w + 6.25 * h - 5 * a + 5);
   return round1(10 * w + 6.25 * h - 5 * a - 161);
-}
-
-function formatDateOnly(value) {
-  if (!value) return '';
-  return String(value).slice(0, 10).replace(/-/g, '/');
 }
 
 function formatKcalRange(mid, min, max) {
