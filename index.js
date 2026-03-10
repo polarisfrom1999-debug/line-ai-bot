@@ -57,6 +57,11 @@ const {
   buildMealFollowupQuickReplies,
 } = require('./services/pain_support_service');
 const {
+  buildVideoSupportResponse,
+  buildExerciseMenuResponse,
+  isVideoIntent,
+} = require('./services/video_support_service');
+const {
   normalizeLabQuickReplyInput,
   getPanelDateKeys,
   findPanelDateFromInput,
@@ -229,6 +234,9 @@ function helpMessage() {
     '・この内容で食事保存',
     '・膝が重いです',
     '・ストレッチしたい',
+    '・動画で見たい',
+    '・1分メニュー',
+    '・3分メニュー',
     '・食事写真も送れます',
     '・血液検査画像も送れます',
   ].join('\n');
@@ -356,11 +364,11 @@ function buildPainSituationResponse(text, area = '全身') {
           ? '膝だけでなく、股関節やふくらはぎも少し整えると歩きやすさにもつながりやすいです。'
           : '少しずつ動きやすさが出ると、活動量や代謝にもつながりやすいです。',
       ].join('\n'),
-      quickReplies: ['ストレッチしたい', '1分だけやる', '今日はここまで', '牛込先生に相談したい'],
+      quickReplies: ['ストレッチしたい', '動画で見たい', '1分メニュー', '今日はここまで'],
     },
     '歩くとつらい': {
       message: [`${area}は歩くとつらいんですね。`, '今日は頑張って動くより、まず負担を減らしながら整える方向が良さそうです。', CONSULT_MESSAGE].join('\n'),
-      quickReplies: ['ストレッチしたい', '少し動くと楽', '今日は休む', '牛込先生に相談したい'],
+      quickReplies: ['ストレッチしたい', '少し動くと楽', '動画で見たい', '牛込先生に相談したい'],
     },
   };
   return map[text] || null;
@@ -534,7 +542,6 @@ async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
 
-    // まず食事判定
     const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
 
     if (analyzedMeal.is_meal) {
@@ -553,7 +560,6 @@ async function handleImageMessage(event, user) {
       return;
     }
 
-    // 食事でなければ血液検査として読む
     const extraction = await extractBloodTestDraftFromImage(buffer, mimeType);
     const dates = Array.isArray(extraction?.dates) ? extraction.dates.filter(Boolean) : [];
     const panels = Array.isArray(extraction?.panels) ? extraction.panels : [];
@@ -637,7 +643,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    // 初回インテーク
     if (isIntakeStartCommand(text)) {
       const session = await startOrResumeIntake(user);
       const msg = renderIntakeStepMessage(session);
@@ -771,7 +776,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    // 血液検査テキストフロー
     const openLabDraft = await getOpenLabDraft(supabase, user.id);
     if (openLabDraft) {
       if (openLabDraft.active_item_name) {
@@ -854,13 +858,74 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    // 相談・痛み・ストレッチ
     const supportContext = getSupportContext(user.line_user_id);
     const contextArea = supportContext?.area || null;
 
     if (text === '牛込先生に相談したい') {
       clearMealDraft(user.line_user_id);
       await replyMessage(event.replyToken, prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isVideoIntent(text)) {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || detectPainArea(text);
+      setSupportContext(user.line_user_id, { area, mode: 'video' });
+
+      const videoResponse = buildVideoSupportResponse(area);
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, videoResponse.text), videoResponse.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '1分メニュー') {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const menu = buildExerciseMenuResponse(area, '1min');
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '3分メニュー') {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const menu = buildExerciseMenuResponse(area, '3min');
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === 'やさしい版') {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const menu = buildExerciseMenuResponse(area, 'gentle');
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === '説明だけ聞く') {
+      clearMealDraft(user.line_user_id);
+      const area = contextArea || '全身';
+      const menu = buildExerciseMenuResponse(area, 'explain');
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
       return;
     }
 
@@ -872,7 +937,7 @@ async function handleTextMessage(event, user) {
       const stretchResponse = buildStretchSupportResponse(area);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, stretchResponse.message), stretchResponse.quickReplies),
+        textMessageWithQuickReplies(prefixWithName(user, stretchResponse.message), [...stretchResponse.quickReplies, '動画で見たい']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -889,7 +954,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, message), ['できた', 'まだ少しやる', '今日はここまで', '牛込先生に相談したい']),
+        textMessageWithQuickReplies(prefixWithName(user, message), ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -918,7 +983,7 @@ async function handleTextMessage(event, user) {
       const painResponse = buildPainSupportResponse(text, area);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, painResponse.message), painResponse.quickReplies),
+        textMessageWithQuickReplies(prefixWithName(user, painResponse.message), [...painResponse.quickReplies, '動画で見たい']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -931,14 +996,18 @@ async function handleTextMessage(event, user) {
       }
 
       if (text === 'できた') {
-        await replyMessage(event.replyToken, prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '今日はここまで']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
         return;
       }
 
       if (text === 'まだ少しやる') {
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。'), ['1分だけやる', 'ストレッチしたい', '今日はここまで']),
+          textMessageWithQuickReplies(prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。'), ['1分メニュー', '3分メニュー', 'やさしい版', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -952,7 +1021,7 @@ async function handleTextMessage(event, user) {
         const painResponse = buildPainSupportResponse(text, area);
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, painResponse.message), painResponse.quickReplies),
+          textMessageWithQuickReplies(prefixWithName(user, painResponse.message), [...painResponse.quickReplies, '動画で見たい']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -969,7 +1038,6 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    // 食事
     const currentMealDraft = getMealDraft(user.line_user_id);
 
     if (currentMealDraft && isMealSaveCommand(text)) {
