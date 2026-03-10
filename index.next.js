@@ -27,6 +27,9 @@ const {
   buildProfileReply,
 } = require('./services/profile_service');
 const {
+  buildEnergySummaryText,
+} = require('./services/energy_service');
+const {
   safeText,
   fmt,
 } = require('./utils/formatters');
@@ -287,9 +290,16 @@ async function handleTextMessage(event, user) {
         '小さな運動でも、しっかり前進です。',
       ].filter(Boolean);
 
+      const energyText = buildEnergySummaryText({
+        estimatedBmr: user.estimated_bmr || 0,
+        estimatedTdee: user.estimated_tdee || 0,
+        intakeKcal: 0,
+        activityKcal: activity.estimated_activity_kcal || 0,
+      });
+
       await replyMessage(
         event.replyToken,
-        prefixWithName(user, lines.join('\n')),
+        prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
