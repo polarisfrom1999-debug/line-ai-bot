@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const fs = require('fs');
 
 const { getEnv } = require('./config/env');
 const { EXERCISE_WORD_HINTS } = require('./config/constants');
@@ -9,7 +10,6 @@ const { ensureUser, refreshUserById } = require('./services/user_service');
 const {
   verifyLineSignature,
   replyMessage,
-  textMessageWithQuickReplies,
 } = require('./services/line_service');
 const { generateTextOnly } = require('./services/gemini_service');
 const {
@@ -18,15 +18,14 @@ const {
   getUserDisplayName,
 } = require('./parsers/name_parser');
 const {
-  parseProfile,
-  calculateBMR,
-  calculateTDEE,
-  profileGuideMessage,
-} = require('./parsers/profile_parser');
-const {
   parseActivity,
   estimateActivityKcalWithStrength,
 } = require('./parsers/activity_parser');
+const {
+  profileGuideMessage,
+  buildProfileUpdatePayload,
+  buildProfileReply,
+} = require('./services/profile_service');
 const {
   safeText,
   fmt,
@@ -41,7 +40,6 @@ const PORT = env.PORT;
 const TZ = env.TZ;
 
 const AI_PROMPT_PATH = './prompts/ai_ushigome_prompt.txt';
-const fs = require('fs');
 
 function loadAiPrompt() {
   try {
@@ -122,8 +120,10 @@ async function processEvent(event) {
 function prefixWithName(user, message) {
   const name = getUserDisplayName(user);
   const text = String(message || '').trim();
+
   if (!text) return text;
   if (!name) return text;
+
   return `${name}さん、${text}`;
 }
 
@@ -215,22 +215,12 @@ async function handleTextMessage(event, user) {
     }
 
     if (isProfileCommand(lower)) {
-      const updates = parseProfile(text);
+      const payload = buildProfileUpdatePayload(user, text);
 
-      if (!Object.keys(updates).length) {
+      if (!payload) {
         await replyMessage(event.replyToken, profileGuideMessage(), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
-
-      const previewUser = { ...user, ...updates };
-      const estimated_bmr = calculateBMR(previewUser);
-      const estimated_tdee = calculateTDEE(previewUser);
-
-      const payload = {
-        ...updates,
-        estimated_bmr,
-        estimated_tdee,
-      };
 
       const { error } = await supabase
         .from('users')
@@ -241,21 +231,9 @@ async function handleTextMessage(event, user) {
 
       const refreshedUser = await refreshUserById(supabase, user.id);
 
-      const lines = [
-        'プロフィールを更新しました。',
-        refreshedUser.sex ? `性別: ${refreshedUser.sex === 'male' ? '男性' : '女性'}` : null,
-        refreshedUser.age ? `年齢: ${fmt(refreshedUser.age)}` : null,
-        refreshedUser.height_cm ? `身長: ${fmt(refreshedUser.height_cm)} cm` : null,
-        refreshedUser.weight_kg ? `体重: ${fmt(refreshedUser.weight_kg)} kg` : null,
-        refreshedUser.target_weight_kg ? `目標体重: ${fmt(refreshedUser.target_weight_kg)} kg` : null,
-        refreshedUser.activity_level ? `活動量: ${refreshedUser.activity_level}` : null,
-        refreshedUser.estimated_bmr ? `推定基礎代謝: ${fmt(refreshedUser.estimated_bmr)} kcal/日` : null,
-        refreshedUser.estimated_tdee ? `推定総消費目安: ${fmt(refreshedUser.estimated_tdee)} kcal/日` : null,
-      ].filter(Boolean);
-
       await replyMessage(
         event.replyToken,
-        prefixWithName(refreshedUser, lines.join('\n')),
+        prefixWithName(refreshedUser, buildProfileReply(refreshedUser)),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
