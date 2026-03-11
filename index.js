@@ -912,11 +912,17 @@ async function handleTextMessage(event, user) {
         return;
       }
 
-      if (text === '読み取れた日付を全部保存') {
-        await confirmAllLabDraftToResults(supabase, openLabDraft);
+      if (['読み取れた日付を全部保存', '一括保存', 'まとめて保存', '全部保存'].includes(text)) {
+        const savedRows = await confirmAllLabDraftToResults(supabase, openLabDraft);
+        const count = Array.isArray(savedRows) ? savedRows.length : 0;
+
         await replyMessage(
           event.replyToken,
-          '読み取れた日付をまとめて保存しました。',
+          [
+            `読み取れた日付をまとめて保存しました。`,
+            count ? `保存件数: ${count}件` : null,
+            '血液検査グラフでも確認できます。',
+          ].filter(Boolean).join('\n'),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
