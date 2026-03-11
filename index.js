@@ -224,11 +224,25 @@ async function processEvent(event) {
   );
 }
 
-function prefixWithName(user, message) {
+function prefixWithName(user, message, options = {}) {
   const name = getUserDisplayName(user);
   const text = String(message || '').trim();
+  const {
+    force = false,
+  } = options;
+
   if (!text) return text;
   if (!name) return text;
+
+  const alreadyHasName =
+    text.includes(`${name}さん`) ||
+    text.includes(`${name}様`) ||
+    text.startsWith(name);
+
+  if (alreadyHasName) return text;
+
+  if (!force) return text;
+
   return `${name}さん、${text}`;
 }
 
@@ -799,6 +813,13 @@ async function defaultChatReply(user, userText) {
     '- AIっぽい定型文を避ける',
     '- 必要なら短く提案する',
     '- 雑談も自然に返す',
+    '- 相手の名前は毎回呼ばない',
+    '- 同じ返答の中で名前を繰り返さない',
+    '- 質問は多くても1つまでにする',
+    '- 1回で励まし、助言、質問を詰め込みすぎない',
+    '- LINEでは少し余白のある短めの返答を優先する',
+    '- 「何よりです」「嬉しいな」「よく分かりますよ」を多用しない',
+    '- きれいにまとめすぎず、自然な会話を優先する',
     '- 痛みや不調は不安を煽らず、危険なら受診もやさしくすすめる',
     '',
     `利用者メッセージ: ${userText}`,
