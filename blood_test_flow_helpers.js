@@ -8,9 +8,9 @@ function formatDateOnly(value) {
   if (!value) return '';
   const s = String(value).trim();
 
-  const m1 = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (m1) {
-    return `${m1[1]}-${pad2(m1[2])}-${pad2(m1[3])}`;
+  const direct = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (direct) {
+    return `${direct[1]}-${pad2(direct[2])}-${pad2(direct[3])}`;
   }
 
   const d = new Date(s);
@@ -19,7 +19,8 @@ function formatDateOnly(value) {
 }
 
 function normalizeDateInput(text) {
-  const s = String(text || '').trim()
+  const s = String(text || '')
+    .trim()
     .replace(/[年/.]/g, '-')
     .replace(/月/g, '-')
     .replace(/日/g, '')
@@ -27,6 +28,7 @@ function normalizeDateInput(text) {
 
   const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (!m) return null;
+
   return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
 }
 
@@ -34,23 +36,23 @@ function parseNumberInput(text) {
   const raw = String(text || '').trim().replace(/,/g, '');
   const m = raw.match(/-?\d+(?:\.\d+)?/);
   if (!m) return null;
+
   const num = Number(m[0]);
-  if (!Number.isFinite(num)) return null;
-  return num;
+  return Number.isFinite(num) ? num : null;
 }
 
 function normalizeLabValue(value) {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
   const parsed = parseNumberInput(String(value));
   return parsed === null ? null : parsed;
 }
 
 function normalizeWorkingData(workingData) {
   const out = {};
-  const entries = Object.entries(workingData || {});
 
-  for (const [dateKey, items] of entries) {
+  for (const [dateKey, items] of Object.entries(workingData || {})) {
     const date = formatDateOnly(dateKey);
     if (!date) continue;
 
@@ -92,7 +94,9 @@ async function createLabDraftSession(supabase, payload) {
 
   const insertPayload = {
     ...payload,
-    detected_dates_json: Array.isArray(payload.detected_dates_json) ? payload.detected_dates_json.map(formatDateOnly).filter(Boolean) : [],
+    detected_dates_json: Array.isArray(payload.detected_dates_json)
+      ? payload.detected_dates_json.map(formatDateOnly).filter(Boolean)
+      : [],
     selected_date: payload.selected_date ? formatDateOnly(payload.selected_date) : null,
     working_data_json: normalizeWorkingData(payload.working_data_json || {}),
   };
@@ -150,34 +154,33 @@ async function applyLabCorrection(supabase, openLabDraft, inputText) {
     throw new Error('NO_ACTIVE_FIELD');
   }
 
-  const baseWorkingData = normalizeWorkingData(openLabDraft.working_data_json || {});
+  const workingData = normalizeWorkingData(openLabDraft.working_data_json || {});
   let selectedDate = formatDateOnly(openLabDraft.selected_date);
 
   if (!selectedDate) {
-    const latestDate = Object.keys(baseWorkingData).sort().pop();
-    selectedDate = latestDate || '';
+    selectedDate = String(Object.keys(workingData).sort().pop() || '');
   }
 
   if (!selectedDate) {
     throw new Error('INVALID_DATE');
   }
 
-  if (!baseWorkingData[selectedDate]) {
-    baseWorkingData[selectedDate] = {};
+  if (!workingData[selectedDate]) {
+    workingData[selectedDate] = {};
   }
 
   if (field === 'date') {
     const nextDate = normalizeDateInput(inputText);
     if (!nextDate) throw new Error('INVALID_DATE');
 
-    const existing = baseWorkingData[selectedDate] || {};
-    delete baseWorkingData[selectedDate];
-    baseWorkingData[nextDate] = existing;
+    const existing = workingData[selectedDate] || {};
+    delete workingData[selectedDate];
+    workingData[nextDate] = existing;
     selectedDate = nextDate;
   } else {
     const value = parseNumberInput(inputText);
     if (value === null) throw new Error('INVALID_NUMBER');
-    baseWorkingData[selectedDate][field] = value;
+    workingData[selectedDate][field] = value;
   }
 
   const { data, error } = await supabase
@@ -185,7 +188,7 @@ async function applyLabCorrection(supabase, openLabDraft, inputText) {
     .update({
       selected_date: selectedDate,
       active_item_name: null,
-      working_data_json: baseWorkingData,
+      working_data_json: workingData,
     })
     .eq('id', openLabDraft.id)
     .select('*')
@@ -297,6 +300,7 @@ async function confirmAllLabDraftToResults(supabase, openLabDraft) {
   }
 
   const savedRows = [];
+
   for (const date of dates) {
     const saved = await upsertLabResultForDate(supabase, openLabDraft, date);
     savedRows.push(saved);
