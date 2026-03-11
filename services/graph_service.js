@@ -49,6 +49,133 @@ function getTrendDirection(values) {
   return 'down';
 }
 
+function buildQuickChartUrl(chartConfig, width = 900, height = 520) {
+  const encoded = encodeURIComponent(JSON.stringify(chartConfig));
+  return `https://quickchart.io/chart?width=${width}&height=${height}&devicePixelRatio=2&backgroundColor=white&c=${encoded}`;
+}
+
+function buildLineImageMessage(url) {
+  return {
+    type: 'image',
+    originalContentUrl: url,
+    previewImageUrl: url,
+  };
+}
+
+function buildLineChartImage(title, labels, values, yLabel = '') {
+  const safeLabels = Array.isArray(labels) ? labels : [];
+  const safeValues = Array.isArray(values) ? values : [];
+
+  const config = {
+    type: 'line',
+    data: {
+      labels: safeLabels,
+      datasets: [
+        {
+          label: title,
+          data: safeValues,
+          fill: false,
+          tension: 0.25,
+          borderWidth: 3,
+          pointRadius: 4,
+          pointHoverRadius: 5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          display: true,
+        },
+        title: {
+          display: true,
+          text: title,
+          font: {
+            size: 20,
+          },
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: false,
+          title: {
+            display: !!yLabel,
+            text: yLabel,
+          },
+        },
+        x: {
+          ticks: {
+            maxRotation: 0,
+            minRotation: 0,
+          },
+        },
+      },
+    },
+  };
+
+  return buildLineImageMessage(buildQuickChartUrl(config));
+}
+
+function buildDualLineChartImage(title, labels, seriesA, seriesB, labelA, labelB, yLabel = 'kcal') {
+  const config = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: labelA,
+          data: seriesA,
+          fill: false,
+          tension: 0.25,
+          borderWidth: 3,
+          pointRadius: 4,
+        },
+        {
+          label: labelB,
+          data: seriesB,
+          fill: false,
+          tension: 0.25,
+          borderWidth: 3,
+          pointRadius: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          display: true,
+        },
+        title: {
+          display: true,
+          text: title,
+          font: {
+            size: 20,
+          },
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: yLabel,
+          },
+        },
+        x: {
+          ticks: {
+            maxRotation: 0,
+            minRotation: 0,
+          },
+        },
+      },
+    },
+  };
+
+  return buildLineImageMessage(buildQuickChartUrl(config));
+}
+
 function describeWeightTrend(rows) {
   const values = rows.map((r) => toNumberOrNull(r?.weight_kg)).filter((v) => v !== null);
   const trend = getTrendDirection(values.slice(-5));
@@ -160,6 +287,8 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
     return `・${date}: ${value}`;
   }).filter(Boolean);
 
+  const labels = sorted.map((row) => formatDateOnly(row?.measured_at));
+  const values = sorted.map((row) => toNumberOrNull(row?.[key]));
   const insight = describeLabTrend(label, sorted, key);
 
   return {
@@ -173,7 +302,7 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
       '履歴:',
       ...lines,
     ].filter(Boolean).join('\n'),
-    messages: [],
+    messages: [buildLineChartImage(`${label}の推移`, labels, values, label)],
   };
 }
 
@@ -203,6 +332,9 @@ function buildEnergyGraphMessage(dayRows) {
     return `・${row.date} / 摂取 ${row.intake_kcal} kcal / 活動 ${row.activity_kcal} kcal / 差分 ${row.net_kcal} kcal`;
   });
 
+  const labels = normalized.map((row) => row.date);
+  const intakeSeries = normalized.map((row) => row.intake_kcal);
+  const activitySeries = normalized.map((row) => row.activity_kcal);
   const insight = describeEnergyTrend(normalized);
 
   return {
@@ -217,7 +349,17 @@ function buildEnergyGraphMessage(dayRows) {
       '履歴:',
       ...lines,
     ].join('\n'),
-    messages: [],
+    messages: [
+      buildDualLineChartImage(
+        '食事と活動の推移',
+        labels,
+        intakeSeries,
+        activitySeries,
+        '摂取kcal',
+        '活動kcal',
+        'kcal'
+      ),
+    ],
   };
 }
 
@@ -269,6 +411,8 @@ function buildWeightGraphMessage(rows) {
     return `・${date}: ${value}kg`;
   }).filter(Boolean);
 
+  const labels = sorted.map((row) => formatDateOnly(row?.measured_at));
+  const values = sorted.map((row) => toNumberOrNull(row?.weight_kg));
   const insight = describeWeightTrend(sorted);
 
   return {
@@ -283,7 +427,7 @@ function buildWeightGraphMessage(rows) {
       '履歴:',
       ...lines,
     ].filter(Boolean).join('\n'),
-    messages: [],
+    messages: [buildLineChartImage('体重の推移', labels, values, 'kg')],
   };
 }
 
