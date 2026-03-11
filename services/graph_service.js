@@ -25,14 +25,13 @@ function toNumberOrNull(v) {
 }
 
 function buildGraphMenuQuickReplies() {
-  return ['血液検査グラフ', 'HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'];
+  return ['体重グラフ', '血液検査グラフ', 'HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'];
 }
 
 function buildLabGraphMessage(rows, metric = 'hba1c') {
   const list = Array.isArray(rows) ? rows : [];
   const key = metric === 'ldl' ? 'ldl' : 'hba1c';
   const label = key === 'ldl' ? 'LDL' : 'HbA1c';
-  const unit = key === 'ldl' ? '' : '';
 
   const sorted = [...list]
     .filter((r) => toNumberOrNull(r?.[key]) !== null)
@@ -67,14 +66,14 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
     const date = formatDateOnly(row?.measured_at);
     const value = toNumberOrNull(row?.[key]);
     if (!date || value === null) return null;
-    return `・${date}: ${value}${unit}`;
+    return `・${date}: ${value}`;
   }).filter(Boolean);
 
   return {
     text: [
       `${label}の推移です。`,
       '',
-      `最新: ${formatDateOnly(latest?.measured_at)} / ${latestValue}${unit}`,
+      `最新: ${formatDateOnly(latest?.measured_at)} / ${latestValue}`,
       trendText,
       '',
       '履歴:',
@@ -125,8 +124,72 @@ function buildEnergyGraphMessage(dayRows) {
   };
 }
 
+function buildWeightGraphMessage(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const sorted = [...list]
+    .filter((r) => toNumberOrNull(r?.weight_kg) !== null)
+    .sort((a, b) => {
+      const aTime = new Date(a?.measured_at || 0).getTime();
+      const bTime = new Date(b?.measured_at || 0).getTime();
+      return aTime - bTime;
+    });
+
+  if (!sorted.length) {
+    return {
+      text: '体重データがまだありません。たとえば「体重 63.2」と送ると保存できます。',
+      messages: [],
+    };
+  }
+
+  const latest = sorted[sorted.length - 1];
+  const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+  const first = sorted[0];
+
+  const latestValue = toNumberOrNull(latest?.weight_kg);
+  const prevValue = toNumberOrNull(prev?.weight_kg);
+  const firstValue = toNumberOrNull(first?.weight_kg);
+
+  const dayDiffText = (() => {
+    if (latestValue === null || prevValue === null) return '前回比較はまだありません。';
+    const diff = Math.round((latestValue - prevValue) * 10) / 10;
+    if (diff === 0) return '前回から変化はありません。';
+    if (diff > 0) return `前回より ${diff}kg 増えています。`;
+    return `前回より ${Math.abs(diff)}kg 減っています。`;
+  })();
+
+  const totalDiffText = (() => {
+    if (latestValue === null || firstValue === null || sorted.length < 2) return null;
+    const diff = Math.round((latestValue - firstValue) * 10) / 10;
+    if (diff === 0) return '初回からの変化はありません。';
+    if (diff > 0) return `初回から ${diff}kg 増えています。`;
+    return `初回から ${Math.abs(diff)}kg 減っています。`;
+  })();
+
+  const lines = sorted.slice(-12).map((row) => {
+    const date = formatDateOnly(row?.measured_at);
+    const value = toNumberOrNull(row?.weight_kg);
+    if (!date || value === null) return null;
+    return `・${date}: ${value}kg`;
+  }).filter(Boolean);
+
+  return {
+    text: [
+      '体重の推移です。',
+      '',
+      `最新: ${formatDateOnly(latest?.measured_at)} / ${latestValue}kg`,
+      dayDiffText,
+      totalDiffText,
+      '',
+      '履歴:',
+      ...lines,
+    ].filter(Boolean).join('\n'),
+    messages: [],
+  };
+}
+
 module.exports = {
   buildLabGraphMessage,
   buildEnergyGraphMessage,
+  buildWeightGraphMessage,
   buildGraphMenuQuickReplies,
 };

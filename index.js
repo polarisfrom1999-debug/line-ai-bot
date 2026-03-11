@@ -68,6 +68,7 @@ const {
 const {
   buildLabGraphMessage,
   buildEnergyGraphMessage,
+  buildWeightGraphMessage,
   buildGraphMenuQuickReplies,
 } = require('./services/graph_service');
 const {
@@ -298,12 +299,48 @@ function isLabGraphIntent(text) {
   ].includes(t) || isHbA1cGraphIntent(t) || isLdlGraphIntent(t);
 }
 
+function isWeightGraphIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    '体重グラフ',
+    '体重のグラフ',
+    '体重見たい',
+    '体重を見たい',
+    '体重推移',
+    '体重の推移',
+    '体重の変化',
+  ].includes(t);
+}
+
+function parseWeightInput(text) {
+  const raw = String(text || '').trim();
+
+  if (/^(体重|今朝の体重|本日の体重|今日の体重)/.test(raw)) {
+    const m = raw.match(/-?\d+(?:\.\d+)?/);
+    if (!m) return null;
+    const value = Number(m[0]);
+    if (!Number.isFinite(value)) return null;
+    if (value < 20 || value > 300) return null;
+    return value;
+  }
+
+  if (/^-?\d+(?:\.\d+)?\s*kg$/i.test(raw)) {
+    const value = Number(raw.replace(/kg/i, '').trim());
+    if (!Number.isFinite(value)) return null;
+    if (value < 20 || value > 300) return null;
+    return value;
+  }
+
+  return null;
+}
+
 function helpMessage() {
   return [
     '使い方の例です。',
     '・名前は 牛込',
     '・初回診断',
     '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
+    '・体重 63.2',
     '・ジョギング 20分',
     '・ストレッチ 5分',
     '・スクワット 10回',
@@ -316,6 +353,7 @@ function helpMessage() {
     '・3分メニュー',
     '・予測',
     '・グラフ',
+    '・体重グラフ',
     '・血液検査グラフ',
     '・食事活動グラフ',
     '・食事写真も送れます',
@@ -458,6 +496,32 @@ async function getSevenDayEnergyRows(userId) {
       net_kcal: row.value - activity,
     };
   });
+}
+
+async function getRecentWeightRows(userId, limit = 20) {
+  const { data, error } = await supabase
+    .from('weight_logs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('measured_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+async function saveWeightToLog(userId, weightKg, rawText) {
+  const insertPayload = {
+    user_id: userId,
+    measured_at: toIsoStringInTZ(new Date(), TZ),
+    weight_kg: weightKg,
+    source: 'line',
+    raw_text: safeText(rawText || '', 300),
+  };
+
+  const { error } = await supabase.from('weight_logs').insert(insertPayload);
+  if (error) throw error;
+  return insertPayload;
 }
 
 async function saveMealToLog(userId, meal) {
@@ -865,6 +929,33 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    const parsedWeight = parseWeightInput(text);
+    if (parsedWeight !== null) {
+      await saveWeightToLog(user.id, parsedWeight, text);
+
+      const recentWeights = await getRecentWeightRows(user.id, 10);
+      const latest = recentWeights[0] || { weight_kg: parsedWeight };
+      const prev = recentWeights[1] || null;
+
+      const diffText = (() => {
+        if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
+        const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
+        if (diff === 0) return '前回から変化はありません。';
+        if (diff > 0) return `前回より ${diff}kg 増えています。`;
+        return `前回より ${Math.abs(diff)}kg 減っています。`;
+      })();
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, `体重を保存しました。\n今回: ${parsedWeight}kg\n${diffText}`),
+          ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     if (isActivityCommand(lower)) {
       const activity = parseActivity(text, user.weight_kg || 60);
       if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal && !activity.exercise_summary) {
@@ -1022,7 +1113,7 @@ async function handleTextMessage(event, user) {
         textMessageWithQuickReplies(
           prefixWithName(
             user,
-            '見たいグラフを選んでください。\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'
+            '見たいグラフを選んでください。\n体重なら「体重グラフ」\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'
           ),
           buildGraphMenuQuickReplies()
         ),
@@ -1031,10 +1122,19 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (isWeightGraphIntent(text)) {
+      const weightRows = await getRecentWeightRows(user.id, 20);
+      const graph = buildWeightGraphMessage(weightRows);
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
     if (isEnergyGraphIntent(text)) {
       const dayRows = await getSevenDayEnergyRows(user.id);
       const graph = buildEnergyGraphMessage(dayRows);
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['予測', '血液検査グラフ', '今日はここまで'])];
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['体重グラフ', '血液検査グラフ', '予測', '今日はここまで'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -1043,7 +1143,7 @@ async function handleTextMessage(event, user) {
     if (isHbA1cGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
       const graph = buildLabGraphMessage(recentRows, 'hba1c');
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '食事活動グラフ', '予測'])];
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -1052,7 +1152,7 @@ async function handleTextMessage(event, user) {
     if (isLdlGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
       const graph = buildLabGraphMessage(recentRows, 'ldl');
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '食事活動グラフ', '予測'])];
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -1061,7 +1161,7 @@ async function handleTextMessage(event, user) {
     if (isLabGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
       const graph = buildLabGraphMessage(recentRows, 'hba1c');
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'])];
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -1079,16 +1179,18 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, prediction.text), [...prediction.quickReplies, 'グラフ']),
+        textMessageWithQuickReplies(prefixWithName(user, prediction.text), [...prediction.quickReplies, '体重グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
     }
 
     if (text === '体重推移を見たい') {
+      const weightRows = await getRecentWeightRows(user.id, 20);
+      const graph = buildWeightGraphMessage(weightRows);
       await replyMessage(
         event.replyToken,
-        prefixWithName(user, '体重グラフは、次に体重履歴保存を入れると見られるようになります。今は血液検査グラフと食事活動グラフが使えます。'),
+        textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -1097,7 +1199,7 @@ async function handleTextMessage(event, user) {
     if (text === '血液検査の流れを見たい') {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
       const graph = buildLabGraphMessage(recentRows, 'hba1c');
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '食事活動グラフ', '予測'])];
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -1234,7 +1336,7 @@ async function handleTextMessage(event, user) {
       if (text === 'できた') {
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', 'グラフ', '今日はここまで']),
+          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', '体重グラフ', 'グラフ', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -1297,7 +1399,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', 'グラフ']),
+        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', '体重グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
