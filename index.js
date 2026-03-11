@@ -228,6 +228,76 @@ function isIntakeStartCommand(text) {
   return t === '初回診断' || t === '初回診断を始める';
 }
 
+function isGraphMenuIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    'グラフ',
+    'グラフ見たい',
+    'グラフを見たい',
+    'グラフみたい',
+    '推移を見たい',
+    'データを見たい',
+    '記録を見たい',
+    '見える化',
+  ].includes(t);
+}
+
+function isEnergyGraphIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    '食事活動グラフ',
+    '食事グラフ',
+    '運動グラフ',
+    '活動グラフ',
+    '食事と運動のグラフ',
+    '食事と活動のグラフ',
+    'カロリーグラフ',
+    '摂取カロリーグラフ',
+    '消費カロリーグラフ',
+    '食事量のグラフ',
+    '運動量のグラフ',
+    '食事と運動を見たい',
+    '食事と活動を見たい',
+  ].includes(t);
+}
+
+function isHbA1cGraphIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    'hba1cグラフ',
+    'hba1c',
+    'hba1c見たい',
+    '血糖グラフ',
+    '血糖を見たい',
+    'ヘモグロビンa1cグラフ',
+  ].includes(t);
+}
+
+function isLdlGraphIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    'ldlグラフ',
+    'ldl',
+    'ldl見たい',
+    'コレステロールグラフ',
+    '悪玉コレステロールグラフ',
+    'コレステロールを見たい',
+    'ldlを見たい',
+  ].includes(t);
+}
+
+function isLabGraphIntent(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return [
+    '血液検査グラフ',
+    '血液検査のグラフ',
+    '血液グラフ',
+    '採血グラフ',
+    '血液検査を見たい',
+    '血液データを見たい',
+  ].includes(t) || isHbA1cGraphIntent(t) || isLdlGraphIntent(t);
+}
+
 function helpMessage() {
   return [
     '使い方の例です。',
@@ -919,7 +989,7 @@ async function handleTextMessage(event, user) {
         await replyMessage(
           event.replyToken,
           [
-            `読み取れた日付をまとめて保存しました。`,
+            '読み取れた日付をまとめて保存しました。',
             count ? `保存件数: ${count}件` : null,
             '血液検査グラフでも確認できます。',
           ].filter(Boolean).join('\n'),
@@ -946,16 +1016,22 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (text === 'グラフ') {
+    if (isGraphMenuIntent(text)) {
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, '見たいグラフを選んでください。'), buildGraphMenuQuickReplies()),
+        textMessageWithQuickReplies(
+          prefixWithName(
+            user,
+            '見たいグラフを選んでください。\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'
+          ),
+          buildGraphMenuQuickReplies()
+        ),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
     }
 
-    if (text === '食事活動グラフ') {
+    if (isEnergyGraphIntent(text)) {
       const dayRows = await getSevenDayEnergyRows(user.id);
       const graph = buildEnergyGraphMessage(dayRows);
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['予測', '血液検査グラフ', '今日はここまで'])];
@@ -964,10 +1040,27 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (text === '血液検査グラフ' || text === 'HbA1cグラフ' || text === 'LDLグラフ') {
+    if (isHbA1cGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
-      const metric = text === 'LDLグラフ' ? 'ldl' : 'hba1c';
-      const graph = buildLabGraphMessage(recentRows, metric);
+      const graph = buildLabGraphMessage(recentRows, 'hba1c');
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '食事活動グラフ', '予測'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isLdlGraphIntent(text)) {
+      const recentRows = await getRecentLabResults(supabase, user.id, 12);
+      const graph = buildLabGraphMessage(recentRows, 'ldl');
+      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '食事活動グラフ', '予測'])];
+      if (graph.messages.length) messages.push(...graph.messages);
+      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isLabGraphIntent(text)) {
+      const recentRows = await getRecentLabResults(supabase, user.id, 12);
+      const graph = buildLabGraphMessage(recentRows, 'hba1c');
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
