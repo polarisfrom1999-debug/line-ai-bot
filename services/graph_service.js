@@ -24,8 +24,99 @@ function toNumberOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
+}
+
 function buildGraphMenuQuickReplies() {
   return ['体重グラフ', '血液検査グラフ', 'HbA1cグラフ', 'LDLグラフ', '食事活動グラフ', '予測'];
+}
+
+function getTrendDirection(values) {
+  const nums = (values || []).map(toNumberOrNull).filter((v) => v !== null);
+  if (nums.length < 3) return 'insufficient';
+
+  const first = nums[0];
+  const last = nums[nums.length - 1];
+  const diff = last - first;
+
+  if (Math.abs(diff) < 0.15) return 'flat';
+  if (diff > 0) return 'up';
+  return 'down';
+}
+
+function describeWeightTrend(rows) {
+  const values = rows.map((r) => toNumberOrNull(r?.weight_kg)).filter((v) => v !== null);
+  const trend = getTrendDirection(values.slice(-5));
+
+  if (trend === 'down') {
+    return '直近はゆるやかに下がる流れです。焦らずこのペースを大事にしていきましょう。';
+  }
+  if (trend === 'up') {
+    return '直近は少し上向きです。数日単位の揺れもあるので、食事と活動の流れを一緒に見るのがおすすめです。';
+  }
+  if (trend === 'flat') {
+    return '直近は大きく崩れず横ばいです。まずは安定していること自体が前進です。';
+  }
+  return '体重の流れは、もう少し記録が増えると読みやすくなります。';
+}
+
+function describeLabTrend(label, rows, key) {
+  const values = rows.map((r) => toNumberOrNull(r?.[key])).filter((v) => v !== null);
+  const trend = getTrendDirection(values.slice(-5));
+
+  if (trend === 'down') {
+    return `${label}は直近では下がる流れです。無理のない積み重ねが数字にも出ている可能性があります。`;
+  }
+  if (trend === 'up') {
+    return `${label}は直近では少し上向きです。1回だけで決めつけず、食事・活動・次回検査も合わせて見ていきましょう。`;
+  }
+  if (trend === 'flat') {
+    return `${label}は大きく崩れず安定しています。まずはこの安定を保てると良い流れです。`;
+  }
+  return `${label}は、もう少し記録が増えると流れを読みやすくなります。`;
+}
+
+function describeEnergyTrend(rows) {
+  const normalized = rows.map((row) => ({
+    intake: toNumberOrNull(row?.intake_kcal) || 0,
+    activity: toNumberOrNull(row?.activity_kcal) || 0,
+    net: toNumberOrNull(row?.net_kcal) || 0,
+  }));
+
+  if (!normalized.length) {
+    return '食事と活動の記録が増えると、流れがもっと読みやすくなります。';
+  }
+
+  const avgIntake = normalized.reduce((sum, row) => sum + row.intake, 0) / normalized.length;
+  const avgActivity = normalized.reduce((sum, row) => sum + row.activity, 0) / normalized.length;
+  const avgNet = normalized.reduce((sum, row) => sum + row.net, 0) / normalized.length;
+
+  const comments = [];
+
+  if (avgNet > 300) {
+    comments.push('全体としては摂取がやや上回りやすい流れです。食事量か間食の見直し余地があるかもしれません。');
+  } else if (avgNet < -100) {
+    comments.push('全体としては活動がしっかり積み上がっています。無理なく続けられると良い流れです。');
+  } else {
+    comments.push('全体としては大きく崩れすぎず、バランスは極端ではありません。');
+  }
+
+  if (avgActivity < 80) {
+    comments.push('活動量はまだ伸ばせる余地があります。短い運動の積み上げでも十分意味があります。');
+  } else {
+    comments.push('活動量はある程度保てています。この安定は大きな強みです。');
+  }
+
+  if (avgIntake > 2200) {
+    comments.push('摂取量はやや高めの日が混ざっていそうです。食事記録と一緒に見ると整えやすくなります。');
+  }
+
+  return comments.join('\n');
 }
 
 function buildLabGraphMessage(rows, metric = 'hba1c') {
@@ -56,7 +147,7 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
   const trendText = (() => {
     if (latestValue === null) return '';
     if (prevValue === null) return '前回比較はまだありません。';
-    const diff = Math.round((latestValue - prevValue) * 100) / 100;
+    const diff = round2(latestValue - prevValue);
     if (diff === 0) return '前回から変化はありません。';
     if (diff > 0) return `前回より ${diff} 上がっています。`;
     return `前回より ${Math.abs(diff)} 下がっています。`;
@@ -69,12 +160,15 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
     return `・${date}: ${value}`;
   }).filter(Boolean);
 
+  const insight = describeLabTrend(label, sorted, key);
+
   return {
     text: [
       `${label}の推移です。`,
       '',
       `最新: ${formatDateOnly(latest?.measured_at)} / ${latestValue}`,
       trendText,
+      insight,
       '',
       '履歴:',
       ...lines,
@@ -103,11 +197,13 @@ function buildEnergyGraphMessage(dayRows) {
 
   const totalIntake = normalized.reduce((sum, row) => sum + row.intake_kcal, 0);
   const totalActivity = normalized.reduce((sum, row) => sum + row.activity_kcal, 0);
-  const avgNet = Math.round((normalized.reduce((sum, row) => sum + row.net_kcal, 0) / normalized.length) * 10) / 10;
+  const avgNet = round1(normalized.reduce((sum, row) => sum + row.net_kcal, 0) / normalized.length);
 
   const lines = normalized.map((row) => {
     return `・${row.date} / 摂取 ${row.intake_kcal} kcal / 活動 ${row.activity_kcal} kcal / 差分 ${row.net_kcal} kcal`;
   });
+
+  const insight = describeEnergyTrend(normalized);
 
   return {
     text: [
@@ -116,6 +212,7 @@ function buildEnergyGraphMessage(dayRows) {
       `合計摂取: ${Math.round(totalIntake)} kcal`,
       `合計活動: ${Math.round(totalActivity)} kcal`,
       `1日平均差分: ${avgNet} kcal`,
+      insight,
       '',
       '履歴:',
       ...lines,
@@ -151,7 +248,7 @@ function buildWeightGraphMessage(rows) {
 
   const dayDiffText = (() => {
     if (latestValue === null || prevValue === null) return '前回比較はまだありません。';
-    const diff = Math.round((latestValue - prevValue) * 10) / 10;
+    const diff = round1(latestValue - prevValue);
     if (diff === 0) return '前回から変化はありません。';
     if (diff > 0) return `前回より ${diff}kg 増えています。`;
     return `前回より ${Math.abs(diff)}kg 減っています。`;
@@ -159,7 +256,7 @@ function buildWeightGraphMessage(rows) {
 
   const totalDiffText = (() => {
     if (latestValue === null || firstValue === null || sorted.length < 2) return null;
-    const diff = Math.round((latestValue - firstValue) * 10) / 10;
+    const diff = round1(latestValue - firstValue);
     if (diff === 0) return '初回からの変化はありません。';
     if (diff > 0) return `初回から ${diff}kg 増えています。`;
     return `初回から ${Math.abs(diff)}kg 減っています。`;
@@ -172,6 +269,8 @@ function buildWeightGraphMessage(rows) {
     return `・${date}: ${value}kg`;
   }).filter(Boolean);
 
+  const insight = describeWeightTrend(sorted);
+
   return {
     text: [
       '体重の推移です。',
@@ -179,6 +278,7 @@ function buildWeightGraphMessage(rows) {
       `最新: ${formatDateOnly(latest?.measured_at)} / ${latestValue}kg`,
       dayDiffText,
       totalDiffText,
+      insight,
       '',
       '履歴:',
       ...lines,
