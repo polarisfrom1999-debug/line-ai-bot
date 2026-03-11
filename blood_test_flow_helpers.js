@@ -1,370 +1,272 @@
-const LAB_ITEM_LABELS = {
-  measured_at: '日付',
-  hba1c: 'HbA1c',
-  fasting_glucose: '血糖',
-  ldl: 'LDL',
-  hdl: 'HDL',
-  triglycerides: 'TG',
-  ast: 'AST',
-  alt: 'ALT',
-  ggt: 'γGTP',
-  uric_acid: '尿酸',
-  creatinine: 'クレアチニン',
-};
+'use strict';
 
-function formatDateOnly(value) {
-  if (!value) return '';
-  return String(value).slice(0, 10).replace(/-/g, '/');
+/**
+ * 血液検査の複数日読み取り結果を、一時保持・正規化・一括保存前プレビューするヘルパー
+ */
+
+const LAB_PENDING_TTL_MS = 1000 * 60 * 30; // 30分
+
+// メモリ保持
+const pendingLabSessions = new Map();
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
-function normalizeDateInput(input) {
-  const s = String(input || '').trim().replace(/\./g, '/').replace(/-/g, '/');
-  const m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-  if (!m) return null;
-  const yyyy = m[1];
-  const mm = m[2].padStart(2, '0');
-  const dd = m[3].padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+function isValidDateString(v) {
+  if (!v || typeof v !== 'string') return false;
+  const s = v.trim();
+  if (!s) return false;
+  const d = new Date(s);
+  return !Number.isNaN(d.getTime());
 }
 
-function normalizeNumberInput(input) {
-  const s = String(input || '')
-    .trim()
-    .replace(/,/g, '')
-    .replace(/\s*[A-Za-zＨＬHL]+\s*$/u, '');
-  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
-  return s;
+function normalizeExamDate(value) {
+  if (!value) return null;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  let s = String(value).trim();
+  if (!s) return null;
+
+  s = s
+    .replace(/[年/.]/g, '-')
+    .replace(/月/g, '-')
+    .replace(/日/g, '')
+    .replace(/\s+/g, '')
+    .replace(/--+/g, '-');
+
+  // YYYY-M-D っぽいものを YYYY-MM-DD へ
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const yyyy = m[1];
+    const mm = String(Number(m[2])).padStart(2, '0');
+    const dd = String(Number(m[3])).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  if (isValidDateString(s)) {
+    return new Date(s).toISOString().slice(0, 10);
+  }
+
+  return null;
 }
 
 function toNumberOrNull(v) {
-  if (v == null || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+
+  const s = String(v).trim().replace(/,/g, '');
+  if (!s) return null;
+
+  // 例: "123 mg/dL" から数字だけ拾う
+  const m = s.match(/-?\d+(\.\d+)?/);
+  if (!m) return null;
+
+  const num = Number(m[0]);
+  return Number.isFinite(num) ? num : null;
 }
 
-function renderPanelSummary(panelDate, items) {
-  const lines = [];
-  lines.push('血液検査の内容を読み取りました。');
-  lines.push('少し見えにくい所もあるので、まずは一緒に確認させてくださいね。');
-  lines.push('');
-  lines.push('【検査日】');
-  lines.push(formatDateOnly(panelDate));
-  lines.push('');
-  lines.push('【読み取れた項目】');
-
-  const order = [
-    'hba1c',
-    'fasting_glucose',
-    'ldl',
-    'hdl',
-    'triglycerides',
-    'ast',
-    'alt',
-    'ggt',
-    'uric_acid',
-    'creatinine',
-  ];
-
-  for (const key of order) {
-    if (items?.[key] != null && items[key] !== '') {
-      lines.push(`${LAB_ITEM_LABELS[key]}: ${items[key]}`);
-    }
-  }
-
-  lines.push('');
-  lines.push('この内容でよければ保存できます。');
-  lines.push('間違いがあれば修正したい項目を選んでください。');
-  return lines.join('\n');
-}
-
-function buildLabQuickReplyMain(items = {}) {
-  const labels = ['この内容で保存', '日付を修正'];
-
-  const itemOrder = [
-    'hba1c',
-    'fasting_glucose',
-    'ldl',
-    'hdl',
-    'triglycerides',
-    'ast',
-    'alt',
-    'ggt',
-    'uric_acid',
-    'creatinine',
-  ];
-
-  for (const key of itemOrder) {
-    if (items[key] != null && items[key] !== '') {
-      labels.push(`${LAB_ITEM_LABELS[key]}を修正`);
-    }
-  }
-
-  labels.push('他の項目を修正');
-  return labels.slice(0, 13);
-}
-
-async function createLabDraftSession(supabase, payload) {
-  const { data, error } = await supabase
-    .from('lab_import_sessions')
-    .insert(payload)
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-async function getOpenLabDraft(supabase, userId) {
-  const { data, error } = await supabase
-    .from('lab_import_sessions')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'draft')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data || null;
-}
-
-async function setActiveLabCorrection(supabase, sessionId, itemName, panelDate) {
-  const { error } = await supabase
-    .from('lab_import_sessions')
-    .update({ active_item_name: itemName, active_panel_date: panelDate })
-    .eq('id', sessionId);
-
-  if (error) throw error;
-}
-
-async function clearActiveLabCorrection(supabase, sessionId) {
-  const { error } = await supabase
-    .from('lab_import_sessions')
-    .update({ active_item_name: null, active_panel_date: null })
-    .eq('id', sessionId);
-
-  if (error) throw error;
-}
-
-async function applyLabCorrection(supabase, session, correctedValue) {
-  const itemName = session.active_item_name;
-  let panelDate = session.active_panel_date;
-
-  if (!itemName || !panelDate) {
-    throw new Error('No active correction target');
-  }
-
-  const working = JSON.parse(JSON.stringify(session.working_data_json || {}));
-  if (!working[panelDate]) working[panelDate] = {};
-
-  if (itemName === 'measured_at') {
-    const date = normalizeDateInput(correctedValue);
-    if (!date) throw new Error('INVALID_DATE');
-
-    const existing = working[panelDate];
-    delete working[panelDate];
-    working[date] = existing;
-    panelDate = date;
-  } else {
-    const num = normalizeNumberInput(correctedValue);
-    if (!num) throw new Error('INVALID_NUMBER');
-    working[panelDate][itemName] = num;
-  }
-
-  const { data, error } = await supabase
-    .from('lab_import_sessions')
-    .update({
-      working_data_json: working,
-      active_item_name: null,
-      active_panel_date: null,
-      selected_date: panelDate,
-    })
-    .eq('id', session.id)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-
-  if (itemName !== 'measured_at') {
-    await supabase.from('lab_import_items').insert({
-      session_id: session.id,
-      panel_date: panelDate,
-      item_name: itemName,
-      original_value: String((session.working_data_json?.[session.active_panel_date] || {})[itemName] ?? ''),
-      corrected_value: String(correctedValue),
-      is_corrected: true,
-    });
-  }
-
-  return data;
-}
-
-async function confirmLabDraftToResults(supabase, session, panelDate) {
-  const cleanDate = String(panelDate).slice(0, 10);
-  const items = (session.working_data_json || {})[panelDate] || (session.working_data_json || {})[cleanDate] || {};
-
+function normalizeLabRow(raw = {}) {
   const row = {
-    user_id: session.user_id,
-    measured_at: cleanDate,
-    hba1c: toNumberOrNull(items.hba1c),
-    fasting_glucose: toNumberOrNull(items.fasting_glucose),
-    ldl: toNumberOrNull(items.ldl),
-    hdl: toNumberOrNull(items.hdl),
-    triglycerides: toNumberOrNull(items.triglycerides),
-    ast: toNumberOrNull(items.ast),
-    alt: toNumberOrNull(items.alt),
-    ggt: toNumberOrNull(items.ggt),
-    uric_acid: toNumberOrNull(items.uric_acid),
-    creatinine: toNumberOrNull(items.creatinine),
-    source_image_url: session.source_image_url ?? null,
-    import_session_id: session.id,
-    is_user_confirmed: true,
-    ai_summary: 'ユーザー確認後に保存された血液検査結果です。',
+    exam_date: normalizeExamDate(raw.exam_date || raw.date || raw.measured_at),
+    height: toNumberOrNull(raw.height),
+    weight: toNumberOrNull(raw.weight),
+    bmi: toNumberOrNull(raw.bmi),
+    abdominal_circumference: toNumberOrNull(raw.abdominal_circumference || raw.waist),
+
+    systolic_bp: toNumberOrNull(raw.systolic_bp || raw.bp_high || raw.sbp),
+    diastolic_bp: toNumberOrNull(raw.diastolic_bp || raw.bp_low || raw.dbp),
+
+    ast: toNumberOrNull(raw.ast),
+    alt: toNumberOrNull(raw.alt),
+    gamma_gtp: toNumberOrNull(raw.gamma_gtp || raw.ggt || raw.gamma),
+
+    triglyceride: toNumberOrNull(raw.triglyceride || raw.tg),
+    hdl: toNumberOrNull(raw.hdl),
+    ldl: toNumberOrNull(raw.ldl),
+
+    fasting_glucose: toNumberOrNull(raw.fasting_glucose || raw.glucose || raw.bs),
+    hba1c: toNumberOrNull(raw.hba1c),
+    uric_acid: toNumberOrNull(raw.uric_acid || raw.ua),
+    creatinine: toNumberOrNull(raw.creatinine || raw.cre),
+
+    hemoglobin: toNumberOrNull(raw.hemoglobin || raw.hb),
+    hematocrit: toNumberOrNull(raw.hematocrit || raw.ht),
+    rbc: toNumberOrNull(raw.rbc),
+    wbc: toNumberOrNull(raw.wbc),
+
+    total_protein: toNumberOrNull(raw.total_protein || raw.tp),
+    albumin: toNumberOrNull(raw.albumin || raw.alb),
+    bun: toNumberOrNull(raw.bun),
+    egfr: toNumberOrNull(raw.egfr),
   };
 
-  const { data: existing, error: findError } = await supabase
-    .from('lab_results')
-    .select('id, measured_at')
-    .eq('user_id', session.user_id)
-    .gte('measured_at', `${cleanDate}T00:00:00`)
-    .lt('measured_at', `${cleanDate}T23:59:59`)
-    .limit(1)
-    .maybeSingle();
+  return row;
+}
 
-  if (findError) throw findError;
+function rowHasAnyLabValue(row) {
+  if (!row || typeof row !== 'object') return false;
+  const keys = Object.keys(row).filter((k) => k !== 'exam_date');
+  return keys.some((k) => row[k] !== null && row[k] !== undefined);
+}
 
-  if (existing?.id) {
-    const { error: updateErr } = await supabase
-      .from('lab_results')
-      .update(row)
-      .eq('id', existing.id);
-    if (updateErr) throw updateErr;
-  } else {
-    const { error: insertErr } = await supabase.from('lab_results').insert(row);
-    if (insertErr) throw insertErr;
+function buildRowSignature(row) {
+  const keys = Object.keys(row).sort();
+  return keys.map((k) => `${k}:${row[k] ?? ''}`).join('|');
+}
+
+function dedupeRows(rows = []) {
+  const seen = new Set();
+  const out = [];
+
+  for (const row of rows) {
+    if (!row || !row.exam_date) continue;
+    if (!rowHasAnyLabValue(row)) continue;
+
+    const sig = buildRowSignature(row);
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(row);
   }
 
-  const { error: sessionErr } = await supabase
-    .from('lab_import_sessions')
-    .update({
-      status: 'confirmed',
-      selected_date: cleanDate,
-      active_item_name: null,
-      active_panel_date: null,
-    })
-    .eq('id', session.id);
+  out.sort((a, b) => {
+    if (a.exam_date < b.exam_date) return -1;
+    if (a.exam_date > b.exam_date) return 1;
+    return 0;
+  });
 
-  if (sessionErr) throw sessionErr;
+  return out;
 }
 
-async function getRecentLabResults(supabase, userId, limit = 6) {
-  const { data, error } = await supabase
-    .from('lab_results')
-    .select('*')
-    .eq('user_id', userId)
-    .order('measured_at', { ascending: false })
-    .limit(limit);
-
-  if (error) throw error;
-  return data || [];
-}
-
-function compareValue(curr, prev, lowerIsBetter = true) {
-  const c = toNumberOrNull(curr);
-  const p = toNumberOrNull(prev);
-  if (c == null || p == null) return null;
-  if (c === p) return 'same';
-
-  if (lowerIsBetter) {
-    return c < p ? 'improved' : 'worsened';
-  }
-  return c > p ? 'improved' : 'worsened';
-}
-
-function buildPostSaveComparisonMessage(savedRow, recentRows) {
-  const currentDate = String(savedRow?.measured_at || '').slice(0, 10);
-
-  const previous = (recentRows || []).find(
-    (r) => String(r.measured_at || '').slice(0, 10) !== currentDate
+function normalizeRows(rows = []) {
+  return dedupeRows(
+    rows
+      .map((r) => normalizeLabRow(r))
+      .filter((r) => r.exam_date && rowHasAnyLabValue(r))
   );
+}
+
+function getPendingLabSession(userId) {
+  if (!userId) return null;
+
+  const item = pendingLabSessions.get(userId);
+  if (!item) return null;
+
+  if (item.expires_at && new Date(item.expires_at).getTime() < Date.now()) {
+    pendingLabSessions.delete(userId);
+    return null;
+  }
+
+  return item;
+}
+
+function setPendingLabSession(userId, payload) {
+  if (!userId) return null;
+
+  const session = {
+    import_session_id: payload.import_session_id || null,
+    source_image_url: payload.source_image_url || null,
+    ai_summary: payload.ai_summary || null,
+    rows: normalizeRows(payload.rows || []),
+    created_at: nowIso(),
+    updated_at: nowIso(),
+    expires_at: new Date(Date.now() + LAB_PENDING_TTL_MS).toISOString(),
+  };
+
+  pendingLabSessions.set(userId, session);
+  return session;
+}
+
+function mergePendingLabSession(userId, payload) {
+  if (!userId) return null;
+
+  const current = getPendingLabSession(userId);
+
+  if (!current) {
+    return setPendingLabSession(userId, payload);
+  }
+
+  const merged = {
+    ...current,
+    import_session_id: payload.import_session_id || current.import_session_id || null,
+    source_image_url: payload.source_image_url || current.source_image_url || null,
+    ai_summary: payload.ai_summary || current.ai_summary || null,
+    rows: normalizeRows([...(current.rows || []), ...(payload.rows || [])]),
+    updated_at: nowIso(),
+    expires_at: new Date(Date.now() + LAB_PENDING_TTL_MS).toISOString(),
+  };
+
+  pendingLabSessions.set(userId, merged);
+  return merged;
+}
+
+function clearPendingLabSession(userId) {
+  if (!userId) return;
+  pendingLabSessions.delete(userId);
+}
+
+function isLabSaveIntent(text = '') {
+  const s = String(text || '').trim();
+  if (!s) return false;
+
+  return [
+    '保存',
+    '一括保存',
+    'まとめて保存',
+    '全部保存',
+    'この内容で保存',
+    'はい保存',
+    'これで保存',
+    '確定',
+    '登録',
+  ].some((kw) => s.includes(kw));
+}
+
+function isLabCancelIntent(text = '') {
+  const s = String(text || '').trim();
+  if (!s) return false;
+
+  return [
+    'キャンセル',
+    '保存しない',
+    'やめる',
+    '破棄',
+    '取り消し',
+  ].some((kw) => s.includes(kw));
+}
+
+function buildPendingLabPreviewMessage(session) {
+  const rows = session?.rows || [];
+  if (!rows.length) {
+    return '血液検査の保存候補が見つかりませんでした。';
+  }
+
+  const dates = rows.map((r) => r.exam_date);
+  const first = dates[0];
+  const last = dates[dates.length - 1];
 
   const lines = [];
-  lines.push('保存しました。これで今後の変化も見やすくなりますね。');
+  lines.push(`血液検査を ${rows.length}件 読み取りました。`);
+  lines.push(`対象日: ${first}${first !== last ? ` 〜 ${last}` : ''}`);
   lines.push('');
-  lines.push(`前回: ${previous ? formatDateOnly(previous.measured_at) : '比較データなし'}`);
-  lines.push(`今回: ${formatDateOnly(savedRow.measured_at)}`);
-  lines.push('');
+  lines.push('保存してよければ「一括保存」と送ってください。');
+  lines.push('やめる場合は「キャンセル」で破棄できます。');
 
-  if (!previous) {
-    lines.push('前回と比較できる主要項目はまだ少ないですが、データはしっかり蓄積されています。');
-    return lines.join('\n');
-  }
-
-  const comments = [];
-
-  const rules = [
-    { key: 'hba1c', label: 'HbA1c', lowerIsBetter: true },
-    { key: 'fasting_glucose', label: '血糖', lowerIsBetter: true },
-    { key: 'ldl', label: 'LDL', lowerIsBetter: true },
-    { key: 'hdl', label: 'HDL', lowerIsBetter: false },
-    { key: 'triglycerides', label: 'TG', lowerIsBetter: true },
-    { key: 'uric_acid', label: '尿酸', lowerIsBetter: true },
-    { key: 'creatinine', label: 'クレアチニン', lowerIsBetter: true },
-  ];
-
-  for (const rule of rules) {
-    const curr = toNumberOrNull(savedRow?.[rule.key]);
-    const prev = toNumberOrNull(previous?.[rule.key]);
-    if (curr == null || prev == null) continue;
-
-    const result = compareValue(curr, prev, rule.lowerIsBetter);
-    if (result === 'improved') {
-      comments.push(`${rule.label}は ${prev} → ${curr} で良い変化が見えています。`);
-    } else if (result === 'worsened') {
-      comments.push(`${rule.label}は ${prev} → ${curr} でした。ここは次回また一緒に流れを見ていきましょう。`);
-    } else {
-      comments.push(`${rule.label}は ${prev} → ${curr} で大きく崩さず維持できています。`);
-    }
-  }
-
-  if (!comments.length) {
-    lines.push('前回と比較できる主要項目はまだ少ないですが、データはしっかり蓄積されています。');
-    return lines.join('\n');
-  }
-
-  lines.push(...comments.slice(0, 4));
-  return lines.join('\n');
-}
-
-function buildLabHistoryText(rows, key, label) {
-  const validRows = (rows || [])
-    .filter((row) => row && row[key] != null)
-    .sort((a, b) => String(a.measured_at).localeCompare(String(b.measured_at)));
-
-  if (!validRows.length) {
-    return `【${label}の推移】\nまだデータがありません。`;
-  }
-
-  const lines = [`【${label}の推移】`];
-  for (const row of validRows) {
-    lines.push(`${formatDateOnly(row.measured_at)}: ${row[key]}`);
-  }
   return lines.join('\n');
 }
 
 module.exports = {
-  LAB_ITEM_LABELS,
-  formatDateOnly,
-  normalizeDateInput,
-  normalizeNumberInput,
-  renderPanelSummary,
-  buildLabQuickReplyMain,
-  createLabDraftSession,
-  getOpenLabDraft,
-  setActiveLabCorrection,
-  clearActiveLabCorrection,
-  applyLabCorrection,
-  confirmLabDraftToResults,
-  getRecentLabResults,
-  buildPostSaveComparisonMessage,
-  buildLabHistoryText,
+  normalizeExamDate,
+  normalizeLabRow,
+  normalizeRows,
+  getPendingLabSession,
+  setPendingLabSession,
+  mergePendingLabSession,
+  clearPendingLabSession,
+  isLabSaveIntent,
+  isLabCancelIntent,
+  buildPendingLabPreviewMessage,
 };
