@@ -114,25 +114,36 @@ const app = express();
 const PORT = env.PORT;
 const TZ = env.TZ;
 
-const AI_PROMPT_PATH = './prompts/ai_ushigome_prompt.txt';
-const AI_MEMORY_PROMPT_PATH = './prompts/ai_ushigome_memory_prompt.txt';
+const AI_PROMPT_PATHS = [
+  './prompts/ai_ushigome_prompt.txt',
+  './ai_ushigome_prompt.txt',
+];
+const AI_MEMORY_PROMPT_PATHS = [
+  './prompts/ai_ushigome_memory_prompt.txt',
+  './ai_ushigome_memory_prompt.txt',
+];
 
 const recentMealDrafts = new Map();
 const recentSupportContexts = new Map();
 
-function readTextFileOrFallback(filePath, fallbackLines) {
-  try {
-    if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, 'utf8');
+function readTextFileOrFallback(filePaths, fallbackLines) {
+  const candidates = Array.isArray(filePaths) ? filePaths : [filePaths];
+
+  for (const filePath of candidates) {
+    try {
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath, 'utf8');
+      }
+    } catch (error) {
+      console.error(`⚠️ Failed to read ${filePath}:`, error?.message || error);
     }
-  } catch (error) {
-    console.error(`⚠️ Failed to read ${filePath}:`, error?.message || error);
   }
+
   return fallbackLines.join('\n');
 }
 
 function loadAiPrompt() {
-  return readTextFileOrFallback(AI_PROMPT_PATH, [
+  return readTextFileOrFallback(AI_PROMPT_PATHS, [
     'あなたはAI牛込です。',
     'ポラリス整骨院の牛込先生の雰囲気を持ち、優しく聞き役として寄り添います。',
     '共感、復唱、状況整理、気づき、小さな提案の順番を大切にしてください。',
@@ -142,26 +153,12 @@ function loadAiPrompt() {
 }
 
 function loadAiMemoryPrompt() {
-  return readTextFileOrFallback(AI_MEMORY_PROMPT_PATH, [
-    'あなたは会話記録から、今後の健康伴走に役立つ情報だけを抽出する記録アシスタントです。',
+  return readTextFileOrFallback(AI_MEMORY_PROMPT_PATHS, [
+    'あなたは会話記録から、今後の伴走に役立つ情報だけを抽出する記憶アシスタントです。',
     '利用者への返答はしません。必ずJSONだけを返してください。',
-    '抽出対象: diet, exercise, pain, symptoms, mood, worries, goals, habits, obstacles, support_preferences, follow_up_needed, medical_risk, notable_events',
-    '会話に明示された情報だけを抽出し、推測しすぎず、曖昧なら空配列にしてください。',
-    'JSON以外は返さないでください。',
     '{',
-    '  "diet": [],',
-    '  "exercise": [],',
-    '  "pain": [],',
-    '  "symptoms": [],',
-    '  "mood": [],',
-    '  "worries": [],',
-    '  "goals": [],',
-    '  "habits": [],',
-    '  "obstacles": [],',
-    '  "support_preferences": [],',
-    '  "follow_up_needed": [],',
-    '  "medical_risk": [],',
-    '  "notable_events": []',
+    '  "should_save": false,',
+    '  "memories": []',
     '}',
   ]);
 }
@@ -537,6 +534,10 @@ function isMealDesireOrFeelingText(text) {
     '食欲が止まらない',
     '食欲がすごい',
     '食欲あります',
+    '食べすぎそう',
+    '食べ過ぎそう',
+    '食べすぎたくなる',
+    '甘いものが止まらない',
   ];
 
   if (patterns.some((p) => t.includes(p))) {
@@ -548,6 +549,20 @@ function isMealDesireOrFeelingText(text) {
   }
 
   return false;
+}
+
+function isExplicitMealGuideIntent(text) {
+  const t = String(text || '').trim();
+  return [
+    '食事を記録したい',
+    '食事記録したい',
+    '食事を登録したい',
+    '食事の記録方法',
+    '食事の保存方法',
+    '食事を入力したい',
+    '食べたものを記録したい',
+    '飲んだものを記録したい',
+  ].includes(t);
 }
 
 function sumBy(arr, key) {
@@ -591,12 +606,6 @@ function isMissingRelationError(error) {
   return msg.includes('does not exist') || msg.includes('relation') || msg.includes('schema cache');
 }
 
-function toArray(value) {
-  if (Array.isArray(value)) return value.filter(Boolean);
-  if (value == null) return [];
-  return [value];
-}
-
 function trimMemoryText(value, max = 300) {
   return safeText(typeof value === 'string' ? value : JSON.stringify(value), max);
 }
@@ -636,60 +645,43 @@ function dedupeMemoryRows(rows) {
 }
 
 function normalizeMemoryPayload(payload) {
+  const shouldSave = Boolean(payload?.should_save);
+  const memories = Array.isArray(payload?.memories)
+    ? payload.memories.filter((item) => item && typeof item === 'object')
+    : [];
+
   return {
-    diet: toArray(payload?.diet),
-    exercise: toArray(payload?.exercise),
-    pain: toArray(payload?.pain),
-    symptoms: toArray(payload?.symptoms),
-    mood: toArray(payload?.mood),
-    worries: toArray(payload?.worries),
-    goals: toArray(payload?.goals),
-    habits: toArray(payload?.habits),
-    obstacles: toArray(payload?.obstacles),
-    support_preferences: toArray(payload?.support_preferences),
-    follow_up_needed: toArray(payload?.follow_up_needed),
-    medical_risk: toArray(payload?.medical_risk),
-    notable_events: toArray(payload?.notable_events),
+    should_save: shouldSave && memories.length > 0,
+    memories: memories
+      .map((item) => ({
+        memory_type: safeText(item.memory_type || '', 80),
+        content: trimMemoryText(item.content, 400),
+        detail_json: item.detail_json && typeof item.detail_json === 'object' ? item.detail_json : {},
+      }))
+      .filter((item) => item.memory_type && item.content),
   };
 }
 
 function buildMemoryRows(user, payload, sourceText, aiReply) {
   const normalized = normalizeMemoryPayload(payload);
   const nowIso = toIsoStringInTZ(new Date(), TZ);
-  const rows = [];
 
-  const pushRows = (memoryType, values) => {
-    values.forEach((value) => {
-      const content = trimMemoryText(value, 400);
-      if (!content) return;
-      rows.push({
-        user_id: user.id,
-        line_user_id: user.line_user_id,
-        memory_type: memoryType,
-        content,
-        detail_json: typeof value === 'object' ? value : { text: value },
-        source_text: safeText(sourceText, 1000),
-        assistant_reply: safeText(aiReply, 1000),
-        created_at: nowIso,
-      });
-    });
-  };
+  if (!normalized.should_save || !normalized.memories.length) {
+    return [];
+  }
 
-  pushRows('diet', normalized.diet);
-  pushRows('exercise', normalized.exercise);
-  pushRows('pain', normalized.pain);
-  pushRows('symptoms', normalized.symptoms);
-  pushRows('mood', normalized.mood);
-  pushRows('worries', normalized.worries);
-  pushRows('goals', normalized.goals);
-  pushRows('habits', normalized.habits);
-  pushRows('obstacles', normalized.obstacles);
-  pushRows('support_preferences', normalized.support_preferences);
-  pushRows('follow_up_needed', normalized.follow_up_needed);
-  pushRows('medical_risk', normalized.medical_risk);
-  pushRows('notable_events', normalized.notable_events);
-
-  return dedupeMemoryRows(rows);
+  return dedupeMemoryRows(
+    normalized.memories.map((memory) => ({
+      user_id: user.id,
+      line_user_id: user.line_user_id,
+      memory_type: memory.memory_type,
+      content: memory.content,
+      detail_json: memory.detail_json || {},
+      source_text: safeText(sourceText, 1000),
+      assistant_reply: safeText(aiReply, 1000),
+      created_at: nowIso,
+    }))
+  );
 }
 
 async function getRecentConversationMemories(userId, limit = 30) {
@@ -724,7 +716,7 @@ function splitMemoryContext(memories) {
     const content = trimMemoryText(row.content, 160);
     if (!content) continue;
 
-    if (type === 'follow_up_needed') {
+    if (type === 'follow_up_hint') {
       if (!followUps.some((x) => isMemoryContentNear(x, content))) {
         followUps.push(content);
       }
@@ -756,27 +748,65 @@ function buildMemorySummary(memories) {
   const { followUps, grouped } = splitMemoryContext(memories);
 
   const labels = {
-    diet: '食事傾向',
-    exercise: '運動',
-    pain: '痛み',
-    symptoms: '症状',
-    mood: '気分',
-    worries: '悩み',
-    goals: '目標',
-    habits: '習慣',
-    obstacles: 'つまずき',
-    support_preferences: '合う声かけ',
-    medical_risk: '医療注意',
-    notable_events: '印象的な出来事',
+    goal: '目標',
+    concern: '気がかり',
+    anxiety: '不安',
+    mood_pattern: '気分の傾向',
+    craving_pattern: '食欲の傾向',
+    snacking_pattern: '間食傾向',
+    eating_pattern: '食習慣',
+    routine_pattern: '生活リズム',
+    exercise_pattern: '運動傾向',
+    pain_pattern: '痛み傾向',
+    symptom_pattern: '症状傾向',
+    medical_attention: '医療注意',
+    motivation_barrier: 'やる気の壁',
+    continuation_barrier: '継続の壁',
+    lifestyle_context: '生活背景',
+    work_context: '仕事背景',
+    family_context: '家庭背景',
+    emotional_trigger: '気持ちの引き金',
+    helpful_support_style: '合う声かけ',
+    disliked_support_style: '合わない声かけ',
+    value: '大切にしていること',
+    preference: '好み',
+    personality_tendency: '性格傾向',
+    sleep_pattern: '睡眠傾向',
+    time_of_day_pattern: '時間帯傾向',
     other: 'その他',
   };
 
+  const preferredOrder = [
+    'goal',
+    'concern',
+    'anxiety',
+    'craving_pattern',
+    'eating_pattern',
+    'exercise_pattern',
+    'pain_pattern',
+    'continuation_barrier',
+    'helpful_support_style',
+    'time_of_day_pattern',
+    'work_context',
+    'family_context',
+    'medical_attention',
+  ];
+
   const memoryLines = [];
+  const handled = new Set();
+
+  for (const type of preferredOrder) {
+    const items = grouped.get(type);
+    if (!items || !items.length) continue;
+    const label = labels[type] || type;
+    memoryLines.push(`- ${label}: ${items.slice(0, 2).join(' / ')}`);
+    handled.add(type);
+  }
 
   for (const [type, items] of grouped.entries()) {
-    if (!items.length) continue;
+    if (!items.length || handled.has(type)) continue;
     const label = labels[type] || type;
-    memoryLines.push(`- ${label}: ${items.slice(0, 3).join(' / ')}`);
+    memoryLines.push(`- ${label}: ${items.slice(0, 2).join(' / ')}`);
   }
 
   return {
@@ -802,11 +832,11 @@ async function extractConversationMemory(user, userText, aiReply) {
     ].join('\n');
 
     const raw = await generateTextOnly(prompt, 0.1);
-    const parsed = safeParseJson(raw, {});
+    const parsed = safeParseJson(raw, { should_save: false, memories: [] });
     return normalizeMemoryPayload(parsed);
   } catch (error) {
     console.error('⚠️ extractConversationMemory failed:', error?.message || error);
-    return normalizeMemoryPayload({});
+    return normalizeMemoryPayload({ should_save: false, memories: [] });
   }
 }
 
@@ -850,6 +880,77 @@ async function rememberInteraction(user, userText, aiReply) {
   } catch (error) {
     console.error('⚠️ rememberInteraction failed:', error?.message || error);
   }
+}
+
+function normalizeAiReplyText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function countQuestions(text) {
+  const matches = String(text || '').match(/[？?]/g);
+  return matches ? matches.length : 0;
+}
+
+function limitReplyQuestions(text, maxQuestions = 1) {
+  if (countQuestions(text) <= maxQuestions) return text;
+
+  let seen = 0;
+  return String(text || '').replace(/[？?]/g, (mark) => {
+    seen += 1;
+    return seen <= maxQuestions ? mark : '。';
+  });
+}
+
+function cleanupAiPhrases(text) {
+  const replacements = [
+    [/報告ありがとうございます/g, '教えてもらえて助かります'],
+    [/素晴らしいです/g, 'いいですね'],
+    [/引き続き頑張りましょう/g, 'また少しずつ整えていきましょう'],
+    [/無理せず頑張ってください/g, '今日は無理を広げすぎないでいきましょう'],
+    [/お大事にしてください/g, '今日はいたわりながらいきましょう'],
+    [/何よりです/g, 'そこは大きいです'],
+  ];
+
+  let out = String(text || '');
+  for (const [pattern, replacement] of replacements) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+function trimReplyLength(text, max = 420) {
+  const normalized = normalizeAiReplyText(text);
+  if (normalized.length <= max) return normalized;
+
+  const firstBreak = normalized.indexOf('\n');
+  if (firstBreak > 0 && firstBreak < max) {
+    return normalized.slice(0, firstBreak).trim();
+  }
+
+  const cut = normalized.slice(0, max);
+  const lastPunc = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('！'), cut.lastIndexOf('？'), cut.lastIndexOf('\n'));
+  if (lastPunc >= 40) {
+    return cut.slice(0, lastPunc + 1).trim();
+  }
+  return cut.trim();
+}
+
+function postProcessAiReply(user, rawReply) {
+  let text = normalizeAiReplyText(rawReply);
+  text = cleanupAiPhrases(text);
+  text = limitReplyQuestions(text, 1);
+  text = trimReplyLength(text, 420);
+  text = safeText(text, 600);
+
+  if (!text) {
+    text = '今日はそんな感じなんですね。ここからまた整えていきましょう。';
+  }
+
+  return prefixWithName(user, text);
 }
 
 async function getTodayEnergyTotals(userId) {
@@ -975,26 +1076,30 @@ async function defaultChatReply(user, userText) {
     '',
     '【今回の返答ルール】',
     '- 相手の言葉の中から最低1つ具体的に拾う',
+    '- 会話が主役。迷ったら記録や分析より会話を優先する',
+    '- 欲求、弱音、相談、雑談はまず自然会話で受ける',
+    '- 記録が必要そうでも、返答は先に自然会話から入る',
     '- AIっぽい定型文を避ける',
     '- 必要なら短く提案する',
     '- 雑談も自然に返す',
     '- 相手の名前は毎回呼ばない',
     '- 同じ返答の中で名前を繰り返さない',
     '- 質問は多くても1つまでにする',
+    '- 質問しなくても成立するなら質問しない',
     '- 1回で励まし、助言、質問を詰め込みすぎない',
     '- LINEでは少し余白のある短めの返答を優先する',
     '- 「何よりです」「嬉しいな」「よく分かりますよ」を多用しない',
     '- きれいにまとめすぎず、自然な会話を優先する',
     '- 必要なら以前の話題に軽く触れてよい',
     '- ただし毎回すべての過去情報を持ち出さない',
-    '- follow_up_needed があれば自然に最優先で活かす',
+    '- follow_up_hint があれば自然に最優先で活かす',
     '- 痛みや不調は不安を煽らず、危険なら受診もやさしくすすめる',
     '',
     `利用者メッセージ: ${userText}`,
   ].filter(Boolean).join('\n');
 
-  const reply = await generateTextOnly(prompt, 0.7);
-  return prefixWithName(user, safeText(reply, 1800) || 'ありがとうございます。もう少し詳しく教えてくださいね。');
+  const rawReply = await generateTextOnly(prompt, 0.8);
+  return postProcessAiReply(user, rawReply);
 }
 
 function buildPainSituationResponse(text, area = '全身') {
@@ -1936,7 +2041,7 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (text.includes('食事') || text.includes('食べた') || text.includes('飲んだ')) {
+    if (isExplicitMealGuideIntent(text)) {
       await replyMessage(event.replyToken, buildMealTextGuide(), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
