@@ -105,7 +105,6 @@ const {
   listRecentDatesYmd,
   buildDayRangeIsoInTZ,
   formatJapaneseDateInTZ,
-  formatJapaneseDateTimeInTZ,
   formatTimeHmInTZ,
   getWeekdayJaInTZ,
 } = require('./utils/dates');
@@ -361,7 +360,11 @@ function isWeightGraphIntent(text) {
 }
 
 function isCurrentDateTimeQuestion(text) {
-  const t = String(text || '').trim().toLowerCase();
+  const t = String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[？?。！!、]/g, '')
+    .replace(/\s+/g, '');
 
   const patterns = [
     '今日は何月何日',
@@ -373,6 +376,15 @@ function isCurrentDateTimeQuestion(text) {
     'いま何時',
     '今何時ですか',
     'いま何時ですか',
+    '今は何時',
+    'いまは何時',
+    '今は何時ですか',
+    'いまは何時ですか',
+    '今何時何分',
+    'いま何時何分',
+    '今は何時何分',
+    'いまは何時何分',
+    '何時何分',
     '現在時刻',
     '今日の日付',
     '今日の日時',
