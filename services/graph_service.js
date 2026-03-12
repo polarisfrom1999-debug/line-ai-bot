@@ -18,6 +18,14 @@ function formatDateOnly(value) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+function formatShortDate(value) {
+  const full = formatDateOnly(value);
+  if (!full) return '';
+  const m = full.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return full;
+  return `${m[2]}/${m[3]}`;
+}
+
 function toNumberOrNull(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -50,8 +58,9 @@ function getTrendDirection(values) {
 }
 
 function buildQuickChartUrl(chartConfig, width = 900, height = 520) {
-  const encoded = encodeURIComponent(JSON.stringify(chartConfig));
-  return `https://quickchart.io/chart?width=${width}&height=${height}&devicePixelRatio=2&backgroundColor=white&c=${encoded}`;
+  const json = JSON.stringify(chartConfig);
+  const encoded = encodeURIComponent(json);
+  return `https://quickchart.io/chart?width=${width}&height=${height}&devicePixelRatio=2&format=png&c=${encoded}`;
 }
 
 function buildLineImageMessage(url) {
@@ -75,40 +84,23 @@ function buildLineChartImage(title, labels, values, yLabel = '') {
           label: title,
           data: safeValues,
           fill: false,
+          borderWidth: 2,
+          pointRadius: 3,
           tension: 0.25,
-          borderWidth: 3,
-          pointRadius: 4,
-          pointHoverRadius: 5,
         },
       ],
     },
     options: {
-      responsive: true,
       plugins: {
-        legend: {
-          display: true,
-        },
-        title: {
-          display: true,
-          text: title,
-          font: {
-            size: 20,
-          },
-        },
+        title: { display: true, text: title },
+        legend: { display: true },
       },
       scales: {
         y: {
-          beginAtZero: false,
-          title: {
-            display: !!yLabel,
-            text: yLabel,
-          },
+          title: { display: !!yLabel, text: yLabel },
         },
         x: {
-          ticks: {
-            maxRotation: 0,
-            minRotation: 0,
-          },
+          ticks: { maxRotation: 0, minRotation: 0 },
         },
       },
     },
@@ -127,47 +119,32 @@ function buildDualLineChartImage(title, labels, seriesA, seriesB, labelA, labelB
           label: labelA,
           data: seriesA,
           fill: false,
+          borderWidth: 2,
+          pointRadius: 3,
           tension: 0.25,
-          borderWidth: 3,
-          pointRadius: 4,
         },
         {
           label: labelB,
           data: seriesB,
           fill: false,
+          borderWidth: 2,
+          pointRadius: 3,
           tension: 0.25,
-          borderWidth: 3,
-          pointRadius: 4,
         },
       ],
     },
     options: {
-      responsive: true,
       plugins: {
-        legend: {
-          display: true,
-        },
-        title: {
-          display: true,
-          text: title,
-          font: {
-            size: 20,
-          },
-        },
+        title: { display: true, text: title },
+        legend: { display: true },
       },
       scales: {
         y: {
           beginAtZero: true,
-          title: {
-            display: true,
-            text: yLabel,
-          },
+          title: { display: true, text: yLabel },
         },
         x: {
-          ticks: {
-            maxRotation: 0,
-            minRotation: 0,
-          },
+          ticks: { maxRotation: 0, minRotation: 0 },
         },
       },
     },
@@ -257,7 +234,8 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
       const aTime = new Date(a?.measured_at || 0).getTime();
       const bTime = new Date(b?.measured_at || 0).getTime();
       return aTime - bTime;
-    });
+    })
+    .slice(-12);
 
   if (!sorted.length) {
     return {
@@ -280,14 +258,16 @@ function buildLabGraphMessage(rows, metric = 'hba1c') {
     return `前回より ${Math.abs(diff)} 下がっています。`;
   })();
 
-  const lines = sorted.slice(-12).map((row) => {
-    const date = formatDateOnly(row?.measured_at);
-    const value = toNumberOrNull(row?.[key]);
-    if (!date || value === null) return null;
-    return `・${date}: ${value}`;
-  }).filter(Boolean);
+  const lines = sorted
+    .map((row) => {
+      const date = formatDateOnly(row?.measured_at);
+      const value = toNumberOrNull(row?.[key]);
+      if (!date || value === null) return null;
+      return `・${date}: ${value}`;
+    })
+    .filter(Boolean);
 
-  const labels = sorted.map((row) => formatDateOnly(row?.measured_at));
+  const labels = sorted.map((row) => formatShortDate(row?.measured_at));
   const values = sorted.map((row) => toNumberOrNull(row?.[key]));
   const insight = describeLabTrend(label, sorted, key);
 
@@ -315,7 +295,8 @@ function buildEnergyGraphMessage(dayRows) {
       activity_kcal: toNumberOrNull(row?.activity_kcal) || 0,
       net_kcal: toNumberOrNull(row?.net_kcal) || 0,
     }))
-    .filter((row) => row.date);
+    .filter((row) => row.date)
+    .slice(-7);
 
   if (!normalized.length) {
     return {
@@ -332,7 +313,7 @@ function buildEnergyGraphMessage(dayRows) {
     return `・${row.date} / 摂取 ${row.intake_kcal} kcal / 活動 ${row.activity_kcal} kcal / 差分 ${row.net_kcal} kcal`;
   });
 
-  const labels = normalized.map((row) => row.date);
+  const labels = normalized.map((row) => formatShortDate(row.date));
   const intakeSeries = normalized.map((row) => row.intake_kcal);
   const activitySeries = normalized.map((row) => row.activity_kcal);
   const insight = describeEnergyTrend(normalized);
@@ -371,7 +352,8 @@ function buildWeightGraphMessage(rows) {
       const aTime = new Date(a?.measured_at || 0).getTime();
       const bTime = new Date(b?.measured_at || 0).getTime();
       return aTime - bTime;
-    });
+    })
+    .slice(-12);
 
   if (!sorted.length) {
     return {
@@ -404,14 +386,16 @@ function buildWeightGraphMessage(rows) {
     return `初回から ${Math.abs(diff)}kg 減っています。`;
   })();
 
-  const lines = sorted.slice(-12).map((row) => {
-    const date = formatDateOnly(row?.measured_at);
-    const value = toNumberOrNull(row?.weight_kg);
-    if (!date || value === null) return null;
-    return `・${date}: ${value}kg`;
-  }).filter(Boolean);
+  const lines = sorted
+    .map((row) => {
+      const date = formatDateOnly(row?.measured_at);
+      const value = toNumberOrNull(row?.weight_kg);
+      if (!date || value === null) return null;
+      return `・${date}: ${value}kg`;
+    })
+    .filter(Boolean);
 
-  const labels = sorted.map((row) => formatDateOnly(row?.measured_at));
+  const labels = sorted.map((row) => formatShortDate(row?.measured_at));
   const values = sorted.map((row) => toNumberOrNull(row?.weight_kg));
   const insight = describeWeightTrend(sorted);
 
