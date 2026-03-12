@@ -1,16 +1,30 @@
 const { findNumber } = require('../utils/text_helpers');
-const { round0, round1, toNumberOrNull } = require('../utils/formatters');
+const { round1, toNumberOrNull } = require('../utils/formatters');
+
+function normalizeActivityText(text) {
+  return String(text || '')
+    .replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 65248))
+    .replace(/　/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function calcGenericExerciseKcal(label, minutes, reps, weightKg) {
   const weight = Number(weightKg) || 60;
   const lower = String(label || '').toLowerCase();
 
   if (minutes != null) {
-    if (lower.includes('ジョギング') || lower.includes('ランニング')) return round1(minutes * weight * 0.09);
-    if (lower.includes('ウォーキング') || lower.includes('散歩') || lower.includes('歩行')) return round1(minutes * weight * 0.035);
+    if (lower.includes('ジョギング') || lower.includes('ランニング') || lower.includes('走')) {
+      return round1(minutes * weight * 0.09);
+    }
+    if (lower.includes('ウォーキング') || lower.includes('散歩') || lower.includes('歩行') || lower.includes('歩')) {
+      return round1(minutes * weight * 0.035);
+    }
     if (lower.includes('自転車')) return round1(minutes * weight * 0.06);
     if (lower.includes('階段')) return round1(minutes * weight * 0.08);
-    if (lower.includes('ストレッチ') || lower.includes('ヨガ') || lower.includes('体操')) return round1(minutes * weight * 0.025);
+    if (lower.includes('ストレッチ') || lower.includes('ヨガ') || lower.includes('体操')) {
+      return round1(minutes * weight * 0.025);
+    }
     if (lower.includes('プランク') || lower.includes('体幹')) return round1(minutes * weight * 0.05);
     return round1(minutes * weight * 0.045);
   }
@@ -29,127 +43,179 @@ function calcGenericExerciseKcal(label, minutes, reps, weightKg) {
   return null;
 }
 
-function parseGenericActivityItems(text, weightKg) {
-  const t = String(text || '');
-  const items = [];
+function parseDurationMinutesFromSegment(segment) {
+  const text = normalizeActivityText(segment);
+  if (!text) return null;
 
-  const minutePatterns = [
-    { regex: /(スロージョギング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ジョギング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ランニング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(散歩)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ウォーキング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(歩行)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(自転車)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(階段)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ストレッチ)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ヨガ)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(ラジオ体操)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(体操)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(プランク)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-    { regex: /(体幹)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i },
-  ];
-
-  for (const p of minutePatterns) {
-    const m = t.match(p.regex);
-    if (!m) continue;
-    const label = String(m[1]).trim();
-    const minutes = toNumberOrNull(m[2]);
-    items.push({
-      label,
-      minutes,
-      reps: null,
-      kcal: calcGenericExerciseKcal(label, minutes, null, weightKg),
-    });
+  const hm = text.match(/([0-9]+(?:\.[0-9]+)?)\s*時間(?:間)?\s*([0-9]+(?:\.[0-9]+)?)\s*分/);
+  if (hm) {
+    return round1(Number(hm[1]) * 60 + Number(hm[2]));
   }
 
+  const hOnly = text.match(/([0-9]+(?:\.[0-9]+)?)\s*時間(?:間)?/);
+  const mOnly = text.match(/([0-9]+(?:\.[0-9]+)?)\s*分/);
+
+  if (hOnly && mOnly) {
+    return round1(Number(hOnly[1]) * 60 + Number(mOnly[1]));
+  }
+  if (hOnly) {
+    return round1(Number(hOnly[1]) * 60);
+  }
+  if (mOnly) {
+    return round1(Number(mOnly[1]));
+  }
+
+  const hourLike = text.match(/([0-9]+(?:\.[0-9]+)?)\s*h\b/i);
+  if (hourLike) {
+    return round1(Number(hourLike[1]) * 60);
+  }
+
+  const minLike = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(min|mins|minute|minutes|m)\b/i);
+  if (minLike) {
+    return round1(Number(minLike[1]));
+  }
+
+  return null;
+}
+
+function buildMinuteItem(label, minutes, weightKg) {
+  return {
+    label,
+    minutes,
+    reps: null,
+    kcal: calcGenericExerciseKcal(label, minutes, null, weightKg),
+  };
+}
+
+function buildRepItem(label, reps, weightKg) {
+  return {
+    label,
+    minutes: null,
+    reps,
+    kcal: calcGenericExerciseKcal(label, null, reps, weightKg),
+  };
+}
+
+function pushIfNew(items, nextItem) {
+  if (!nextItem) return;
+  const duplicate = items.some((item) => {
+    return item.label === nextItem.label && item.minutes === nextItem.minutes && item.reps === nextItem.reps;
+  });
+  if (!duplicate) items.push(nextItem);
+}
+
+function parseKeywordDurationItems(text, weightKg) {
+  const t = normalizeActivityText(text);
+  const items = [];
+
+  const minuteActivityDefs = [
+    { label: 'スロージョギング', keywords: ['スロージョギング'] },
+    { label: 'ジョギング', keywords: ['ジョギング', 'ランニング', '走った', '走る', '走りました'] },
+    { label: '散歩', keywords: ['散歩'] },
+    { label: 'ウォーキング', keywords: ['ウォーキング'] },
+    { label: '歩行', keywords: ['歩行', '歩いた', '歩く'] },
+    { label: '自転車', keywords: ['自転車'] },
+    { label: '階段', keywords: ['階段'] },
+    { label: 'ストレッチ', keywords: ['ストレッチ', '伸ばした', 'ほぐした'] },
+    { label: 'ヨガ', keywords: ['ヨガ'] },
+    { label: 'ラジオ体操', keywords: ['ラジオ体操'] },
+    { label: '体操', keywords: ['体操'] },
+    { label: 'プランク', keywords: ['プランク'] },
+    { label: '体幹', keywords: ['体幹'] },
+  ];
+
+  for (const def of minuteActivityDefs) {
+    for (const keyword of def.keywords) {
+      const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      const patterns = [
+        new RegExp(`(${escaped})\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分`, 'i'),
+        new RegExp(`(${escaped})\\s*([0-9]+(?:\\.[0-9]+)?)\\s*時間(?:間)?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分`, 'i'),
+        new RegExp(`(${escaped})\\s*([0-9]+(?:\\.[0-9]+)?)\\s*時間(?:間)?`, 'i'),
+        new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*分\\s*(?:の|ほどの|くらいの|ぐらいの)?\\s*(${escaped})`, 'i'),
+        new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*時間(?:間)?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*分\\s*(?:の|ほどの|くらいの|ぐらいの)?\\s*(${escaped})`, 'i'),
+        new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*時間(?:間)?\\s*(?:の|ほどの|くらいの|ぐらいの)?\\s*(${escaped})`, 'i'),
+      ];
+
+      for (const pattern of patterns) {
+        const m = t.match(pattern);
+        if (!m) continue;
+
+        const joined = m.slice(1).filter(Boolean).join(' ');
+        const minutes = parseDurationMinutesFromSegment(joined);
+        if (minutes != null) {
+          pushIfNew(items, buildMinuteItem(def.label, minutes, weightKg));
+        }
+      }
+
+      const index = t.search(new RegExp(escaped, 'i'));
+      if (index >= 0) {
+        const head = t.slice(Math.max(0, index - 20), index + keyword.length + 20);
+        const minutes = parseDurationMinutesFromSegment(head);
+        if (minutes != null) {
+          pushIfNew(items, buildMinuteItem(def.label, minutes, weightKg));
+        }
+      }
+    }
+  }
+
+  return items;
+}
+
+function parseRepItems(text, weightKg) {
+  const t = normalizeActivityText(text);
+  const items = [];
+
   const repPatterns = [
-    { regex: /(スクワット)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(腹筋)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(膝つき腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(もも上げ)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(開脚)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
-    { regex: /(階段)\s*([0-9]+(?:\.[0-9]+)?)\s*段/i },
+    { label: 'スクワット', regex: /(スクワット)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: '腹筋', regex: /(腹筋)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: '膝つき腕立て', regex: /(膝つき腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: '腕立て', regex: /(腕立て)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: 'もも上げ', regex: /(もも上げ)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: '開脚', regex: /(開脚)\s*([0-9]+(?:\.[0-9]+)?)\s*回/i },
+    { label: '階段', regex: /(階段)\s*([0-9]+(?:\.[0-9]+)?)\s*段/i },
   ];
 
   for (const p of repPatterns) {
     const m = t.match(p.regex);
     if (!m) continue;
-    const label = String(m[1]).trim();
     const reps = toNumberOrNull(m[2]);
-    items.push({
-      label,
-      minutes: null,
-      reps,
-      kcal: calcGenericExerciseKcal(label, null, reps, weightKg),
-    });
+    pushIfNew(items, buildRepItem(p.label, reps, weightKg));
   }
+
+  return items;
+}
+
+function parseGenericActivityItems(text, weightKg) {
+  const t = normalizeActivityText(text);
+  const items = [];
+
+  const keywordDurationItems = parseKeywordDurationItems(t, weightKg);
+  keywordDurationItems.forEach((item) => pushIfNew(items, item));
+
+  const repItems = parseRepItems(t, weightKg);
+  repItems.forEach((item) => pushIfNew(items, item));
 
   if (!items.length) {
     if (/少し歩/i.test(t) || /ちょっと歩/i.test(t) || /買い物で.*歩/i.test(t) || /結構歩/i.test(t)) {
-      items.push({
-        label: '歩行',
-        minutes: 10,
-        reps: null,
-        kcal: calcGenericExerciseKcal('歩行', 10, null, weightKg),
-      });
+      pushIfNew(items, buildMinuteItem('歩行', 10, weightKg));
     } else if (/階段を使/i.test(t)) {
-      items.push({
-        label: '階段',
-        minutes: 3,
-        reps: null,
-        kcal: calcGenericExerciseKcal('階段', 3, null, weightKg),
-      });
+      pushIfNew(items, buildMinuteItem('階段', 3, weightKg));
     } else if (/ストレッチした|伸ばした|ほぐした/i.test(t)) {
-      items.push({
-        label: 'ストレッチ',
-        minutes: 5,
-        reps: null,
-        kcal: calcGenericExerciseKcal('ストレッチ', 5, null, weightKg),
-      });
+      pushIfNew(items, buildMinuteItem('ストレッチ', 5, weightKg));
     } else if (/ヨガした/i.test(t)) {
-      items.push({
-        label: 'ヨガ',
-        minutes: 10,
-        reps: null,
-        kcal: calcGenericExerciseKcal('ヨガ', 10, null, weightKg),
-      });
+      pushIfNew(items, buildMinuteItem('ヨガ', 10, weightKg));
     } else if (/プランクした/i.test(t)) {
-      items.push({
-        label: 'プランク',
-        minutes: 1,
-        reps: null,
-        kcal: calcGenericExerciseKcal('プランク', 1, null, weightKg),
-      });
-    } else if (/ジョギングした|走った/i.test(t)) {
-      items.push({
-        label: 'ジョギング',
-        minutes: 10,
-        reps: null,
-        kcal: calcGenericExerciseKcal('ジョギング', 10, null, weightKg),
-      });
+      pushIfNew(items, buildMinuteItem('プランク', 1, weightKg));
+    } else if (/ジョギングした|ランニングした|走った|走る/i.test(t)) {
+      const fallbackMinutes = parseDurationMinutesFromSegment(t);
+      pushIfNew(items, buildMinuteItem('ジョギング', fallbackMinutes != null ? fallbackMinutes : 10, weightKg));
     } else if (/スクワットした/i.test(t)) {
-      items.push({
-        label: 'スクワット',
-        minutes: null,
-        reps: 5,
-        kcal: calcGenericExerciseKcal('スクワット', null, 5, weightKg),
-      });
+      pushIfNew(items, buildRepItem('スクワット', 5, weightKg));
     } else if (/腹筋した/i.test(t)) {
-      items.push({
-        label: '腹筋',
-        minutes: null,
-        reps: 5,
-        kcal: calcGenericExerciseKcal('腹筋', null, 5, weightKg),
-      });
+      pushIfNew(items, buildRepItem('腹筋', 5, weightKg));
     } else if (/腕立てした/i.test(t)) {
-      items.push({
-        label: '腕立て',
-        minutes: null,
-        reps: 3,
-        kcal: calcGenericExerciseKcal('腕立て', null, 3, weightKg),
-      });
+      pushIfNew(items, buildRepItem('腕立て', 3, weightKg));
     }
   }
 
@@ -157,10 +223,12 @@ function parseGenericActivityItems(text, weightKg) {
 }
 
 function parseActivity(text, weightKg = 60) {
-  const base = String(text || '');
+  const base = normalizeActivityText(text);
 
   const steps = toNumberOrNull(findNumber(base, /歩数\s*([0-9]+(?:\.[0-9]+)?)/i));
-  const walkingMinutes = toNumberOrNull(findNumber(base, /(散歩|歩行|ウォーキング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i, 2));
+  const walkingMinutes =
+    toNumberOrNull(findNumber(base, /(散歩|歩行|ウォーキング)\s*([0-9]+(?:\.[0-9]+)?)\s*分/i, 2)) ||
+    null;
   const explicitKcal = toNumberOrNull(findNumber(base, /(消費|活動消費)\s*([0-9]+(?:\.[0-9]+)?)/i, 2));
 
   const activityItems = parseGenericActivityItems(base, weightKg);
