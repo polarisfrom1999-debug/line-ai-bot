@@ -16,6 +16,10 @@ function verifyLineSignature(rawBody, signature, channelSecret) {
   }
 }
 
+function isValidHttpUrl(value) {
+  return /^https:\/\//i.test(String(value || ''));
+}
+
 function normalizeLineMessages(messages) {
   const list = Array.isArray(messages) ? messages : [messages];
 
@@ -31,8 +35,28 @@ function normalizeLineMessages(messages) {
         return { ...msg, text: msg.text.slice(0, 5000) };
       }
 
+      if (msg.type === 'image') {
+        const originalContentUrl = String(msg.originalContentUrl || '');
+        const previewImageUrl = String(msg.previewImageUrl || originalContentUrl);
+
+        if (!isValidHttpUrl(originalContentUrl) || !isValidHttpUrl(previewImageUrl)) {
+          console.warn('⚠️ Invalid LINE image message URL:', {
+            originalContentUrl,
+            previewImageUrl,
+          });
+          return null;
+        }
+
+        return {
+          type: 'image',
+          originalContentUrl,
+          previewImageUrl,
+        };
+      }
+
       return msg;
-    });
+    })
+    .filter(Boolean);
 }
 
 function textMessageWithQuickReplies(text, labels) {
@@ -65,18 +89,29 @@ function textMessageWithQuickReplies(text, labels) {
 async function replyMessage(replyToken, messages, accessToken) {
   if (!replyToken) return;
 
+  const normalizedMessages = normalizeLineMessages(messages);
+  if (!normalizedMessages.length) {
+    throw new Error('No valid LINE messages to send');
+  }
+
   const payload = {
     replyToken,
-    messages: normalizeLineMessages(messages),
+    messages: normalizedMessages,
   };
 
-  await axios.post('https://api.line.me/v2/bot/message/reply', payload, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    timeout: 30000,
-  });
+  try {
+    await axios.post('https://api.line.me/v2/bot/message/reply', payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      timeout: 30000,
+    });
+  } catch (error) {
+    const detail = error?.response?.data || error?.message || error;
+    console.error('❌ LINE replyMessage failed:', JSON.stringify(detail, null, 2));
+    throw error;
+  }
 }
 
 async function getLineImageContent(messageId, accessToken) {
