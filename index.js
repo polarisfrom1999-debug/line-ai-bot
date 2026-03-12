@@ -104,6 +104,10 @@ const {
   addDaysYmd,
   listRecentDatesYmd,
   buildDayRangeIsoInTZ,
+  formatJapaneseDateInTZ,
+  formatJapaneseDateTimeInTZ,
+  formatTimeHmInTZ,
+  getWeekdayJaInTZ,
 } = require('./utils/dates');
 
 const env = getEnv();
@@ -354,6 +358,48 @@ function isWeightGraphIntent(text) {
     '体重の推移',
     '体重の変化',
   ].includes(t);
+}
+
+function isCurrentDateTimeQuestion(text) {
+  const t = String(text || '').trim().toLowerCase();
+
+  const patterns = [
+    '今日は何月何日',
+    'きょうは何月何日',
+    '今日何日',
+    'きょう何日',
+    '今日は何日',
+    '今何時',
+    'いま何時',
+    '今何時ですか',
+    'いま何時ですか',
+    '現在時刻',
+    '今日の日付',
+    '今日の日時',
+    '今の日時',
+    '今日は何曜日',
+    'きょうは何曜日',
+    '今日何曜日',
+    'きょう何曜日',
+    '今は何月何日',
+    '今日は何月何日ですか',
+    'いま何月何日',
+    '今の日付',
+  ];
+
+  return patterns.some((p) => t.includes(p));
+}
+
+function buildCurrentDateTimeReply(tz = 'Asia/Tokyo') {
+  const now = new Date();
+  const dateText = formatJapaneseDateInTZ(now, tz);
+  const weekday = getWeekdayJaInTZ(now, tz);
+  const timeText = formatTimeHmInTZ(now, tz);
+
+  return [
+    `東京では、今日は ${dateText}（${weekday}）です。`,
+    `今の時刻は ${timeText} です。`,
+  ].join('\n');
 }
 
 function parseWeightInput(text) {
@@ -1220,6 +1266,13 @@ async function handleTextMessage(event, user) {
       if (error) throw error;
 
       const replyText = `${safeName}さんですね。これからはそうお呼びします。`;
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isCurrentDateTimeQuestion(text)) {
+      const replyText = buildCurrentDateTimeReply(TZ);
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;

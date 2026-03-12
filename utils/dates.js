@@ -30,6 +30,41 @@ function formatTimeHmsInTZ(date, tz = 'Asia/Tokyo') {
   }).format(d);
 }
 
+function formatTimeHmInTZ(date, tz = 'Asia/Tokyo') {
+  const d = new Date(date);
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+}
+
+function getWeekdayJaInTZ(date, tz = 'Asia/Tokyo') {
+  const d = new Date(date);
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: tz,
+    weekday: 'long',
+  }).format(d);
+}
+
+function formatJapaneseDateInTZ(date, tz = 'Asia/Tokyo') {
+  const ymd = formatDateYmdInTZ(date, tz);
+  const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return ymd;
+
+  return `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日`;
+}
+
+function formatJapaneseDateTimeInTZ(date, tz = 'Asia/Tokyo') {
+  const dateText = formatJapaneseDateInTZ(date, tz);
+  const weekday = getWeekdayJaInTZ(date, tz);
+  const timeText = formatTimeHmInTZ(date, tz);
+  return `${dateText}（${weekday}） ${timeText}`;
+}
+
 function toIsoStringInTZ(date, tz = 'Asia/Tokyo') {
   const ymd = formatDateYmdInTZ(date, tz);
   const hms = formatTimeHmsInTZ(date, tz);
@@ -100,6 +135,10 @@ module.exports = {
   currentDateYmdInTZ,
   formatDateYmdInTZ,
   formatTimeHmsInTZ,
+  formatTimeHmInTZ,
+  getWeekdayJaInTZ,
+  formatJapaneseDateInTZ,
+  formatJapaneseDateTimeInTZ,
   addDaysYmd,
   listRecentDatesYmd,
   buildDayRangeIsoInTZ,
