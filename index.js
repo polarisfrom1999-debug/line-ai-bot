@@ -109,29 +109,59 @@ const PORT = env.PORT;
 const TZ = env.TZ;
 
 const AI_PROMPT_PATH = './prompts/ai_ushigome_prompt.txt';
+const AI_MEMORY_PROMPT_PATH = './prompts/ai_ushigome_memory_prompt.txt';
 
 const recentMealDrafts = new Map();
 const recentSupportContexts = new Map();
 
-function loadAiPrompt() {
+function readTextFileOrFallback(filePath, fallbackLines) {
   try {
-    if (fs.existsSync(AI_PROMPT_PATH)) {
-      return fs.readFileSync(AI_PROMPT_PATH, 'utf8');
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf8');
     }
   } catch (error) {
-    console.error('⚠️ Failed to read ai_ushigome_prompt.txt:', error?.message || error);
+    console.error(`⚠️ Failed to read ${filePath}:`, error?.message || error);
   }
+  return fallbackLines.join('\n');
+}
 
-  return [
+function loadAiPrompt() {
+  return readTextFileOrFallback(AI_PROMPT_PATH, [
     'あなたはAI牛込です。',
     'ポラリス整骨院の牛込先生の雰囲気を持ち、優しく聞き役として寄り添います。',
     '共感、復唱、状況整理、気づき、小さな提案の順番を大切にしてください。',
     '健康知識は自然な会話の中で軽く補足してください。',
     '相手を責めず、断定しすぎず、必要ならポラリス整骨院で牛込先生への相談を勧めてください。',
-  ].join('\n');
+  ]);
+}
+
+function loadAiMemoryPrompt() {
+  return readTextFileOrFallback(AI_MEMORY_PROMPT_PATH, [
+    'あなたは会話記録から、今後の健康伴走に役立つ情報だけを抽出する記録アシスタントです。',
+    '利用者への返答はしません。必ずJSONだけを返してください。',
+    '抽出対象: diet, exercise, pain, symptoms, mood, worries, goals, habits, obstacles, support_preferences, follow_up_needed, medical_risk, notable_events',
+    '会話に明示された情報だけを抽出し、推測しすぎず、曖昧なら空配列にしてください。',
+    'JSON以外は返さないでください。',
+    '{',
+    '  "diet": [],',
+    '  "exercise": [],',
+    '  "pain": [],',
+    '  "symptoms": [],',
+    '  "mood": [],',
+    '  "worries": [],',
+    '  "goals": [],',
+    '  "habits": [],',
+    '  "obstacles": [],',
+    '  "support_preferences": [],',
+    '  "follow_up_needed": [],',
+    '  "medical_risk": [],',
+    '  "notable_events": []',
+    '}',
+  ]);
 }
 
 const AI_BASE_PROMPT = loadAiPrompt();
+const AI_MEMORY_PROMPT = loadAiMemoryPrompt();
 
 app.get('/', (_req, res) => {
   res.status(200).send('AI Ushigome LINE bot is running.');
@@ -194,11 +224,22 @@ async function processEvent(event) {
   );
 }
 
-function prefixWithName(user, message) {
+function prefixWithName(user, message, options = {}) {
   const name = getUserDisplayName(user);
   const text = String(message || '').trim();
+  const { force = false } = options;
+
   if (!text) return text;
   if (!name) return text;
+
+  const alreadyHasName =
+    text.includes(`${name}さん`) ||
+    text.includes(`${name}様`) ||
+    text.startsWith(name);
+
+  if (alreadyHasName) return text;
+  if (!force) return text;
+
   return `${name}さん、${text}`;
 }
 
@@ -413,6 +454,41 @@ function seemsMealCorrectionText(text) {
   ].some((w) => t.includes(w));
 }
 
+function isMealDesireOrFeelingText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+
+  const patterns = [
+    '食べたい',
+    '飲みたい',
+    'お腹いっぱい食べたい',
+    'いっぱい食べたい',
+    '甘いもの食べたい',
+    '何か食べたい',
+    '食欲がある',
+    '食欲がない',
+    'お腹すいた',
+    'おなかすいた',
+    '食べたくなる',
+    '食べてしまいそう',
+    '食べそう',
+    '飲みたくなる',
+    '食欲が止まらない',
+    '食欲がすごい',
+    '食欲あります',
+  ];
+
+  if (patterns.some((p) => t.includes(p))) {
+    return true;
+  }
+
+  if ((t.includes('食べ') || t.includes('飲み')) && t.includes('たい')) {
+    return true;
+  }
+
+  return false;
+}
+
 function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
@@ -436,6 +512,287 @@ function buildDailySeries(rows, field, days = 7) {
   }
 
   return Array.from(map.entries()).map(([date, value]) => ({ date, value }));
+}
+
+function normalizeJsonText(rawText) {
+  const text = String(rawText || '').trim();
+  if (!text) return '';
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  return fenced ? fenced[1].trim() : text;
+}
+
+function safeParseJson(rawText, fallback = null) {
+  try {
+    return JSON.parse(normalizeJsonText(rawText));
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function isMissingRelationError(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('does not exist') || msg.includes('relation') || msg.includes('schema cache');
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value == null) return [];
+  return [value];
+}
+
+function trimMemoryText(value, max = 300) {
+  return safeText(typeof value === 'string' ? value : JSON.stringify(value), max);
+}
+
+function normalizeMemoryContent(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[ 　\t\r\n]+/g, '')
+    .replace(/[。、,.!！?？:：;；"'“”‘’（）()\[\]【】]/g, '');
+}
+
+function isMemoryContentNear(a, b) {
+  const na = normalizeMemoryContent(a);
+  const nb = normalizeMemoryContent(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.length >= 8 && nb.includes(na)) return true;
+  if (nb.length >= 8 && na.includes(nb)) return true;
+  return false;
+}
+
+function dedupeMemoryRows(rows) {
+  const result = [];
+
+  for (const row of rows || []) {
+    const duplicate = result.some((saved) => {
+      return saved.memory_type === row.memory_type && isMemoryContentNear(saved.content, row.content);
+    });
+
+    if (!duplicate) {
+      result.push(row);
+    }
+  }
+
+  return result;
+}
+
+function normalizeMemoryPayload(payload) {
+  return {
+    diet: toArray(payload?.diet),
+    exercise: toArray(payload?.exercise),
+    pain: toArray(payload?.pain),
+    symptoms: toArray(payload?.symptoms),
+    mood: toArray(payload?.mood),
+    worries: toArray(payload?.worries),
+    goals: toArray(payload?.goals),
+    habits: toArray(payload?.habits),
+    obstacles: toArray(payload?.obstacles),
+    support_preferences: toArray(payload?.support_preferences),
+    follow_up_needed: toArray(payload?.follow_up_needed),
+    medical_risk: toArray(payload?.medical_risk),
+    notable_events: toArray(payload?.notable_events),
+  };
+}
+
+function buildMemoryRows(user, payload, sourceText, aiReply) {
+  const normalized = normalizeMemoryPayload(payload);
+  const nowIso = toIsoStringInTZ(new Date(), TZ);
+  const rows = [];
+
+  const pushRows = (memoryType, values) => {
+    values.forEach((value) => {
+      const content = trimMemoryText(value, 400);
+      if (!content) return;
+      rows.push({
+        user_id: user.id,
+        line_user_id: user.line_user_id,
+        memory_type: memoryType,
+        content,
+        detail_json: typeof value === 'object' ? value : { text: value },
+        source_text: safeText(sourceText, 1000),
+        assistant_reply: safeText(aiReply, 1000),
+        created_at: nowIso,
+      });
+    });
+  };
+
+  pushRows('diet', normalized.diet);
+  pushRows('exercise', normalized.exercise);
+  pushRows('pain', normalized.pain);
+  pushRows('symptoms', normalized.symptoms);
+  pushRows('mood', normalized.mood);
+  pushRows('worries', normalized.worries);
+  pushRows('goals', normalized.goals);
+  pushRows('habits', normalized.habits);
+  pushRows('obstacles', normalized.obstacles);
+  pushRows('support_preferences', normalized.support_preferences);
+  pushRows('follow_up_needed', normalized.follow_up_needed);
+  pushRows('medical_risk', normalized.medical_risk);
+  pushRows('notable_events', normalized.notable_events);
+
+  return dedupeMemoryRows(rows);
+}
+
+async function getRecentConversationMemories(userId, limit = 30) {
+  try {
+    const { data, error } = await supabase
+      .from('conversation_memories')
+      .select('memory_type, content, detail_json, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (isMissingRelationError(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('⚠️ getRecentConversationMemories failed:', error?.message || error);
+    return [];
+  }
+}
+
+function splitMemoryContext(memories) {
+  const followUps = [];
+  const grouped = new Map();
+
+  for (const row of memories || []) {
+    const type = row.memory_type || 'other';
+    const content = trimMemoryText(row.content, 160);
+    if (!content) continue;
+
+    if (type === 'follow_up_needed') {
+      if (!followUps.some((x) => isMemoryContentNear(x, content))) {
+        followUps.push(content);
+      }
+      continue;
+    }
+
+    if (!grouped.has(type)) grouped.set(type, []);
+    const list = grouped.get(type);
+
+    if (!list.some((x) => isMemoryContentNear(x, content))) {
+      list.push(content);
+    }
+  }
+
+  return {
+    followUps: followUps.slice(0, 4),
+    grouped,
+  };
+}
+
+function buildMemorySummary(memories) {
+  if (!Array.isArray(memories) || !memories.length) {
+    return {
+      followUpText: '特に優先フォローはまだありません。',
+      memoryText: '過去記憶はまだありません。',
+    };
+  }
+
+  const { followUps, grouped } = splitMemoryContext(memories);
+
+  const labels = {
+    diet: '食事傾向',
+    exercise: '運動',
+    pain: '痛み',
+    symptoms: '症状',
+    mood: '気分',
+    worries: '悩み',
+    goals: '目標',
+    habits: '習慣',
+    obstacles: 'つまずき',
+    support_preferences: '合う声かけ',
+    medical_risk: '医療注意',
+    notable_events: '印象的な出来事',
+    other: 'その他',
+  };
+
+  const memoryLines = [];
+
+  for (const [type, items] of grouped.entries()) {
+    if (!items.length) continue;
+    const label = labels[type] || type;
+    memoryLines.push(`- ${label}: ${items.slice(0, 3).join(' / ')}`);
+  }
+
+  return {
+    followUpText: followUps.length
+      ? followUps.map((x) => `- ${x}`).join('\n')
+      : '特に優先フォローはまだありません。',
+    memoryText: memoryLines.length
+      ? memoryLines.join('\n')
+      : '過去記憶はまだありません。',
+  };
+}
+
+async function extractConversationMemory(user, userText, aiReply) {
+  try {
+    const prompt = [
+      AI_MEMORY_PROMPT,
+      '',
+      `利用者名: ${getUserDisplayName(user) || '未設定'}`,
+      `利用者メッセージ: ${userText}`,
+      `AI返答: ${aiReply}`,
+      '',
+      'JSONだけを返してください。',
+    ].join('\n');
+
+    const raw = await generateTextOnly(prompt, 0.1);
+    const parsed = safeParseJson(raw, {});
+    return normalizeMemoryPayload(parsed);
+  } catch (error) {
+    console.error('⚠️ extractConversationMemory failed:', error?.message || error);
+    return normalizeMemoryPayload({});
+  }
+}
+
+function filterDuplicateRowsAgainstRecent(rows, recentRows) {
+  return (rows || []).filter((row) => {
+    const duplicate = (recentRows || []).some((recent) => {
+      return recent.memory_type === row.memory_type && isMemoryContentNear(recent.content, row.content);
+    });
+    return !duplicate;
+  });
+}
+
+async function saveConversationMemory(user, userText, aiReply) {
+  try {
+    const payload = await extractConversationMemory(user, userText, aiReply);
+    const rows = buildMemoryRows(user, payload, userText, aiReply);
+
+    if (!rows.length) return;
+
+    const recentRows = await getRecentConversationMemories(user.id, 120);
+    const filteredRows = filterDuplicateRowsAgainstRecent(rows, recentRows);
+
+    if (!filteredRows.length) return;
+
+    const { error } = await supabase.from('conversation_memories').insert(filteredRows);
+    if (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('⚠️ conversation_memories table not found. Memory save skipped.');
+        return;
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('⚠️ saveConversationMemory failed:', error?.message || error);
+  }
+}
+
+async function rememberInteraction(user, userText, aiReply) {
+  try {
+    await saveConversationMemory(user, userText, aiReply);
+  } catch (error) {
+    console.error('⚠️ rememberInteraction failed:', error?.message || error);
+  }
 }
 
 async function getTodayEnergyTotals(userId) {
@@ -548,14 +905,39 @@ async function saveMealToLog(userId, meal) {
 
 async function defaultChatReply(user, userText) {
   const name = getUserDisplayName(user);
+  const recentMemories = await getRecentConversationMemories(user.id, 40);
+  const { followUpText, memoryText } = buildMemorySummary(recentMemories);
+
   const prompt = [
     AI_BASE_PROMPT,
     buildAiTypePrompt(user.ai_type),
     name ? `利用者の呼び名: ${name}さん` : '',
-    '次の利用者メッセージに、自然でやさしく、聞き役として返してください。',
-    '強い断定や説教はしないでください。',
+    '',
+    '【優先フォロー項目】',
+    followUpText,
+    '',
+    '【過去の伴走メモ】',
+    memoryText,
+    '',
+    '【今回の返答ルール】',
+    '- 相手の言葉の中から最低1つ具体的に拾う',
+    '- AIっぽい定型文を避ける',
+    '- 必要なら短く提案する',
+    '- 雑談も自然に返す',
+    '- 相手の名前は毎回呼ばない',
+    '- 同じ返答の中で名前を繰り返さない',
+    '- 質問は多くても1つまでにする',
+    '- 1回で励まし、助言、質問を詰め込みすぎない',
+    '- LINEでは少し余白のある短めの返答を優先する',
+    '- 「何よりです」「嬉しいな」「よく分かりますよ」を多用しない',
+    '- きれいにまとめすぎず、自然な会話を優先する',
+    '- 必要なら以前の話題に軽く触れてよい',
+    '- ただし毎回すべての過去情報を持ち出さない',
+    '- follow_up_needed があれば自然に最優先で活かす',
+    '- 痛みや不調は不安を煽らず、危険なら受診もやさしくすすめる',
+    '',
     `利用者メッセージ: ${userText}`,
-  ].filter(Boolean).join('\n\n');
+  ].filter(Boolean).join('\n');
 
   const reply = await generateTextOnly(prompt, 0.7);
   return prefixWithName(user, safeText(reply, 1800) || 'ありがとうございます。もう少し詳しく教えてくださいね。');
@@ -841,7 +1223,9 @@ async function handleTextMessage(event, user) {
       const { error } = await supabase.from('users').update({ display_name: safeName }).eq('id', user.id);
       if (error) throw error;
 
-      await replyMessage(event.replyToken, `${safeName}さんですね。これからはそうお呼びします。`, env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = `${safeName}さんですね。これからはそうお呼びします。`;
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -879,11 +1263,9 @@ async function handleTextMessage(event, user) {
 
       if (openIntake.current_step === 'confirm_finish' && text === 'この内容で完了') {
         await completeIntakeSession(user, openIntake);
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, '初回設定が完了しました。ここから一緒に整えていきましょうね。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        const replyText = prefixWithName(user, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -925,7 +1307,9 @@ async function handleTextMessage(event, user) {
       if (error) throw error;
 
       const refreshedUser = await refreshUserById(supabase, user.id);
-      await replyMessage(event.replyToken, prefixWithName(refreshedUser, buildProfileReply(refreshedUser)), env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = prefixWithName(refreshedUser, buildProfileReply(refreshedUser));
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(refreshedUser, text, replyText);
       return;
     }
 
@@ -945,14 +1329,13 @@ async function handleTextMessage(event, user) {
         return `前回より ${Math.abs(diff)}kg 減っています。`;
       })();
 
+      const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${parsedWeight}kg\n${diffText}`);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, `体重を保存しました。\n今回: ${parsedWeight}kg\n${diffText}`),
-          ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']
-        ),
+        textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1002,11 +1385,14 @@ async function handleTextMessage(event, user) {
         activityKcal: totals.activity_kcal || 0,
       });
 
+      const replyText = prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`);
+
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`), [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
+        textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1065,11 +1451,9 @@ async function handleTextMessage(event, user) {
             ...(openLabDraft.working_data_json?.[selectedDate] || {}),
           };
 
-        await replyMessage(
-          event.replyToken,
-          buildLabSaveMessage(savedRow, recentRows),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        const replyText = buildLabSaveMessage(savedRow, recentRows);
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -1077,15 +1461,14 @@ async function handleTextMessage(event, user) {
         const savedRows = await confirmAllLabDraftToResults(supabase, openLabDraft);
         const count = Array.isArray(savedRows) ? savedRows.length : 0;
 
-        await replyMessage(
-          event.replyToken,
-          [
-            '読み取れた日付をまとめて保存しました。',
-            count ? `保存件数: ${count}件` : null,
-            '血液検査グラフでも確認できます。',
-          ].filter(Boolean).join('\n'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        const replyText = [
+          '読み取れた日付をまとめて保存しました。',
+          count ? `保存件数: ${count}件` : null,
+          '血液検査グラフでも確認できます。',
+        ].filter(Boolean).join('\n');
+
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -1103,7 +1486,9 @@ async function handleTextMessage(event, user) {
 
     if (text === '牛込先生に相談したい') {
       clearMealDraft(user.line_user_id);
-      await replyMessage(event.replyToken, prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`), env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`);
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1211,11 +1596,13 @@ async function handleTextMessage(event, user) {
       setSupportContext(user.line_user_id, { area, mode: 'video' });
 
       const videoResponse = buildVideoSupportResponse(area);
+      const replyText = prefixWithName(user, videoResponse.text);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, videoResponse.text), videoResponse.quickReplies),
+        textMessageWithQuickReplies(replyText, videoResponse.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1223,11 +1610,13 @@ async function handleTextMessage(event, user) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, '1min');
+      const replyText = prefixWithName(user, menu.text);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        textMessageWithQuickReplies(replyText, menu.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1235,11 +1624,13 @@ async function handleTextMessage(event, user) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, '3min');
+      const replyText = prefixWithName(user, menu.text);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        textMessageWithQuickReplies(replyText, menu.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1247,11 +1638,13 @@ async function handleTextMessage(event, user) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, 'gentle');
+      const replyText = prefixWithName(user, menu.text);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        textMessageWithQuickReplies(replyText, menu.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1259,11 +1652,13 @@ async function handleTextMessage(event, user) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, 'explain');
+      const replyText = prefixWithName(user, menu.text);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, menu.text), menu.quickReplies),
+        textMessageWithQuickReplies(replyText, menu.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1273,11 +1668,13 @@ async function handleTextMessage(event, user) {
       setSupportContext(user.line_user_id, { area, mode: 'stretch' });
 
       const stretchResponse = buildStretchSupportResponse(area);
+      const replyText = prefixWithName(user, stretchResponse.message);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, stretchResponse.message), [...stretchResponse.quickReplies, '動画で見たい']),
+        textMessageWithQuickReplies(replyText, [...stretchResponse.quickReplies, '動画で見たい']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1290,11 +1687,13 @@ async function handleTextMessage(event, user) {
         CONSULT_MESSAGE,
       ].join('\n');
 
+      const replyText = prefixWithName(user, message);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, message), ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']),
+        textMessageWithQuickReplies(replyText, ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1304,11 +1703,13 @@ async function handleTextMessage(event, user) {
       const followup = buildPainSituationResponse(text, area);
 
       if (followup) {
+        const replyText = prefixWithName(user, followup.message);
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, followup.message), followup.quickReplies),
+          textMessageWithQuickReplies(replyText, followup.quickReplies),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
+        await rememberInteraction(user, text, replyText);
         return;
       }
     }
@@ -1319,35 +1720,43 @@ async function handleTextMessage(event, user) {
       setSupportContext(user.line_user_id, { area, mode: 'pain' });
 
       const painResponse = buildPainSupportResponse(text, area);
+      const replyText = prefixWithName(user, painResponse.message);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, painResponse.message), [...painResponse.quickReplies, '動画で見たい']),
+        textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (['今日はここまで', 'まだ少しやる', 'できた', '次の食事を記録', '少し歩いた', '股関節を整えたい', '腰が重い'].includes(text)) {
       if (text === '今日はここまで') {
-        await replyMessage(event.replyToken, prefixWithName(user, '今日はここまでで大丈夫です。小さく続けることが一番力になります。'), env.LINE_CHANNEL_ACCESS_TOKEN);
+        const replyText = prefixWithName(user, '今日はここまでで大丈夫です。小さく続けることが一番力になります。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
       if (text === 'できた') {
+        const replyText = prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。');
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。'), ['まだ少しやる', '動画で見たい', '予測', '体重グラフ', 'グラフ', '今日はここまで']),
+          textMessageWithQuickReplies(replyText, ['まだ少しやる', '動画で見たい', '予測', '体重グラフ', 'グラフ', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
       if (text === 'まだ少しやる') {
+        const replyText = prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。');
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。'), ['1分メニュー', '3分メニュー', 'やさしい版', '今日はここまで']),
+          textMessageWithQuickReplies(replyText, ['1分メニュー', '3分メニュー', 'やさしい版', '今日はここまで']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -1357,16 +1766,20 @@ async function handleTextMessage(event, user) {
         setSupportContext(user.line_user_id, { area, mode: 'pain' });
 
         const painResponse = buildPainSupportResponse(text, area);
+        const replyText = prefixWithName(user, painResponse.message);
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, painResponse.message), [...painResponse.quickReplies, '動画で見たい']),
+          textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
       if (text === '少し歩いた') {
-        await replyMessage(event.replyToken, prefixWithName(user, '少し歩けたのは大事です。そこから代謝や流れが変わっていきます。'), env.LINE_CHANNEL_ACCESS_TOKEN);
+        const replyText = prefixWithName(user, '少し歩けたのは大事です。そこから代謝や流れが変わっていきます。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -1397,17 +1810,22 @@ async function handleTextMessage(event, user) {
         `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
       ].filter(Boolean);
 
+      const replyText = prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`);
+
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`), ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', '体重グラフ', 'グラフ']),
+        textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', '体重グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (currentMealDraft && isMealCancelCommand(text)) {
       clearMealDraft(user.line_user_id);
-      await replyMessage(event.replyToken, '食事の確認中データを取り消しました。', env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = '食事の確認中データを取り消しました。';
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
@@ -1416,12 +1834,22 @@ async function handleTextMessage(event, user) {
       setMealDraft(user.line_user_id, correctedMeal);
 
       const needsDrinkCorrection = (correctedMeal.food_items || []).some((x) => x.needs_confirmation);
+      const replyText = prefixWithName(user, buildMealCorrectionConfirmationMessage(correctedMeal));
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, buildMealCorrectionConfirmationMessage(correctedMeal)), buildMealFollowupQuickReplies(needsDrinkCorrection)),
+        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies(needsDrinkCorrection)),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    // 食欲・欲求・相談表現は食事保存候補ではなく自然会話に回す
+    if (isMealDesireOrFeelingText(text)) {
+      const reply = await defaultChatReply(user, text);
+      await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, reply);
       return;
     }
 
@@ -1431,17 +1859,20 @@ async function handleTextMessage(event, user) {
 
       const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
       const mealMessage = `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
+      const replyText = prefixWithName(user, mealMessage);
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, mealMessage), buildMealFollowupQuickReplies(needsDrinkCorrection)),
+        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies(needsDrinkCorrection)),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (text === '飲み物を訂正' || text === '量を訂正') {
-      await replyMessage(event.replyToken, 'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です', env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = 'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です';
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -1452,6 +1883,7 @@ async function handleTextMessage(event, user) {
 
     const reply = await defaultChatReply(user, text);
     await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
+    await rememberInteraction(user, text, reply);
   } catch (error) {
     console.error('❌ handleTextMessage error:', error?.stack || error?.message || error);
     await replyMessage(event.replyToken, '入力の処理でエラーが起きました。もう一度ゆっくり送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
