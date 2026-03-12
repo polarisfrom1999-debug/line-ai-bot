@@ -1,38 +1,93 @@
-function toIsoStringInTZ(date, tz = 'Asia/Tokyo') {
+function pad2(v) {
+  return String(v).padStart(2, '0');
+}
+
+function getFixedOffset(tz = 'Asia/Tokyo') {
+  if (tz === 'Asia/Tokyo') return '+09:00';
+  return 'Z';
+}
+
+function formatDateYmdInTZ(date, tz = 'Asia/Tokyo') {
   const d = new Date(date);
 
-  const fmtDate = new Intl.DateTimeFormat('sv-SE', {
+  return new Intl.DateTimeFormat('sv-SE', {
     timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).format(d);
+}
 
-  const fmtTime = new Intl.DateTimeFormat('sv-SE', {
+function formatTimeHmsInTZ(date, tz = 'Asia/Tokyo') {
+  const d = new Date(date);
+
+  return new Intl.DateTimeFormat('sv-SE', {
     timeZone: tz,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
   }).format(d);
+}
 
-  return `${fmtDate}T${fmtTime}+09:00`;
+function toIsoStringInTZ(date, tz = 'Asia/Tokyo') {
+  const ymd = formatDateYmdInTZ(date, tz);
+  const hms = formatTimeHmsInTZ(date, tz);
+  const offset = getFixedOffset(tz);
+  return `${ymd}T${hms}${offset}`;
 }
 
 function currentDateYmdInTZ(tz = 'Asia/Tokyo') {
-  return toIsoStringInTZ(new Date(), tz).slice(0, 10);
+  return formatDateYmdInTZ(new Date(), tz);
+}
+
+function parseYmdParts(dateYmd) {
+  const m = String(dateYmd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return {
+    year: Number(m[1]),
+    month: Number(m[2]),
+    day: Number(m[3]),
+  };
+}
+
+function addDaysYmd(dateYmd, days = 0) {
+  const parts = parseYmdParts(dateYmd);
+  if (!parts) return null;
+
+  const baseUtc = Date.UTC(parts.year, parts.month - 1, parts.day);
+  const next = new Date(baseUtc + Number(days || 0) * 24 * 60 * 60 * 1000);
+
+  return `${next.getUTCFullYear()}-${pad2(next.getUTCMonth() + 1)}-${pad2(next.getUTCDate())}`;
+}
+
+function listRecentDatesYmd(days = 7, tz = 'Asia/Tokyo', endYmd = null) {
+  const safeDays = Math.max(1, Number(days) || 1);
+  const end = endYmd || currentDateYmdInTZ(tz);
+  const list = [];
+
+  for (let i = safeDays - 1; i >= 0; i -= 1) {
+    list.push(addDaysYmd(end, -i));
+  }
+
+  return list.filter(Boolean);
+}
+
+function buildDayRangeIsoInTZ(dateYmd, tz = 'Asia/Tokyo') {
+  const ymd = String(dateYmd || '').slice(0, 10);
+  const offset = getFixedOffset(tz);
+
+  return {
+    startIso: `${ymd}T00:00:00${offset}`,
+    endIso: `${ymd}T23:59:59${offset}`,
+  };
 }
 
 function toTokyoDate(date, tz = 'Asia/Tokyo') {
-  const str = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(date));
-
-  const [y, m, d] = str.split('-').map(Number);
-  return new Date(y, m - 1, d);
+  const ymd = formatDateYmdInTZ(date, tz);
+  const parts = parseYmdParts(ymd);
+  if (!parts) return new Date(NaN);
+  return new Date(parts.year, parts.month - 1, parts.day);
 }
 
 function daysInMonth(date) {
@@ -43,6 +98,11 @@ function daysInMonth(date) {
 module.exports = {
   toIsoStringInTZ,
   currentDateYmdInTZ,
+  formatDateYmdInTZ,
+  formatTimeHmsInTZ,
+  addDaysYmd,
+  listRecentDatesYmd,
+  buildDayRangeIsoInTZ,
   toTokyoDate,
   daysInMonth,
 };

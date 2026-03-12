@@ -101,6 +101,9 @@ const {
 const {
   toIsoStringInTZ,
   currentDateYmdInTZ,
+  addDaysYmd,
+  listRecentDatesYmd,
+  buildDayRangeIsoInTZ,
 } = require('./utils/dates');
 
 const env = getEnv();
@@ -493,19 +496,15 @@ function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
 
-function buildDailySeries(rows, field, days = 7) {
-  const today = new Date();
+function buildDailySeries(rows, field, dateKeys = []) {
   const map = new Map();
 
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const ymd = d.toISOString().slice(0, 10);
-    map.set(ymd, 0);
+  for (const ymd of dateKeys || []) {
+    if (ymd) map.set(ymd, 0);
   }
 
   for (const row of rows || []) {
-    const dt = String(row?.[field] || '').slice(0, 10);
+    const dt = formatDateOnly(row?.[field]);
     if (!map.has(dt)) continue;
     const prev = map.get(dt) || 0;
     map.set(dt, prev + (Number(row?.estimated_kcal || row?.estimated_activity_kcal || 0) || 0));
@@ -797,12 +796,11 @@ async function rememberInteraction(user, userText, aiReply) {
 
 async function getTodayEnergyTotals(userId) {
   const dateYmd = currentDateYmdInTZ(TZ);
-  const start = `${dateYmd}T00:00:00+09:00`;
-  const end = `${dateYmd}T23:59:59+09:00`;
+  const { startIso, endIso } = buildDayRangeIsoInTZ(dateYmd, TZ);
 
   const [mealsRes, actsRes] = await Promise.all([
-    supabase.from('meal_logs').select('estimated_kcal').eq('user_id', userId).gte('eaten_at', start).lte('eaten_at', end),
-    supabase.from('activity_logs').select('estimated_activity_kcal').eq('user_id', userId).gte('logged_at', start).lte('logged_at', end),
+    supabase.from('meal_logs').select('estimated_kcal').eq('user_id', userId).gte('eaten_at', startIso).lte('eaten_at', endIso),
+    supabase.from('activity_logs').select('estimated_activity_kcal').eq('user_id', userId).gte('logged_at', startIso).lte('logged_at', endIso),
   ]);
 
   if (mealsRes.error) throw mealsRes.error;
@@ -815,13 +813,11 @@ async function getTodayEnergyTotals(userId) {
 }
 
 async function getSevenDayEnergyRows(userId) {
-  const dateTo = currentDateYmdInTZ(TZ);
-  const endDate = new Date(`${dateTo}T23:59:59+09:00`);
-  const startDate = new Date(endDate);
-  startDate.setDate(endDate.getDate() - 6);
-
-  const startIso = startDate.toISOString();
-  const endIso = endDate.toISOString();
+  const endYmd = currentDateYmdInTZ(TZ);
+  const startYmd = addDaysYmd(endYmd, -6);
+  const dateKeys = listRecentDatesYmd(7, TZ, endYmd);
+  const { startIso } = buildDayRangeIsoInTZ(startYmd, TZ);
+  const { endIso } = buildDayRangeIsoInTZ(endYmd, TZ);
 
   const [mealsRes, actsRes] = await Promise.all([
     supabase
@@ -841,8 +837,8 @@ async function getSevenDayEnergyRows(userId) {
   if (mealsRes.error) throw mealsRes.error;
   if (actsRes.error) throw actsRes.error;
 
-  const intakeSeries = buildDailySeries(mealsRes.data || [], 'eaten_at', 7);
-  const activitySeries = buildDailySeries(actsRes.data || [], 'logged_at', 7);
+  const intakeSeries = buildDailySeries(mealsRes.data || [], 'eaten_at', dateKeys);
+  const activitySeries = buildDailySeries(actsRes.data || [], 'logged_at', dateKeys);
 
   return intakeSeries.map((row, idx) => {
     const activity = activitySeries[idx]?.value || 0;
@@ -1845,7 +1841,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    // 食欲・欲求・相談表現は食事保存候補ではなく自然会話に回す
     if (isMealDesireOrFeelingText(text)) {
       const reply = await defaultChatReply(user, text);
       await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
