@@ -227,9 +227,7 @@ async function processEvent(event) {
 function prefixWithName(user, message, options = {}) {
   const name = getUserDisplayName(user);
   const text = String(message || '').trim();
-  const {
-    force = false,
-  } = options;
+  const { force = false } = options;
 
   if (!text) return text;
   if (!name) return text;
@@ -454,6 +452,41 @@ function seemsMealCorrectionText(text) {
     'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
     'ウーロン茶', '緑茶', '麦茶', '紅茶',
   ].some((w) => t.includes(w));
+}
+
+function isMealDesireOrFeelingText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+
+  const patterns = [
+    '食べたい',
+    '飲みたい',
+    'お腹いっぱい食べたい',
+    'いっぱい食べたい',
+    '甘いもの食べたい',
+    '何か食べたい',
+    '食欲がある',
+    '食欲がない',
+    'お腹すいた',
+    'おなかすいた',
+    '食べたくなる',
+    '食べてしまいそう',
+    '食べそう',
+    '飲みたくなる',
+    '食欲が止まらない',
+    '食欲がすごい',
+    '食欲あります',
+  ];
+
+  if (patterns.some((p) => t.includes(p))) {
+    return true;
+  }
+
+  if ((t.includes('食べ') || t.includes('飲み')) && t.includes('たい')) {
+    return true;
+  }
+
+  return false;
 }
 
 function sumBy(arr, key) {
@@ -1231,11 +1264,7 @@ async function handleTextMessage(event, user) {
       if (openIntake.current_step === 'confirm_finish' && text === 'この内容で完了') {
         await completeIntakeSession(user, openIntake);
         const replyText = prefixWithName(user, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
-        await replyMessage(
-          event.replyToken,
-          replyText,
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -1303,10 +1332,7 @@ async function handleTextMessage(event, user) {
       const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${parsedWeight}kg\n${diffText}`);
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(
-          replyText,
-          ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']
-        ),
+        textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
@@ -1426,11 +1452,7 @@ async function handleTextMessage(event, user) {
           };
 
         const replyText = buildLabSaveMessage(savedRow, recentRows);
-        await replyMessage(
-          event.replyToken,
-          replyText,
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -1445,11 +1467,7 @@ async function handleTextMessage(event, user) {
           '血液検査グラフでも確認できます。',
         ].filter(Boolean).join('\n');
 
-        await replyMessage(
-          event.replyToken,
-          replyText,
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -1824,6 +1842,14 @@ async function handleTextMessage(event, user) {
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    // 食欲・欲求・相談表現は食事保存候補ではなく自然会話に回す
+    if (isMealDesireOrFeelingText(text)) {
+      const reply = await defaultChatReply(user, text);
+      await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, reply);
       return;
     }
 
