@@ -240,7 +240,6 @@ function prefixWithName(user, message, options = {}) {
     text.startsWith(name);
 
   if (alreadyHasName) return text;
-
   if (!force) return text;
 
   return `${name}さん、${text}`;
@@ -512,6 +511,40 @@ function trimMemoryText(value, max = 300) {
   return safeText(typeof value === 'string' ? value : JSON.stringify(value), max);
 }
 
+function normalizeMemoryContent(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[ 　\t\r\n]+/g, '')
+    .replace(/[。、,.!！?？:：;；"'“”‘’（）()\[\]【】]/g, '');
+}
+
+function isMemoryContentNear(a, b) {
+  const na = normalizeMemoryContent(a);
+  const nb = normalizeMemoryContent(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.length >= 8 && nb.includes(na)) return true;
+  if (nb.length >= 8 && na.includes(nb)) return true;
+  return false;
+}
+
+function dedupeMemoryRows(rows) {
+  const result = [];
+
+  for (const row of rows || []) {
+    const duplicate = result.some((saved) => {
+      return saved.memory_type === row.memory_type && isMemoryContentNear(saved.content, row.content);
+    });
+
+    if (!duplicate) {
+      result.push(row);
+    }
+  }
+
+  return result;
+}
+
 function normalizeMemoryPayload(payload) {
   return {
     diet: toArray(payload?.diet),
@@ -566,7 +599,7 @@ function buildMemoryRows(user, payload, sourceText, aiReply) {
   pushRows('medical_risk', normalized.medical_risk);
   pushRows('notable_events', normalized.notable_events);
 
-  return rows;
+  return dedupeMemoryRows(rows);
 }
 
 async function getRecentConversationMemories(userId, limit = 30) {
@@ -592,23 +625,45 @@ async function getRecentConversationMemories(userId, limit = 30) {
   }
 }
 
-function buildMemorySummary(memories) {
-  if (!Array.isArray(memories) || !memories.length) return '過去記憶はまだありません。';
-
+function splitMemoryContext(memories) {
+  const followUps = [];
   const grouped = new Map();
 
-  for (const row of memories) {
+  for (const row of memories || []) {
     const type = row.memory_type || 'other';
     const content = trimMemoryText(row.content, 160);
     if (!content) continue;
 
+    if (type === 'follow_up_needed') {
+      if (!followUps.some((x) => isMemoryContentNear(x, content))) {
+        followUps.push(content);
+      }
+      continue;
+    }
+
     if (!grouped.has(type)) grouped.set(type, []);
     const list = grouped.get(type);
 
-    if (!list.includes(content)) {
+    if (!list.some((x) => isMemoryContentNear(x, content))) {
       list.push(content);
     }
   }
+
+  return {
+    followUps: followUps.slice(0, 4),
+    grouped,
+  };
+}
+
+function buildMemorySummary(memories) {
+  if (!Array.isArray(memories) || !memories.length) {
+    return {
+      followUpText: '特に優先フォローはまだありません。',
+      memoryText: '過去記憶はまだありません。',
+    };
+  }
+
+  const { followUps, grouped } = splitMemoryContext(memories);
 
   const labels = {
     diet: '食事傾向',
@@ -621,21 +676,27 @@ function buildMemorySummary(memories) {
     habits: '習慣',
     obstacles: 'つまずき',
     support_preferences: '合う声かけ',
-    follow_up_needed: '次回確認',
     medical_risk: '医療注意',
     notable_events: '印象的な出来事',
     other: 'その他',
   };
 
-  const lines = [];
+  const memoryLines = [];
 
   for (const [type, items] of grouped.entries()) {
     if (!items.length) continue;
     const label = labels[type] || type;
-    lines.push(`- ${label}: ${items.slice(0, 3).join(' / ')}`);
+    memoryLines.push(`- ${label}: ${items.slice(0, 3).join(' / ')}`);
   }
 
-  return lines.length ? lines.join('\n') : '過去記憶はまだありません。';
+  return {
+    followUpText: followUps.length
+      ? followUps.map((x) => `- ${x}`).join('\n')
+      : '特に優先フォローはまだありません。',
+    memoryText: memoryLines.length
+      ? memoryLines.join('\n')
+      : '過去記憶はまだありません。',
+  };
 }
 
 async function extractConversationMemory(user, userText, aiReply) {
@@ -659,6 +720,15 @@ async function extractConversationMemory(user, userText, aiReply) {
   }
 }
 
+function filterDuplicateRowsAgainstRecent(rows, recentRows) {
+  return (rows || []).filter((row) => {
+    const duplicate = (recentRows || []).some((recent) => {
+      return recent.memory_type === row.memory_type && isMemoryContentNear(recent.content, row.content);
+    });
+    return !duplicate;
+  });
+}
+
 async function saveConversationMemory(user, userText, aiReply) {
   try {
     const payload = await extractConversationMemory(user, userText, aiReply);
@@ -666,7 +736,12 @@ async function saveConversationMemory(user, userText, aiReply) {
 
     if (!rows.length) return;
 
-    const { error } = await supabase.from('conversation_memories').insert(rows);
+    const recentRows = await getRecentConversationMemories(user.id, 120);
+    const filteredRows = filterDuplicateRowsAgainstRecent(rows, recentRows);
+
+    if (!filteredRows.length) return;
+
+    const { error } = await supabase.from('conversation_memories').insert(filteredRows);
     if (error) {
       if (isMissingRelationError(error)) {
         console.warn('⚠️ conversation_memories table not found. Memory save skipped.');
@@ -797,16 +872,19 @@ async function saveMealToLog(userId, meal) {
 
 async function defaultChatReply(user, userText) {
   const name = getUserDisplayName(user);
-  const recentMemories = await getRecentConversationMemories(user.id, 20);
-  const memorySummary = buildMemorySummary(recentMemories);
+  const recentMemories = await getRecentConversationMemories(user.id, 40);
+  const { followUpText, memoryText } = buildMemorySummary(recentMemories);
 
   const prompt = [
     AI_BASE_PROMPT,
     buildAiTypePrompt(user.ai_type),
     name ? `利用者の呼び名: ${name}さん` : '',
     '',
+    '【優先フォロー項目】',
+    followUpText,
+    '',
     '【過去の伴走メモ】',
-    memorySummary,
+    memoryText,
     '',
     '【今回の返答ルール】',
     '- 相手の言葉の中から最低1つ具体的に拾う',
@@ -820,6 +898,9 @@ async function defaultChatReply(user, userText) {
     '- LINEでは少し余白のある短めの返答を優先する',
     '- 「何よりです」「嬉しいな」「よく分かりますよ」を多用しない',
     '- きれいにまとめすぎず、自然な会話を優先する',
+    '- 必要なら以前の話題に軽く触れてよい',
+    '- ただし毎回すべての過去情報を持ち出さない',
+    '- follow_up_needed があれば自然に最優先で活かす',
     '- 痛みや不調は不安を煽らず、危険なら受診もやさしくすすめる',
     '',
     `利用者メッセージ: ${userText}`,
