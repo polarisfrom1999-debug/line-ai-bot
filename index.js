@@ -512,19 +512,32 @@ function seemsMealCorrectionText(text) {
   ].some((w) => t.includes(w));
 }
 
+function normalizeMealIntentText(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
 function isMealDesireOrFeelingText(text) {
-  const t = String(text || '').trim();
+  const t = normalizeMealIntentText(text);
   if (!t) return false;
 
   const patterns = [
     '食べたい',
     '飲みたい',
     'お腹いっぱい食べたい',
+    'おなかいっぱい食べたい',
+    'お腹一杯食べたい',
+    'おなか一杯食べたい',
     'いっぱい食べたい',
     '甘いもの食べたい',
     '何か食べたい',
     '食欲がある',
     '食欲がない',
+    '食欲あります',
+    '食欲ない',
     'お腹すいた',
     'おなかすいた',
     '食べたくなる',
@@ -533,11 +546,12 @@ function isMealDesireOrFeelingText(text) {
     '飲みたくなる',
     '食欲が止まらない',
     '食欲がすごい',
-    '食欲あります',
     '食べすぎそう',
     '食べ過ぎそう',
     '食べすぎたくなる',
     '甘いものが止まらない',
+    'お腹いっぱい食べれる',
+    'おなかいっぱい食べれる',
   ];
 
   if (patterns.some((p) => t.includes(p))) {
@@ -549,6 +563,41 @@ function isMealDesireOrFeelingText(text) {
   }
 
   return false;
+}
+
+function isExplicitMealLogText(text) {
+  const t = normalizeMealIntentText(text);
+  if (!t) return false;
+  if (isMealDesireOrFeelingText(t)) return false;
+
+  const directPatterns = [
+    '食べた',
+    '飲んだ',
+    '食べました',
+    '飲みました',
+    '食べたよ',
+    '飲んだよ',
+    '食べたです',
+    '朝食',
+    '昼食',
+    '夕食',
+    '朝ごはん',
+    '昼ごはん',
+    '夜ごはん',
+    '晩ごはん',
+    '朝飯',
+    '昼飯',
+    '夜飯',
+  ];
+
+  if (directPatterns.some((p) => t.includes(p))) {
+    return true;
+  }
+
+  const hasMealVerb = /食べた|飲んだ|食べました|飲みました/.test(t);
+  const hasFoodLikeWord = /ラーメン|ご飯|ごはん|パン|おにぎり|うどん|そば|パスタ|カレー|寿司|すし|肉|魚|卵|サラダ|スープ|味噌汁|みそ汁|コーヒー|お茶|ジュース|ビール|お酒|ケーキ|チョコ|アイス/.test(t);
+
+  return hasMealVerb || hasFoodLikeWord;
 }
 
 function isExplicitMealGuideIntent(text) {
@@ -2018,7 +2067,7 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (seemsMealTextCandidate(text)) {
+    if (isExplicitMealLogText(text) || seemsMealTextCandidate(text)) {
       const analyzedMeal = await analyzeMealTextWithAI(text);
       setMealDraft(user.line_user_id, analyzedMeal);
 
