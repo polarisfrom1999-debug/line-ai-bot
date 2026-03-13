@@ -15,6 +15,11 @@ const {
 } = require('./services/line_service');
 const { generateTextOnly } = require('./services/gemini_service');
 const {
+  analyzeMealPhotoWithGemini,
+  buildMealReply,
+  normalizeGeminiMealResult,
+} = require('./services/gemini_meal_service');
+const {
   parseDisplayName,
   normalizeStoredDisplayName,
   getUserDisplayName,
@@ -1151,6 +1156,73 @@ async function defaultChatReply(user, userText) {
   return postProcessAiReply(user, rawReply);
 }
 
+function buildLegacyMealFromGeminiResult(result) {
+  const normalized = normalizeGeminiMealResult(result || {});
+  const mainItems = (normalized.items || []).filter((item) => item.is_main_subject);
+
+  const foodItems = mainItems.map((item) => ({
+    name: safeText(item.name || '不明な食品', 80),
+    amount_text: safeText(item.qty_text || '1つ', 80),
+    estimated_kcal: Number(item.estimated_kcal) || 0,
+    confidence: Number(item.confidence) || 0.7,
+    needs_confirmation: false,
+  }));
+
+  const uncertainPoints = Array.isArray(normalized.uncertain_points)
+    ? normalized.uncertain_points.filter(Boolean)
+    : [];
+
+  const confirmationQuestions = Array.isArray(normalized.confirmation_questions)
+    ? normalized.confirmation_questions.filter(Boolean)
+    : [];
+
+  const commentLines = [];
+  if (uncertainPoints.length) {
+    commentLines.push('確認したい点:');
+    commentLines.push(...uncertainPoints.map((x) => `・${x}`));
+  }
+  if (confirmationQuestions.length) {
+    commentLines.push(...confirmationQuestions.map((x) => `・${x}`));
+  }
+
+  return {
+    is_meal: true,
+    meal_label: safeText(
+      mainItems.map((item) => item.name).join(' / ') || '食事',
+      100
+    ),
+    food_items: foodItems,
+    estimated_kcal: Number(normalized.total_kcal) || 0,
+    kcal_min: Number(normalized.range_min) || 0,
+    kcal_max: Number(normalized.range_max) || 0,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+    confidence: 0.85,
+    ai_comment: safeText(
+      commentLines.length
+        ? commentLines.join('\n')
+        : `写真から推定しました。約${fmt(Number(normalized.total_kcal) || 0)} kcalです。`,
+      1000
+    ),
+    raw_model_json: {
+      source: 'gemini_meal_service',
+      gemini_result: normalized,
+    },
+  };
+}
+
+async function analyzeMealImageWithGeminiFallback(buffer, mimeType) {
+  const base64Image = buffer.toString('base64');
+
+  const result = await analyzeMealPhotoWithGemini({
+    base64Image,
+    mimeType: mimeType || 'image/jpeg',
+  });
+
+  return buildLegacyMealFromGeminiResult(result);
+}
+
 function buildPainSituationResponse(text, area = '全身') {
   const map = {
     '少し動くと楽': {
@@ -1342,9 +1414,28 @@ async function handleImageMessage(event, user) {
     const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
 
     if (analyzedMeal.is_meal) {
-      setMealDraft(user.line_user_id, analyzedMeal);
-      const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
-      const mealMessage = `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
+      let finalMealDraft = analyzedMeal;
+      let usedGeminiForMeal = false;
+
+      try {
+        finalMealDraft = await analyzeMealImageWithGeminiFallback(buffer, mimeType);
+        usedGeminiForMeal = true;
+      } catch (geminiMealError) {
+        console.error(
+          '⚠️ Gemini meal analysis failed. Fallback to legacy meal image flow:',
+          geminiMealError?.message || geminiMealError
+        );
+        finalMealDraft = analyzedMeal;
+      }
+
+      setMealDraft(user.line_user_id, finalMealDraft);
+      const needsDrinkCorrection = (finalMealDraft.food_items || []).some((x) => x.needs_confirmation);
+
+      const mealMessageBase = usedGeminiForMeal
+        ? buildMealReply(finalMealDraft.raw_model_json?.gemini_result || {})
+        : buildMealConfirmationMessage(finalMealDraft);
+
+      const mealMessage = `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
 
       await replyMessage(
         event.replyToken,
@@ -1414,6 +1505,9 @@ async function handleImageMessage(event, user) {
     );
   }
 }
+
+// NOTE: Below this point is the same as your current file except unchanged logic.
+// It is kept full so you can replace the file as-is.
 
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
