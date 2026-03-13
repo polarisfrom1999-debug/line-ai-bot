@@ -5,7 +5,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
 function safeJsonParse(text, fallback = null) {
   try {
     return JSON.parse(text);
-  } catch (err) {
+  } catch (_err) {
     return fallback;
   }
 }
@@ -22,9 +22,13 @@ function roundKcal(value) {
   return Math.round(n);
 }
 
+function safeText(value, max = 200) {
+  return String(value || '').trim().slice(0, max);
+}
+
 function normalizeItem(raw) {
-  const name = String(raw?.name || '').trim();
-  const qtyText = String(raw?.qty_text || raw?.qtyText || '').trim();
+  const name = safeText(raw?.name || '', 80) || '不明な食品';
+  const qtyText = safeText(raw?.qty_text || raw?.qtyText || '', 80) || '1つ';
   const estimatedKcal = roundKcal(raw?.estimated_kcal ?? raw?.estimatedKcal ?? 0);
   const confidence = clampNumber(raw?.confidence ?? 0.7, 0, 1, 0.7);
   const isMainSubject = Boolean(
@@ -32,89 +36,12 @@ function normalizeItem(raw) {
   );
 
   return {
-    name: name || '不明な食品',
-    qty_text: qtyText || '1つ',
+    name,
+    qty_text: qtyText,
     estimated_kcal: Math.max(0, estimatedKcal),
     confidence,
     is_main_subject: isMainSubject,
   };
-}
-
-function normalizeGeminiMealResult(raw) {
-  const items = Array.isArray(raw?.items) ? raw.items.map(normalizeItem) : [];
-
-  const normalized = {
-    items,
-    total_kcal: roundKcal(raw?.total_kcal ?? raw?.totalKcal ?? 0),
-    range_min: roundKcal(raw?.range_min ?? raw?.rangeMin ?? 0),
-    range_max: roundKcal(raw?.range_max ?? raw?.rangeMax ?? 0),
-    uncertain_points: Array.isArray(raw?.uncertain_points)
-      ? raw.uncertain_points.map((x) => String(x).trim()).filter(Boolean)
-      : [],
-    needs_confirmation: Boolean(raw?.needs_confirmation),
-    confirmation_questions: Array.isArray(raw?.confirmation_questions)
-      ? raw.confirmation_questions.map((x) => String(x).trim()).filter(Boolean)
-      : [],
-    raw_json: raw || {},
-  };
-
-  const mainItems = normalized.items.filter((item) => item.is_main_subject);
-  const computedMainTotal = mainItems.reduce((sum, item) => sum + item.estimated_kcal, 0);
-
-  if (!normalized.total_kcal || normalized.total_kcal <= 0) {
-    normalized.total_kcal = computedMainTotal;
-  }
-
-  if (!normalized.range_min || normalized.range_min <= 0) {
-    normalized.range_min = Math.max(0, Math.round(normalized.total_kcal * 0.85));
-  }
-
-  if (!normalized.range_max || normalized.range_max <= 0) {
-    normalized.range_max = Math.max(normalized.range_min, Math.round(normalized.total_kcal * 1.2));
-  }
-
-  if (normalized.range_min > normalized.range_max) {
-    const tmp = normalized.range_min;
-    normalized.range_min = normalized.range_max;
-    normalized.range_max = tmp;
-  }
-
-  if (!normalized.needs_confirmation) {
-    normalized.needs_confirmation =
-      normalized.uncertain_points.length > 0 || normalized.confirmation_questions.length > 0;
-  }
-
-  return applyLocalMealGuards(normalized);
-}
-
-function applyLocalMealGuards(result) {
-  const mainItems = result.items.filter((item) => item.is_main_subject);
-  const mainNames = mainItems.map((item) => item.name).join(' / ');
-  const total = result.total_kcal;
-
-  const hasLightSnackPattern =
-    /ナゲット|バウム|バーム|ドーナツ|お菓子|クッキー|パン|カフェオレ|ラテ|コーヒー|紅茶|ミルクティー/i.test(mainNames) &&
-    mainItems.length <= 4;
-
-  if (hasLightSnackPattern && total >= 550) {
-    result.uncertain_points.unshift(
-      '軽食の見た目に対して推定カロリーが高めのため再確認が必要です'
-    );
-    result.needs_confirmation = true;
-
-    result.total_kcal = Math.round(total * 0.75);
-    result.range_min = Math.min(result.range_min, Math.round(result.total_kcal * 0.85));
-    result.range_max = Math.max(result.range_max, Math.round(result.total_kcal * 1.2));
-  }
-
-  if (result.range_max - result.range_min > 400) {
-    result.uncertain_points.unshift(
-      '推定幅が広いため、飲み物や量の確認で精度が上がります'
-    );
-    result.needs_confirmation = true;
-  }
-
-  return result;
 }
 
 function buildMealVisionPrompt() {
@@ -133,6 +60,16 @@ function buildMealVisionPrompt() {
 8. 背景物は total_kcal に自動加算しないこと。
 9. ソース・ドレッシング・砂糖・シロップは、明確に確認できる時だけ加算すること。
 10. 必ずJSONのみを返すこと。説明文は禁止。
+
+飲み物の扱い:
+- 水、お茶、無糖コーヒーの可能性があるなら高カロリーにしすぎないこと
+- 不明なミルク入り飲料は、まず 70〜90 kcal 程度を中心に考えること
+- カフェオレかミルクティーか曖昧なら、確認質問を出しつつ仮推定は控えめにすること
+
+軽食の扱い:
+- ナゲット2個、バウムクーヘン2切れ、小さなお菓子、軽いパン、1杯の飲み物などは、
+  見た目以上に盛りすぎないこと
+- 軽食3〜4点で合計 500kcal を大きく超える時は、過大推定の可能性を疑うこと
 
 出力要件:
 - items: 配列
@@ -191,6 +128,242 @@ function getMealResponseSchema() {
   };
 }
 
+function extractGeminiText(json) {
+  return (
+    json?.candidates?.[0]?.content?.parts?.map((p) => p?.text || '').join('') ||
+    json?.candidates?.[0]?.content?.parts?.[0]?.text ||
+    ''
+  );
+}
+
+function cleanupJsonText(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '{}';
+
+  if (trimmed.startsWith('```')) {
+    return trimmed
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+  }
+
+  return trimmed;
+}
+
+function hasUncertainDrink(result) {
+  const text = [
+    ...(Array.isArray(result?.uncertain_points) ? result.uncertain_points : []),
+    ...(Array.isArray(result?.confirmation_questions) ? result.confirmation_questions : []),
+    ...((result?.items || []).map((x) => `${x?.name || ''} ${x?.qty_text || ''}`)),
+  ].join(' ');
+
+  return /カフェオレ|ミルクティー|ラテ|飲み物|マグカップ|コップ|紅茶|お茶|水/.test(text);
+}
+
+function looksLikeLightSnack(itemNamesText) {
+  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース/.test(
+    itemNamesText
+  );
+}
+
+function normalizeGeminiMealResult(raw) {
+  const items = Array.isArray(raw?.items) ? raw.items.map(normalizeItem) : [];
+
+  const normalized = {
+    items,
+    total_kcal: roundKcal(raw?.total_kcal ?? raw?.totalKcal ?? 0),
+    range_min: roundKcal(raw?.range_min ?? raw?.rangeMin ?? 0),
+    range_max: roundKcal(raw?.range_max ?? raw?.rangeMax ?? 0),
+    uncertain_points: Array.isArray(raw?.uncertain_points)
+      ? raw.uncertain_points.map((x) => safeText(x, 160)).filter(Boolean)
+      : [],
+    needs_confirmation: Boolean(raw?.needs_confirmation),
+    confirmation_questions: Array.isArray(raw?.confirmation_questions)
+      ? raw.confirmation_questions.map((x) => safeText(x, 160)).filter(Boolean)
+      : [],
+    raw_json: raw || {},
+  };
+
+  const mainItems = normalized.items.filter((item) => item.is_main_subject);
+  const computedMainTotal = mainItems.reduce(
+    (sum, item) => sum + (Number(item.estimated_kcal) || 0),
+    0
+  );
+
+  if (!normalized.total_kcal || normalized.total_kcal <= 0) {
+    normalized.total_kcal = computedMainTotal;
+  }
+
+  if (!normalized.range_min || normalized.range_min <= 0) {
+    normalized.range_min = Math.max(0, Math.round(normalized.total_kcal * 0.85));
+  }
+
+  if (!normalized.range_max || normalized.range_max <= 0) {
+    normalized.range_max = Math.max(
+      normalized.range_min,
+      Math.round(normalized.total_kcal * 1.2)
+    );
+  }
+
+  if (normalized.range_min > normalized.range_max) {
+    const tmp = normalized.range_min;
+    normalized.range_min = normalized.range_max;
+    normalized.range_max = tmp;
+  }
+
+  if (!normalized.needs_confirmation) {
+    normalized.needs_confirmation =
+      normalized.uncertain_points.length > 0 ||
+      normalized.confirmation_questions.length > 0;
+  }
+
+  return applyLocalMealGuards(normalized);
+}
+
+function applyUncertainDrinkAdjustment(result) {
+  const items = Array.isArray(result.items) ? result.items : [];
+  const uncertainDrink = hasUncertainDrink(result);
+  if (!uncertainDrink) return result;
+
+  const adjustedItems = items.map((item) => {
+    const name = String(item.name || '');
+    const isDrinkLike = /カフェオレ|ミルクティー|ラテ|コーヒー|紅茶|お茶|水|ドリンク|飲み物/.test(name);
+
+    if (!isDrinkLike) return item;
+
+    const current = Number(item.estimated_kcal) || 0;
+
+    if (current <= 0) {
+      return { ...item, estimated_kcal: 80 };
+    }
+
+    if (current > 95) {
+      return { ...item, estimated_kcal: 80 };
+    }
+
+    return item;
+  });
+
+  const mainItems = adjustedItems.filter((item) => item.is_main_subject);
+  const newTotal = mainItems.reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+
+  return {
+    ...result,
+    items: adjustedItems,
+    total_kcal: newTotal,
+    range_min: Math.min(result.range_min, Math.round(newTotal * 0.85)),
+    range_max: Math.max(Math.round(newTotal * 1.18), Math.round(newTotal + 70)),
+  };
+}
+
+function applyLightSnackCap(result) {
+  const mainItems = (result.items || []).filter((item) => item.is_main_subject);
+  const namesText = mainItems.map((item) => item.name).join(' / ');
+  const isLightSnack = looksLikeLightSnack(namesText) && mainItems.length <= 4;
+
+  if (!isLightSnack) return result;
+
+  let total = Number(result.total_kcal) || 0;
+  let changed = false;
+
+  if (hasUncertainDrink(result) && total > 430) {
+    total = 390;
+    changed = true;
+  } else if (total > 520) {
+    total = Math.round(total * 0.78);
+    changed = true;
+  }
+
+  if (!changed) return result;
+
+  const rangeMin = Math.max(0, Math.round(total * 0.82));
+  const rangeMax = Math.max(rangeMin + 40, Math.round(total * 1.18));
+
+  const notes = Array.isArray(result.uncertain_points) ? [...result.uncertain_points] : [];
+  if (!notes.some((x) => x.includes('軽食'))) {
+    notes.unshift('軽食としては高めに出やすいため、控えめ寄りに再調整しています');
+  }
+
+  return {
+    ...result,
+    total_kcal: total,
+    range_min: rangeMin,
+    range_max: rangeMax,
+    uncertain_points: notes,
+    needs_confirmation: true,
+  };
+}
+
+function dedupeLines(list) {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of list || []) {
+    const text = safeText(item, 160);
+    if (!text) continue;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+
+  return out;
+}
+
+function applyLocalMealGuards(result) {
+  let adjusted = {
+    ...result,
+    items: Array.isArray(result.items) ? result.items : [],
+    uncertain_points: dedupeLines(result.uncertain_points),
+    confirmation_questions: dedupeLines(result.confirmation_questions),
+  };
+
+  adjusted = applyUncertainDrinkAdjustment(adjusted);
+  adjusted = applyLightSnackCap(adjusted);
+
+  const mainItems = adjusted.items.filter((item) => item.is_main_subject);
+  const mainNames = mainItems.map((item) => item.name).join(' / ');
+  const total = Number(adjusted.total_kcal) || 0;
+
+  const hasLightSnackPattern =
+    looksLikeLightSnack(mainNames) &&
+    mainItems.length <= 4;
+
+  if (hasLightSnackPattern && total >= 550) {
+    adjusted.uncertain_points.unshift(
+      '軽食の見た目に対して推定カロリーが高めのため再確認が必要です'
+    );
+    adjusted.needs_confirmation = true;
+
+    adjusted.total_kcal = Math.round(total * 0.75);
+    adjusted.range_min = Math.min(adjusted.range_min, Math.round(adjusted.total_kcal * 0.85));
+    adjusted.range_max = Math.max(
+      adjusted.range_max,
+      Math.round(adjusted.total_kcal * 1.2)
+    );
+  }
+
+  if (adjusted.range_max - adjusted.range_min > 260) {
+    adjusted.uncertain_points.unshift(
+      '推定幅が広いため、飲み物や量の確認で精度が上がります'
+    );
+    adjusted.needs_confirmation = true;
+    adjusted.range_max = Math.round(adjusted.total_kcal * 1.18);
+    adjusted.range_min = Math.round(adjusted.total_kcal * 0.82);
+  }
+
+  adjusted.uncertain_points = dedupeLines(adjusted.uncertain_points);
+  adjusted.confirmation_questions = dedupeLines(adjusted.confirmation_questions);
+
+  if (adjusted.range_min > adjusted.range_max) {
+    const tmp = adjusted.range_min;
+    adjusted.range_min = adjusted.range_max;
+    adjusted.range_max = tmp;
+  }
+
+  return adjusted;
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -204,30 +377,6 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   } finally {
     clearTimeout(timer);
   }
-}
-
-function extractGeminiText(json) {
-  return (
-    json?.candidates?.[0]?.content?.parts?.map((p) => p?.text || '').join('') ||
-    json?.candidates?.[0]?.content?.parts?.[0]?.text ||
-    ''
-  );
-}
-
-function cleanupJsonText(text) {
-  const trimmed = String(text || '').trim();
-
-  if (!trimmed) return '{}';
-
-  if (trimmed.startsWith('```')) {
-    return trimmed
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-  }
-
-  return trimmed;
 }
 
 async function analyzeMealPhotoWithGemini({
@@ -316,20 +465,18 @@ function buildMealReply(result) {
 
   text += `推定カロリー: ${kcal} kcal（${minKcal}〜${maxKcal} kcal）`;
 
-  if (Array.isArray(result?.uncertain_points) && result.uncertain_points.length) {
+  const uncertainPoints = dedupeLines(result?.uncertain_points || []);
+  const confirmationQuestions = dedupeLines(result?.confirmation_questions || []);
+
+  if (uncertainPoints.length) {
     text += '\n\n確認したい点:\n';
-    text += result.uncertain_points.map((x) => `・${x}`).join('\n');
+    text += uncertainPoints.map((x) => `・${x}`).join('\n');
   }
 
-  if (
-    Array.isArray(result?.confirmation_questions) &&
-    result.confirmation_questions.length
-  ) {
+  if (confirmationQuestions.length) {
     text += '\n\n';
-    text += result.confirmation_questions.map((x) => `・${x}`).join('\n');
+    text += confirmationQuestions.map((x) => `・${x}`).join('\n');
   }
-
-  text += '\n\n合っていれば保存、違うところがあればそのまま訂正してください。';
 
   return text;
 }
