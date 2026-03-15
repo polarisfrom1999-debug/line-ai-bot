@@ -1,9 +1,15 @@
 const { generateJsonOnly } = require('./gemini_service');
-const { safeText, toNumberOrNull, clamp01, formatKcalRange } = require('../utils/formatters');
+const {
+  safeText,
+  toNumberOrNull,
+  clamp01,
+  formatKcalRange,
+} = require('../utils/formatters');
 
 const MEAL_CORRECTION_SCHEMA = {
   type: 'object',
   properties: {
+    overwrite_all: { type: 'boolean' },
     correction_type: { type: 'string' },
     corrected_meal_label: { type: 'string' },
     corrected_food_items: {
@@ -27,295 +33,428 @@ const MEAL_CORRECTION_SCHEMA = {
     corrected_protein_g: { type: 'number' },
     corrected_fat_g: { type: 'number' },
     corrected_carbs_g: { type: 'number' },
-    confidence: { type: 'number' },
-    assistant_message: { type: 'string' },
+    uncertainty_notes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    confirmation_questions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    correction_summary: { type: 'string' },
   },
   required: [
+    'overwrite_all',
     'correction_type',
     'corrected_meal_label',
     'corrected_food_items',
     'corrected_estimated_kcal',
     'corrected_kcal_min',
     'corrected_kcal_max',
-    'confidence',
-    'assistant_message',
+    'correction_summary',
   ],
 };
 
 function normalizeFoodItem(item) {
   return {
-    name: safeText(item?.name, 100),
-    estimated_amount: safeText(item?.estimated_amount || item?.amount_text, 80) || null,
-    estimated_kcal: toNumberOrNull(item?.estimated_kcal),
+    name: safeText(item?.name, 100) || '不明な食品',
+    estimated_amount: safeText(item?.estimated_amount, 80) || null,
+    estimated_kcal: Math.max(0, toNumberOrNull(item?.estimated_kcal) ?? 0),
     category: safeText(item?.category, 40) || null,
-    confidence: clamp01(toNumberOrNull(item?.confidence) ?? 0.7),
+    confidence: clamp01(toNumberOrNull(item?.confidence) ?? 0.85),
     needs_confirmation: !!item?.needs_confirmation,
   };
 }
 
-function normalizeCorrectedMealResult(parsed, fallbackMeal = {}) {
+function normalizeMeal(meal) {
   return {
-    meal_label: safeText(parsed.corrected_meal_label || fallbackMeal.meal_label || '食事', 100),
-    food_items: Array.isArray(parsed.corrected_food_items)
-      ? parsed.corrected_food_items.map((item) => normalizeFoodItem(item))
-      : Array.isArray(fallbackMeal.food_items)
-        ? fallbackMeal.food_items.map((item) => normalizeFoodItem(item))
-        : [],
-    estimated_kcal: toNumberOrNull(parsed.corrected_estimated_kcal),
-    kcal_min: toNumberOrNull(parsed.corrected_kcal_min),
-    kcal_max: toNumberOrNull(parsed.corrected_kcal_max),
-    protein_g: toNumberOrNull(parsed.corrected_protein_g),
-    fat_g: toNumberOrNull(parsed.corrected_fat_g),
-    carbs_g: toNumberOrNull(parsed.corrected_carbs_g),
-    confidence: clamp01(toNumberOrNull(parsed.confidence) ?? 0.7),
-    ai_comment: safeText(parsed.assistant_message || '訂正内容を反映しました。', 300),
+    meal_label: safeText(meal?.meal_label || '食事', 100),
+    food_items: Array.isArray(meal?.food_items)
+      ? meal.food_items.map(normalizeFoodItem).filter((x) => x.name)
+      : [],
+    estimated_kcal: Math.max(0, toNumberOrNull(meal?.estimated_kcal) ?? 0),
+    kcal_min: Math.max(0, toNumberOrNull(meal?.kcal_min) ?? 0),
+    kcal_max: Math.max(0, toNumberOrNull(meal?.kcal_max) ?? 0),
+    protein_g: toNumberOrNull(meal?.protein_g),
+    fat_g: toNumberOrNull(meal?.fat_g),
+    carbs_g: toNumberOrNull(meal?.carbs_g),
+    confidence: clamp01(toNumberOrNull(meal?.confidence) ?? 0.85),
+    ai_comment: safeText(meal?.ai_comment || '内容を整理しました。', 1000),
+    uncertainty_notes: Array.isArray(meal?.uncertainty_notes)
+      ? meal.uncertainty_notes.map((x) => safeText(x, 160)).filter(Boolean)
+      : [],
+    confirmation_questions: Array.isArray(meal?.confirmation_questions)
+      ? meal.confirmation_questions.map((x) => safeText(x, 160)).filter(Boolean)
+      : [],
+    raw_model_json: meal?.raw_model_json || meal || {},
   };
 }
 
-function buildCorrectionPrompt(previousMeal, userCorrectionText) {
-  const previousJson = JSON.stringify(previousMeal || {}, null, 2);
+function uniqueStrings(list = []) {
+  return [...new Set((list || []).map((x) => safeText(x, 160)).filter(Boolean))];
+}
+
+function includesAny(text, words) {
+  const t = String(text || '');
+  return words.some((w) => t.includes(w));
+}
+
+function parseCount(text) {
+  const m = String(text || '').match(/(\d+(?:\.\d+)?)\s*(切れ|個|本|杯|枚|皿|袋|パック)/);
+  if (!m) return null;
+  return {
+    value: Number(m[1]),
+    unit: m[2],
+  };
+}
+
+function looksLikeOnlyOverwrite(text) {
+  const t = String(text || '');
+  return (
+    t.includes('だけ') ||
+    t.includes('のみ') ||
+    t.includes('しか') ||
+    t.includes('これだけ') ||
+    t.includes('だけです') ||
+    t.includes('のみです')
+  );
+}
+
+function looksLikeDrinkCorrectionOnly(text) {
+  const t = String(text || '');
+  return includesAny(t, [
+    'お酒ではない',
+    'ノンアル',
+    'ジャスミンティー',
+    '烏龍茶',
+    'ウーロン茶',
+    '緑茶',
+    '麦茶',
+    '紅茶',
+    '水です',
+    'お茶です',
+  ]);
+}
+
+function estimateKcalForKnownItem(name, amountText) {
+  const n = String(name || '');
+  const amount = String(amountText || '');
+  const count = parseCount(amount);
+
+  // 刺身系
+  if (n.includes('サーモン') && n.includes('刺身')) {
+    const pieces = count?.unit === '切れ' ? count.value : null;
+    if (pieces != null) {
+      const kcal = Math.round(pieces * 30);
+      return {
+        kcal,
+        min: Math.round(pieces * 25),
+        max: Math.round(pieces * 35),
+      };
+    }
+    return { kcal: 140, min: 120, max: 160 };
+  }
+
+  if ((n.includes('白身') || n.includes('鯛') || n.includes('ヒラメ')) && n.includes('刺身')) {
+    const pieces = count?.unit === '切れ' ? count.value : null;
+    if (pieces != null) {
+      const kcal = Math.round(pieces * 15);
+      return {
+        kcal,
+        min: Math.round(pieces * 10),
+        max: Math.round(pieces * 20),
+      };
+    }
+    return { kcal: 60, min: 40, max: 80 };
+  }
+
+  // 貝系
+  if (includesAny(n, ['ホンビノス', 'ボンビノス']) && includesAny(amount, ['1個', '１個'])) {
+    return { kcal: 25, min: 18, max: 35 };
+  }
+
+  if (n.includes('ホタテ') && includesAny(amount, ['1個', '１個'])) {
+    return { kcal: 20, min: 15, max: 30 };
+  }
+
+  // 焼きおにぎり
+  if (n.includes('焼きおにぎり')) {
+    return { kcal: 200, min: 180, max: 230 };
+  }
+
+  // パン系
+  if (n.includes('プレミアムチョコクロ')) {
+    return { kcal: 280, min: 250, max: 300 };
+  }
+
+  if (n.includes('フレンチトースト')) {
+    return { kcal: 320, min: 280, max: 360 };
+  }
+
+  // 微量
+  if (includesAny(n, ['わさび', 'ツマ', '大根']) || n.includes('わかめ')) {
+    return { kcal: 5, min: 0, max: 10 };
+  }
+
+  return null;
+}
+
+function applyKnownFoodCorrections(items) {
+  const normalizedItems = (items || []).map(normalizeFoodItem);
+
+  let total = 0;
+  let min = 0;
+  let max = 0;
+
+  const updated = normalizedItems.map((item) => {
+    const known = estimateKcalForKnownItem(item.name, item.estimated_amount);
+    if (!known) {
+      const kcal = Math.max(0, toNumberOrNull(item.estimated_kcal) ?? 0);
+      total += kcal;
+      min += Math.max(0, Math.round(kcal * 0.85));
+      max += Math.max(0, Math.round(kcal * 1.2));
+      return item;
+    }
+
+    total += known.kcal;
+    min += known.min;
+    max += known.max;
+
+    return {
+      ...item,
+      estimated_kcal: known.kcal,
+      confidence: Math.max(Number(item.confidence || 0), 0.9),
+      needs_confirmation: false,
+    };
+  });
+
+  return {
+    items: updated,
+    total,
+    min,
+    max,
+  };
+}
+
+function buildCorrectionPrompt(currentMeal, correctionText) {
+  const currentSummary = {
+    meal_label: currentMeal.meal_label,
+    food_items: currentMeal.food_items,
+    estimated_kcal: currentMeal.estimated_kcal,
+    kcal_min: currentMeal.kcal_min,
+    kcal_max: currentMeal.kcal_max,
+  };
 
   return [
     'あなたは日本向けの食事記録訂正アシスタントです。',
-    '直前の食事解析結果に対して、ユーザーが訂正を送ってきます。',
-    'ユーザーの訂正を最優先し、前回の誤認を丁寧に修正してください。',
-    '特に飲み物は、お茶・水・ノンアル・アルコールの取り違えに注意してください。',
-    'ユーザーが「お酒ではない」「ジャスミンティー」などと訂正したら、その内容を必ず優先してください。',
-    '訂正後の meal_label, food_items, kcal, PFC をJSONで返してください。',
+    '最優先ルール: ユーザーの訂正文を、元の画像推定や元のAI推定より優先してください。',
+    '特に「だけ」「のみ」「しか〜ない」が含まれる場合は、元の食材一覧を引きずらず、ユーザー文だけを正として再構成してください。',
+    '食材を追加で想像しないでください。',
+    '写っていたかもしれない別食材を復活させないでください。',
+    '訂正後は corrected_food_items をユーザーの意図に合わせて作り直してください。',
+    '刺身は高く見積もりすぎないでください。',
+    'サーモン刺身は1切れ25〜35kcal程度を基準にしてください。',
+    '白身魚刺身は1切れ10〜20kcal程度を基準にしてください。',
+    'わかめ、わさび、ツマなどの少量付け合わせは過大評価しないでください。',
+    '不明な食材は勝手に足さず、必要時だけ確認質問を出してください。',
     '必ずJSONだけを返してください。',
     '',
-    '前回の解析結果:',
-    previousJson,
-    '',
-    `今回のユーザー訂正: ${userCorrectionText}`,
+    `現在の食事データ: ${JSON.stringify(currentSummary)}`,
+    `ユーザー訂正文: ${correctionText}`,
   ].join('\n');
 }
 
-function getFoodItems(previousMeal) {
-  return Array.isArray(previousMeal?.food_items)
-    ? previousMeal.food_items.map((item) => normalizeFoodItem(item))
-    : [];
-}
+function buildDeterministicOverwrite(currentMeal, correctionText) {
+  const t = String(correctionText || '').trim();
 
-function isDrinkItemName(name) {
-  const t = String(name || '');
-  return /コーヒー|カフェオレ|ラテ|ミルクティー|紅茶|お茶|茶|水|ジュース|酒|ビール|ハイボール|サワー|焼酎|ワイン|日本酒|飲み物|ドリンク/.test(t);
-}
+  if (!looksLikeOnlyOverwrite(t)) return null;
 
-function detectDrinkCorrection(text) {
-  const t = String(text || '').trim();
+  // サーモン刺身4切れだけです
+  if (t.includes('サーモン') && t.includes('刺身')) {
+    const count = parseCount(t);
+    const amountText =
+      count && count.unit === '切れ'
+        ? `${count.value}切れ`
+        : '1皿';
 
-  if (!t) return null;
+    const items = [
+      {
+        name: 'サーモン刺身',
+        estimated_amount: amountText,
+        estimated_kcal: 0,
+        category: 'fish',
+        confidence: 0.98,
+        needs_confirmation: false,
+      },
+    ];
 
-  if (/^水(です)?$/.test(t) || t.includes('水です')) {
+    const hasWakame = currentMeal.food_items.some((x) => String(x.name || '').includes('わかめ') || String(x.name || '').includes('ワカメ'));
+    const hasWasabi = currentMeal.food_items.some((x) => String(x.name || '').includes('わさび') || String(x.name || '').includes('ワサビ'));
+
+    if (hasWakame) {
+      items.push({
+        name: 'わかめ',
+        estimated_amount: '少量',
+        estimated_kcal: 0,
+        category: 'side',
+        confidence: 0.9,
+        needs_confirmation: false,
+      });
+    }
+
+    if (hasWasabi) {
+      items.push({
+        name: 'わさび',
+        estimated_amount: '少量',
+        estimated_kcal: 0,
+        category: 'side',
+        confidence: 0.9,
+        needs_confirmation: false,
+      });
+    }
+
+    const applied = applyKnownFoodCorrections(items);
+
     return {
-      name: '水',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.98,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/ジャスミンティー/.test(t)) {
-    return {
-      name: 'ジャスミンティー',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.98,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/ウーロン茶|烏龍茶/.test(t)) {
-    return {
-      name: 'ウーロン茶',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.98,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/緑茶/.test(t)) {
-    return {
-      name: '緑茶',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.98,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/麦茶/.test(t)) {
-    return {
-      name: '麦茶',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.98,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/紅茶/.test(t) && !/ミルクティー/.test(t)) {
-    return {
-      name: '紅茶',
-      estimated_amount: '1杯',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.95,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/無糖コーヒー|ブラックコーヒー|ブラック/.test(t)) {
-    return {
-      name: '無糖コーヒー',
-      estimated_amount: '1杯',
-      estimated_kcal: 5,
-      category: 'drink',
-      confidence: 0.95,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/ミルクティー/.test(t)) {
-    return {
-      name: 'ミルクティー',
-      estimated_amount: '1杯',
-      estimated_kcal: 80,
-      category: 'drink',
-      confidence: 0.9,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/カフェオレ/.test(t)) {
-    return {
-      name: 'カフェオレ',
-      estimated_amount: '1杯',
-      estimated_kcal: 80,
-      category: 'drink',
-      confidence: 0.9,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/ミルク入りコーヒー/.test(t)) {
-    return {
-      name: 'ミルク入りコーヒー',
-      estimated_amount: '1杯',
-      estimated_kcal: 70,
-      category: 'drink',
-      confidence: 0.9,
-      needs_confirmation: false,
-    };
-  }
-
-  if (/お酒ではない|ノンアル|ノンアルコール/.test(t)) {
-    return {
-      name: 'ノンアル飲料',
-      estimated_amount: '1本',
-      estimated_kcal: 0,
-      category: 'drink',
-      confidence: 0.9,
-      needs_confirmation: false,
+      overwrite_all: true,
+      correction_type: 'overwrite_from_user_text',
+      corrected_meal_label: 'サーモン刺身',
+      corrected_food_items: applied.items,
+      corrected_estimated_kcal: applied.total,
+      corrected_kcal_min: applied.min,
+      corrected_kcal_max: applied.max,
+      corrected_protein_g: null,
+      corrected_fat_g: null,
+      corrected_carbs_g: null,
+      uncertainty_notes: [],
+      confirmation_questions: [],
+      correction_summary: `ユーザー訂正を最優先し、サーモン刺身${amountText}のみで再構成しました。`,
     };
   }
 
   return null;
 }
 
-function replaceDrinkItem(foodItems, correctedDrink) {
-  const items = Array.isArray(foodItems) ? [...foodItems] : [];
-  const drinkIndex = items.findIndex((item) => isDrinkItemName(item?.name));
+function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
+  const overwriteAll =
+    !!correctionResult?.overwrite_all ||
+    looksLikeOnlyOverwrite(correctionText);
 
-  if (drinkIndex >= 0) {
-    items[drinkIndex] = correctedDrink;
-    return items;
+  const correctedItems = Array.isArray(correctionResult?.corrected_food_items)
+    ? correctionResult.corrected_food_items.map(normalizeFoodItem).filter((x) => x.name)
+    : [];
+
+  const baseMeal = overwriteAll
+    ? {
+        ...currentMeal,
+        food_items: [],
+      }
+    : {
+        ...currentMeal,
+      };
+
+  let nextItems = overwriteAll
+    ? correctedItems
+    : correctedItems.length
+      ? correctedItems
+      : baseMeal.food_items;
+
+  // 飲み物訂正だけは元の他食材を維持
+  if (!overwriteAll && looksLikeDrinkCorrectionOnly(correctionText) && correctedItems.length) {
+    nextItems = correctedItems;
   }
 
-  return [...items, correctedDrink];
-}
+  const applied = applyKnownFoodCorrections(nextItems);
 
-function recalculateMealTotals(mealLike, aiComment = '訂正内容を反映しました。') {
-  const foodItems = getFoodItems(mealLike);
+  const estimatedKcal =
+    toNumberOrNull(correctionResult?.corrected_estimated_kcal) != null &&
+    !overwriteAll
+      ? Math.max(0, toNumberOrNull(correctionResult?.corrected_estimated_kcal))
+      : applied.total;
 
-  const estimatedKcal = foodItems.reduce((sum, item) => {
-    return sum + (Number(item?.estimated_kcal) || 0);
-  }, 0);
+  const kcalMin =
+    toNumberOrNull(correctionResult?.corrected_kcal_min) != null &&
+    !overwriteAll
+      ? Math.max(0, toNumberOrNull(correctionResult?.corrected_kcal_min))
+      : applied.min;
 
-  const kcalMin = Math.max(0, Math.round(estimatedKcal * 0.85));
-  const kcalMax = Math.max(kcalMin, Math.round(estimatedKcal * 1.15));
+  const kcalMax =
+    toNumberOrNull(correctionResult?.corrected_kcal_max) != null &&
+    !overwriteAll
+      ? Math.max(0, toNumberOrNull(correctionResult?.corrected_kcal_max))
+      : applied.max;
+
+  const mealLabel =
+    safeText(correctionResult?.corrected_meal_label, 100) ||
+    safeText(
+      applied.items
+        .filter((x) => !includesAny(String(x.name || ''), ['わさび', 'わかめ']))
+        .map((x) => x.name)
+        .join(' / '),
+      100
+    ) ||
+    currentMeal.meal_label ||
+    '食事';
 
   return {
-    meal_label: safeText(
-      mealLike?.meal_label ||
-        foodItems.map((x) => x.name).filter(Boolean).join(' / ') ||
-        '食事',
-      100
-    ),
-    food_items: foodItems,
+    ...baseMeal,
+    meal_label: mealLabel,
+    food_items: applied.items,
     estimated_kcal: estimatedKcal,
     kcal_min: kcalMin,
-    kcal_max: kcalMax,
-    protein_g: toNumberOrNull(mealLike?.protein_g),
-    fat_g: toNumberOrNull(mealLike?.fat_g),
-    carbs_g: toNumberOrNull(mealLike?.carbs_g),
-    confidence: clamp01(toNumberOrNull(mealLike?.confidence) ?? 0.9),
-    ai_comment: safeText(aiComment, 300),
+    kcal_max: Math.max(kcalMin, kcalMax),
+    protein_g: toNumberOrNull(correctionResult?.corrected_protein_g) ?? baseMeal.protein_g ?? null,
+    fat_g: toNumberOrNull(correctionResult?.corrected_fat_g) ?? baseMeal.fat_g ?? null,
+    carbs_g: toNumberOrNull(correctionResult?.corrected_carbs_g) ?? baseMeal.carbs_g ?? null,
+    confidence: overwriteAll ? 0.97 : 0.92,
+    uncertainty_notes: uniqueStrings(correctionResult?.uncertainty_notes || []),
+    confirmation_questions: uniqueStrings(correctionResult?.confirmation_questions || []),
+    ai_comment: safeText(
+      correctionResult?.correction_summary ||
+        '訂正内容を反映しました。',
+      1000
+    ),
+    raw_model_json: {
+      ...(baseMeal.raw_model_json || {}),
+      correction_text: correctionText,
+      correction_result: correctionResult,
+      overwrite_all: overwriteAll,
+    },
   };
 }
 
-function applyDeterministicDrinkCorrection(previousMeal, userCorrectionText) {
-  const correctedDrink = detectDrinkCorrection(userCorrectionText);
-  if (!correctedDrink) return null;
+async function applyMealCorrection(currentMealInput, correctionText) {
+  const currentMeal = normalizeMeal(currentMealInput);
+  const deterministic = buildDeterministicOverwrite(currentMeal, correctionText);
 
-  const originalItems = getFoodItems(previousMeal);
-  const replacedItems = replaceDrinkItem(originalItems, correctedDrink);
-
-  const mealLabel = safeText(
-    replacedItems.map((x) => x.name).filter(Boolean).join(' / ') || previousMeal?.meal_label || '食事',
-    100
-  );
-
-  return recalculateMealTotals(
-    {
-      ...previousMeal,
-      meal_label: mealLabel,
-      food_items: replacedItems,
-      confidence: 0.95,
-    },
-    `ご訂正ありがとうございます。飲み物は${correctedDrink.name}でしたね。内容を修正しました。`
-  );
-}
-
-async function applyMealCorrection(previousMeal, userCorrectionText) {
-  const deterministic = applyDeterministicDrinkCorrection(previousMeal, userCorrectionText);
   if (deterministic) {
-    return deterministic;
+    return mergeCorrectionResult(currentMeal, deterministic, correctionText);
   }
 
-  const prompt = buildCorrectionPrompt(previousMeal, userCorrectionText);
-  const parsed = await generateJsonOnly(prompt, MEAL_CORRECTION_SCHEMA, 0.2);
-  return normalizeCorrectedMealResult(parsed, previousMeal);
+  const prompt = buildCorrectionPrompt(currentMeal, correctionText);
+  const aiResult = await generateJsonOnly(prompt, MEAL_CORRECTION_SCHEMA, 0.15);
+
+  return mergeCorrectionResult(currentMeal, aiResult, correctionText);
 }
 
-function buildMealCorrectionConfirmationMessage(result) {
+function buildMealCorrectionConfirmationMessage(meal) {
   const lines = [
     '訂正内容を反映しました。',
-    `料理: ${result.meal_label || '食事'}`,
-    `推定カロリー: ${formatKcalRange(result.estimated_kcal, result.kcal_min, result.kcal_max)}`,
-    result.food_items?.length
-      ? `内容: ${result.food_items.map((x) => x.name).filter(Boolean).join(' / ')}`
+    `料理: ${meal.meal_label || '食事'}`,
+    `推定カロリー: ${formatKcalRange(meal.estimated_kcal, meal.kcal_min, meal.kcal_max)}`,
+    Array.isArray(meal.food_items) && meal.food_items.length
+      ? `内容: ${meal.food_items.map((x) => {
+          const amount = safeText(x.estimated_amount, 40);
+          return amount ? `${x.name} ${amount}` : x.name;
+        }).join(' / ')}`
       : null,
-    result.ai_comment || null,
-    'これでよければ保存できます。さらに違うところがあれば続けて訂正してください。',
+    Array.isArray(meal.uncertainty_notes) && meal.uncertainty_notes.length
+      ? `確認したい点: ${meal.uncertainty_notes.join(' / ')}`
+      : null,
+    Array.isArray(meal.confirmation_questions) && meal.confirmation_questions.length
+      ? meal.confirmation_questions.join('\n')
+      : null,
+    '合っていれば保存、違うところがあればボタンか文字で訂正してください。',
   ].filter(Boolean);
 
   return lines.join('\n');
