@@ -55,6 +55,10 @@ const MEAL_CORRECTION_SCHEMA = {
   ],
 };
 
+function uniqueStrings(list = []) {
+  return [...new Set((list || []).map((x) => safeText(x, 160)).filter(Boolean))];
+}
+
 function normalizeFoodItem(item) {
   return {
     name: safeText(item?.name, 100) || '不明な食品',
@@ -90,8 +94,12 @@ function normalizeMeal(meal) {
   };
 }
 
-function uniqueStrings(list = []) {
-  return [...new Set((list || []).map((x) => safeText(x, 160)).filter(Boolean))];
+function normalizeText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[ 　\t\r\n]+/g, '')
+    .replace(/[。、,.!！?？:：;；"'“”‘’（）()\[\]【】]/g, '');
 }
 
 function includesAny(text, words) {
@@ -113,7 +121,6 @@ function looksLikeOnlyOverwrite(text) {
   return (
     t.includes('だけ') ||
     t.includes('のみ') ||
-    t.includes('しか') ||
     t.includes('これだけ') ||
     t.includes('だけです') ||
     t.includes('のみです')
@@ -141,13 +148,11 @@ function estimateKcalForKnownItem(name, amountText) {
   const amount = String(amountText || '');
   const count = parseCount(amount);
 
-  // 刺身系
   if (n.includes('サーモン') && n.includes('刺身')) {
     const pieces = count?.unit === '切れ' ? count.value : null;
     if (pieces != null) {
-      const kcal = Math.round(pieces * 30);
       return {
-        kcal,
+        kcal: Math.round(pieces * 30),
         min: Math.round(pieces * 25),
         max: Math.round(pieces * 35),
       };
@@ -158,9 +163,8 @@ function estimateKcalForKnownItem(name, amountText) {
   if ((n.includes('白身') || n.includes('鯛') || n.includes('ヒラメ')) && n.includes('刺身')) {
     const pieces = count?.unit === '切れ' ? count.value : null;
     if (pieces != null) {
-      const kcal = Math.round(pieces * 15);
       return {
-        kcal,
+        kcal: Math.round(pieces * 15),
         min: Math.round(pieces * 10),
         max: Math.round(pieces * 20),
       };
@@ -168,7 +172,6 @@ function estimateKcalForKnownItem(name, amountText) {
     return { kcal: 60, min: 40, max: 80 };
   }
 
-  // 貝系
   if (includesAny(n, ['ホンビノス', 'ボンビノス']) && includesAny(amount, ['1個', '１個'])) {
     return { kcal: 25, min: 18, max: 35 };
   }
@@ -177,12 +180,10 @@ function estimateKcalForKnownItem(name, amountText) {
     return { kcal: 20, min: 15, max: 30 };
   }
 
-  // 焼きおにぎり
   if (n.includes('焼きおにぎり')) {
     return { kcal: 200, min: 180, max: 230 };
   }
 
-  // パン系
   if (n.includes('プレミアムチョコクロ')) {
     return { kcal: 280, min: 250, max: 300 };
   }
@@ -191,8 +192,11 @@ function estimateKcalForKnownItem(name, amountText) {
     return { kcal: 320, min: 280, max: 360 };
   }
 
-  // 微量
-  if (includesAny(n, ['わさび', 'ツマ', '大根']) || n.includes('わかめ')) {
+  if (includesAny(n, ['わさび', 'ツマ', 'つま', '大根'])) {
+    return { kcal: 5, min: 0, max: 10 };
+  }
+
+  if (n.includes('わかめ') || n.includes('ワカメ')) {
     return { kcal: 5, min: 0, max: 10 };
   }
 
@@ -236,32 +240,92 @@ function applyKnownFoodCorrections(items) {
   };
 }
 
-function buildCorrectionPrompt(currentMeal, correctionText) {
-  const currentSummary = {
-    meal_label: currentMeal.meal_label,
-    food_items: currentMeal.food_items,
-    estimated_kcal: currentMeal.estimated_kcal,
-    kcal_min: currentMeal.kcal_min,
-    kcal_max: currentMeal.kcal_max,
-  };
+function itemMatchesKeyword(itemName, keyword) {
+  const itemNorm = normalizeText(itemName);
+  const keyNorm = normalizeText(keyword);
 
-  return [
-    'あなたは日本向けの食事記録訂正アシスタントです。',
-    '最優先ルール: ユーザーの訂正文を、元の画像推定や元のAI推定より優先してください。',
-    '特に「だけ」「のみ」「しか〜ない」が含まれる場合は、元の食材一覧を引きずらず、ユーザー文だけを正として再構成してください。',
-    '食材を追加で想像しないでください。',
-    '写っていたかもしれない別食材を復活させないでください。',
-    '訂正後は corrected_food_items をユーザーの意図に合わせて作り直してください。',
-    '刺身は高く見積もりすぎないでください。',
-    'サーモン刺身は1切れ25〜35kcal程度を基準にしてください。',
-    '白身魚刺身は1切れ10〜20kcal程度を基準にしてください。',
-    'わかめ、わさび、ツマなどの少量付け合わせは過大評価しないでください。',
-    '不明な食材は勝手に足さず、必要時だけ確認質問を出してください。',
-    '必ずJSONだけを返してください。',
-    '',
-    `現在の食事データ: ${JSON.stringify(currentSummary)}`,
-    `ユーザー訂正文: ${correctionText}`,
-  ].join('\n');
+  if (!itemNorm || !keyNorm) return false;
+  if (itemNorm.includes(keyNorm) || keyNorm.includes(itemNorm)) return true;
+
+  const synonymGroups = [
+    ['白身魚', '白身魚刺身', '白身', '鯛', 'ヒラメ'],
+    ['サーモン', 'サーモン刺身', '鮭', 'サーモンさしみ'],
+    ['わさび', 'ワサビ'],
+    ['わかめ', 'ワカメ'],
+    ['つま', 'ツマ', '大根のつま', '大根ツマ'],
+    ['ホンビノス', 'ボンビノス', 'ホンビノス貝', 'ボンビノス貝'],
+  ];
+
+  for (const group of synonymGroups) {
+    const hitItem = group.some((w) => itemNorm.includes(normalizeText(w)));
+    const hitKey = group.some((w) => keyNorm.includes(normalizeText(w)));
+    if (hitItem && hitKey) return true;
+  }
+
+  return false;
+}
+
+function extractNegativeTargets(text) {
+  const raw = String(text || '').trim();
+  const targets = [];
+
+  const patterns = [
+    /(.+?)はありません/g,
+    /(.+?)はないです/g,
+    /(.+?)はない/g,
+    /(.+?)じゃないです/g,
+    /(.+?)ではないです/g,
+    /(.+?)ではありません/g,
+    /(.+?)じゃない/g,
+    /(.+?)違います/g,
+  ];
+
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      const target = safeText(m[1], 80);
+      if (target) targets.push(target);
+    }
+  }
+
+  return uniqueStrings(targets);
+}
+
+function buildRemoveOnlyCorrection(currentMeal, correctionText) {
+  const negativeTargets = extractNegativeTargets(correctionText);
+  if (!negativeTargets.length) return null;
+
+  const originalItems = Array.isArray(currentMeal.food_items) ? currentMeal.food_items : [];
+  const remainingItems = originalItems.filter((item) => {
+    return !negativeTargets.some((target) => itemMatchesKeyword(item.name, target));
+  });
+
+  if (remainingItems.length === originalItems.length) {
+    return null;
+  }
+
+  const applied = applyKnownFoodCorrections(remainingItems);
+
+  const mainNames = applied.items
+    .map((x) => x.name)
+    .filter((name) => !includesAny(String(name || ''), ['わさび', 'ワサビ', 'わかめ', 'ワカメ', 'つま', 'ツマ', '大根']))
+    .join(' / ');
+
+  return {
+    overwrite_all: false,
+    correction_type: 'remove_specific_items',
+    corrected_meal_label: safeText(mainNames || currentMeal.meal_label || '食事', 100),
+    corrected_food_items: applied.items,
+    corrected_estimated_kcal: applied.total,
+    corrected_kcal_min: applied.min,
+    corrected_kcal_max: applied.max,
+    corrected_protein_g: currentMeal.protein_g ?? null,
+    corrected_fat_g: currentMeal.fat_g ?? null,
+    corrected_carbs_g: currentMeal.carbs_g ?? null,
+    uncertainty_notes: [],
+    confirmation_questions: [],
+    correction_summary: `「${negativeTargets.join(' / ')}」を削除して再計算しました。`,
+  };
 }
 
 function buildDeterministicOverwrite(currentMeal, correctionText) {
@@ -269,7 +333,6 @@ function buildDeterministicOverwrite(currentMeal, correctionText) {
 
   if (!looksLikeOnlyOverwrite(t)) return null;
 
-  // サーモン刺身4切れだけです
   if (t.includes('サーモン') && t.includes('刺身')) {
     const count = parseCount(t);
     const amountText =
@@ -290,6 +353,7 @@ function buildDeterministicOverwrite(currentMeal, correctionText) {
 
     const hasWakame = currentMeal.food_items.some((x) => String(x.name || '').includes('わかめ') || String(x.name || '').includes('ワカメ'));
     const hasWasabi = currentMeal.food_items.some((x) => String(x.name || '').includes('わさび') || String(x.name || '').includes('ワサビ'));
+    const hasTsuma = currentMeal.food_items.some((x) => String(x.name || '').includes('つま') || String(x.name || '').includes('ツマ') || String(x.name || '').includes('大根'));
 
     if (hasWakame) {
       items.push({
@@ -313,6 +377,17 @@ function buildDeterministicOverwrite(currentMeal, correctionText) {
       });
     }
 
+    if (hasTsuma) {
+      items.push({
+        name: '大根のつま',
+        estimated_amount: '適量',
+        estimated_kcal: 0,
+        category: 'side',
+        confidence: 0.9,
+        needs_confirmation: false,
+      });
+    }
+
     const applied = applyKnownFoodCorrections(items);
 
     return {
@@ -328,11 +403,38 @@ function buildDeterministicOverwrite(currentMeal, correctionText) {
       corrected_carbs_g: null,
       uncertainty_notes: [],
       confirmation_questions: [],
-      correction_summary: `ユーザー訂正を最優先し、サーモン刺身${amountText}のみで再構成しました。`,
+      correction_summary: `ユーザー訂正を最優先し、サーモン刺身${amountText}中心で再構成しました。`,
     };
   }
 
   return null;
+}
+
+function buildCorrectionPrompt(currentMeal, correctionText) {
+  const currentSummary = {
+    meal_label: currentMeal.meal_label,
+    food_items: currentMeal.food_items,
+    estimated_kcal: currentMeal.estimated_kcal,
+    kcal_min: currentMeal.kcal_min,
+    kcal_max: currentMeal.kcal_max,
+  };
+
+  return [
+    'あなたは日本向けの食事記録訂正アシスタントです。',
+    '最優先ルール: ユーザーの訂正文を、元の画像推定や元のAI推定より優先してください。',
+    '「Aはありません」「Aではない」「Aじゃない」は、食事全体の否定ではなく、その食材Aだけを削除する訂正として扱ってください。',
+    '「だけ」「のみ」が含まれる場合は、ユーザー文だけを正として再構成してください。',
+    '食材を追加で想像しないでください。',
+    '不明な食材を復活させないでください。',
+    '刺身は高く見積もりすぎないでください。',
+    'サーモン刺身は1切れ25〜35kcal程度を基準にしてください。',
+    '白身魚刺身は1切れ10〜20kcal程度を基準にしてください。',
+    'わかめ、わさび、ツマなどの少量付け合わせは過大評価しないでください。',
+    '必ずJSONだけを返してください。',
+    '',
+    `現在の食事データ: ${JSON.stringify(currentSummary)}`,
+    `ユーザー訂正文: ${correctionText}`,
+  ].join('\n');
 }
 
 function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
@@ -359,7 +461,6 @@ function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
       ? correctedItems
       : baseMeal.food_items;
 
-  // 飲み物訂正だけは元の他食材を維持
   if (!overwriteAll && looksLikeDrinkCorrectionOnly(correctionText) && correctedItems.length) {
     nextItems = correctedItems;
   }
@@ -388,7 +489,7 @@ function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
     safeText(correctionResult?.corrected_meal_label, 100) ||
     safeText(
       applied.items
-        .filter((x) => !includesAny(String(x.name || ''), ['わさび', 'わかめ']))
+        .filter((x) => !includesAny(String(x.name || ''), ['わさび', 'ワサビ', 'わかめ', 'ワカメ', 'つま', 'ツマ', '大根']))
         .map((x) => x.name)
         .join(' / '),
       100
@@ -406,12 +507,11 @@ function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
     protein_g: toNumberOrNull(correctionResult?.corrected_protein_g) ?? baseMeal.protein_g ?? null,
     fat_g: toNumberOrNull(correctionResult?.corrected_fat_g) ?? baseMeal.fat_g ?? null,
     carbs_g: toNumberOrNull(correctionResult?.corrected_carbs_g) ?? baseMeal.carbs_g ?? null,
-    confidence: overwriteAll ? 0.97 : 0.92,
+    confidence: overwriteAll ? 0.97 : 0.94,
     uncertainty_notes: uniqueStrings(correctionResult?.uncertainty_notes || []),
     confirmation_questions: uniqueStrings(correctionResult?.confirmation_questions || []),
     ai_comment: safeText(
-      correctionResult?.correction_summary ||
-        '訂正内容を反映しました。',
+      correctionResult?.correction_summary || '訂正内容を反映しました。',
       1000
     ),
     raw_model_json: {
@@ -425,8 +525,13 @@ function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
 
 async function applyMealCorrection(currentMealInput, correctionText) {
   const currentMeal = normalizeMeal(currentMealInput);
-  const deterministic = buildDeterministicOverwrite(currentMeal, correctionText);
 
+  const removeOnly = buildRemoveOnlyCorrection(currentMeal, correctionText);
+  if (removeOnly) {
+    return mergeCorrectionResult(currentMeal, removeOnly, correctionText);
+  }
+
+  const deterministic = buildDeterministicOverwrite(currentMeal, correctionText);
   if (deterministic) {
     return mergeCorrectionResult(currentMeal, deterministic, correctionText);
   }
