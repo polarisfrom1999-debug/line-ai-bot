@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -1162,10 +1163,11 @@ function buildLegacyMealFromGeminiResult(result) {
 
   const foodItems = mainItems.map((item) => ({
     name: safeText(item.name || '不明な食品', 80),
-    amount_text: safeText(item.qty_text || '1つ', 80),
+    estimated_amount: safeText(item.qty_text || '1つ', 80),
     estimated_kcal: Number(item.estimated_kcal) || 0,
+    category: null,
     confidence: Number(item.confidence) || 0.7,
-    needs_confirmation: false,
+    needs_confirmation: Boolean(normalized.needs_confirmation),
   }));
 
   const uncertainPoints = Array.isArray(normalized.uncertain_points)
@@ -1198,7 +1200,16 @@ function buildLegacyMealFromGeminiResult(result) {
     protein_g: null,
     fat_g: null,
     carbs_g: null,
-    confidence: 0.85,
+    confidence: Math.max(
+      0.55,
+      mainItems.length
+        ? Math.round(
+            (mainItems.reduce((sum, item) => sum + (Number(item.confidence) || 0.7), 0) / mainItems.length) * 100
+          ) / 100
+        : 0.75
+    ),
+    uncertainty_notes: uncertainPoints,
+    confirmation_questions: confirmationQuestions,
     ai_comment: safeText(
       commentLines.length
         ? commentLines.join('\n')
@@ -1212,7 +1223,7 @@ function buildLegacyMealFromGeminiResult(result) {
   };
 }
 
-async function analyzeMealImageWithGeminiFallback(buffer, mimeType) {
+async function analyzeMealImageWithGeminiPrimary(buffer, mimeType) {
   const base64Image = buffer.toString('base64');
 
   const result = await analyzeMealPhotoWithGemini({
@@ -1411,23 +1422,27 @@ async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
 
-    const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
+    let finalMealDraft = null;
+    let usedGeminiForMeal = false;
 
-    if (analyzedMeal.is_meal) {
-      let finalMealDraft = analyzedMeal;
-      let usedGeminiForMeal = false;
+    try {
+      finalMealDraft = await analyzeMealImageWithGeminiPrimary(buffer, mimeType);
+      usedGeminiForMeal = true;
+    } catch (geminiMealError) {
+      console.error(
+        '⚠️ Gemini meal analysis failed. Fallback to meal_image_ai_service:',
+        geminiMealError?.message || geminiMealError
+      );
+    }
 
-      try {
-        finalMealDraft = await analyzeMealImageWithGeminiFallback(buffer, mimeType);
-        usedGeminiForMeal = true;
-      } catch (geminiMealError) {
-        console.error(
-          '⚠️ Gemini meal analysis failed. Fallback to legacy meal image flow:',
-          geminiMealError?.message || geminiMealError
-        );
+    if (!finalMealDraft) {
+      const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
+      if (analyzedMeal?.is_meal) {
         finalMealDraft = analyzedMeal;
       }
+    }
 
+    if (finalMealDraft?.is_meal) {
       setMealDraft(user.line_user_id, finalMealDraft);
       const needsDrinkCorrection = (finalMealDraft.food_items || []).some((x) => x.needs_confirmation);
 
@@ -1505,9 +1520,6 @@ async function handleImageMessage(event, user) {
     );
   }
 }
-
-// NOTE: Below this point is the same as your current file except unchanged logic.
-// It is kept full so you can replace the file as-is.
 
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
