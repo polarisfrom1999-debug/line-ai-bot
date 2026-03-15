@@ -31,9 +31,7 @@ function normalizeItem(raw) {
   const qtyText = safeText(raw?.qty_text || raw?.qtyText || '', 80) || '1つ';
   const estimatedKcal = roundKcal(raw?.estimated_kcal ?? raw?.estimatedKcal ?? 0);
   const confidence = clampNumber(raw?.confidence ?? 0.7, 0, 1, 0.7);
-  const isMainSubject = Boolean(
-    raw?.is_main_subject ?? raw?.isMainSubject ?? true
-  );
+  const isMainSubject = Boolean(raw?.is_main_subject ?? raw?.isMainSubject ?? true);
 
   return {
     name,
@@ -46,30 +44,43 @@ function normalizeItem(raw) {
 
 function buildMealVisionPrompt() {
   return `
-あなたは食事画像の解析エンジンです。
-目的は、写真に写っている主被写体の食事・飲み物を現実的に推定し、過大評価を避けることです。
+あなたは日本向けの食事画像解析エンジンです。
+目的は、写真に写っている主被写体の食事・飲み物を、できるだけ具体名で、現実的な量とカロリーで整理することです。
 
-必須ルール:
+最優先ルール:
 1. 写真の主被写体を最優先で判定すること。
 2. 背景にある食品・飲料は自動で摂取扱いにしないこと。
 3. 見えない量を過大に補完しないこと。
 4. 推定カロリーは上限寄りではなく中央値寄りで返すこと。
-5. 少量のおやつ・軽食・飲み物は盛りすぎないこと。
-6. 不明点があれば uncertain_points と confirmation_questions に入れること。
-7. 飲み物の種類や砂糖の有無が曖昧なら、勝手に高カロリー寄りにしないこと。
-8. 背景物は total_kcal に自動加算しないこと。
-9. ソース・ドレッシング・砂糖・シロップは、明確に確認できる時だけ加算すること。
+5. 一般名に丸めすぎないこと。具体名が有力なら具体名を優先すること。
+6. 商品名・店の定番名・料理名・魚種・貝の種類などが推定できるなら、無理のない範囲で具体的に書くこと。
+7. 不明点があれば uncertain_points と confirmation_questions に入れること。
+8. 飲み物の種類や砂糖の有無が曖昧でも、勝手に高カロリー寄りにしないこと。
+9. ソース・ドレッシング・砂糖・シロップ・バターは、明確に確認できる時だけ加算すること。
 10. 必ずJSONのみを返すこと。説明文は禁止。
 
-飲み物の扱い:
-- 水、お茶、無糖コーヒーの可能性があるなら高カロリーにしすぎないこと
-- 不明なミルク入り飲料は、まず 70〜90 kcal 程度を中心に考えること
-- カフェオレかミルクティーか曖昧なら、確認質問を出しつつ仮推定は控えめにすること
+具体名の扱い:
+- 「貝」「魚」「パン」などの一般名だけで終えず、見た目や文脈から有力なら具体名を書くこと。
+- 例: ホンビノス貝 / ボンビノス貝 / サーモン刺身 / プレミアムチョコクロ / フレンチトースト。
+- ただし断定が危険な場合は、confirmation_questions で確認前提にすること。
 
-軽食の扱い:
-- ナゲット2個、バウムクーヘン2切れ、小さなお菓子、軽いパン、1杯の飲み物などは、
-  見た目以上に盛りすぎないこと
-- 軽食3〜4点で合計 500kcal を大きく超える時は、過大推定の可能性を疑うこと
+量の扱い:
+- 切れ数、個数、本数、杯数が見える場合は qty_text に反映すること。
+- 量が見えない時だけ「1個」「1杯」など最小限の表現にすること。
+
+カロリーの基準:
+- 刺身や寿司ネタ、貝類は高くしすぎないこと。
+- サーモン刺身は 1切れあたりおおむね 25〜35kcal を基本に考えること。
+- 白身刺身は 1切れあたりおおむね 10〜20kcal を基本に考えること。
+- ホンビノス貝・ハマグリなど大ぶりの貝は 1個あたりおおむね 20〜35kcal を基本に考えること。
+- 焼きおにぎり 1個はおおむね 160〜230kcal を基本に考えること。
+- 菓子パン・クロワッサン系は高くなりやすいが、見た目以上に過大推定しないこと。
+- 軽食3〜4点で合計 500kcal を大きく超える時は、過大推定の可能性を疑うこと。
+
+飲み物の扱い:
+- 水、お茶、無糖コーヒーの可能性があるなら高カロリーにしすぎないこと。
+- 不明なミルク入り飲料は、まず 70〜110 kcal 程度を中心に考えること。
+- カフェオレかミルクティーか曖昧なら、確認質問を出しつつ仮推定は控えめにすること。
 
 出力要件:
 - items: 配列
@@ -151,6 +162,21 @@ function cleanupJsonText(text) {
   return trimmed;
 }
 
+function dedupeLines(list) {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of list || []) {
+    const text = safeText(item, 160);
+    if (!text) continue;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+
+  return out;
+}
+
 function hasUncertainDrink(result) {
   const text = [
     ...(Array.isArray(result?.uncertain_points) ? result.uncertain_points : []),
@@ -162,9 +188,97 @@ function hasUncertainDrink(result) {
 }
 
 function looksLikeLightSnack(itemNamesText) {
-  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース/.test(
+  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|クロワッサン|チョコクロ|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース/.test(
     itemNamesText
   );
+}
+
+function extractCount(qtyText) {
+  const m = String(qtyText || '').match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function applyNamedFoodAdjustments(result) {
+  const adjustedItems = (result.items || []).map((item) => {
+    const name = String(item.name || '');
+    const qtyText = String(item.qty_text || '');
+    const count = extractCount(qtyText);
+    let estimated = Number(item.estimated_kcal) || 0;
+
+    if (/サーモン/.test(name) && /刺身|さしみ|刺し身/.test(name) && count && count >= 2 && count <= 12) {
+      const target = Math.round(count * 30);
+      estimated = Math.max(Math.round(count * 25), Math.min(Math.round(count * 35), target));
+    }
+
+    if (/白身|鯛|たい|ヒラメ|ひらめ|カンパチ|かんぱち/.test(name) && /刺身|さしみ|刺し身/.test(name) && count && count >= 2 && count <= 12) {
+      const target = Math.round(count * 15);
+      estimated = Math.max(Math.round(count * 10), Math.min(Math.round(count * 20), target));
+    }
+
+    if (/ホンビノス|ボンビノス|はまぐり|ハマグリ|蛤/.test(name) && count && count >= 1 && count <= 6) {
+      const target = Math.round(count * 28);
+      estimated = Math.max(Math.round(count * 20), Math.min(Math.round(count * 35), target));
+    }
+
+    if (/ホタテ|帆立/.test(name) && count && count >= 1 && count <= 6) {
+      const target = Math.round(count * 18);
+      estimated = Math.max(Math.round(count * 12), Math.min(Math.round(count * 28), target));
+    }
+
+    if (/焼きおにぎり/.test(name)) {
+      estimated = Math.max(160, Math.min(230, estimated || 190));
+    }
+
+    return {
+      ...item,
+      estimated_kcal: Math.max(0, Math.round(estimated)),
+    };
+  });
+
+  const mainItems = adjustedItems.filter((item) => item.is_main_subject);
+  const newTotal = mainItems.reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+
+  if (!newTotal) {
+    return {
+      ...result,
+      items: adjustedItems,
+    };
+  }
+
+  return {
+    ...result,
+    items: adjustedItems,
+    total_kcal: newTotal,
+    range_min: Math.max(0, Math.round(newTotal * 0.82)),
+    range_max: Math.max(Math.round(newTotal * 1.15), Math.round(newTotal + 25)),
+  };
+}
+
+function normalizeSpecificNames(result) {
+  const items = (result.items || []).map((item) => {
+    let name = String(item.name || '');
+
+    name = name
+      .replace(/ホンビノズ/g, 'ホンビノス')
+      .replace(/ボンビノズ/g, 'ボンビノス')
+      .replace(/サ一モン/g, 'サーモン');
+
+    if (/ホンビノス|ボンビノス/.test(name) && !/貝/.test(name)) {
+      name = `${name}貝`;
+    }
+
+    return {
+      ...item,
+      name: safeText(name, 80) || '不明な食品',
+    };
+  });
+
+  return {
+    ...result,
+    items,
+  };
 }
 
 function normalizeGeminiMealResult(raw) {
@@ -202,7 +316,7 @@ function normalizeGeminiMealResult(raw) {
   if (!normalized.range_max || normalized.range_max <= 0) {
     normalized.range_max = Math.max(
       normalized.range_min,
-      Math.round(normalized.total_kcal * 1.2)
+      Math.round(normalized.total_kcal * 1.18)
     );
   }
 
@@ -218,7 +332,7 @@ function normalizeGeminiMealResult(raw) {
       normalized.confirmation_questions.length > 0;
   }
 
-  return applyLocalMealGuards(normalized);
+  return applyLocalMealGuards(normalizeSpecificNames(normalized));
 }
 
 function applyUncertainDrinkAdjustment(result) {
@@ -238,8 +352,8 @@ function applyUncertainDrinkAdjustment(result) {
       return { ...item, estimated_kcal: 80 };
     }
 
-    if (current > 95) {
-      return { ...item, estimated_kcal: 80 };
+    if (current > 110) {
+      return { ...item, estimated_kcal: 90 };
     }
 
     return item;
@@ -253,7 +367,7 @@ function applyUncertainDrinkAdjustment(result) {
     items: adjustedItems,
     total_kcal: newTotal,
     range_min: Math.min(result.range_min, Math.round(newTotal * 0.85)),
-    range_max: Math.max(Math.round(newTotal * 1.18), Math.round(newTotal + 70)),
+    range_max: Math.max(Math.round(newTotal * 1.15), Math.round(newTotal + 60)),
   };
 }
 
@@ -271,14 +385,14 @@ function applyLightSnackCap(result) {
     total = 390;
     changed = true;
   } else if (total > 520) {
-    total = Math.round(total * 0.78);
+    total = Math.round(total * 0.82);
     changed = true;
   }
 
   if (!changed) return result;
 
-  const rangeMin = Math.max(0, Math.round(total * 0.82));
-  const rangeMax = Math.max(rangeMin + 40, Math.round(total * 1.18));
+  const rangeMin = Math.max(0, Math.round(total * 0.84));
+  const rangeMax = Math.max(rangeMin + 35, Math.round(total * 1.15));
 
   const notes = Array.isArray(result.uncertain_points) ? [...result.uncertain_points] : [];
   if (!notes.some((x) => x.includes('軽食'))) {
@@ -295,21 +409,6 @@ function applyLightSnackCap(result) {
   };
 }
 
-function dedupeLines(list) {
-  const seen = new Set();
-  const out = [];
-
-  for (const item of list || []) {
-    const text = safeText(item, 160);
-    if (!text) continue;
-    if (seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-  }
-
-  return out;
-}
-
 function applyLocalMealGuards(result) {
   let adjusted = {
     ...result,
@@ -318,6 +417,7 @@ function applyLocalMealGuards(result) {
     confirmation_questions: dedupeLines(result.confirmation_questions),
   };
 
+  adjusted = applyNamedFoodAdjustments(adjusted);
   adjusted = applyUncertainDrinkAdjustment(adjusted);
   adjusted = applyLightSnackCap(adjusted);
 
@@ -325,31 +425,21 @@ function applyLocalMealGuards(result) {
   const mainNames = mainItems.map((item) => item.name).join(' / ');
   const total = Number(adjusted.total_kcal) || 0;
 
-  const hasLightSnackPattern =
-    looksLikeLightSnack(mainNames) &&
-    mainItems.length <= 4;
+  const hasLightSnackPattern = looksLikeLightSnack(mainNames) && mainItems.length <= 4;
 
   if (hasLightSnackPattern && total >= 550) {
-    adjusted.uncertain_points.unshift(
-      '軽食の見た目に対して推定カロリーが高めのため再確認が必要です'
-    );
+    adjusted.uncertain_points.unshift('軽食の見た目に対して推定カロリーが高めのため再確認が必要です');
     adjusted.needs_confirmation = true;
-
-    adjusted.total_kcal = Math.round(total * 0.75);
-    adjusted.range_min = Math.min(adjusted.range_min, Math.round(adjusted.total_kcal * 0.85));
-    adjusted.range_max = Math.max(
-      adjusted.range_max,
-      Math.round(adjusted.total_kcal * 1.2)
-    );
+    adjusted.total_kcal = Math.round(total * 0.8);
+    adjusted.range_min = Math.min(adjusted.range_min, Math.round(adjusted.total_kcal * 0.84));
+    adjusted.range_max = Math.max(adjusted.range_max, Math.round(adjusted.total_kcal * 1.15));
   }
 
-  if (adjusted.range_max - adjusted.range_min > 260) {
-    adjusted.uncertain_points.unshift(
-      '推定幅が広いため、飲み物や量の確認で精度が上がります'
-    );
+  if (adjusted.range_max - adjusted.range_min > 240) {
+    adjusted.uncertain_points.unshift('推定幅が広いため、量や飲み物の確認で精度が上がります');
     adjusted.needs_confirmation = true;
-    adjusted.range_max = Math.round(adjusted.total_kcal * 1.18);
-    adjusted.range_min = Math.round(adjusted.total_kcal * 0.82);
+    adjusted.range_max = Math.round(adjusted.total_kcal * 1.15);
+    adjusted.range_min = Math.round(adjusted.total_kcal * 0.84);
   }
 
   adjusted.uncertain_points = dedupeLines(adjusted.uncertain_points);
@@ -411,7 +501,7 @@ async function analyzeMealPhotoWithGemini({
       },
     ],
     generationConfig: {
-      temperature: 0.2,
+      temperature: 0.15,
       responseMimeType: 'application/json',
       responseSchema: getMealResponseSchema(),
     },
