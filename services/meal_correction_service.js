@@ -219,7 +219,7 @@ function buildRemoveOnlyCorrection(currentMeal, correctionText) {
     corrected_carbs_g: currentMeal.carbs_g ?? null,
     uncertainty_notes: [],
     confirmation_questions: [],
-    correction_summary: `「${negativeTargets.join(' / ')}」を削除して、写真判定ベースで再構成しました。`,
+    correction_summary: `「${negativeTargets.join(' / ')}」を削除して再整理しました。`,
   };
 }
 
@@ -300,7 +300,7 @@ function buildDrinkOverrideCorrection(currentMeal, correctionText) {
     corrected_carbs_g: currentMeal.carbs_g ?? null,
     uncertainty_notes: [],
     confirmation_questions: [],
-    correction_summary: `飲み物を「${newDrinkName}」として、写真判定ベースで上書きしました。`,
+    correction_summary: `飲み物を「${newDrinkName}」として反映しました。`,
   };
 }
 
@@ -343,12 +343,12 @@ function buildDeterministicOverwrite(currentMeal, correctionText) {
       corrected_estimated_kcal: recalced.total,
       corrected_kcal_min: recalced.min,
       corrected_kcal_max: recalced.max,
-      corrected_protein_g: null,
-      corrected_fat_g: null,
-      corrected_carbs_g: null,
+      corrected_protein_g: currentMeal.protein_g ?? null,
+      corrected_fat_g: currentMeal.fat_g ?? null,
+      corrected_carbs_g: currentMeal.carbs_g ?? null,
       uncertainty_notes: [],
       confirmation_questions: [],
-      correction_summary: 'ユーザーの訂正文を最優先して、内容を再構成しました。',
+      correction_summary: 'ユーザーの訂正文を優先して内容を更新しました。',
     };
   }
 
@@ -362,16 +362,21 @@ function buildCorrectionPrompt(currentMeal, correctionText) {
     estimated_kcal: currentMeal.estimated_kcal,
     kcal_min: currentMeal.kcal_min,
     kcal_max: currentMeal.kcal_max,
+    protein_g: currentMeal.protein_g,
+    fat_g: currentMeal.fat_g,
+    carbs_g: currentMeal.carbs_g,
   };
 
   return [
     'あなたは日本向けの食事記録訂正アシスタントです。',
-    '最優先ルール: 元の写真判定を土台として保ちつつ、ユーザーの訂正文を最優先で反映してください。',
+    '最優先ルール: 元の写真判定や食事判定を土台として保ちつつ、ユーザーの訂正文を最優先で反映してください。',
     '「Aはありません」「Aではない」は、食事全体の否定ではなく、その対象Aだけを削除してください。',
     '「水です」「お茶です」のような短文は、対象飲み物をその内容に確定上書きしてください。',
     '「だけ」「のみ」がある場合は、その内容で再構成してください。',
     '食材を追加で想像しないでください。',
-    'すでに写真判定で存在する他の食材は、ユーザーが否定していない限り基本的に残してください。',
+    'すでに存在する他の食材は、ユーザーが否定していない限り基本的に残してください。',
+    'たんぱく質・脂質・糖質も大きく不自然にならない範囲で返してください。',
+    '確認質問は本当に必要な時だけ入れてください。',
     '必ずJSONだけを返してください。',
     '',
     `現在の食事データ: ${JSON.stringify(currentSummary)}`,
@@ -397,8 +402,14 @@ function mergeCorrectionResult(currentMeal, correctionResult, correctionText) {
   );
 
   const mealLabel = safeText(correctionResult?.corrected_meal_label, 100)
-    || safeText(nextItems.map((x) => x.name).filter((name) => !/わさび|ワサビ|わかめ|ワカメ|つま|ツマ|大根/.test(String(name || ''))).join(' / '), 100)
     || currentMeal.meal_label
+    || safeText(
+      nextItems
+        .map((x) => x.name)
+        .filter((name) => !/わさび|ワサビ|わかめ|ワカメ|つま|ツマ|大根/.test(String(name || '')))
+        .join(' / '),
+      100
+    )
     || '食事';
 
   return {
@@ -441,25 +452,51 @@ async function applyMealCorrection(currentMealInput, correctionText) {
   return mergeCorrectionResult(currentMeal, aiResult, correctionText);
 }
 
+function roundMacro(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 10) / 10;
+}
+
 function buildMealCorrectionConfirmationMessage(meal) {
+  const protein = roundMacro(meal?.protein_g);
+  const fat = roundMacro(meal?.fat_g);
+  const carbs = roundMacro(meal?.carbs_g);
+
   const lines = [
     '訂正内容を反映しました。',
     `料理: ${meal.meal_label || '食事'}`,
     `推定カロリー: ${formatKcalRange(meal.estimated_kcal, meal.kcal_min, meal.kcal_max)}`,
-    Array.isArray(meal.food_items) && meal.food_items.length
-      ? `内容: ${meal.food_items.map((x) => {
-          const amount = safeText(x.estimated_amount, 40);
-          return amount ? `${x.name} ${amount}` : x.name;
-        }).join(' / ')}`
-      : null,
-    Array.isArray(meal.uncertainty_notes) && meal.uncertainty_notes.length
-      ? `確認したい点: ${meal.uncertainty_notes.join(' / ')}`
-      : null,
-    Array.isArray(meal.confirmation_questions) && meal.confirmation_questions.length
-      ? meal.confirmation_questions.join('\n')
-      : null,
-    '合っていれば保存、違うところがあればボタンか文字で訂正してください。',
-  ].filter(Boolean);
+  ];
+
+  if (protein != null || fat != null || carbs != null) {
+    lines.push('');
+    lines.push('栄養の目安');
+    if (protein != null) lines.push(`・たんぱく質: ${protein}g`);
+    if (fat != null) lines.push(`・脂質: ${fat}g`);
+    if (carbs != null) lines.push(`・糖質: ${carbs}g`);
+  }
+
+  const shortComment = safeText(meal.ai_comment || '', 120);
+  const shortUncertainty = Array.isArray(meal.uncertainty_notes) && meal.uncertainty_notes.length
+    ? meal.uncertainty_notes.slice(0, 2).join(' / ')
+    : '';
+
+  if (shortComment) {
+    lines.push('');
+    lines.push(`補足: ${shortComment}`);
+  } else if (shortUncertainty) {
+    lines.push('');
+    lines.push(`補足: ${shortUncertainty}`);
+  }
+
+  if (Array.isArray(meal.confirmation_questions) && meal.confirmation_questions.length) {
+    lines.push('');
+    lines.push(...meal.confirmation_questions.map((x) => `・${x}`));
+  }
+
+  lines.push('');
+  lines.push('合っていれば保存、違うところがあればボタンか文字で訂正してください。');
 
   return lines.join('\n');
 }
