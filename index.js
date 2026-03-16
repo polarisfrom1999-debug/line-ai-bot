@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 
 const express = require('express');
@@ -1008,6 +1007,50 @@ function postProcessAiReply(user, rawReply) {
   return prefixWithName(user, text);
 }
 
+function roundMacroGram(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 10) / 10;
+}
+
+function buildMealNutritionLines(meal) {
+  const protein = roundMacroGram(meal?.protein_g);
+  const fat = roundMacroGram(meal?.fat_g);
+  const carbs = roundMacroGram(meal?.carbs_g);
+
+  if (protein == null && fat == null && carbs == null) {
+    return [];
+  }
+
+  return [
+    '栄養の目安',
+    protein != null ? `・たんぱく質: ${protein}g` : null,
+    fat != null ? `・脂質: ${fat}g` : null,
+    carbs != null ? `・糖質: ${carbs}g` : null,
+  ].filter(Boolean);
+}
+
+function appendMealNutritionText(baseText, meal) {
+  const nutritionLines = buildMealNutritionLines(meal);
+  if (!nutritionLines.length) return String(baseText || '').trim();
+
+  const text = String(baseText || '').trim();
+  const saveGuide = '合っていれば保存、違うところがあればボタンか文字で訂正してください。';
+  const saveGuideTextOnly = '合っていれば保存、違うところがあればそのまま訂正してください。';
+
+  if (text.endsWith(saveGuide)) {
+    const body = text.slice(0, -saveGuide.length).trim();
+    return `${body}\n\n${nutritionLines.join('\n')}\n\n${saveGuide}`;
+  }
+
+  if (text.endsWith(saveGuideTextOnly)) {
+    const body = text.slice(0, -saveGuideTextOnly.length).trim();
+    return `${body}\n\n${nutritionLines.join('\n')}\n\n${saveGuideTextOnly}`;
+  }
+
+  return `${text}\n\n${nutritionLines.join('\n')}`;
+}
+
 async function getTodayEnergyTotals(userId) {
   const dateYmd = currentDateYmdInTZ(TZ);
   const { startIso, endIso } = buildDayRangeIsoInTZ(dateYmd, TZ);
@@ -1187,19 +1230,20 @@ function buildLegacyMealFromGeminiResult(result) {
     commentLines.push(...confirmationQuestions.map((x) => `・${x}`));
   }
 
+  const mealLabel =
+    safeText(normalized.meal_label || '', 100) ||
+    safeText(mainItems.map((item) => item.name).join(' / ') || '食事', 100);
+
   return {
     is_meal: true,
-    meal_label: safeText(
-      mainItems.map((item) => item.name).join(' / ') || '食事',
-      100
-    ),
+    meal_label: mealLabel,
     food_items: foodItems,
     estimated_kcal: Number(normalized.total_kcal) || 0,
     kcal_min: Number(normalized.range_min) || 0,
     kcal_max: Number(normalized.range_max) || 0,
-    protein_g: null,
-    fat_g: null,
-    carbs_g: null,
+    protein_g: normalized.protein_g ?? null,
+    fat_g: normalized.fat_g ?? null,
+    carbs_g: normalized.carbs_g ?? null,
     confidence: Math.max(
       0.55,
       mainItems.length
@@ -1450,7 +1494,10 @@ async function handleImageMessage(event, user) {
         ? buildMealReply(finalMealDraft.raw_model_json?.gemini_result || {})
         : buildMealConfirmationMessage(finalMealDraft);
 
-      const mealMessage = `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
+      const mealMessage = appendMealNutritionText(
+        `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`,
+        finalMealDraft
+      );
 
       await replyMessage(
         event.replyToken,
@@ -2124,10 +2171,14 @@ async function handleTextMessage(event, user) {
         activityKcal: totals.activity_kcal || 0,
       });
 
+      const nutritionLines = buildMealNutritionLines(savedMeal);
+
       const saveLines = [
         '食事を保存しました。',
         `料理: ${savedMeal.meal_label}`,
         savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+        nutritionLines.length ? '' : null,
+        ...(nutritionLines.length ? nutritionLines : []),
         `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
       ].filter(Boolean);
 
@@ -2155,7 +2206,10 @@ async function handleTextMessage(event, user) {
       setMealDraft(user.line_user_id, correctedMeal);
 
       const needsDrinkCorrection = (correctedMeal.food_items || []).some((x) => x.needs_confirmation);
-      const replyText = prefixWithName(user, buildMealCorrectionConfirmationMessage(correctedMeal));
+      const replyText = prefixWithName(
+        user,
+        appendMealNutritionText(buildMealCorrectionConfirmationMessage(correctedMeal), correctedMeal)
+      );
 
       await replyMessage(
         event.replyToken,
@@ -2178,7 +2232,10 @@ async function handleTextMessage(event, user) {
       setMealDraft(user.line_user_id, analyzedMeal);
 
       const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
-      const mealMessage = `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
+      const mealMessage = appendMealNutritionText(
+        `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`,
+        analyzedMeal
+      );
       const replyText = prefixWithName(user, mealMessage);
 
       await replyMessage(
