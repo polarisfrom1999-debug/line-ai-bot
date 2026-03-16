@@ -1494,10 +1494,7 @@ async function handleImageMessage(event, user) {
         ? buildMealReply(finalMealDraft.raw_model_json?.gemini_result || {})
         : buildMealConfirmationMessage(finalMealDraft);
 
-      const mealMessage = appendMealNutritionText(
-        `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`,
-        finalMealDraft
-      );
+      const mealMessage = `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
 
       await replyMessage(
         event.replyToken,
@@ -2208,7 +2205,7 @@ async function handleTextMessage(event, user) {
       const needsDrinkCorrection = (correctedMeal.food_items || []).some((x) => x.needs_confirmation);
       const replyText = prefixWithName(
         user,
-        appendMealNutritionText(buildMealCorrectionConfirmationMessage(correctedMeal), correctedMeal)
+        buildMealCorrectionConfirmationMessage(correctedMeal)
       );
 
       await replyMessage(
@@ -2232,10 +2229,7 @@ async function handleTextMessage(event, user) {
       setMealDraft(user.line_user_id, analyzedMeal);
 
       const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
-      const mealMessage = appendMealNutritionText(
-        `${buildMealConfirmationMessage(analyzedMeal)}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`,
-        analyzedMeal
-      );
+      const mealMessage = buildMealConfirmationMessage(analyzedMeal);
       const replyText = prefixWithName(user, mealMessage);
 
       await replyMessage(
