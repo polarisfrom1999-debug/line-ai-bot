@@ -27,51 +27,53 @@ function safeText(value, max = 200) {
 }
 
 function normalizeItem(raw) {
-  const name = safeText(raw?.name || '', 80) || '不明な食品';
-  const qtyText = safeText(raw?.qty_text || raw?.qtyText || '', 80) || '1つ';
+  const geminiName = safeText(raw?.name || raw?.item_name || '', 120) || '不明な食品';
+  const qtyText = safeText(raw?.qty_text || raw?.qtyText || raw?.estimated_amount || '', 80) || '1つ';
   const estimatedKcal = roundKcal(raw?.estimated_kcal ?? raw?.estimatedKcal ?? 0);
   const confidence = clampNumber(raw?.confidence ?? 0.7, 0, 1, 0.7);
   const isMainSubject = Boolean(raw?.is_main_subject ?? raw?.isMainSubject ?? true);
 
   return {
-    name,
+    name: geminiName,
     qty_text: qtyText,
     estimated_kcal: Math.max(0, estimatedKcal),
     confidence,
     is_main_subject: isMainSubject,
+    gemini_original_name: geminiName,
   };
 }
 
 function buildMealVisionPrompt() {
   return `
-あなたは日本向けの食事画像解析エンジンです。
-目的は、写真に写っている主被写体の食事・飲み物を、現実的かつ過大補完なしで推定することです。
+あなたは食事画像の解析エンジンです。
+目的は、写真に写っている主被写体の食事・飲み物を現実的に推定し、Geminiが判断した具体的な食材名・商品名をできるだけそのまま保持することです。
 
 最重要ルール:
-1. 写真に明確に見えるものだけを採用すること。
-2. 見えない食材、あいまいな別食材、背景食材は足さないこと。
-3. 迷ったときは「別食材を追加する」より「単一料理・単一食材として控えめに判定する」こと。
-4. 推定カロリーは上限寄りではなく中央値寄りで返すこと。
-5. ソース・ドレッシング・砂糖・シロップ・付け合わせは、明確に確認できる時だけ加算すること。
-6. 必ずJSONのみを返すこと。説明文は禁止。
+1. 食材名・料理名・商品名は、一般名に丸めすぎず、見えたまま具体的に返すこと。
+2. 具体名に自信がある場合は、貝・魚・パンなどの一般名へ戻さないこと。
+3. 主被写体を最優先で判定すること。
+4. 背景にある食品・飲料は自動で摂取扱いにしないこと。
+5. 見えない量を過大に補完しないこと。
+6. 推定カロリーは上限寄りではなく中央値寄りで返すこと。
+7. 不明点があれば uncertain_points と confirmation_questions に入れること。
+8. 飲み物の種類や砂糖の有無が曖昧なら、勝手に高カロリー寄りにしないこと。
+9. ソース・ドレッシング・砂糖・シロップは、明確に確認できる時だけ加算すること。
+10. 必ずJSONのみを返すこと。説明文は禁止。
 
-刺身・魚介の特別ルール:
-- 刺身写真では、魚種を勝手に増やしてはいけません。
-- サーモンが明確に見える場合、別の魚種を自動追加しないでください。
-- 白っぽい部分は、白身魚と断定する前に、反射、縁、つま、わかめ、氷、皿の模様の可能性を優先してください。
-- 別魚種を追加してよいのは、色・形・切り身の群が明確に分かれている場合だけです。
-- 明確でないときは「サーモン刺身」「刺身盛り合わせの可能性」ではなく、まず単一魚種寄りで返してください。
-- 刺身の付け合わせ（わさび、つま、わかめ等）は少量として扱い、過大評価しないでください。
-- サーモン刺身は1切れ25〜35kcal程度、白身魚刺身は1切れ10〜20kcal程度を目安にしてください。
+具体名優先の例:
+- ボンビノス貝 / ホンビノス貝 / プレミアムチョコクロ / サーモン刺身 / 焼きおにぎり
+- 具体名候補がかなり有力なら、ハマグリ、白身魚、パン、お菓子、飲み物 のような一般名へ丸めないこと
+- 断定しきれない場合のみ「○○の可能性が高い」「○○系」とすること
 
-飲み物の扱い:
-- 水、お茶、無糖コーヒーの可能性があるなら高カロリーにしすぎないこと。
-- 不明なミルク入り飲料は、まず70〜90kcal程度を中心に考えること。
-- カフェオレかミルクティーか曖昧なら、確認質問を出しつつ仮推定は控えめにすること。
+刺身の扱い:
+- サーモンが明確なら、別の白身魚を自動追加しないこと
+- 白っぽい部分は、反射、氷、縁、つまの可能性を先に考えること
+- 別魚種を追加するのは、明確に別の切り身群が確認できる時だけ
 
-軽食の扱い:
-- 小さなお菓子、軽いパン、1杯の飲み物などは見た目以上に盛りすぎないこと。
-- 軽食3〜4点で合計500kcalを大きく超える時は、過大推定の可能性を疑うこと。
+貝の扱い:
+- 大ぶりの白貝系は、見た目や文脈から具体名候補が強いならそれを優先すること
+- Geminiがボンビノス貝 / ホンビノス貝と判断できる場合は、その名前を保持すること
+- 無難な一般名に逃がしすぎないこと
 
 出力要件:
 - items: 配列
@@ -184,53 +186,23 @@ function looksLikeLightSnack(itemNamesText) {
   );
 }
 
-function isSalmonLikeName(name) {
-  return /サーモン|鮭|サケ/.test(String(name || ''));
+function looksSpecificName(name) {
+  const t = String(name || '');
+  if (!t) return false;
+  return /ホンビノス|ボンビノス|プレミアムチョコクロ|サーモン刺身|焼きおにぎり|フレンチトースト/.test(t);
 }
 
-function isWhiteFishLikeName(name) {
-  return /白身|鯛|タイ|ひらめ|ヒラメ|かんぱち|カンパチ|ぶり|ブリ|はまち|ハマチ/.test(String(name || ''));
-}
-
-function isSashimiLikeName(name) {
-  return /刺身|さしみ/.test(String(name || ''));
-}
-
-function isMinorSideName(name) {
-  return /わさび|ワサビ|つま|ツマ|大根|わかめ|ワカメ|海藻/.test(String(name || ''));
-}
-
-function parsePieceCount(text) {
-  const m = String(text || '').match(/(\d+(?:\.\d+)?)\s*切れ/);
-  if (!m) return null;
-  const value = Number(m[1]);
-  return Number.isFinite(value) ? value : null;
-}
-
-function forceSashimiCalories(item) {
-  const name = String(item?.name || '');
-  const qtyText = String(item?.qty_text || '');
-  const pieces = parsePieceCount(qtyText);
-
-  if (!isSashimiLikeName(name)) return item;
-
-  if (isSalmonLikeName(name)) {
-    const kcal = pieces != null ? Math.round(pieces * 30) : Math.max(110, Math.min(170, Number(item.estimated_kcal) || 140));
-    return { ...item, estimated_kcal: kcal, confidence: Math.max(Number(item.confidence || 0), 0.88) };
-  }
-
-  if (isWhiteFishLikeName(name)) {
-    const kcal = pieces != null ? Math.round(pieces * 15) : Math.max(35, Math.min(90, Number(item.estimated_kcal) || 60));
-    return { ...item, estimated_kcal: kcal, confidence: Math.max(Number(item.confidence || 0), 0.8) };
-  }
-
-  return item;
+function keepGeminiNames(items) {
+  return (items || []).map((item) => ({
+    ...item,
+    name: safeText(item.gemini_original_name || item.name || '不明な食品', 120) || '不明な食品',
+  }));
 }
 
 function applyUncertainDrinkAdjustment(result) {
-  const items = Array.isArray(result.items) ? result.items : [];
+  const items = Array.isArray(result.items) ? keepGeminiNames(result.items) : [];
   const uncertainDrink = hasUncertainDrink(result);
-  if (!uncertainDrink) return result;
+  if (!uncertainDrink) return { ...result, items };
 
   const adjustedItems = items.map((item) => {
     const name = String(item.name || '');
@@ -268,7 +240,7 @@ function applyLightSnackCap(result) {
   const namesText = mainItems.map((item) => item.name).join(' / ');
   const isLightSnack = looksLikeLightSnack(namesText) && mainItems.length <= 4;
 
-  if (!isLightSnack) return result;
+  if (!isLightSnack) return { ...result, items: keepGeminiNames(result.items) };
 
   let total = Number(result.total_kcal) || 0;
   let changed = false;
@@ -281,7 +253,7 @@ function applyLightSnackCap(result) {
     changed = true;
   }
 
-  if (!changed) return result;
+  if (!changed) return { ...result, items: keepGeminiNames(result.items) };
 
   const rangeMin = Math.max(0, Math.round(total * 0.82));
   const rangeMax = Math.max(rangeMin + 40, Math.round(total * 1.18));
@@ -293,6 +265,7 @@ function applyLightSnackCap(result) {
 
   return {
     ...result,
+    items: keepGeminiNames(result.items),
     total_kcal: total,
     range_min: rangeMin,
     range_max: rangeMax,
@@ -301,86 +274,55 @@ function applyLightSnackCap(result) {
   };
 }
 
-function applySashimiSingleFishGuard(result) {
-  const items = Array.isArray(result.items) ? result.items.map(forceSashimiCalories) : [];
+function applySashimiSpecificGuard(result) {
+  const items = keepGeminiNames(result.items || []);
   const mainItems = items.filter((item) => item.is_main_subject);
-  const sashimiItems = mainItems.filter((item) => isSashimiLikeName(item.name));
+  const names = mainItems.map((item) => item.name).join(' / ');
 
-  if (sashimiItems.length < 2) {
+  const hasSalmon = /サーモン/.test(names);
+  const hasWhiteFish = /白身魚|鯛|ヒラメ/.test(names);
+
+  if (!hasSalmon || !hasWhiteFish) {
     return { ...result, items };
   }
 
-  const salmonItems = sashimiItems.filter((item) => isSalmonLikeName(item.name));
-  const whiteFishItems = sashimiItems.filter((item) => isWhiteFishLikeName(item.name));
+  const strongSpecific = mainItems.some((item) => looksSpecificName(item.name));
+  const whiteFishLowConfidence = mainItems.some(
+    (item) => /白身魚|鯛|ヒラメ/.test(item.name) && Number(item.confidence || 0) < 0.88
+  );
 
-  if (!salmonItems.length || !whiteFishItems.length) {
-    const recomputedTotal = mainItems.reduce((sum, item) => sum + (Number(forceSashimiCalories(item).estimated_kcal) || 0), 0);
+  if (!strongSpecific && whiteFishLowConfidence) {
+    const filtered = items.filter((item) => !(/白身魚|鯛|ヒラメ/.test(item.name) && item.is_main_subject));
+    const filteredMain = filtered.filter((item) => item.is_main_subject);
+    const newTotal = filteredMain.reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+    const notes = dedupeLines([
+      '刺身は別魚種を自動追加しやすいため、低信頼の白身魚候補を外しています',
+      ...(result.uncertain_points || []),
+    ]);
+
     return {
       ...result,
-      items,
-      total_kcal: recomputedTotal,
-      range_min: Math.round(recomputedTotal * 0.85),
-      range_max: Math.max(Math.round(recomputedTotal * 1.15), Math.round(recomputedTotal + 20)),
+      items: filtered,
+      total_kcal: newTotal,
+      range_min: Math.max(0, Math.round(newTotal * 0.85)),
+      range_max: Math.max(Math.round(newTotal * 1.18), Math.round(newTotal + 25)),
+      uncertain_points: notes,
+      needs_confirmation: true,
     };
   }
 
-  const salmonScore = salmonItems.reduce((sum, item) => sum + (Number(item.confidence) || 0), 0);
-  const whiteScore = whiteFishItems.reduce((sum, item) => sum + (Number(item.confidence) || 0), 0);
-
-  const weakWhiteFish = whiteScore < Math.max(1.65, salmonScore * 0.75);
-
-  if (!weakWhiteFish) {
-    const total = items.filter((item) => item.is_main_subject).reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
-    return {
-      ...result,
-      items,
-      total_kcal: total,
-      range_min: Math.round(total * 0.85),
-      range_max: Math.max(Math.round(total * 1.15), Math.round(total + 25)),
-    };
-  }
-
-  const filteredItems = items.filter((item) => {
-    if (!item.is_main_subject) return true;
-    if (!isSashimiLikeName(item.name)) return true;
-    if (isMinorSideName(item.name)) return true;
-    return !isWhiteFishLikeName(item.name);
-  });
-
-  const total = filteredItems
-    .filter((item) => item.is_main_subject)
-    .reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
-
-  const notes = dedupeLines([
-    '刺身の別魚種は明確でないため、単一魚種寄りで整理しました',
-    ...(result.uncertain_points || []),
-  ]);
-
-  const questions = dedupeLines([
-    ...((result.confirmation_questions || []).filter((q) => !/白身魚|別の魚種/.test(String(q || '')))),
-  ]);
-
-  return {
-    ...result,
-    items: filteredItems,
-    total_kcal: total,
-    range_min: Math.round(total * 0.85),
-    range_max: Math.max(Math.round(total * 1.15), Math.round(total + 20)),
-    uncertain_points: notes,
-    confirmation_questions: questions,
-    needs_confirmation: notes.length > 0 || questions.length > 0,
-  };
+  return { ...result, items };
 }
 
 function applyLocalMealGuards(result) {
   let adjusted = {
     ...result,
-    items: Array.isArray(result.items) ? result.items : [],
+    items: keepGeminiNames(Array.isArray(result.items) ? result.items : []),
     uncertain_points: dedupeLines(result.uncertain_points),
     confirmation_questions: dedupeLines(result.confirmation_questions),
   };
 
-  adjusted = applySashimiSingleFishGuard(adjusted);
+  adjusted = applySashimiSpecificGuard(adjusted);
   adjusted = applyUncertainDrinkAdjustment(adjusted);
   adjusted = applyLightSnackCap(adjusted);
 
@@ -405,6 +347,7 @@ function applyLocalMealGuards(result) {
     adjusted.range_min = Math.round(adjusted.total_kcal * 0.82);
   }
 
+  adjusted.items = keepGeminiNames(adjusted.items);
   adjusted.uncertain_points = dedupeLines(adjusted.uncertain_points);
   adjusted.confirmation_questions = dedupeLines(adjusted.confirmation_questions);
 
@@ -458,7 +401,8 @@ function normalizeGeminiMealResult(raw) {
 
   if (!normalized.needs_confirmation) {
     normalized.needs_confirmation =
-      normalized.uncertain_points.length > 0 || normalized.confirmation_questions.length > 0;
+      normalized.uncertain_points.length > 0 ||
+      normalized.confirmation_questions.length > 0;
   }
 
   return applyLocalMealGuards(normalized);
@@ -547,7 +491,7 @@ async function analyzeMealPhotoWithGemini({
 }
 
 function buildMealReply(result) {
-  const items = Array.isArray(result?.items) ? result.items : [];
+  const items = Array.isArray(result?.items) ? keepGeminiNames(result.items) : [];
   const mainItems = items.filter((item) => item.is_main_subject);
 
   const itemLines = mainItems.map((item) => `・${item.name} ${item.qty_text}`);
@@ -581,14 +525,19 @@ function buildMealReply(result) {
   return text;
 }
 
-function buildMealSavePayload({ userId = null, imageUrl = null, result, originalMessageId = null }) {
+function buildMealSavePayload({
+  userId = null,
+  imageUrl = null,
+  result,
+  originalMessageId = null,
+}) {
   return {
     user_id: userId,
     source_type: 'photo',
     source_model: 'gemini',
     original_message_id: originalMessageId,
     image_url: imageUrl,
-    meal_items_json: result?.items || [],
+    meal_items_json: keepGeminiNames(result?.items || []),
     total_kcal: roundKcal(result?.total_kcal),
     kcal_range_min: roundKcal(result?.range_min),
     kcal_range_max: roundKcal(result?.range_max),
