@@ -99,6 +99,62 @@ JSON以外は絶対に返さないでください。
 `.trim();
 }
 
+function buildMealTextPrompt(userText) {
+  return `
+あなたは食事テキスト解析エンジンです。
+利用者の文章から、実際に食べた・飲んだ内容だけを整理して、自然で現実的な推定を行ってください。
+
+最重要ルール:
+1. 「食べたい」「飲みたい」「どうかな」「大丈夫かな」など、願望・相談・質問は食事記録として扱わないこと。
+2. 実際に食べた・飲んだ記録なら is_meal = true、そうでなければ is_meal = false。
+3. 「今朝」「朝食」「昼食」「夕食」「AM4時半」などの時間情報があれば meal_label の参考にしてよい。
+4. 食材名は具体的に残すこと。一般名に丸めすぎないこと。
+5. カロリーは中央値寄り。過大推定しないこと。
+6. たんぱく質・脂質・糖質は現実的な目安で返すこと。
+7. 量が曖昧なら uncertain_points と confirmation_questions に入れること。
+8. コメントは短く自然に。定型的すぎないこと。
+9. 必ずJSONのみを返すこと。
+
+利用者メッセージ:
+${userText}
+`.trim();
+}
+
+function buildMealCorrectionPrompt(currentMeal, correctionText) {
+  const summary = {
+    meal_label: currentMeal?.meal_label || '食事',
+    estimated_kcal: currentMeal?.estimated_kcal ?? null,
+    kcal_min: currentMeal?.kcal_min ?? null,
+    kcal_max: currentMeal?.kcal_max ?? null,
+    protein_g: currentMeal?.protein_g ?? null,
+    fat_g: currentMeal?.fat_g ?? null,
+    carbs_g: currentMeal?.carbs_g ?? null,
+    food_items: Array.isArray(currentMeal?.food_items) ? currentMeal.food_items : [],
+    ai_comment: currentMeal?.ai_comment || '',
+  };
+
+  return `
+あなたは食事記録の訂正再計算エンジンです。
+現在の食事案と、利用者の訂正文をもとに、内容を自然に修正して再計算してください。
+
+最重要ルール:
+1. 利用者の訂正を最優先すること。
+2. 飲み物の種類、個数、量、塗った量、トッピング有無は訂正文を反映すること。
+3. 量が減る訂正ならカロリーも下げること。
+4. 量が増える訂正ならカロリーも上げること。
+5. 名前は具体的に保つこと。
+6. 不確実な点は uncertain_points と confirmation_questions に残すこと。
+7. コメントは短く自然に。
+8. 必ずJSONのみを返すこと。
+
+現在の食事案:
+${JSON.stringify(summary, null, 2)}
+
+利用者の訂正文:
+${correctionText}
+`.trim();
+}
+
 function getMealResponseSchema() {
   return {
     type: 'object',
@@ -136,6 +192,61 @@ function getMealResponseSchema() {
       ai_comment: { type: 'string' },
     },
     required: [
+      'meal_label',
+      'items',
+      'total_kcal',
+      'range_min',
+      'range_max',
+      'protein_g',
+      'fat_g',
+      'carbs_g',
+      'uncertain_points',
+      'needs_confirmation',
+      'confirmation_questions',
+      'ai_comment',
+    ],
+  };
+}
+
+function getMealTextResponseSchema() {
+  return {
+    type: 'object',
+    properties: {
+      is_meal: { type: 'boolean' },
+      meal_label: { type: 'string' },
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            qty_text: { type: 'string' },
+            estimated_kcal: { type: 'number' },
+            confidence: { type: 'number' },
+            is_main_subject: { type: 'boolean' },
+          },
+          required: ['name', 'qty_text', 'estimated_kcal', 'confidence', 'is_main_subject'],
+        },
+      },
+      total_kcal: { type: 'number' },
+      range_min: { type: 'number' },
+      range_max: { type: 'number' },
+      protein_g: { type: 'number' },
+      fat_g: { type: 'number' },
+      carbs_g: { type: 'number' },
+      uncertain_points: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      needs_confirmation: { type: 'boolean' },
+      confirmation_questions: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      ai_comment: { type: 'string' },
+    },
+    required: [
+      'is_meal',
       'meal_label',
       'items',
       'total_kcal',
@@ -201,7 +312,7 @@ function hasUncertainDrink(result) {
 }
 
 function looksLikeLightSnack(itemNamesText) {
-  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース/.test(
+  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース|青汁/.test(
     itemNamesText
   );
 }
@@ -226,14 +337,14 @@ function applyUncertainDrinkAdjustment(result) {
 
   const adjustedItems = items.map((item) => {
     const name = String(item.name || '');
-    const isDrinkLike = /カフェオレ|ミルクティー|ラテ|コーヒー|紅茶|お茶|水|ドリンク|飲み物/.test(name);
+    const isDrinkLike = /カフェオレ|ミルクティー|ラテ|コーヒー|紅茶|お茶|水|ドリンク|飲み物|青汁/.test(name);
 
     if (!isDrinkLike) return item;
 
     const current = Number(item.estimated_kcal) || 0;
 
     if (current <= 0) {
-      return { ...item, estimated_kcal: 80 };
+      return { ...item, estimated_kcal: 40 };
     }
 
     if (current > 95) {
@@ -258,7 +369,7 @@ function applyUncertainDrinkAdjustment(result) {
 function applyLightSnackCap(result) {
   const mainItems = (result.items || []).filter((item) => item.is_main_subject);
   const namesText = mainItems.map((item) => item.name).join(' / ');
-  const isLightSnack = looksLikeLightSnack(namesText) && mainItems.length <= 4;
+  const isLightSnack = looksLikeLightSnack(namesText) && mainItems.length <= 5;
 
   if (!isLightSnack) return { ...result, items: keepGeminiNames(result.items) };
 
@@ -334,6 +445,35 @@ function applySashimiSpecificGuard(result) {
   return { ...result, items };
 }
 
+function applyTextMealGuards(result) {
+  const adjusted = {
+    ...result,
+    items: keepGeminiNames(Array.isArray(result.items) ? result.items : []),
+    uncertain_points: dedupeLines(result.uncertain_points),
+    confirmation_questions: dedupeLines(result.confirmation_questions),
+  };
+
+  const mainItems = adjusted.items.filter((item) => item.is_main_subject);
+  const namesText = mainItems.map((item) => item.name).join(' / ');
+
+  if (/食パン/.test(namesText) && /ピーナッツバター/.test(namesText)) {
+    const breadItem = mainItems.find((item) => /食パン|パン/.test(item.name));
+    const butterItem = mainItems.find((item) => /ピーナッツバター/.test(item.name));
+    const drinkItem = mainItems.find((item) => /青汁|お茶|コーヒー|紅茶|水/.test(item.name));
+
+    const breadKcal = breadItem ? Math.min(Math.max(Number(breadItem.estimated_kcal) || 120, 110), 170) : 0;
+    const butterKcal = butterItem ? Math.min(Math.max(Number(butterItem.estimated_kcal) || 60, 35), 120) : 0;
+    const drinkKcal = drinkItem ? Math.min(Math.max(Number(drinkItem.estimated_kcal) || 15, 0), 40) : 0;
+
+    const total = breadKcal + butterKcal + drinkKcal;
+    adjusted.total_kcal = total;
+    adjusted.range_min = Math.max(0, Math.round(total * 0.85));
+    adjusted.range_max = Math.max(adjusted.range_min + 20, Math.round(total * 1.18));
+  }
+
+  return adjusted;
+}
+
 function applyLocalMealGuards(result) {
   let adjusted = {
     ...result,
@@ -345,12 +485,13 @@ function applyLocalMealGuards(result) {
   adjusted = applySashimiSpecificGuard(adjusted);
   adjusted = applyUncertainDrinkAdjustment(adjusted);
   adjusted = applyLightSnackCap(adjusted);
+  adjusted = applyTextMealGuards(adjusted);
 
   const mainItems = adjusted.items.filter((item) => item.is_main_subject);
   const mainNames = mainItems.map((item) => item.name).join(' / ');
   const total = Number(adjusted.total_kcal) || 0;
 
-  const hasLightSnackPattern = looksLikeLightSnack(mainNames) && mainItems.length <= 4;
+  const hasLightSnackPattern = looksLikeLightSnack(mainNames) && mainItems.length <= 5;
 
   if (hasLightSnackPattern && total >= 550) {
     adjusted.uncertain_points.unshift('軽食の見た目に対して推定カロリーが高めのため再確認が必要です');
@@ -437,6 +578,72 @@ function normalizeGeminiMealResult(raw) {
   return applyLocalMealGuards(normalized);
 }
 
+function buildLegacyMealFromNormalized(normalized, extra = {}) {
+  const mainItems = (normalized.items || []).filter((item) => item.is_main_subject);
+
+  const foodItems = mainItems.map((item) => ({
+    name: safeText(item.name || '不明な食品', 80),
+    estimated_amount: safeText(item.qty_text || '1つ', 80),
+    estimated_kcal: Number(item.estimated_kcal) || 0,
+    category: null,
+    confidence: Number(item.confidence) || 0.7,
+    needs_confirmation: Boolean(normalized.needs_confirmation),
+  }));
+
+  const uncertainPoints = Array.isArray(normalized.uncertain_points)
+    ? normalized.uncertain_points.filter(Boolean)
+    : [];
+
+  const confirmationQuestions = Array.isArray(normalized.confirmation_questions)
+    ? normalized.confirmation_questions.filter(Boolean)
+    : [];
+
+  const commentBase = safeText(normalized.ai_comment || '', 200);
+  const commentLines = [];
+
+  if (commentBase) {
+    commentLines.push(commentBase);
+  }
+
+  if (uncertainPoints.length) {
+    commentLines.push('確認したい点:');
+    commentLines.push(...uncertainPoints.slice(0, 2).map((x) => `・${x}`));
+  }
+
+  if (confirmationQuestions.length) {
+    commentLines.push(...confirmationQuestions.slice(0, 2).map((x) => `・${x}`));
+  }
+
+  return {
+    is_meal: extra.is_meal !== false,
+    meal_label: safeText(normalized.meal_label || '食事', 100),
+    food_items: foodItems,
+    estimated_kcal: Number(normalized.total_kcal) || 0,
+    kcal_min: Number(normalized.range_min) || 0,
+    kcal_max: Number(normalized.range_max) || 0,
+    protein_g: normalized.protein_g ?? null,
+    fat_g: normalized.fat_g ?? null,
+    carbs_g: normalized.carbs_g ?? null,
+    confidence: Math.max(
+      0.55,
+      mainItems.length
+        ? Math.round(
+            (mainItems.reduce((sum, item) => sum + (Number(item.confidence) || 0.7), 0) / mainItems.length) * 100
+          ) / 100
+        : 0.75
+    ),
+    uncertainty_notes: uncertainPoints,
+    confirmation_questions: confirmationQuestions,
+    ai_comment: safeText(commentLines.join('\n') || '食事内容を整理しました。', 1000),
+    raw_model_json: {
+      source: extra.source || 'gemini_meal_service',
+      gemini_result: normalized,
+      correction_text: extra.correction_text || null,
+      original_text: extra.original_text || null,
+    },
+  };
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -452,41 +659,41 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   }
 }
 
-async function analyzeMealPhotoWithGemini({
-  base64Image,
-  mimeType = 'image/jpeg',
+async function callGeminiJson({
+  prompt,
+  schema,
+  inlineData = null,
   apiKey = process.env.GEMINI_API_KEY,
   model = process.env.GEMINI_MEAL_MODEL || 'gemini-2.5-flash',
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  temperature = 0.15,
 }) {
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY が未設定です');
   }
 
-  if (!base64Image) {
-    throw new Error('base64Image が空です');
-  }
-
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const parts = [{ text: prompt }];
+  if (inlineData?.data) {
+    parts.push({
+      inline_data: {
+        mime_type: inlineData.mimeType || 'image/jpeg',
+        data: inlineData.data,
+      },
+    });
+  }
 
   const body = {
     contents: [
       {
-        parts: [
-          { text: buildMealVisionPrompt() },
-          {
-            inline_data: {
-              mime_type: mimeType,
-              data: base64Image,
-            },
-          },
-        ],
+        parts,
       },
     ],
     generationConfig: {
-      temperature: 0.15,
+      temperature,
       responseMimeType: 'application/json',
-      responseSchema: getMealResponseSchema(),
+      responseSchema: schema,
     },
   };
 
@@ -516,7 +723,108 @@ async function analyzeMealPhotoWithGemini({
     throw new Error(`GeminiのJSON解析に失敗しました: ${cleanedText}`);
   }
 
+  return parsed;
+}
+
+async function analyzeMealPhotoWithGemini({
+  base64Image,
+  mimeType = 'image/jpeg',
+  apiKey = process.env.GEMINI_API_KEY,
+  model = process.env.GEMINI_MEAL_MODEL || 'gemini-2.5-flash',
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+}) {
+  if (!base64Image) {
+    throw new Error('base64Image が空です');
+  }
+
+  const parsed = await callGeminiJson({
+    prompt: buildMealVisionPrompt(),
+    schema: getMealResponseSchema(),
+    inlineData: {
+      mimeType,
+      data: base64Image,
+    },
+    apiKey,
+    model,
+    timeoutMs,
+    temperature: 0.15,
+  });
+
   return normalizeGeminiMealResult(parsed);
+}
+
+async function analyzeMealTextWithGemini(
+  userText,
+  {
+    apiKey = process.env.GEMINI_API_KEY,
+    model = process.env.GEMINI_MEAL_MODEL || 'gemini-2.5-flash',
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = {}
+) {
+  const parsed = await callGeminiJson({
+    prompt: buildMealTextPrompt(userText),
+    schema: getMealTextResponseSchema(),
+    apiKey,
+    model,
+    timeoutMs,
+    temperature: 0.2,
+  });
+
+  if (!parsed?.is_meal) {
+    return {
+      is_meal: false,
+      meal_label: '',
+      food_items: [],
+      estimated_kcal: 0,
+      kcal_min: 0,
+      kcal_max: 0,
+      protein_g: null,
+      fat_g: null,
+      carbs_g: null,
+      confidence: 0,
+      uncertainty_notes: [],
+      confirmation_questions: [],
+      ai_comment: safeText(parsed?.ai_comment || '食事記録ではないと判断しました。', 200),
+      raw_model_json: {
+        source: 'gemini_meal_service_text',
+        gemini_result: parsed || {},
+        original_text: userText,
+      },
+    };
+  }
+
+  const normalized = normalizeGeminiMealResult(parsed);
+  return buildLegacyMealFromNormalized(normalized, {
+    source: 'gemini_meal_service_text',
+    original_text: userText,
+    is_meal: true,
+  });
+}
+
+async function applyMealCorrectionWithGemini(
+  currentMeal,
+  correctionText,
+  {
+    apiKey = process.env.GEMINI_API_KEY,
+    model = process.env.GEMINI_MEAL_MODEL || 'gemini-2.5-flash',
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = {}
+) {
+  const parsed = await callGeminiJson({
+    prompt: buildMealCorrectionPrompt(currentMeal, correctionText),
+    schema: getMealResponseSchema(),
+    apiKey,
+    model,
+    timeoutMs,
+    temperature: 0.2,
+  });
+
+  const normalized = normalizeGeminiMealResult(parsed);
+  return buildLegacyMealFromNormalized(normalized, {
+    source: 'gemini_meal_service_correction',
+    correction_text: correctionText,
+    is_meal: true,
+  });
 }
 
 function buildMealReply(result) {
@@ -594,6 +902,8 @@ function buildMealSavePayload({
 
 module.exports = {
   analyzeMealPhotoWithGemini,
+  analyzeMealTextWithGemini,
+  applyMealCorrectionWithGemini,
   buildMealReply,
   buildMealSavePayload,
   buildMealVisionPrompt,
