@@ -18,6 +18,8 @@ const {
   analyzeMealPhotoWithGemini,
   buildMealReply,
   normalizeGeminiMealResult,
+  analyzeMealTextWithGemini,
+  applyMealCorrectionWithGemini,
 } = require('./services/gemini_meal_service');
 const {
   parseDisplayName,
@@ -259,7 +261,107 @@ function isProfileCommand(text) {
   return text.includes('プロフィール');
 }
 
+function normalizeTextLoose(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
+function hasQuestionIntent(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(text);
+
+  if (!t) return false;
+
+  if (/[？?]/.test(raw)) return true;
+
+  const patterns = [
+    'かな',
+    'ですか',
+    'ますか',
+    'いいですか',
+    '大丈夫ですか',
+    'だめですか',
+    'ダメですか',
+    'してもいい',
+    'して平気',
+    '問題ない',
+    'どうかな',
+    'どうですか',
+    '良いですか',
+    '悪いですか',
+    'いいかな',
+    '平気かな',
+    'だめかな',
+    'ダメかな',
+    'どうしたら',
+    'どうすれば',
+    'どう思う',
+    '教えて',
+  ];
+
+  return patterns.some((p) => t.includes(normalizeTextLoose(p)));
+}
+
+function hasPainOrMedicalContext(text) {
+  const t = normalizeTextLoose(text);
+  if (!t) return false;
+
+  const patterns = [
+    '痛い',
+    '痛み',
+    'しびれ',
+    '腫れ',
+    '炎症',
+    '違和感',
+    'だるい',
+    '重い',
+    'つらい',
+    '辛い',
+    '足底腱膜炎',
+    '膝',
+    '腰',
+    '股関節',
+    '肩',
+    '首',
+    'かかと',
+    '足裏',
+    'ふくらはぎ',
+    '整形外科',
+    '病院',
+    '治療',
+    '症状',
+  ];
+
+  return patterns.some((p) => t.includes(normalizeTextLoose(p)));
+}
+
+function isExerciseConsultationText(text) {
+  const t = normalizeTextLoose(text);
+  if (!t) return false;
+
+  const hasExerciseWord = [
+    '走る',
+    'ジョギング',
+    'ランニング',
+    '歩く',
+    '運動',
+    '筋トレ',
+    'ストレッチ',
+    'スクワット',
+    '散歩',
+    'トレーニング',
+  ].some((w) => t.includes(normalizeTextLoose(w)));
+
+  if (!hasExerciseWord) return false;
+
+  return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
+}
+
 function isActivityCommand(text) {
+  if (isExerciseConsultationText(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
 }
 
@@ -513,7 +615,7 @@ function seemsMealCorrectionText(text) {
   return [
     'です', 'ではない', 'じゃない', '違います', 'ちがいます', '個です', '杯です', '本です',
     'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
-    'ウーロン茶', '緑茶', '麦茶', '紅茶',
+    'ウーロン茶', '緑茶', '麦茶', '紅茶', '薄く', '少し', '多め', '少なめ',
   ].some((w) => t.includes(w));
 }
 
@@ -574,6 +676,7 @@ function isExplicitMealLogText(text) {
   const t = normalizeMealIntentText(text);
   if (!t) return false;
   if (isMealDesireOrFeelingText(t)) return false;
+  if (hasQuestionIntent(text)) return false;
 
   const directPatterns = [
     '食べた',
@@ -593,6 +696,8 @@ function isExplicitMealLogText(text) {
     '朝飯',
     '昼飯',
     '夜飯',
+    '今朝',
+    'さっき',
   ];
 
   if (directPatterns.some((p) => t.includes(p))) {
@@ -600,7 +705,7 @@ function isExplicitMealLogText(text) {
   }
 
   const hasMealVerb = /食べた|飲んだ|食べました|飲みました/.test(t);
-  const hasFoodLikeWord = /ラーメン|ご飯|ごはん|パン|おにぎり|うどん|そば|パスタ|カレー|寿司|すし|肉|魚|卵|サラダ|スープ|味噌汁|みそ汁|コーヒー|お茶|ジュース|ビール|お酒|ケーキ|チョコ|アイス/.test(t);
+  const hasFoodLikeWord = /ラーメン|ご飯|ごはん|パン|おにぎり|うどん|そば|パスタ|カレー|寿司|すし|肉|魚|卵|サラダ|スープ|味噌汁|みそ汁|コーヒー|お茶|ジュース|ビール|お酒|ケーキ|チョコ|アイス|青汁|食パン|ピーナッツバター/.test(t);
 
   return hasMealVerb || hasFoodLikeWord;
 }
@@ -1051,6 +1156,52 @@ function appendMealNutritionText(baseText, meal) {
   return `${text}\n\n${nutritionLines.join('\n')}`;
 }
 
+function buildMealReplyWithSaveGuide(meal, options = {}) {
+  const { textOnly = false } = options;
+  const baseMessage =
+    meal?.raw_model_json?.gemini_result
+      ? buildMealReply(meal.raw_model_json.gemini_result)
+      : buildMealConfirmationMessage(meal);
+
+  const withNutrition = appendMealNutritionText(baseMessage, meal);
+  const saveGuide = textOnly
+    ? '合っていれば保存、違うところがあればそのまま訂正してください。'
+    : '合っていれば保存、違うところがあればボタンか文字で訂正してください。';
+
+  if (withNutrition.includes('合っていれば保存')) {
+    return withNutrition;
+  }
+
+  return `${withNutrition}\n\n${saveGuide}`;
+}
+
+async function analyzeMealTextPrimary(text) {
+  if (typeof analyzeMealTextWithGemini === 'function') {
+    try {
+      const geminiMeal = await analyzeMealTextWithGemini(text);
+      if (geminiMeal?.is_meal) return geminiMeal;
+      if (geminiMeal?.meal_label || geminiMeal?.estimated_kcal != null) return geminiMeal;
+    } catch (error) {
+      console.error('⚠️ analyzeMealTextWithGemini failed. Fallback to analyzeMealTextWithAI:', error?.message || error);
+    }
+  }
+
+  return analyzeMealTextWithAI(text);
+}
+
+async function applyMealCorrectionPrimary(currentMeal, correctionText) {
+  if (typeof applyMealCorrectionWithGemini === 'function') {
+    try {
+      const corrected = await applyMealCorrectionWithGemini(currentMeal, correctionText);
+      if (corrected?.meal_label || corrected?.estimated_kcal != null) return corrected;
+    } catch (error) {
+      console.error('⚠️ applyMealCorrectionWithGemini failed. Fallback to applyMealCorrection:', error?.message || error);
+    }
+  }
+
+  return applyMealCorrection(currentMeal, correctionText);
+}
+
 async function getTodayEnergyTotals(userId) {
   const dateYmd = currentDateYmdInTZ(TZ);
   const { startIso, endIso } = buildDayRangeIsoInTZ(dateYmd, TZ);
@@ -1490,11 +1641,7 @@ async function handleImageMessage(event, user) {
       setMealDraft(user.line_user_id, finalMealDraft);
       const needsDrinkCorrection = (finalMealDraft.food_items || []).some((x) => x.needs_confirmation);
 
-      const mealMessageBase = usedGeminiForMeal
-        ? buildMealReply(finalMealDraft.raw_model_json?.gemini_result || {})
-        : buildMealConfirmationMessage(finalMealDraft);
-
-      const mealMessage = `${mealMessageBase}\n\n合っていれば保存、違うところがあればボタンか文字で訂正してください。`;
+      const mealMessage = buildMealReplyWithSaveGuide(finalMealDraft);
 
       await replyMessage(
         event.replyToken,
@@ -1698,63 +1845,6 @@ async function handleTextMessage(event, user) {
       await replyMessage(
         event.replyToken,
         textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (isActivityCommand(lower)) {
-      const activity = parseActivity(text, user.weight_kg || 60);
-      if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal && !activity.exercise_summary) {
-        await replyMessage(event.replyToken, '例: ジョギング 20分 / ストレッチ 5分 / スクワット 10回 / 少し歩いた', env.LINE_CHANNEL_ACCESS_TOKEN);
-        return;
-      }
-
-      if (!activity.estimated_activity_kcal) {
-        activity.estimated_activity_kcal = estimateActivityKcalWithStrength(
-          activity.steps,
-          activity.walking_minutes,
-          user.weight_kg || 60,
-          activity.raw_detail_json || {}
-        );
-      }
-
-      const insertPayload = {
-        user_id: user.id,
-        logged_at: toIsoStringInTZ(new Date(), TZ),
-        steps: activity.steps,
-        walking_minutes: activity.walking_minutes,
-        estimated_activity_kcal: activity.estimated_activity_kcal,
-        exercise_summary: activity.exercise_summary,
-        raw_detail_json: activity.raw_detail_json,
-      };
-
-      const { error } = await supabase.from('activity_logs').insert(insertPayload);
-      if (error) throw error;
-
-      const totals = await getTodayEnergyTotals(user.id);
-      const lines = [
-        '活動を記録しました。',
-        activity.exercise_summary ? `内容: ${activity.exercise_summary}` : null,
-        activity.steps ? `歩数: ${fmt(activity.steps)} 歩` : null,
-        activity.walking_minutes ? `歩行・散歩: ${fmt(activity.walking_minutes)} 分` : null,
-        activity.estimated_activity_kcal != null ? `推定活動消費: ${fmt(activity.estimated_activity_kcal)} kcal` : null,
-        '小さな運動でも、しっかり前進です。',
-      ].filter(Boolean);
-
-      const energyText = buildEnergySummaryText({
-        estimatedBmr: user.estimated_bmr || 0,
-        estimatedTdee: user.estimated_tdee || 0,
-        intakeKcal: totals.intake_kcal || 0,
-        activityKcal: totals.activity_kcal || 0,
-      });
-
-      const replyText = prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`);
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
@@ -2079,7 +2169,7 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    if (isPainLikeText(text)) {
+    if (isPainLikeText(text) || isExerciseConsultationText(text)) {
       clearMealDraft(user.line_user_id);
       const area = detectPainArea(text);
       setSupportContext(user.line_user_id, { area, mode: 'pain' });
@@ -2199,13 +2289,18 @@ async function handleTextMessage(event, user) {
     }
 
     if (currentMealDraft && seemsMealCorrectionText(text)) {
-      const correctedMeal = await applyMealCorrection(currentMealDraft.meal, text);
+      const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, text);
       setMealDraft(user.line_user_id, correctedMeal);
 
       const needsDrinkCorrection = (correctedMeal.food_items || []).some((x) => x.needs_confirmation);
+      const correctionBaseText =
+        correctedMeal?.raw_model_json?.gemini_result
+          ? buildMealReplyWithSaveGuide(correctedMeal)
+          : buildMealCorrectionConfirmationMessage(correctedMeal);
+
       const replyText = prefixWithName(
         user,
-        buildMealCorrectionConfirmationMessage(correctedMeal)
+        appendMealNutritionText(correctionBaseText, correctedMeal)
       );
 
       await replyMessage(
@@ -2225,11 +2320,11 @@ async function handleTextMessage(event, user) {
     }
 
     if (isExplicitMealLogText(text) || seemsMealTextCandidate(text)) {
-      const analyzedMeal = await analyzeMealTextWithAI(text);
+      const analyzedMeal = await analyzeMealTextPrimary(text);
       setMealDraft(user.line_user_id, analyzedMeal);
 
       const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
-      const mealMessage = buildMealConfirmationMessage(analyzedMeal);
+      const mealMessage = buildMealReplyWithSaveGuide(analyzedMeal, { textOnly: true });
       const replyText = prefixWithName(user, mealMessage);
 
       await replyMessage(
@@ -2249,6 +2344,63 @@ async function handleTextMessage(event, user) {
 
     if (isExplicitMealGuideIntent(text)) {
       await replyMessage(event.replyToken, buildMealTextGuide(), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isActivityCommand(lower)) {
+      const activity = parseActivity(text, user.weight_kg || 60);
+      if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal && !activity.exercise_summary) {
+        await replyMessage(event.replyToken, '例: ジョギング 20分 / ストレッチ 5分 / スクワット 10回 / 少し歩いた', env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      if (!activity.estimated_activity_kcal) {
+        activity.estimated_activity_kcal = estimateActivityKcalWithStrength(
+          activity.steps,
+          activity.walking_minutes,
+          user.weight_kg || 60,
+          activity.raw_detail_json || {}
+        );
+      }
+
+      const insertPayload = {
+        user_id: user.id,
+        logged_at: toIsoStringInTZ(new Date(), TZ),
+        steps: activity.steps,
+        walking_minutes: activity.walking_minutes,
+        estimated_activity_kcal: activity.estimated_activity_kcal,
+        exercise_summary: activity.exercise_summary,
+        raw_detail_json: activity.raw_detail_json,
+      };
+
+      const { error } = await supabase.from('activity_logs').insert(insertPayload);
+      if (error) throw error;
+
+      const totals = await getTodayEnergyTotals(user.id);
+      const lines = [
+        '活動を記録しました。',
+        activity.exercise_summary ? `内容: ${activity.exercise_summary}` : null,
+        activity.steps ? `歩数: ${fmt(activity.steps)} 歩` : null,
+        activity.walking_minutes ? `歩行・散歩: ${fmt(activity.walking_minutes)} 分` : null,
+        activity.estimated_activity_kcal != null ? `推定活動消費: ${fmt(activity.estimated_activity_kcal)} kcal` : null,
+        '小さな運動でも、しっかり前進です。',
+      ].filter(Boolean);
+
+      const energyText = buildEnergySummaryText({
+        estimatedBmr: user.estimated_bmr || 0,
+        estimatedTdee: user.estimated_tdee || 0,
+        intakeKcal: totals.intake_kcal || 0,
+        activityKcal: totals.activity_kcal || 0,
+      });
+
+      const replyText = prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`);
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
