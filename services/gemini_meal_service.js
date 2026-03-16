@@ -22,6 +22,12 @@ function roundKcal(value) {
   return Math.round(n);
 }
 
+function roundGram(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 10) / 10;
+}
+
 function safeText(value, max = 200) {
   return String(value || '').trim().slice(0, max);
 }
@@ -58,7 +64,8 @@ function buildMealVisionPrompt() {
 7. 不明点があれば uncertain_points と confirmation_questions に入れること。
 8. 飲み物の種類や砂糖の有無が曖昧なら、勝手に高カロリー寄りにしないこと。
 9. ソース・ドレッシング・砂糖・シロップは、明確に確認できる時だけ加算すること。
-10. 必ずJSONのみを返すこと。説明文は禁止。
+10. たんぱく質・脂質・糖質も現実的な目安で返すこと。
+11. 必ずJSONのみを返すこと。説明文は禁止。
 
 具体名優先の例:
 - ボンビノス貝 / ホンビノス貝 / プレミアムチョコクロ / サーモン刺身 / 焼きおにぎり
@@ -76,13 +83,16 @@ function buildMealVisionPrompt() {
 - 無難な一般名に逃がしすぎないこと
 
 出力要件:
+- meal_label: 写真全体の料理名
 - items: 配列
 - 各itemは name, qty_text, estimated_kcal, confidence, is_main_subject を持つ
 - total_kcal は主被写体のみの合計
 - range_min, range_max は妥当な推定幅
+- protein_g, fat_g, carbs_g は料理全体の目安
 - uncertain_points は曖昧点
 - needs_confirmation は true/false
 - confirmation_questions は必要時のみ質問を入れる
+- ai_comment は短い補足文
 
 日本語で判定してください。
 JSON以外は絶対に返さないでください。
@@ -93,6 +103,7 @@ function getMealResponseSchema() {
   return {
     type: 'object',
     properties: {
+      meal_label: { type: 'string' },
       items: {
         type: 'array',
         items: {
@@ -110,6 +121,9 @@ function getMealResponseSchema() {
       total_kcal: { type: 'number' },
       range_min: { type: 'number' },
       range_max: { type: 'number' },
+      protein_g: { type: 'number' },
+      fat_g: { type: 'number' },
+      carbs_g: { type: 'number' },
       uncertain_points: {
         type: 'array',
         items: { type: 'string' },
@@ -119,15 +133,21 @@ function getMealResponseSchema() {
         type: 'array',
         items: { type: 'string' },
       },
+      ai_comment: { type: 'string' },
     },
     required: [
+      'meal_label',
       'items',
       'total_kcal',
       'range_min',
       'range_max',
+      'protein_g',
+      'fat_g',
+      'carbs_g',
       'uncertain_points',
       'needs_confirmation',
       'confirmation_questions',
+      'ai_comment',
     ],
   };
 }
@@ -364,10 +384,14 @@ function normalizeGeminiMealResult(raw) {
   const items = Array.isArray(raw?.items) ? raw.items.map(normalizeItem) : [];
 
   const normalized = {
+    meal_label: safeText(raw?.meal_label || raw?.mealLabel || '', 100),
     items,
     total_kcal: roundKcal(raw?.total_kcal ?? raw?.totalKcal ?? 0),
     range_min: roundKcal(raw?.range_min ?? raw?.rangeMin ?? 0),
     range_max: roundKcal(raw?.range_max ?? raw?.rangeMax ?? 0),
+    protein_g: roundGram(raw?.protein_g),
+    fat_g: roundGram(raw?.fat_g),
+    carbs_g: roundGram(raw?.carbs_g),
     uncertain_points: Array.isArray(raw?.uncertain_points)
       ? raw.uncertain_points.map((x) => safeText(x, 160)).filter(Boolean)
       : [],
@@ -375,11 +399,16 @@ function normalizeGeminiMealResult(raw) {
     confirmation_questions: Array.isArray(raw?.confirmation_questions)
       ? raw.confirmation_questions.map((x) => safeText(x, 160)).filter(Boolean)
       : [],
+    ai_comment: safeText(raw?.ai_comment || '', 200),
     raw_json: raw || {},
   };
 
   const mainItems = normalized.items.filter((item) => item.is_main_subject);
   const computedMainTotal = mainItems.reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+
+  if (!normalized.meal_label) {
+    normalized.meal_label = safeText(mainItems.map((item) => item.name).join(' / '), 100) || '食事';
+  }
 
   if (!normalized.total_kcal || normalized.total_kcal <= 0) {
     normalized.total_kcal = computedMainTotal;
@@ -491,38 +520,46 @@ async function analyzeMealPhotoWithGemini({
 }
 
 function buildMealReply(result) {
-  const items = Array.isArray(result?.items) ? keepGeminiNames(result.items) : [];
-  const mainItems = items.filter((item) => item.is_main_subject);
+  const normalized = normalizeGeminiMealResult(result || {});
+  const kcal = roundKcal(normalized.total_kcal);
+  const minKcal = roundKcal(normalized.range_min);
+  const maxKcal = roundKcal(normalized.range_max);
+  const protein = roundGram(normalized.protein_g);
+  const fat = roundGram(normalized.fat_g);
+  const carbs = roundGram(normalized.carbs_g);
 
-  const itemLines = mainItems.map((item) => `・${item.name} ${item.qty_text}`);
-  const kcal = roundKcal(result?.total_kcal);
-  const minKcal = roundKcal(result?.range_min);
-  const maxKcal = roundKcal(result?.range_max);
+  const lines = [
+    '食事内容を整理しました。',
+    `料理: ${normalized.meal_label || '食事'}`,
+    `推定カロリー: ${kcal} kcal（${minKcal}〜${maxKcal} kcal）`,
+  ];
 
-  let text = '食事内容を整理しました。\n';
-
-  if (itemLines.length) {
-    text += `${itemLines.join('\n')}\n\n`;
-  } else {
-    text += '・写真から主な食事を特定できませんでした\n\n';
+  if (protein != null || fat != null || carbs != null) {
+    lines.push('');
+    lines.push('栄養の目安');
+    if (protein != null) lines.push(`・たんぱく質: ${protein}g`);
+    if (fat != null) lines.push(`・脂質: ${fat}g`);
+    if (carbs != null) lines.push(`・糖質: ${carbs}g`);
   }
 
-  text += `推定カロリー: ${kcal} kcal（${minKcal}〜${maxKcal} kcal）`;
+  const uncertainPoints = dedupeLines(normalized.uncertain_points || []);
+  const confirmationQuestions = dedupeLines(normalized.confirmation_questions || []);
+  const shortComment = safeText(normalized.ai_comment || '', 120);
 
-  const uncertainPoints = dedupeLines(result?.uncertain_points || []);
-  const confirmationQuestions = dedupeLines(result?.confirmation_questions || []);
-
-  if (uncertainPoints.length) {
-    text += '\n\n確認したい点:\n';
-    text += uncertainPoints.map((x) => `・${x}`).join('\n');
+  if (shortComment) {
+    lines.push('');
+    lines.push(`補足: ${shortComment}`);
+  } else if (uncertainPoints.length) {
+    lines.push('');
+    lines.push(`補足: ${uncertainPoints.slice(0, 2).join(' / ')}`);
   }
 
   if (confirmationQuestions.length) {
-    text += '\n\n';
-    text += confirmationQuestions.map((x) => `・${x}`).join('\n');
+    lines.push('');
+    lines.push(...confirmationQuestions.map((x) => `・${x}`));
   }
 
-  return text;
+  return lines.join('\n');
 }
 
 function buildMealSavePayload({
@@ -531,21 +568,26 @@ function buildMealSavePayload({
   result,
   originalMessageId = null,
 }) {
+  const normalized = normalizeGeminiMealResult(result || {});
+
   return {
     user_id: userId,
     source_type: 'photo',
     source_model: 'gemini',
     original_message_id: originalMessageId,
     image_url: imageUrl,
-    meal_items_json: keepGeminiNames(result?.items || []),
-    total_kcal: roundKcal(result?.total_kcal),
-    kcal_range_min: roundKcal(result?.range_min),
-    kcal_range_max: roundKcal(result?.range_max),
-    uncertain_points_json: result?.uncertain_points || [],
-    confirmation_questions_json: result?.confirmation_questions || [],
-    needs_confirmation: Boolean(result?.needs_confirmation),
+    meal_items_json: keepGeminiNames(normalized.items || []),
+    total_kcal: roundKcal(normalized.total_kcal),
+    kcal_range_min: roundKcal(normalized.range_min),
+    kcal_range_max: roundKcal(normalized.range_max),
+    protein_g: roundGram(normalized.protein_g),
+    fat_g: roundGram(normalized.fat_g),
+    carbs_g: roundGram(normalized.carbs_g),
+    uncertain_points_json: normalized.uncertain_points || [],
+    confirmation_questions_json: normalized.confirmation_questions || [],
+    needs_confirmation: Boolean(normalized.needs_confirmation),
     confirmed_by_user: false,
-    raw_response_json: result?.raw_json || result || {},
+    raw_response_json: normalized.raw_json || normalized || {},
     created_at: new Date().toISOString(),
   };
 }
