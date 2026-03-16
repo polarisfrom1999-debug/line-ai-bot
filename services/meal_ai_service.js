@@ -149,7 +149,7 @@ function buildMealAnalysisPrompt(text) {
     '特に飲み物は誤認しやすいので、見分けに自信がない場合は alcohol と断定せず、needs_confirmation=true を使ってください。',
     'ジャスミンティー、緑茶、烏龍茶、麦茶、水などを、安易にビールや酒類と断定してはいけません。',
     '推定に自信がない項目は uncertainty_notes と confirmation_questions に確認文を入れてください。',
-    '食事全体のラベル、食品一覧、概算カロリー、PFC、確認事項をJSONで返してください。',
+    '食事全体のラベル、食品一覧、概算カロリー、たんぱく質・脂質・糖質、確認事項をJSONで返してください。',
     '必ずJSONだけを返してください。',
     '',
     `食事文章: ${text}`,
@@ -163,22 +163,56 @@ async function analyzeMealTextWithAI(text) {
   return applyDrinkSafetyRules(normalized);
 }
 
+function buildNutritionLines(result) {
+  const protein = round1(result?.protein_g);
+  const fat = round1(result?.fat_g);
+  const carbs = round1(result?.carbs_g);
+
+  if (protein == null && fat == null && carbs == null) {
+    return [];
+  }
+
+  return [
+    '栄養の目安',
+    protein != null ? `・たんぱく質: ${protein}g` : null,
+    fat != null ? `・脂質: ${fat}g` : null,
+    carbs != null ? `・糖質: ${carbs}g` : null,
+  ].filter(Boolean);
+}
+
 function buildMealConfirmationMessage(result) {
   const lines = [
     '食事内容を整理しました。',
     `料理: ${result.meal_label || '食事'}`,
     `推定カロリー: ${formatKcalRange(result.estimated_kcal, result.kcal_min, result.kcal_max)}`,
-    result.food_items?.length
-      ? `内容: ${result.food_items.map((x) => x.name).filter(Boolean).join(' / ')}`
-      : null,
-    result.uncertainty_notes?.length
-      ? `確認したい点: ${result.uncertainty_notes.join(' / ')}`
-      : null,
-    result.confirmation_questions?.length
-      ? result.confirmation_questions.join('\n')
-      : null,
-    '合っていれば保存、違うところがあればそのまま訂正してください。',
-  ].filter(Boolean);
+  ];
+
+  const nutritionLines = buildNutritionLines(result);
+  if (nutritionLines.length) {
+    lines.push('');
+    lines.push(...nutritionLines);
+  }
+
+  const shortComment = safeText(result.ai_comment || '', 120);
+  const shortUncertainty = result.uncertainty_notes?.length
+    ? result.uncertainty_notes.slice(0, 2).join(' / ')
+    : '';
+
+  if (shortComment) {
+    lines.push('');
+    lines.push(`補足: ${shortComment}`);
+  } else if (shortUncertainty) {
+    lines.push('');
+    lines.push(`補足: ${shortUncertainty}`);
+  }
+
+  if (result.confirmation_questions?.length) {
+    lines.push('');
+    lines.push(...result.confirmation_questions.map((x) => `・${x}`));
+  }
+
+  lines.push('');
+  lines.push('合っていれば保存、違うところがあればそのまま訂正してください。');
 
   return lines.join('\n');
 }
