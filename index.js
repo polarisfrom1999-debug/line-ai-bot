@@ -61,7 +61,6 @@ const {
   buildPainSupportResponse,
   buildStretchSupportResponse,
   buildExerciseFollowupQuickReplies,
-  buildMealFollowupQuickReplies,
 } = require('./services/pain_support_service');
 const {
   buildVideoSupportResponse,
@@ -371,7 +370,17 @@ function isMealSaveCommand(text) {
 
 function isMealCancelCommand(text) {
   const t = String(text || '').trim();
-  return ['食事をキャンセル', '食事やめる', 'キャンセル'].includes(t);
+  return ['食事をキャンセル', '食事やめる', 'キャンセル', '写真取り消し'].includes(t);
+}
+
+function isMealManualEditCommand(text) {
+  const t = String(text || '').trim();
+  return t === '手書きで追加・修正';
+}
+
+function isMealAddPhotoCommand(text) {
+  const t = String(text || '').trim();
+  return t === '追加で写真';
 }
 
 function isIntakeStartCommand(text) {
@@ -573,6 +582,15 @@ function buildAiTypePrompt(aiType) {
   return '話し方はやさしく包み込むように、安心感を大切にしてください。';
 }
 
+function buildMealFollowupQuickReplies() {
+  return [
+    'この内容で食事保存',
+    '手書きで追加・修正',
+    '追加で写真',
+    '写真取り消し',
+  ];
+}
+
 function getMealDraft(lineUserId) {
   const draft = recentMealDrafts.get(lineUserId);
   if (!draft) return null;
@@ -584,12 +602,31 @@ function getMealDraft(lineUserId) {
   return draft;
 }
 
-function setMealDraft(lineUserId, mealResult) {
-  recentMealDrafts.set(lineUserId, { meal: mealResult, updatedAt: Date.now() });
+function setMealDraft(lineUserId, mealResult, options = {}) {
+  const {
+    awaitingAdditionalPhoto = false,
+  } = options;
+
+  recentMealDrafts.set(lineUserId, {
+    meal: mealResult,
+    awaitingAdditionalPhoto: Boolean(awaitingAdditionalPhoto),
+    updatedAt: Date.now(),
+  });
 }
 
 function clearMealDraft(lineUserId) {
   recentMealDrafts.delete(lineUserId);
+}
+
+function markMealDraftAwaitingAdditionalPhoto(lineUserId, awaiting = true) {
+  const draft = getMealDraft(lineUserId);
+  if (!draft) return;
+
+  recentMealDrafts.set(lineUserId, {
+    ...draft,
+    awaitingAdditionalPhoto: Boolean(awaiting),
+    updatedAt: Date.now(),
+  });
 }
 
 function getSupportContext(lineUserId) {
@@ -615,6 +652,7 @@ function seemsMealCorrectionText(text) {
     'です', 'ではない', 'じゃない', '違います', 'ちがいます', '個です', '杯です', '本です',
     'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
     'ウーロン茶', '緑茶', '麦茶', '紅茶', '薄く', '少し', '多め', '少なめ',
+    '追加', '増やし', '減らし', '半分', 'ひとくち', '一口', '抜いて', 'なしで',
   ].some((w) => t.includes(w));
 }
 
@@ -1174,6 +1212,71 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   return `${withNutrition}\n\n${saveGuide}`;
 }
 
+function mergeFoodItems(baseItems = [], extraItems = []) {
+  return [...baseItems, ...extraItems].map((item) => ({
+    name: safeText(item?.name || '不明な食品', 80),
+    estimated_amount: safeText(item?.estimated_amount || '1つ', 80),
+    estimated_kcal: Number(item?.estimated_kcal) || 0,
+    category: item?.category || null,
+    confidence: Number(item?.confidence) || 0.7,
+    needs_confirmation: Boolean(item?.needs_confirmation),
+  }));
+}
+
+function mergeMealLabels(baseLabel, extraLabel) {
+  const labels = [baseLabel, extraLabel]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(labels)).join(' / ') || '食事';
+}
+
+function sumNullableNumber(a, b) {
+  const av = Number(a);
+  const bv = Number(b);
+  const hasA = Number.isFinite(av);
+  const hasB = Number.isFinite(bv);
+
+  if (!hasA && !hasB) return null;
+  return (hasA ? av : 0) + (hasB ? bv : 0);
+}
+
+function mergeMealDrafts(baseMeal, extraMeal) {
+  const baseFoodItems = Array.isArray(baseMeal?.food_items) ? baseMeal.food_items : [];
+  const extraFoodItems = Array.isArray(extraMeal?.food_items) ? extraMeal.food_items : [];
+
+  const confidenceValues = [Number(baseMeal?.confidence), Number(extraMeal?.confidence)].filter((x) => Number.isFinite(x));
+
+  return {
+    is_meal: true,
+    meal_label: mergeMealLabels(baseMeal?.meal_label, extraMeal?.meal_label),
+    food_items: mergeFoodItems(baseFoodItems, extraFoodItems),
+    estimated_kcal: sumNullableNumber(baseMeal?.estimated_kcal, extraMeal?.estimated_kcal),
+    kcal_min: sumNullableNumber(baseMeal?.kcal_min, extraMeal?.kcal_min),
+    kcal_max: sumNullableNumber(baseMeal?.kcal_max, extraMeal?.kcal_max),
+    protein_g: sumNullableNumber(baseMeal?.protein_g, extraMeal?.protein_g),
+    fat_g: sumNullableNumber(baseMeal?.fat_g, extraMeal?.fat_g),
+    carbs_g: sumNullableNumber(baseMeal?.carbs_g, extraMeal?.carbs_g),
+    confidence: confidenceValues.length
+      ? Math.round((confidenceValues.reduce((sum, x) => sum + x, 0) / confidenceValues.length) * 100) / 100
+      : 0.75,
+    uncertainty_notes: [
+      ...(Array.isArray(baseMeal?.uncertainty_notes) ? baseMeal.uncertainty_notes : []),
+      ...(Array.isArray(extraMeal?.uncertainty_notes) ? extraMeal.uncertainty_notes : []),
+    ],
+    confirmation_questions: [
+      ...(Array.isArray(baseMeal?.confirmation_questions) ? baseMeal.confirmation_questions : []),
+      ...(Array.isArray(extraMeal?.confirmation_questions) ? extraMeal.confirmation_questions : []),
+    ],
+    ai_comment: safeText('追加写真も含めて食事内容を再整理しました。', 1000),
+    raw_model_json: {
+      source: 'merged_meal_draft',
+      base_meal: baseMeal?.raw_model_json || baseMeal || {},
+      extra_meal: extraMeal?.raw_model_json || extraMeal || {},
+    },
+  };
+}
+
 async function analyzeMealTextPrimary(text) {
   if (typeof analyzeMealTextWithGemini === 'function') {
     try {
@@ -1618,13 +1721,12 @@ function buildLabSaveMessage(savedRow, recentRows) {
 async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
+    const existingMealDraft = getMealDraft(user.line_user_id);
 
     let finalMealDraft = null;
-    let usedGeminiForMeal = false;
 
     try {
       finalMealDraft = await analyzeMealImageWithGeminiPrimary(buffer, mimeType);
-      usedGeminiForMeal = true;
     } catch (geminiMealError) {
       console.error(
         '⚠️ Gemini meal analysis failed. Fallback to meal_image_ai_service:',
@@ -1639,9 +1741,37 @@ async function handleImageMessage(event, user) {
       }
     }
 
+    if (existingMealDraft?.awaitingAdditionalPhoto) {
+      if (finalMealDraft?.is_meal) {
+        const mergedMeal = mergeMealDrafts(existingMealDraft.meal, finalMealDraft);
+        setMealDraft(user.line_user_id, mergedMeal);
+
+        const mealMessage = buildMealReplyWithSaveGuide(mergedMeal);
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(
+            prefixWithName(user, `追加写真も反映しました。\n\n${mealMessage}`),
+            buildMealFollowupQuickReplies()
+          ),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      setMealDraft(user.line_user_id, existingMealDraft.meal);
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, '追加写真を食事として読み取れませんでした。もう一度送り直すか、そのまま文字で追加・修正内容を送ってください。'),
+          buildMealFollowupQuickReplies()
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     if (finalMealDraft?.is_meal) {
       setMealDraft(user.line_user_id, finalMealDraft);
-      const needsDrinkCorrection = (finalMealDraft.food_items || []).some((x) => x.needs_confirmation);
 
       const mealMessage = buildMealReplyWithSaveGuide(finalMealDraft);
 
@@ -1649,7 +1779,7 @@ async function handleImageMessage(event, user) {
         event.replyToken,
         textMessageWithQuickReplies(
           prefixWithName(user, mealMessage),
-          buildMealFollowupQuickReplies(needsDrinkCorrection)
+          buildMealFollowupQuickReplies()
         ),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
@@ -2248,6 +2378,20 @@ async function handleTextMessage(event, user) {
 
     const currentMealDraft = getMealDraft(user.line_user_id);
 
+    if (currentMealDraft && isMealManualEditCommand(text)) {
+      markMealDraftAwaitingAdditionalPhoto(user.line_user_id, false);
+      const replyText = 'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です';
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (currentMealDraft && isMealAddPhotoCommand(text)) {
+      markMealDraftAwaitingAdditionalPhoto(user.line_user_id, true);
+      const replyText = '追加した写真をそのまま送ってください。次の写真を追加分として反映します。';
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
     if (currentMealDraft && isMealSaveCommand(text)) {
       const savedMeal = await saveMealToLog(user.id, currentMealDraft.meal);
       clearMealDraft(user.line_user_id);
@@ -2284,7 +2428,7 @@ async function handleTextMessage(event, user) {
 
     if (currentMealDraft && isMealCancelCommand(text)) {
       clearMealDraft(user.line_user_id);
-      const replyText = '食事の確認中データを取り消しました。';
+      const replyText = '確認中の食事データを取り消しました。';
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -2294,7 +2438,6 @@ async function handleTextMessage(event, user) {
       const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, text);
       setMealDraft(user.line_user_id, correctedMeal);
 
-      const needsDrinkCorrection = (correctedMeal.food_items || []).some((x) => x.needs_confirmation);
       const correctionBaseText =
         correctedMeal?.raw_model_json?.gemini_result
           ? buildMealReplyWithSaveGuide(correctedMeal)
@@ -2307,7 +2450,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies(needsDrinkCorrection)),
+        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
@@ -2325,13 +2468,12 @@ async function handleTextMessage(event, user) {
       const analyzedMeal = await analyzeMealTextPrimary(text);
       setMealDraft(user.line_user_id, analyzedMeal);
 
-      const needsDrinkCorrection = (analyzedMeal.food_items || []).some((x) => x.needs_confirmation);
       const mealMessage = buildMealReplyWithSaveGuide(analyzedMeal, { textOnly: true });
       const replyText = prefixWithName(user, mealMessage);
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies(needsDrinkCorrection)),
+        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
