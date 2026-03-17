@@ -136,7 +136,7 @@ function buildLabDraftSummaryMessage(session) {
   const lines = buildPanelLines(items);
 
   const text = [
-    `血液検査の読み取り結果です。`,
+    '血液検査の読み取り結果です。',
     `対象日: ${selectedDate}`,
     '',
     ...(lines.length ? lines : ['読めた項目がまだ少ないようです。必要なら修正してください。']),
@@ -170,7 +170,7 @@ function buildLabDateChoiceMessage(session) {
 
   return {
     text: [
-      `複数の日付を読み取りました。`,
+      '複数の日付を読み取りました。',
       ...dates.map((d) => `・${d}`),
       '',
       '1日分を確認するなら日付をそのまま送ってください。',
@@ -377,11 +377,23 @@ function mapActivityLevelToStoredValue(level) {
   return map[level] || 'moderate';
 }
 
+function mapSexToStoredValue(sex) {
+  const map = {
+    '女性': 'female',
+    '男性': 'male',
+    'その他': 'other',
+    female: 'female',
+    male: 'male',
+    other: 'other',
+  };
+  return map[sex] || null;
+}
+
 function buildIntakeProfilePatch(answers) {
   return {
     ai_type: mapAiTypeToStoredValue(answers?.ai_type),
     age: answers?.age ?? null,
-    sex: answers?.sex ?? null,
+    sex: mapSexToStoredValue(answers?.sex),
     height_cm: answers?.height_cm ?? null,
     weight_kg: answers?.weight_kg ?? null,
     target_weight_kg: answers?.target_weight_kg ?? null,
