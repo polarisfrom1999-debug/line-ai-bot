@@ -274,7 +274,6 @@ function hasQuestionIntent(text) {
   const t = normalizeTextLoose(text);
 
   if (!t) return false;
-
   if (/[？?]/.test(raw)) return true;
 
   const patterns = [
@@ -1593,7 +1592,10 @@ async function completeIntakeSession(user, session) {
       encouragement_style: profileSummary.encouragement_style,
       current_barriers: profileSummary.current_barriers,
     }, { onConflict: 'user_id' });
-  if (profileError) throw profileError;
+
+  if (profileError) {
+    console.error('⚠️ user_profiles upsert failed:', profileError?.message || profileError);
+  }
 
   const { error: sessionError } = await supabase
     .from('intake_sessions')
@@ -2296,12 +2298,12 @@ async function handleTextMessage(event, user) {
       const correctionBaseText =
         correctedMeal?.raw_model_json?.gemini_result
           ? buildMealReplyWithSaveGuide(correctedMeal)
-          : buildMealCorrectionConfirmationMessage(correctedMeal);
+          : appendMealNutritionText(
+              buildMealCorrectionConfirmationMessage(correctedMeal),
+              correctedMeal
+            );
 
-      const replyText = prefixWithName(
-        user,
-        appendMealNutritionText(correctionBaseText, correctedMeal)
-      );
+      const replyText = prefixWithName(user, correctionBaseText);
 
       await replyMessage(
         event.replyToken,
