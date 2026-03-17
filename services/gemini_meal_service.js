@@ -135,17 +135,25 @@ function buildMealCorrectionPrompt(currentMeal, correctionText) {
 
   return `
 あなたは食事記録の訂正再計算エンジンです。
-現在の食事案と、利用者の訂正文をもとに、内容を自然に修正して再計算してください。
+これは新規の食事記録ではありません。必ず「現在の食事案」を土台にして、利用者の訂正文だけを反映してください。
 
 最重要ルール:
-1. 利用者の訂正を最優先すること。
-2. 飲み物の種類、個数、量、塗った量、トッピング有無は訂正文を反映すること。
-3. 量が減る訂正ならカロリーも下げること。
-4. 量が増える訂正ならカロリーも上げること。
-5. 名前は具体的に保つこと。
-6. 不確実な点は uncertain_points と confirmation_questions に残すこと。
-7. コメントは短く自然に。
-8. 必ずJSONのみを返すこと。
+1. 今回は新規記録禁止。必ず既存の food_items を残したまま必要部分だけ修正すること。
+2. 利用者の訂正が飲み物だけなら、飲み物だけを修正し、他の食品は消さないこと。
+3. 利用者の訂正が個数・杯数・量なら、その対象項目だけ更新すること。
+4. 訂正文に出ていない他の食品を勝手に削除しないこと。
+5. 料理名を Beverage / Drink だけにしないこと。元の meal_label をできるだけ維持すること。
+6. 飲み物の種類、個数、量、塗った量、トッピング有無は訂正文を反映すること。
+7. 量が減る訂正ならカロリーも下げること。量が増える訂正ならカロリーも上げること。
+8. 名前は具体的に保つこと。
+9. 不確実な点は uncertain_points と confirmation_questions に残すこと。
+10. コメントは短く自然に。
+11. 必ずJSONのみを返すこと。
+
+特に重要:
+- 既存が「パイ + コーヒー」で、訂正文が「ブラックコーヒー2杯です」の場合、
+  結果は「パイ + ブラックコーヒー2杯」のままにすること。
+- 訂正文だけを独立した新しい食事として解釈してはいけない。
 
 現在の食事案:
 ${JSON.stringify(summary, null, 2)}
@@ -308,11 +316,11 @@ function hasUncertainDrink(result) {
     ...((result?.items || []).map((x) => `${x?.name || ''} ${x?.qty_text || ''}`)),
   ].join(' ');
 
-  return /カフェオレ|ミルクティー|ラテ|飲み物|マグカップ|コップ|紅茶|お茶|水/.test(text);
+  return /カフェオレ|ミルクティー|ラテ|飲み物|マグカップ|コップ|紅茶|お茶|水|コーヒー/.test(text);
 }
 
 function looksLikeLightSnack(itemNamesText) {
-  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース|青汁/.test(
+  return /ナゲット|バウム|バーム|クッキー|ドーナツ|お菓子|菓子|ケーキ|パン|カフェオレ|ラテ|ミルクティー|コーヒー|紅茶|お茶|ジュース|青汁|パイ/.test(
     itemNamesText
   );
 }
@@ -344,7 +352,7 @@ function applyUncertainDrinkAdjustment(result) {
     const current = Number(item.estimated_kcal) || 0;
 
     if (current <= 0) {
-      return { ...item, estimated_kcal: 40 };
+      return { ...item, estimated_kcal: 10 };
     }
 
     if (current > 95) {
@@ -472,6 +480,83 @@ function applyTextMealGuards(result) {
   }
 
   return adjusted;
+}
+
+function applyCoffeePairCorrectionGuard(result, previousMeal, correctionText) {
+  const prevItems = Array.isArray(previousMeal?.food_items) ? previousMeal.food_items : [];
+  if (!prevItems.length) return result;
+
+  const correction = String(correctionText || '').trim();
+  if (!/コーヒー|珈琲|ブラック/.test(correction)) return result;
+
+  const prevNames = prevItems.map((x) => String(x?.name || ''));
+  const prevHasCoffee = prevNames.some((name) => /コーヒー|珈琲|ラテ|カフェオレ/.test(name));
+  const prevHasFood = prevNames.some((name) => !/コーヒー|珈琲|ラテ|カフェオレ|紅茶|お茶|水|ドリンク|飲み物/.test(name));
+
+  if (!prevHasCoffee || !prevHasFood) return result;
+
+  const newItems = Array.isArray(result?.items) ? result.items : [];
+  const newNames = newItems.map((x) => String(x?.name || ''));
+  const becameDrinkOnly =
+    newItems.length > 0 &&
+    newItems.every((item) => /コーヒー|珈琲|ラテ|カフェオレ|紅茶|お茶|水|ドリンク|飲み物/.test(String(item?.name || '')));
+
+  const mealLabel = String(result?.meal_label || '');
+  const badMealLabel = /^beverage$|^drink$/i.test(mealLabel) || mealLabel === 'Beverage' || mealLabel === 'Drink';
+
+  if (!becameDrinkOnly && !badMealLabel) return result;
+
+  const cupMatch = correction.match(/(\d+)\s*杯/);
+  const cupCount = cupMatch ? Math.max(1, Number(cupMatch[1])) : null;
+
+  const rebuiltItems = [];
+  for (const prev of prevItems) {
+    const prevName = safeText(prev?.name || '不明な食品', 120);
+    const prevQty = safeText(prev?.estimated_amount || '1つ', 80);
+    const prevKcal = roundKcal(prev?.estimated_kcal ?? 0);
+    const prevConf = clampNumber(prev?.confidence ?? 0.9, 0, 1, 0.9);
+    const isCoffee = /コーヒー|珈琲|ラテ|カフェオレ/.test(prevName);
+
+    if (isCoffee) {
+      const qtyText = cupCount ? `${cupCount}杯` : 'ブラックコーヒー';
+      const kcal = cupCount ? cupCount * 4 : 4;
+      rebuiltItems.push({
+        name: /ブラック/.test(correction) ? 'ブラックコーヒー' : prevName,
+        qty_text: qtyText,
+        estimated_kcal: kcal,
+        confidence: 0.95,
+        is_main_subject: true,
+        gemini_original_name: /ブラック/.test(correction) ? 'ブラックコーヒー' : prevName,
+      });
+    } else {
+      rebuiltItems.push({
+        name: prevName,
+        qty_text: prevQty,
+        estimated_kcal: prevKcal,
+        confidence: prevConf,
+        is_main_subject: true,
+        gemini_original_name: prevName,
+      });
+    }
+  }
+
+  const total = rebuiltItems.reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+
+  return {
+    ...result,
+    meal_label: previousMeal?.meal_label || result.meal_label || '食事',
+    items: rebuiltItems,
+    total_kcal: total,
+    range_min: Math.max(0, Math.round(total * 0.96)),
+    range_max: Math.max(Math.round(total * 1.05), Math.round(total + 3)),
+    protein_g: result?.protein_g ?? previousMeal?.protein_g ?? null,
+    fat_g: result?.fat_g ?? previousMeal?.fat_g ?? null,
+    carbs_g: result?.carbs_g ?? previousMeal?.carbs_g ?? null,
+    uncertain_points: dedupeLines(result?.uncertain_points || []),
+    confirmation_questions: dedupeLines(result?.confirmation_questions || []),
+    ai_comment: 'コーヒーだけ訂正して、他の食事はそのまま残しました。',
+    needs_confirmation: false,
+  };
 }
 
 function applyLocalMealGuards(result) {
@@ -819,7 +904,10 @@ async function applyMealCorrectionWithGemini(
     temperature: 0.2,
   });
 
-  const normalized = normalizeGeminiMealResult(parsed);
+  let normalized = normalizeGeminiMealResult(parsed);
+  normalized = applyCoffeePairCorrectionGuard(normalized, currentMeal, correctionText);
+  normalized = applyLocalMealGuards(normalized);
+
   return buildLegacyMealFromNormalized(normalized, {
     source: 'gemini_meal_service_correction',
     correction_text: correctionText,
