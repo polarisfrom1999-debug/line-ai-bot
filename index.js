@@ -44,14 +44,12 @@ const {
 } = require('./services/meal_service');
 const {
   analyzeMealTextWithAI,
-  buildMealConfirmationMessage,
 } = require('./services/meal_ai_service');
 const {
   analyzeMealImageWithAI,
 } = require('./services/meal_image_ai_service');
 const {
   applyMealCorrection,
-  buildMealCorrectionConfirmationMessage,
 } = require('./services/meal_correction_service');
 const {
   CONSULT_MESSAGE,
@@ -1193,23 +1191,74 @@ function appendMealNutritionText(baseText, meal) {
   return `${text}\n\n${nutritionLines.join('\n')}`;
 }
 
-function buildMealReplyWithSaveGuide(meal, options = {}) {
-  const { textOnly = false } = options;
-  const baseMessage =
-    meal?.raw_model_json?.gemini_result
-      ? buildMealReply(meal.raw_model_json.gemini_result)
-      : buildMealConfirmationMessage(meal);
+function normalizeMealCorrectionText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return raw;
 
-  const withNutrition = appendMealNutritionText(baseMessage, meal);
-  const saveGuide = textOnly
-    ? '合っていれば保存、違うところがあればそのまま訂正してください。'
-    : '合っていれば保存、違うところがあればボタンか文字で訂正してください。';
+  const t = raw
+    .replace(/\s+/g, '')
+    .replace(/[。．]/g, '');
 
-  if (withNutrition.includes('合っていれば保存')) {
-    return withNutrition;
+  if (/^ご飯半分$/.test(t) || /^ごはん半分$/.test(t)) {
+    return 'ご飯は半分です';
+  }
+  if (/^ご飯少なめ$/.test(t) || /^ごはん少なめ$/.test(t)) {
+    return 'ご飯は少なめです';
+  }
+  if (/^ご飯多め$/.test(t) || /^ごはん多め$/.test(t)) {
+    return 'ご飯は多めです';
+  }
+  if (/^味噌汁追加$/.test(t) || /^みそ汁追加$/.test(t)) {
+    return '味噌汁を追加します';
+  }
+  if (/^ご飯追加$/.test(t) || /^ごはん追加$/.test(t)) {
+    return 'ご飯を追加します';
+  }
+  if (/^お茶$/.test(t)) {
+    return '飲み物はお茶です';
+  }
+  if (/^水$/.test(t)) {
+    return '飲み物は水です';
+  }
+  if (/^ノンアル$/.test(t)) {
+    return '飲み物はノンアルです';
+  }
+  if (/^\d+個$/.test(t)) {
+    return `個数は${t}です`;
   }
 
-  return `${withNutrition}\n\n${saveGuide}`;
+  return raw;
+}
+
+function buildMealReplyWithSaveGuide(meal, options = {}) {
+  const { textOnly = false } = options;
+
+  const lines = [
+    '食事内容を整理しました。',
+    `料理: ${safeText(meal?.meal_label || '食事', 120)}`,
+    meal?.estimated_kcal != null
+      ? `推定カロリー: ${fmt(meal.estimated_kcal)} kcal${
+          meal?.kcal_min != null && meal?.kcal_max != null
+            ? ` (${fmt(meal.kcal_min)}〜${fmt(meal.kcal_max)} kcal)`
+            : ''
+        }`
+      : null,
+  ].filter(Boolean);
+
+  const nutritionLines = buildMealNutritionLines(meal);
+  if (nutritionLines.length) {
+    lines.push('');
+    lines.push(...nutritionLines);
+  }
+
+  lines.push('');
+  lines.push(
+    textOnly
+      ? '合っていれば保存、違うところがあればそのまま訂正してください。'
+      : '合っていれば保存、違うところがあればボタンか文字で訂正してください。'
+  );
+
+  return lines.join('\n');
 }
 
 function mergeFoodItems(baseItems = [], extraItems = []) {
@@ -2435,18 +2484,18 @@ async function handleTextMessage(event, user) {
     }
 
     if (currentMealDraft && seemsMealCorrectionText(text)) {
-      const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, text);
+      const normalizedCorrectionText = normalizeMealCorrectionText(text);
+      const correctedMeal = await applyMealCorrectionPrimary(
+        currentMealDraft.meal,
+        normalizedCorrectionText
+      );
+
       setMealDraft(user.line_user_id, correctedMeal);
 
-      const correctionBaseText =
-        correctedMeal?.raw_model_json?.gemini_result
-          ? buildMealReplyWithSaveGuide(correctedMeal)
-          : appendMealNutritionText(
-              buildMealCorrectionConfirmationMessage(correctedMeal),
-              correctedMeal
-            );
-
-      const replyText = prefixWithName(user, correctionBaseText);
+      const replyText = prefixWithName(
+        user,
+        buildMealReplyWithSaveGuide(correctedMeal)
+      );
 
       await replyMessage(
         event.replyToken,
