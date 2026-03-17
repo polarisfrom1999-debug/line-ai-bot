@@ -384,58 +384,105 @@ function scaleMacro(value, ratio) {
   return roundGram(n * ratio);
 }
 
+function maybeScaleMacrosFromTotal(previousMeal, nextTotal) {
+  const prevTotal = Number(previousMeal?.estimated_kcal);
+  if (!Number.isFinite(prevTotal) || prevTotal <= 0) {
+    return {
+      protein_g: previousMeal?.protein_g ?? null,
+      fat_g: previousMeal?.fat_g ?? null,
+      carbs_g: previousMeal?.carbs_g ?? null,
+    };
+  }
+
+  const ratio = Math.max(0.4, Math.min(1.6, nextTotal / prevTotal));
+
+  return {
+    protein_g: scaleMacro(previousMeal?.protein_g, ratio),
+    fat_g: scaleMacro(previousMeal?.fat_g, ratio),
+    carbs_g: scaleMacro(previousMeal?.carbs_g, ratio),
+  };
+}
+
+function buildBaseItemsForShortCorrection(previousMeal, result) {
+  const prevItems = legacyFoodItemsToNormalizedItems(previousMeal?.food_items || []);
+  if (prevItems.length) return prevItems;
+
+  const resultItems = keepGeminiNames(Array.isArray(result?.items) ? result.items : []);
+  return resultItems;
+}
+
 function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText) {
   const rawCorrection = String(correctionText || '').trim();
   const compact = rawCorrection.replace(/\s+/g, '').replace(/[。．]/g, '');
   if (!compact) return result;
 
+  const isShortRiceCorrection =
+    /^ご飯半分$/.test(compact) ||
+    /^ごはん半分$/.test(compact) ||
+    /^ご飯少なめ$/.test(compact) ||
+    /^ごはん少なめ$/.test(compact) ||
+    /^ご飯多め$/.test(compact) ||
+    /^ごはん多め$/.test(compact) ||
+    /ご飯は半分です/.test(rawCorrection) ||
+    /ごはんは半分です/.test(rawCorrection) ||
+    /ご飯は少なめです/.test(rawCorrection) ||
+    /ごはんは少なめです/.test(rawCorrection) ||
+    /ご飯は多めです/.test(rawCorrection) ||
+    /ごはんは多めです/.test(rawCorrection);
+
+  const isShortAddOrDrinkCorrection =
+    /^味噌汁追加$/.test(compact) ||
+    /^みそ汁追加$/.test(compact) ||
+    /味噌汁を追加/.test(rawCorrection) ||
+    /みそ汁を追加/.test(rawCorrection) ||
+    /^お茶$/.test(compact) ||
+    /^水$/.test(compact) ||
+    /^ノンアル$/.test(compact) ||
+    /飲み物はお茶です/.test(rawCorrection) ||
+    /飲み物は水です/.test(rawCorrection) ||
+    /飲み物はノンアルです/.test(rawCorrection) ||
+    /^(\d+)個(?:です)?$/.test(compact);
+
+  const mustUsePreviousMealAsBase = isShortRiceCorrection || isShortAddOrDrinkCorrection;
+
+  let baseItems = buildBaseItemsForShortCorrection(previousMeal, result);
+  if (!baseItems.length) {
+    return result;
+  }
+
   let working = {
     ...result,
-    items: keepGeminiNames(Array.isArray(result?.items) ? result.items : []),
+    items: keepGeminiNames(baseItems),
+    meal_label: safeText(previousMeal?.meal_label || result?.meal_label || '食事', 100),
+    total_kcal: Number(previousMeal?.estimated_kcal ?? result?.total_kcal ?? 0) || 0,
+    range_min: Number(previousMeal?.kcal_min ?? result?.range_min ?? 0) || 0,
+    range_max: Number(previousMeal?.kcal_max ?? result?.range_max ?? 0) || 0,
+    protein_g: previousMeal?.protein_g ?? result?.protein_g ?? null,
+    fat_g: previousMeal?.fat_g ?? result?.fat_g ?? null,
+    carbs_g: previousMeal?.carbs_g ?? result?.carbs_g ?? null,
+    uncertain_points: dedupeLines(result?.uncertain_points || []),
+    confirmation_questions: [],
+    needs_confirmation: false,
+    ai_comment: '訂正内容を反映しました。',
   };
-
-  const prevItems = legacyFoodItemsToNormalizedItems(previousMeal?.food_items || []);
-  if (!working.items.length && prevItems.length) {
-    working.items = prevItems;
-    working.meal_label = safeText(previousMeal?.meal_label || working.meal_label || '食事', 100);
-    working.total_kcal = roundKcal(previousMeal?.estimated_kcal ?? 0);
-    working.range_min = roundKcal(previousMeal?.kcal_min ?? 0);
-    working.range_max = roundKcal(previousMeal?.kcal_max ?? 0);
-    working.protein_g = previousMeal?.protein_g ?? null;
-    working.fat_g = previousMeal?.fat_g ?? null;
-    working.carbs_g = previousMeal?.carbs_g ?? null;
-  }
 
   const items = [...working.items];
   let changed = false;
 
   const ricePatterns = [/ご飯/, /ごはん/, /ライス/, /白米/, /米/];
   const soupPatterns = [/味噌汁/, /みそ汁/];
-  const teaPatterns = [/お茶/, /緑茶/, /麦茶/, /烏龍茶/, /ウーロン茶/, /ジャスミンティー/, /紅茶/];
-  const waterPatterns = [/水/];
-  const nonAlcoholPatterns = [/ノンアル/];
   const drinkPatterns = [/コーヒー/, /珈琲/, /カフェオレ/, /ラテ/, /紅茶/, /お茶/, /水/, /ドリンク/, /飲み物/, /ジュース/, /青汁/, /ノンアル/];
 
   const riceIndex = findItemIndexByPatterns(items, ricePatterns);
 
   if (riceIndex >= 0 && (/^ご飯半分$/.test(compact) || /^ごはん半分$/.test(compact) || /ご飯は半分です/.test(rawCorrection) || /ごはんは半分です/.test(rawCorrection))) {
     const originalKcal = Number(items[riceIndex].estimated_kcal) || 0;
-    const ratio = originalKcal > 0 ? 0.5 : 1;
     items[riceIndex] = {
       ...items[riceIndex],
       qty_text: '半分',
       estimated_kcal: Math.max(0, roundKcal(originalKcal * 0.5)),
       confidence: Math.max(Number(items[riceIndex].confidence || 0), 0.95),
     };
-    working.carbs_g = scaleMacro(working.carbs_g, 1);
-    if (Number.isFinite(Number(working.carbs_g)) && originalKcal > 0) {
-      const nonRiceTotal = Math.max(0, (Number(working.total_kcal) || 0) - originalKcal);
-      const nextTotal = nonRiceTotal + (Number(items[riceIndex].estimated_kcal) || 0);
-      const ratioForCarbs = (nextTotal > 0 && (Number(working.total_kcal) || 0) > 0)
-        ? nextTotal / (Number(working.total_kcal) || 1)
-        : 1;
-      working.carbs_g = scaleMacro(working.carbs_g, Math.max(0.75, ratioForCarbs));
-    }
     changed = true;
   }
 
@@ -588,11 +635,14 @@ function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText
   const next = rebuildTotalsFromItems({
     ...working,
     items,
-    needs_confirmation: false,
-    uncertain_points: dedupeLines(working.uncertain_points || []),
-    confirmation_questions: [],
-    ai_comment: '訂正内容を反映しました。',
   });
+
+  if (mustUsePreviousMealAsBase) {
+    const scaled = maybeScaleMacrosFromTotal(previousMeal, Number(next.total_kcal) || 0);
+    next.protein_g = scaled.protein_g;
+    next.fat_g = scaled.fat_g;
+    next.carbs_g = scaled.carbs_g;
+  }
 
   return next;
 }
