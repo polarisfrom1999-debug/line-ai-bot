@@ -153,6 +153,10 @@ function buildMealCorrectionPrompt(currentMeal, correctionText) {
 特に重要:
 - 既存が「パイ + コーヒー」で、訂正文が「ブラックコーヒー2杯です」の場合、
   結果は「パイ + ブラックコーヒー2杯」のままにすること。
+- 既存にご飯があり、訂正文が「ご飯半分」「ご飯少なめ」「ご飯多め」の場合、
+  ご飯項目の量とカロリーだけを修正すること。
+- 訂正文が「味噌汁追加」「お茶」「水」「ノンアル」「2個です」のような短文でも、
+  現在の食事案に対する差分訂正として解釈すること。
 - 訂正文だけを独立した新しい食事として解釈してはいけない。
 
 現在の食事案:
@@ -338,6 +342,261 @@ function keepGeminiNames(items) {
   }));
 }
 
+function legacyFoodItemsToNormalizedItems(foodItems = []) {
+  return (foodItems || []).map((item) => {
+    const name = safeText(item?.name || '不明な食品', 120) || '不明な食品';
+    return {
+      name,
+      qty_text: safeText(item?.estimated_amount || item?.qty_text || '1つ', 80) || '1つ',
+      estimated_kcal: Math.max(0, roundKcal(item?.estimated_kcal ?? 0)),
+      confidence: clampNumber(item?.confidence ?? 0.9, 0, 1, 0.9),
+      is_main_subject: true,
+      gemini_original_name: name,
+    };
+  });
+}
+
+function rebuildTotalsFromItems(result) {
+  const items = keepGeminiNames(Array.isArray(result?.items) ? result.items : []);
+  const total = items
+    .filter((item) => item.is_main_subject)
+    .reduce((sum, item) => sum + (Number(item.estimated_kcal) || 0), 0);
+
+  return {
+    ...result,
+    items,
+    total_kcal: total,
+    range_min: Math.max(0, Math.round(total * 0.85)),
+    range_max: Math.max(Math.round(total * 1.15), Math.round(total + 20)),
+  };
+}
+
+function findItemIndexByPatterns(items, patterns) {
+  return items.findIndex((item) => {
+    const name = String(item?.name || '');
+    return patterns.some((pattern) => pattern.test(name));
+  });
+}
+
+function scaleMacro(value, ratio) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value ?? null;
+  return roundGram(n * ratio);
+}
+
+function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText) {
+  const rawCorrection = String(correctionText || '').trim();
+  const compact = rawCorrection.replace(/\s+/g, '').replace(/[。．]/g, '');
+  if (!compact) return result;
+
+  let working = {
+    ...result,
+    items: keepGeminiNames(Array.isArray(result?.items) ? result.items : []),
+  };
+
+  const prevItems = legacyFoodItemsToNormalizedItems(previousMeal?.food_items || []);
+  if (!working.items.length && prevItems.length) {
+    working.items = prevItems;
+    working.meal_label = safeText(previousMeal?.meal_label || working.meal_label || '食事', 100);
+    working.total_kcal = roundKcal(previousMeal?.estimated_kcal ?? 0);
+    working.range_min = roundKcal(previousMeal?.kcal_min ?? 0);
+    working.range_max = roundKcal(previousMeal?.kcal_max ?? 0);
+    working.protein_g = previousMeal?.protein_g ?? null;
+    working.fat_g = previousMeal?.fat_g ?? null;
+    working.carbs_g = previousMeal?.carbs_g ?? null;
+  }
+
+  const items = [...working.items];
+  let changed = false;
+
+  const ricePatterns = [/ご飯/, /ごはん/, /ライス/, /白米/, /米/];
+  const soupPatterns = [/味噌汁/, /みそ汁/];
+  const teaPatterns = [/お茶/, /緑茶/, /麦茶/, /烏龍茶/, /ウーロン茶/, /ジャスミンティー/, /紅茶/];
+  const waterPatterns = [/水/];
+  const nonAlcoholPatterns = [/ノンアル/];
+  const drinkPatterns = [/コーヒー/, /珈琲/, /カフェオレ/, /ラテ/, /紅茶/, /お茶/, /水/, /ドリンク/, /飲み物/, /ジュース/, /青汁/, /ノンアル/];
+
+  const riceIndex = findItemIndexByPatterns(items, ricePatterns);
+
+  if (riceIndex >= 0 && (/^ご飯半分$/.test(compact) || /^ごはん半分$/.test(compact) || /ご飯は半分です/.test(rawCorrection) || /ごはんは半分です/.test(rawCorrection))) {
+    const originalKcal = Number(items[riceIndex].estimated_kcal) || 0;
+    const ratio = originalKcal > 0 ? 0.5 : 1;
+    items[riceIndex] = {
+      ...items[riceIndex],
+      qty_text: '半分',
+      estimated_kcal: Math.max(0, roundKcal(originalKcal * 0.5)),
+      confidence: Math.max(Number(items[riceIndex].confidence || 0), 0.95),
+    };
+    working.carbs_g = scaleMacro(working.carbs_g, 1);
+    if (Number.isFinite(Number(working.carbs_g)) && originalKcal > 0) {
+      const nonRiceTotal = Math.max(0, (Number(working.total_kcal) || 0) - originalKcal);
+      const nextTotal = nonRiceTotal + (Number(items[riceIndex].estimated_kcal) || 0);
+      const ratioForCarbs = (nextTotal > 0 && (Number(working.total_kcal) || 0) > 0)
+        ? nextTotal / (Number(working.total_kcal) || 1)
+        : 1;
+      working.carbs_g = scaleMacro(working.carbs_g, Math.max(0.75, ratioForCarbs));
+    }
+    changed = true;
+  }
+
+  if (riceIndex >= 0 && (/^ご飯少なめ$/.test(compact) || /^ごはん少なめ$/.test(compact) || /ご飯は少なめです/.test(rawCorrection) || /ごはんは少なめです/.test(rawCorrection))) {
+    const originalKcal = Number(items[riceIndex].estimated_kcal) || 0;
+    items[riceIndex] = {
+      ...items[riceIndex],
+      qty_text: '少なめ',
+      estimated_kcal: Math.max(0, roundKcal(originalKcal * 0.7)),
+      confidence: Math.max(Number(items[riceIndex].confidence || 0), 0.95),
+    };
+    changed = true;
+  }
+
+  if (riceIndex >= 0 && (/^ご飯多め$/.test(compact) || /^ごはん多め$/.test(compact) || /ご飯は多めです/.test(rawCorrection) || /ごはんは多めです/.test(rawCorrection))) {
+    const originalKcal = Number(items[riceIndex].estimated_kcal) || 0;
+    items[riceIndex] = {
+      ...items[riceIndex],
+      qty_text: '多め',
+      estimated_kcal: Math.max(0, roundKcal(originalKcal * 1.3)),
+      confidence: Math.max(Number(items[riceIndex].confidence || 0), 0.95),
+    };
+    changed = true;
+  }
+
+  if (/^味噌汁追加$/.test(compact) || /^みそ汁追加$/.test(compact) || /味噌汁を追加/.test(rawCorrection) || /みそ汁を追加/.test(rawCorrection)) {
+    const soupIndex = findItemIndexByPatterns(items, soupPatterns);
+    if (soupIndex >= 0) {
+      const originalKcal = Number(items[soupIndex].estimated_kcal) || 35;
+      items[soupIndex] = {
+        ...items[soupIndex],
+        qty_text: items[soupIndex].qty_text || '1杯',
+        estimated_kcal: Math.max(originalKcal, 35),
+        confidence: Math.max(Number(items[soupIndex].confidence || 0), 0.95),
+      };
+    } else {
+      items.push({
+        name: '味噌汁',
+        qty_text: '1杯',
+        estimated_kcal: 35,
+        confidence: 0.95,
+        is_main_subject: true,
+        gemini_original_name: '味噌汁',
+      });
+    }
+    changed = true;
+  }
+
+  if (/^お茶$/.test(compact) || /飲み物はお茶です/.test(rawCorrection)) {
+    const drinkIndex = findItemIndexByPatterns(items, drinkPatterns);
+    if (drinkIndex >= 0) {
+      items[drinkIndex] = {
+        ...items[drinkIndex],
+        name: 'お茶',
+        gemini_original_name: 'お茶',
+        qty_text: items[drinkIndex].qty_text || '1杯',
+        estimated_kcal: 0,
+        confidence: 0.98,
+      };
+    } else {
+      items.push({
+        name: 'お茶',
+        qty_text: '1杯',
+        estimated_kcal: 0,
+        confidence: 0.98,
+        is_main_subject: true,
+        gemini_original_name: 'お茶',
+      });
+    }
+    changed = true;
+  }
+
+  if (/^水$/.test(compact) || /飲み物は水です/.test(rawCorrection)) {
+    const drinkIndex = findItemIndexByPatterns(items, drinkPatterns);
+    if (drinkIndex >= 0) {
+      items[drinkIndex] = {
+        ...items[drinkIndex],
+        name: '水',
+        gemini_original_name: '水',
+        qty_text: items[drinkIndex].qty_text || '1杯',
+        estimated_kcal: 0,
+        confidence: 0.98,
+      };
+    } else {
+      items.push({
+        name: '水',
+        qty_text: '1杯',
+        estimated_kcal: 0,
+        confidence: 0.98,
+        is_main_subject: true,
+        gemini_original_name: '水',
+      });
+    }
+    changed = true;
+  }
+
+  if (/^ノンアル$/.test(compact) || /飲み物はノンアルです/.test(rawCorrection)) {
+    const drinkIndex = findItemIndexByPatterns(items, drinkPatterns);
+    if (drinkIndex >= 0) {
+      items[drinkIndex] = {
+        ...items[drinkIndex],
+        name: 'ノンアル',
+        gemini_original_name: 'ノンアル',
+        qty_text: items[drinkIndex].qty_text || '1本',
+        estimated_kcal: Math.min(Number(items[drinkIndex].estimated_kcal) || 15, 15),
+        confidence: 0.97,
+      };
+    } else {
+      items.push({
+        name: 'ノンアル',
+        qty_text: '1本',
+        estimated_kcal: 15,
+        confidence: 0.97,
+        is_main_subject: true,
+        gemini_original_name: 'ノンアル',
+      });
+    }
+    changed = true;
+  }
+
+  const countMatch = compact.match(/^(\d+)個(?:です)?$/);
+  if (countMatch) {
+    const count = Math.max(1, Number(countMatch[1]));
+    const nonDrinkIndexes = items
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !drinkPatterns.some((pattern) => pattern.test(String(item?.name || ''))));
+
+    if (nonDrinkIndexes.length) {
+      const targetIndex = nonDrinkIndexes[nonDrinkIndexes.length - 1].index;
+      const currentKcal = Number(items[targetIndex].estimated_kcal) || 0;
+      const currentQtyText = String(items[targetIndex].qty_text || '');
+      const baseCountMatch = currentQtyText.match(/(\d+)個/);
+      const baseCount = baseCountMatch ? Math.max(1, Number(baseCountMatch[1])) : 1;
+      const perItemKcal = baseCount > 0 ? currentKcal / baseCount : currentKcal;
+
+      items[targetIndex] = {
+        ...items[targetIndex],
+        qty_text: `${count}個`,
+        estimated_kcal: Math.max(0, roundKcal(perItemKcal * count)),
+        confidence: Math.max(Number(items[targetIndex].confidence || 0), 0.95),
+      };
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return result;
+  }
+
+  const next = rebuildTotalsFromItems({
+    ...working,
+    items,
+    needs_confirmation: false,
+    uncertain_points: dedupeLines(working.uncertain_points || []),
+    confirmation_questions: [],
+    ai_comment: '訂正内容を反映しました。',
+  });
+
+  return next;
+}
+
 function applyUncertainDrinkAdjustment(result) {
   const items = Array.isArray(result.items) ? keepGeminiNames(result.items) : [];
   const uncertainDrink = hasUncertainDrink(result);
@@ -496,7 +755,6 @@ function applyCoffeePairCorrectionGuard(result, previousMeal, correctionText) {
   if (!prevHasCoffee || !prevHasFood) return result;
 
   const newItems = Array.isArray(result?.items) ? result.items : [];
-  const newNames = newItems.map((x) => String(x?.name || ''));
   const becameDrinkOnly =
     newItems.length > 0 &&
     newItems.every((item) => /コーヒー|珈琲|ラテ|カフェオレ|紅茶|お茶|水|ドリンク|飲み物/.test(String(item?.name || '')));
@@ -906,6 +1164,7 @@ async function applyMealCorrectionWithGemini(
 
   let normalized = normalizeGeminiMealResult(parsed);
   normalized = applyCoffeePairCorrectionGuard(normalized, currentMeal, correctionText);
+  normalized = applySimpleJapaneseCorrectionGuard(normalized, currentMeal, correctionText);
   normalized = applyLocalMealGuards(normalized);
 
   return buildLegacyMealFromNormalized(normalized, {
@@ -936,23 +1195,6 @@ function buildMealReply(result) {
     if (protein != null) lines.push(`・たんぱく質: ${protein}g`);
     if (fat != null) lines.push(`・脂質: ${fat}g`);
     if (carbs != null) lines.push(`・糖質: ${carbs}g`);
-  }
-
-  const uncertainPoints = dedupeLines(normalized.uncertain_points || []);
-  const confirmationQuestions = dedupeLines(normalized.confirmation_questions || []);
-  const shortComment = safeText(normalized.ai_comment || '', 120);
-
-  if (shortComment) {
-    lines.push('');
-    lines.push(`補足: ${shortComment}`);
-  } else if (uncertainPoints.length) {
-    lines.push('');
-    lines.push(`補足: ${uncertainPoints.slice(0, 2).join(' / ')}`);
-  }
-
-  if (confirmationQuestions.length) {
-    lines.push('');
-    lines.push(...confirmationQuestions.map((x) => `・${x}`));
   }
 
   return lines.join('\n');
