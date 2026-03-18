@@ -119,6 +119,7 @@ const {
   buildReplyPayload,
   advanceOnboardingState,
   buildOnboardingStatePatch,
+  startProfileEditFromUser,
 } = require('./services/onboarding_service');
 
 let analyzePainText = null;
@@ -313,6 +314,18 @@ function isHelpCommand(text) {
 
 function isProfileCommand(text) {
   return text.includes('プロフィール');
+}
+
+function isProfileConfirmCommand(text) {
+  return ['プロフィール確認', 'プロフィールを確認', '設定確認'].includes(String(text || '').trim());
+}
+
+function isProfileEditCommand(text) {
+  return ['プロフィール変更', 'プロフィールを変更', '設定変更'].includes(String(text || '').trim());
+}
+
+function isProfileResetCommand(text) {
+  return ['プロフィール再設定', 'プロフィールを再設定', '設定をやり直す', 'プロフィールをやり直す'].includes(String(text || '').trim());
 }
 
 function normalizeTextLoose(text) {
@@ -629,6 +642,9 @@ function helpMessage() {
   return [
     '使い方の例です。',
     '・はじめる',
+    '・プロフィール確認',
+    '・プロフィール変更',
+    '・プロフィール再設定',
     '・名前は 牛込',
     '・初回診断',
     '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
@@ -2231,11 +2247,46 @@ async function handleOnboardingMessage(event, user) {
   );
 }
 
+async function beginProfileManagementFlow(event, user, mode) {
+  const state = startProfileEditFromUser(user, mode);
+  const patch = buildOnboardingStatePatch(state);
+
+  const { error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('id', user.id);
+
+  if (error) throw error;
+
+  const reply = buildReplyPayload(state);
+
+  await replyMessage(
+    event.replyToken,
+    textMessageWithQuickReplies(reply.text, reply.quickReplies),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+}
+
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
 
   try {
+    if (isProfileConfirmCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'confirm');
+      return;
+    }
+
+    if (isProfileEditCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'edit');
+      return;
+    }
+
+    if (isProfileResetCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'reset');
+      return;
+    }
+
     const shouldEnterOnboarding =
       isOnboardingActive(user) ||
       text === 'はじめる' ||
