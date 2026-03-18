@@ -328,6 +328,11 @@ function isProfileResetCommand(text) {
   return ['プロフィール再設定', 'プロフィールを再設定', '設定をやり直す', 'プロフィールをやり直す'].includes(String(text || '').trim());
 }
 
+function isOnboardingStartCommand(text) {
+  const t = String(text || '').trim();
+  return ['はじめる', 'スタート', '開始'].includes(t);
+}
+
 function normalizeTextLoose(text) {
   return String(text || '')
     .trim()
@@ -2272,31 +2277,6 @@ async function handleTextMessage(event, user) {
   const lower = text.toLowerCase();
 
   try {
-    if (isProfileConfirmCommand(text)) {
-      await beginProfileManagementFlow(event, user, 'confirm');
-      return;
-    }
-
-    if (isProfileEditCommand(text)) {
-      await beginProfileManagementFlow(event, user, 'edit');
-      return;
-    }
-
-    if (isProfileResetCommand(text)) {
-      await beginProfileManagementFlow(event, user, 'reset');
-      return;
-    }
-
-    const shouldEnterOnboarding =
-      isOnboardingActive(user) ||
-      text === 'はじめる' ||
-      (!user?.onboarding_status && !user?.current_flow);
-
-    if (shouldEnterOnboarding) {
-      await handleOnboardingMessage(event, user);
-      return;
-    }
-
     const parsedName = parseDisplayName(text);
     if (parsedName) {
       const safeName = normalizeStoredDisplayName(parsedName);
@@ -2323,6 +2303,26 @@ async function handleTextMessage(event, user) {
 
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage(), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isProfileConfirmCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'confirm');
+      return;
+    }
+
+    if (isProfileEditCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'edit');
+      return;
+    }
+
+    if (isProfileResetCommand(text)) {
+      await beginProfileManagementFlow(event, user, 'reset');
+      return;
+    }
+
+    if (isOnboardingActive(user) || isOnboardingStartCommand(text)) {
+      await handleOnboardingMessage(event, user);
       return;
     }
 
