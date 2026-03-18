@@ -1,300 +1,485 @@
-const CONSULT_MESSAGE = '無理はしないでくださいね。つらそうなときや急な痛みは、直接牛込先生に相談してください。';
+'use strict';
+
+const CONSULT_MESSAGE = '症状が気になる時や、無理をすると悪化しそうな時は、牛込先生にそのままLINEで相談してください。必要なら専門家への相談も考えましょう。';
+
+function safeText(value, max = 200) {
+  return String(value || '').trim().slice(0, max);
+}
+
+function normalizeLoose(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
+function includesAny(text, words = []) {
+  const t = normalizeLoose(text);
+  return words.some((w) => t.includes(normalizeLoose(w)));
+}
 
 function detectPainArea(text) {
-  const t = String(text || '');
+  const t = normalizeLoose(text);
 
-  if (/腰|ぎっくり腰|腰痛/.test(t)) return '腰';
-  if (/膝|ひざ/.test(t)) return '膝';
-  if (/股関節|そけい|鼠径/.test(t)) return '股関節';
-  if (/肩|五十肩|四十肩/.test(t)) return '肩';
-  if (/首|頚|くび/.test(t)) return '首';
-  if (/足首/.test(t)) return '足首';
-  if (/ふくらはぎ/.test(t)) return 'ふくらはぎ';
-  if (/太もも|もも/.test(t)) return '太もも';
-  if (/背中/.test(t)) return '背中';
+  if (!t) return '全身';
+
+  if (includesAny(t, ['足底腱膜炎', '足裏', '足の裏', '土踏まず'])) return '足底';
+  if (includesAny(t, ['かかと', '踵'])) return 'かかと';
+  if (includesAny(t, ['足首'])) return '足首';
+  if (includesAny(t, ['ふくらはぎ'])) return 'ふくらはぎ';
+  if (includesAny(t, ['すね'])) return 'すね';
+  if (includesAny(t, ['足指', '足の指'])) return '足指';
+  if (includesAny(t, ['太もも', 'もも', '腿'])) return '太もも';
+  if (includesAny(t, ['膝', 'ひざ'])) return '膝';
+  if (includesAny(t, ['股関節'])) return '股関節';
+  if (includesAny(t, ['お尻', '臀部'])) return 'お尻';
+  if (includesAny(t, ['腰'])) return '腰';
+  if (includesAny(t, ['背中'])) return '背中';
+  if (includesAny(t, ['胸'])) return '胸';
+  if (includesAny(t, ['首'])) return '首';
+  if (includesAny(t, ['肩', '肩甲骨'])) return '肩';
+  if (includesAny(t, ['肘'])) return '肘';
+  if (includesAny(t, ['手首'])) return '手首';
+  if (includesAny(t, ['手指', '指'])) return '手指';
+
   return '全身';
 }
 
-function detectPainType(text) {
-  const t = String(text || '');
-
-  if (/しびれ|痺れ/.test(t)) return 'しびれ';
-  if (/重い|重だるい|だるい|張る|張り/.test(t)) return '重だるさ';
-  if (/硬い|かたい|固い/.test(t)) return '硬さ';
-  if (/違和感/.test(t)) return '違和感';
-  return '痛み';
-}
-
-function detectPainTiming(text) {
-  const t = String(text || '');
-
-  if (/急に|さっきから|突然/.test(t)) return 'acute';
-  if (/朝から|朝は/.test(t)) return 'morning';
-  if (/夜|夜中|寝ると|寝返り/.test(t)) return 'night';
-  if (/ずっと|前から|慢性|いつも/.test(t)) return 'chronic';
+function detectAreaGroup(area) {
+  if (['足底', 'かかと', '足首', 'ふくらはぎ', 'すね', '足指', '太もも', '膝', '股関節', 'お尻'].includes(area)) {
+    return 'lower';
+  }
+  if (['腰', '背中', '胸'].includes(area)) {
+    return 'trunk';
+  }
+  if (['首', '肩', '肘', '手首', '手指'].includes(area)) {
+    return 'upper';
+  }
   return 'unknown';
 }
 
-function detectAggravatingFactor(text) {
-  const t = String(text || '');
+function detectSymptomType(text) {
+  const t = normalizeLoose(text);
 
-  if (/歩くと|歩いて/.test(t)) return 'walking';
-  if (/座ると|座って/.test(t)) return 'sitting';
-  if (/立つと|立ち上がると|立ち上がり/.test(t)) return 'standing_up';
-  if (/曲げると|かがむと/.test(t)) return 'bending';
-  if (/伸ばすと|反ると/.test(t)) return 'extending';
-  if (/上げると/.test(t)) return 'raising';
-  if (/開くと/.test(t)) return 'opening';
+  if (!t) return 'pain';
+
+  if (includesAny(t, ['つる', 'つった', 'こむら返り'])) return 'cramp';
+  if (includesAny(t, ['しびれ', 'ピリピリ', 'ジンジン', 'ビリビリ', '感覚が鈍い', '感覚がにぶい', '電気が走る', '力が入りにくい', '脱力'])) return 'numbness';
+  if (includesAny(t, ['重い', '張る', 'はる', 'こわばる', '硬い', 'かたい'])) return 'stiffness';
+  if (includesAny(t, ['息苦しい', '胸が苦しい', '発熱', 'むくみ', 'ふらつく', 'だるすぎる', '強い倦怠感'])) return 'internal_possible';
+
+  return 'pain';
+}
+
+function detectOnsetType(text) {
+  const t = normalizeLoose(text);
+
+  if (includesAny(t, ['ぶつけた', 'ひねった', '転んだ', '捻挫', 'ぶつかった', '痛めた瞬間'])) return 'trauma';
+  if (includesAny(t, ['使いすぎ', '歩きすぎ', '走りすぎ', 'やりすぎ', '立ちすぎ'])) return 'overuse';
+  if (includesAny(t, ['気づいたら', 'いつのまにか', 'だんだん', '前から', '前々から', 'ずっと'])) return 'gradual';
+
   return 'unknown';
 }
 
-function detectReliefFactor(text) {
-  const t = String(text || '');
+function detectRedFlags(text) {
+  const t = normalizeLoose(text);
 
-  if (/少し動くと楽|動くと少し楽|歩くと楽/.test(t)) return 'move_relief';
-  if (/休むと楽|横になると楽/.test(t)) return 'rest_relief';
-  if (/温めると楽/.test(t)) return 'heat_relief';
+  const swelling = includesAny(t, ['腫れ', '腫れてる', 'はれてる']);
+  const bruising = includesAny(t, ['内出血', '皮下出血', 'あざ', '青あざ', '紫']);
+  const numbness = includesAny(t, ['しびれ', 'ピリピリ', 'ジンジン', 'ビリビリ', '感覚が鈍い', '力が入りにくい', '脱力']);
+  const restPain = includesAny(t, ['じっとしてても痛い', '何もしなくても痛い', '安静でも痛い']);
+  const nightPain = includesAny(t, ['夜も痛い', '夜に痛い', '寝ていても痛い']);
+  const internalPossible = includesAny(t, ['息苦しい', '胸が苦しい', '発熱', 'むくみ', 'ふらつく', '強いだるさ', '強い倦怠感']);
+  const trauma = detectOnsetType(t) === 'trauma';
+
+  const high = Boolean(swelling || bruising || numbness || restPain || nightPain || internalPossible || trauma);
+
+  return {
+    swelling,
+    bruising,
+    numbness,
+    restPain,
+    nightPain,
+    trauma,
+    internalPossible,
+    high,
+  };
+}
+
+function detectPainTrigger(text) {
+  const t = normalizeLoose(text);
+
+  if (includesAny(t, ['歩くと痛い', '歩くと'])) return 'walk';
+  if (includesAny(t, ['走ると痛い', '走ったら', 'ジョギング'])) return 'run';
+  if (includesAny(t, ['しゃがむと', '深く曲げると'])) return 'squat';
+  if (includesAny(t, ['階段'])) return 'stairs';
+  if (includesAny(t, ['腕を上げると', '上げると'])) return 'raise_arm';
+  if (includesAny(t, ['ひねると'])) return 'twist';
+  if (includesAny(t, ['じっとしてても痛い', '安静でも痛い'])) return 'rest';
+  if (includesAny(t, ['夜も痛い', '夜に痛い'])) return 'night';
+  if (includesAny(t, ['少し動くと楽'])) return 'move_relief';
+
   return 'unknown';
 }
 
-function isUrgentPainText(text) {
-  const t = String(text || '');
+function triagePainLevel({ symptomType, onsetType, redFlags, text }) {
+  const t = normalizeLoose(text);
 
-  return [
-    '急に',
-    '激痛',
-    'かなり痛い',
-    'すごく痛い',
-    '強く痛い',
-    '眠れない',
-    '夜も痛い',
-    '歩けない',
-    '立てない',
-    '力が入らない',
-    'しびれが強い',
-    'しびれがひどい',
-    'どんどん悪化',
-    '悪化している',
-    '腫れている',
-    '腫れた',
-  ].some((w) => t.includes(w));
+  if (
+    symptomType === 'internal_possible' ||
+    redFlags.internalPossible ||
+    redFlags.trauma ||
+    redFlags.swelling ||
+    redFlags.bruising ||
+    redFlags.numbness ||
+    redFlags.restPain ||
+    redFlags.nightPain
+  ) {
+    return 'red_flag';
+  }
+
+  if (
+    includesAny(t, ['歩くと痛い', '動くと痛い', 'つらい', '辛い', '数日', '何日も', 'まだ痛い']) ||
+    onsetType === 'overuse' ||
+    onsetType === 'gradual'
+  ) {
+    return 'careful';
+  }
+
+  return 'light';
 }
 
 function isPainLikeText(text) {
-  const t = String(text || '');
-
-  return [
-    '痛い',
-    'いたい',
-    '痛み',
-    'しびれ',
-    '痺れ',
-    '重い',
-    '重だるい',
-    'だるい',
-    '張る',
-    '張り',
-    '違和感',
-    'つらい',
-    '辛い',
-    '硬い',
-    'かたい',
-    '固い',
-    '動かしづらい',
-    '歩幅が出ない',
-    '上がらない',
-    '伸びない',
-  ].some((w) => t.includes(w));
+  return includesAny(text, [
+    '痛い', '痛み', '違和感', 'つらい', '辛い', '重い', '張る', 'こわばる',
+    '足底腱膜炎', '膝', '腰', '股関節', '肩', '首', 'かかと', '足裏', 'ふくらはぎ',
+    'つる', 'しびれ'
+  ]);
 }
 
 function isStretchIntent(text) {
-  const t = String(text || '');
-
-  return [
-    'ストレッチ',
-    '体操',
-    'ほぐしたい',
-    '伸ばしたい',
-    '可動域',
-    '柔らかくしたい',
-    '動かしたい',
-    '整えたい',
-  ].some((w) => t.includes(w));
+  return includesAny(text, [
+    'ストレッチ', '伸ばしたい', 'ほぐしたい', 'ゆるめたい', '整えたい'
+  ]);
 }
 
-function buildPainQuickReplies(area, urgent = false, type = '痛み') {
-  if (urgent) {
-    return [
-      '牛込先生に相談したい',
-      '今日は休む',
-      '落ち着いたらストレッチ',
-    ];
+function buildQuickRepliesForLevel(level, symptomType) {
+  if (level === 'red_flag') {
+    return ['牛込先生に相談したい', '動画で見たい', '今日はここまで'];
   }
 
-  if (type === 'しびれ') {
-    return [
-      '少ししびれる',
-      'しびれが広がる',
-      '歩くとつらい',
-      'ストレッチしたい',
-      '牛込先生に相談したい',
-    ];
+  if (symptomType === 'cramp') {
+    return ['ストレッチしたい', '動画で見たい', '牛込先生に相談したい', '今日はここまで'];
   }
 
-  if (area === '腰') {
-    return ['朝から重い', '座るとつらい', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-  if (area === '膝') {
-    return ['歩くとつらい', '立ち上がりでつらい', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-  if (area === '股関節') {
-    return ['開くとつらい', '歩幅が出ない', '少し硬い', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-  if (area === '肩') {
-    return ['上げるとつらい', '後ろに回しづらい', '少し動かしたい', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-  if (area === '首') {
-    return ['振り向くとつらい', '重だるい', '肩も張る', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-  if (area === 'ふくらはぎ' || area === '足首') {
-    return ['歩くとつらい', '張っている', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
-  }
-
-  return ['少しつらい', '動くとつらい', '少し動くと楽', 'ストレッチしたい', '牛込先生に相談したい'];
+  return ['ストレッチしたい', '動画で見たい', '1分メニュー', '今日はここまで'];
 }
 
-function buildStretchQuickReplies(area) {
-  if (area === '腰') {
-    return ['腰まわりをやる', '股関節もやる', '1分だけやる', '今日は説明だけ'];
-  }
-  if (area === '膝') {
-    return ['股関節をゆるめる', 'ふくらはぎを伸ばす', '1分だけやる', '今日は説明だけ'];
-  }
-  if (area === '股関節') {
-    return ['股関節を開く', 'お尻をゆるめる', '1分だけやる', '今日は説明だけ'];
-  }
-  if (area === '肩') {
-    return ['肩まわりをほぐす', '胸を開く', '1分だけやる', '今日は説明だけ'];
-  }
-  if (area === '首') {
-    return ['首肩をゆるめる', '胸を開く', '1分だけやる', '今日は説明だけ'];
-  }
-  if (area === 'ふくらはぎ' || area === '足首') {
-    return ['ふくらはぎを伸ばす', '足首を動かす', '1分だけやる', '今日は説明だけ'];
-  }
-
-  return ['全身軽め', '股関節をやる', '肩まわりをやる', '今日は説明だけ'];
-}
-
-function buildBridgeMessage(area, type, aggravating, relief) {
-  if (type === 'しびれ') {
-    return 'しびれは無理に我慢しすぎず、変化を丁寧に見ていくことが大事です。強くなるときは早めに直接相談してください。';
-  }
-
-  if (area === '股関節') {
-    return '股関節まわりが少し整うと、歩きやすさや姿勢、代謝にもつながりやすいです。';
-  }
-
-  if (area === '膝') {
-    return '膝だけでなく、股関節やふくらはぎの動きも少し整うと、歩きやすさや活動量につながりやすいです。';
-  }
-
-  if (area === '腰') {
-    if (aggravating === 'sitting') {
-      return '同じ姿勢で固まりやすくなっているのかもしれません。軽く動きを作るだけでも、少し楽になりやすいです。';
+function buildAreaSupportText(area, areaGroup, symptomType, level) {
+  if (symptomType === 'cramp') {
+    if (area === 'ふくらはぎ') {
+      return {
+        message: 'ふくらはぎがつる感じなら、まず強く動かすより、やさしく戻す方向が安心です。',
+        avoid: '急に踏ん張る動きや強い運動は今日は控えめがよさそうです。',
+        alternative: '落ち着いているなら、軽く伸ばす、水分を意識する、夜なら予防ストレッチが合いやすいです。',
+      };
     }
-    if (relief === 'move_relief') {
-      return '少し動くと楽になるなら、固まりすぎないようにやさしく動かす方向が合いそうです。';
+
+    if (area === '足底' || area === 'かかと' || area === '足指') {
+      return {
+        message: '足まわりがつる感じなら、無理に踏ん張らず、まず力を抜く方向が安心です。',
+        avoid: '急な歩き出しや強い踏み込みは今日は控えめがよさそうです。',
+        alternative: '足指や足裏をやさしくゆるめるくらいからが進めやすいです。',
+      };
     }
-    return '腰まわりが少し動きやすくなると、姿勢や歩きやすさ、代謝にもつながりやすいです。';
+
+    return {
+      message: 'つる感じがあるなら、まず強く動かさず、やさしく戻す方向が安心です。',
+      avoid: '勢いをつけた運動は今日は控えめがよさそうです。',
+      alternative: '落ち着いているなら、軽いストレッチと水分を意識するのが合いやすいです。',
+    };
+  }
+
+  if (area === '足底') {
+    return {
+      message: '足底なら、足裏に負担が集まりやすい場所なので、今日は無理に踏み込まない方が安心です。',
+      avoid: 'ジョギングや長く歩く動きは控えめがよさそうです。',
+      alternative: 'その代わり、上半身中心や、足に体重をかけすぎない整え方なら進めやすいです。',
+    };
+  }
+
+  if (area === 'かかと') {
+    return {
+      message: 'かかと寄りの痛みなら、着地の負担を増やしすぎない方が安心です。',
+      avoid: '走る、ジャンプ、長歩きは今日は控えめがよさそうです。',
+      alternative: '上半身中心か、座ってできる軽い運動の方が進めやすいです。',
+    };
+  }
+
+  if (area === '膝') {
+    return {
+      message: '膝なら、深く曲げる動きや勢いの強い動きは今日は控えめが安心です。',
+      avoid: '深いしゃがみ、ジャンプ、強い踏み込みは避けたいです。',
+      alternative: '上半身中心や、膝に負担の少ない軽い調整なら進めやすいです。',
+    };
+  }
+
+  if (area === '腰') {
+    return {
+      message: '腰なら、今日は頑張って鍛えるより守る方を優先したいです。',
+      avoid: '強い体幹トレやひねりは控えめがよさそうです。',
+      alternative: '呼吸を整える、軽くゆるめる、無理のない範囲で動く方向が合いやすいです。',
+    };
+  }
+
+  if (area === '股関節') {
+    return {
+      message: '股関節なら、大きく開く動きや深い曲げ伸ばしは今日は慎重が安心です。',
+      avoid: '深いしゃがみや反動のある動きは控えめがよさそうです。',
+      alternative: '上半身中心か、小さい動きで整える方向が進めやすいです。',
+    };
   }
 
   if (area === '肩' || area === '首') {
-    return '首肩まわりが少し楽になると、姿勢や呼吸のしやすさにもつながりやすいです。';
+    return {
+      message: `${area}まわりなら、無理に大きく動かすより軽く整える方向が安心です。`,
+      avoid: '腕を高く上げる動きや強い負荷は今日は控えめがよさそうです。',
+      alternative: '下半身の軽い運動や、呼吸を整える方向の方が進めやすいです。',
+    };
   }
 
-  if (area === 'ふくらはぎ' || area === '足首') {
-    return 'ふくらはぎや足首が整うと、歩きやすさや膝への負担軽減にもつながりやすいです。';
+  if (area === 'ふくらはぎ') {
+    return {
+      message: 'ふくらはぎなら、踏ん張りすぎや急な負荷は今日は控えめが安心です。',
+      avoid: '急に走る、強く蹴る動きは避けたいです。',
+      alternative: '軽くゆるめる、上半身中心に寄せる方向が進めやすいです。',
+    };
   }
 
-  return '動きやすさが少しずつ整うと、活動量や代謝にもつながりやすいです。';
-}
+  if (areaGroup === 'lower') {
+    return {
+      message: '下半身に負担がありそうなので、今日はその場所を守る方向が安心です。',
+      avoid: '下半身に強く負荷がかかる動きは控えめがよさそうです。',
+      alternative: '上半身中心や、座ってできる軽い方法なら進めやすいです。',
+    };
+  }
 
-function buildPainSupportResponse(text, previousArea = null) {
-  const area = previousArea || detectPainArea(text);
-  const type = detectPainType(text);
-  const urgent = isUrgentPainText(text);
-  const timing = detectPainTiming(text);
-  const aggravating = detectAggravatingFactor(text);
-  const relief = detectReliefFactor(text);
+  if (areaGroup === 'upper') {
+    return {
+      message: '上半身に負担がありそうなので、今日はそこを守る方向が安心です。',
+      avoid: '上半身に強く負荷がかかる動きは控えめがよさそうです。',
+      alternative: '下半身の軽い運動や歩く方向の方が進めやすいです。',
+    };
+  }
 
-  const opening = urgent
-    ? `${area}の${type}が強そうですね。今日はまず無理をしないことを優先しましょう。`
-    : timing === 'chronic'
-      ? `${area}の${type}が続いているんですね。今日は無理に頑張りすぎず、整える方向でいきましょう。`
-      : `${area}の${type}があるんですね。今日は無理に頑張りすぎず、整える方向でいきましょう。`;
-
-  const bridge = buildBridgeMessage(area, type, aggravating, relief);
-
-  const lines = [
-    opening,
-    urgent ? null : bridge,
-    urgent ? CONSULT_MESSAGE : null,
-  ].filter(Boolean);
+  if (areaGroup === 'trunk') {
+    return {
+      message: '体幹まわりなら、今日は無理に頑張るより守る方向が安心です。',
+      avoid: '強い体幹負荷やひねりは控えめがよさそうです。',
+      alternative: '呼吸や軽い調整くらいからが合いやすいです。',
+    };
+  }
 
   return {
-    area,
-    type,
-    urgent,
-    aggravating,
-    relief,
-    message: lines.join('\n'),
-    quickReplies: buildPainQuickReplies(area, urgent, type),
+    message: '今日は無理を広げすぎず、やさしく整える方向が安心です。',
+    avoid: '強い負荷は控えめがよさそうです。',
+    alternative: '軽い運動やストレッチから進めるのが合いやすいです。',
+  };
+}
+
+function buildConsultPrompt(redFlags, symptomType) {
+  if (symptomType === 'internal_possible' || redFlags.internalPossible) {
+    return 'ここでは断定できませんが、運動器だけではなく他の要因も含めて見た方がよい可能性があります。まずは専門家に相談してください。必要なら牛込先生にも共有してください。';
+  }
+
+  if (redFlags.trauma && (redFlags.swelling || redFlags.bruising)) {
+    return 'きっかけがあって、さらに腫れや内出血があるなら、まず外傷として慎重に見たいです。無理に動かす前に、牛込先生を含めて専門家に相談するのがおすすめです。';
+  }
+
+  if (redFlags.numbness) {
+    return '痛みだけでなく、しびれに近い要素も少し気になります。ピリピリ感や力の入りにくさがあるなら、運動を進める前に一度相談する方が安全です。';
+  }
+
+  if (redFlags.restPain || redFlags.nightPain) {
+    return '安静時や夜もつらいなら、自己判断で運動を進めすぎない方が安心です。まずは専門家に相談できると安全です。';
+  }
+
+  return CONSULT_MESSAGE;
+}
+
+function buildPainSupportResponse(text, area = null) {
+  const areaDetail = area || detectPainArea(text);
+  const areaGroup = detectAreaGroup(areaDetail);
+  const symptomType = detectSymptomType(text);
+  const onsetType = detectOnsetType(text);
+  const redFlags = detectRedFlags(text);
+  const painTrigger = detectPainTrigger(text);
+  const level = triagePainLevel({ symptomType, onsetType, redFlags, text });
+
+  const support = buildAreaSupportText(areaDetail, areaGroup, symptomType, level);
+  const quickReplies = buildQuickRepliesForLevel(level, symptomType);
+
+  if (level === 'red_flag') {
+    const message = [
+      `${areaDetail === '全身' ? '体の負担' : `${areaDetail}の負担`}が少し気になります。`,
+      buildConsultPrompt(redFlags, symptomType),
+    ].join('\n');
+
+    return {
+      message,
+      quickReplies,
+      context: {
+        symptom_type: symptomType,
+        area_group: areaGroup,
+        area_detail: areaDetail,
+        severity_level: 'high',
+        onset_type: onsetType,
+        pain_trigger: painTrigger,
+        red_flag_level: 'high',
+        red_flags: redFlags,
+        support_mode: 'consult',
+      },
+    };
+  }
+
+  if (level === 'careful') {
+    let followQuestion = '今日は無理を広げすぎない方が安心です。';
+
+    if (onsetType === 'trauma') {
+      followQuestion = '腫れや内出血があるなら、まずは相談を優先したいです。';
+    } else if (symptomType === 'numbness') {
+      followQuestion = 'ピリピリ感や力の入りにくさがあるなら、無理に進めず相談できると安心です。';
+    } else if (symptomType === 'cramp') {
+      followQuestion = '今つっているなら、まず止めてやさしく戻す方向が安心です。';
+    } else if (painTrigger === 'rest' || painTrigger === 'night') {
+      followQuestion = 'じっとしていてもつらいなら、自己判断で進めすぎない方が安心です。';
+    } else {
+      followQuestion = support.alternative;
+    }
+
+    const message = [
+      support.message,
+      support.avoid,
+      followQuestion,
+    ].join('\n');
+
+    return {
+      message,
+      quickReplies,
+      context: {
+        symptom_type: symptomType,
+        area_group: areaGroup,
+        area_detail: areaDetail,
+        severity_level: 'moderate',
+        onset_type: onsetType,
+        pain_trigger: painTrigger,
+        red_flag_level: 'medium',
+        red_flags: redFlags,
+        support_mode: symptomType === 'cramp' ? 'stretch' : 'exercise_alternative',
+      },
+    };
+  }
+
+  const message = [
+    support.message,
+    support.avoid,
+    support.alternative,
+  ].join('\n');
+
+  return {
+    message,
+    quickReplies,
+    context: {
+      symptom_type: symptomType,
+      area_group: areaGroup,
+      area_detail: areaDetail,
+      severity_level: 'light',
+      onset_type: onsetType,
+      pain_trigger: painTrigger,
+      red_flag_level: 'low',
+      red_flags: redFlags,
+      support_mode: symptomType === 'cramp' ? 'stretch' : 'exercise_alternative',
+    },
   };
 }
 
 function buildStretchSupportResponse(area = '全身') {
-  const message = area === '股関節'
-    ? '股関節をやさしく広げていくと、歩きやすさや姿勢だけでなく、ダイエットの土台にもつながりやすいです。今日はやさしくいきましょう。'
-    : area === '膝'
-      ? '膝を直接頑張らせるより、股関節やふくらはぎも少し整えると楽になることがあります。無理のない範囲でいきましょう。'
-      : area === '腰'
-        ? '腰は頑張りすぎず、周りをやさしく動かしてあげると整いやすいです。少しずつで十分です。'
-        : area === '肩'
-          ? '肩まわりは少しほぐれてくると、姿勢や呼吸にもつながりやすいです。軽くいきましょう。'
-          : area === '首'
-            ? '首肩まわりは、やさしく動かすだけでも軽さにつながることがあります。今日は無理なくいきましょう。'
-            : area === 'ふくらはぎ' || area === '足首'
-              ? 'ふくらはぎや足首が少し動きやすくなると、歩きやすさや膝の負担軽減にもつながりやすいです。'
-              : '軽いストレッチや体操でも、可動域が広がると動きやすさや代謝につながりやすいです。';
+  if (area === '足底' || area === 'かかと') {
+    return {
+      message: [
+        '今日は足裏やかかとに体重をかけすぎない範囲でいきましょう。',
+        '足裏そのものを強く攻めるより、ふくらはぎや足首をやさしくゆるめるくらいが合いやすいです。',
+      ].join('\n'),
+      quickReplies: ['動画で見たい', '1分メニュー', '今日はここまで'],
+    };
+  }
+
+  if (area === '膝') {
+    return {
+      message: [
+        '膝は深く曲げすぎず、まずは周りを軽く整える方向が安心です。',
+        '股関節や太ももをやさしくゆるめるくらいからが進めやすいです。',
+      ].join('\n'),
+      quickReplies: ['動画で見たい', '1分メニュー', '今日はここまで'],
+    };
+  }
+
+  if (area === '腰') {
+    return {
+      message: [
+        '腰は今日は強く伸ばすより、呼吸を整えて軽くゆるめるくらいが安心です。',
+        '無理のない範囲でいきましょう。',
+      ].join('\n'),
+      quickReplies: ['動画で見たい', '1分メニュー', '今日はここまで'],
+    };
+  }
 
   return {
-    area,
-    message,
-    quickReplies: buildStretchQuickReplies(area),
+    message: [
+      '今日は無理に強く伸ばさず、やさしく整える方向でいきましょう。',
+      '軽くゆるめるくらいで十分です。',
+    ].join('\n'),
+    quickReplies: ['動画で見たい', '1分メニュー', '今日はここまで'],
   };
 }
 
 function buildExerciseFollowupQuickReplies() {
-  return ['今日はここまで', 'まだ少しやる', 'ストレッチしたい', '腰が重い', '股関節を整えたい'];
+  return ['ストレッチしたい', '動画で見たい', '1分メニュー', '今日はここまで'];
 }
 
-function buildMealFollowupQuickReplies(needsDrinkCorrection = false) {
-  if (needsDrinkCorrection) {
-    return ['この内容で食事保存', 'お茶です', '水です', 'ノンアルです', 'お酒です'];
-  }
+function buildAdminSymptomSummary(context = {}) {
+  const redFlags = context.red_flags || {};
 
-  return ['この内容で食事保存', '飲み物を訂正', '量を訂正', '食事をキャンセル'];
+  const lines = [
+    '牛込先生共有用',
+    `主訴: ${safeText(context.raw_text || '症状相談', 120)}`,
+    `部位: ${safeText(context.area_detail || '不明', 60)}`,
+    `分類: ${safeText(context.symptom_type || 'pain', 40)}`,
+    `発生機序: ${safeText(context.onset_type || 'unknown', 40)}`,
+    `痛みの出方: ${safeText(context.pain_trigger || 'unknown', 40)}`,
+    `腫れ: ${redFlags.swelling ? 'あり' : 'なし/不明'}`,
+    `内出血: ${redFlags.bruising ? 'あり' : 'なし/不明'}`,
+    `しびれ: ${redFlags.numbness ? 'あり/疑い' : 'なし/不明'}`,
+    `危険度: ${safeText(context.red_flag_level || 'low', 20)}`,
+    `AI案内: ${safeText(context.ai_guidance || '負担を下げる方向を案内', 200)}`,
+  ];
+
+  return lines.join('\n');
 }
 
 module.exports = {
   CONSULT_MESSAGE,
   isPainLikeText,
   isStretchIntent,
-  isUrgentPainText,
   detectPainArea,
+  detectSymptomType,
+  detectOnsetType,
+  detectRedFlags,
+  detectPainTrigger,
+  triagePainLevel,
   buildPainSupportResponse,
   buildStretchSupportResponse,
   buildExerciseFollowupQuickReplies,
-  buildMealFollowupQuickReplies,
+  buildAdminSymptomSummary,
 };
