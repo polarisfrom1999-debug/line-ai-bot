@@ -32,6 +32,173 @@ function safeText(value, max = 200) {
   return String(value || '').trim().slice(0, max);
 }
 
+function normalizeLooseText(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
+function hasQuestionIntent(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeLooseText(text);
+  if (!t) return false;
+  if (/[？?]/.test(raw)) return true;
+
+  const patterns = [
+    'かな',
+    'ですか',
+    'ますか',
+    'いいですか',
+    '大丈夫ですか',
+    'だめですか',
+    'ダメですか',
+    'してもいい',
+    'して平気',
+    '問題ない',
+    'どうかな',
+    'どうですか',
+    '良いですか',
+    '悪いですか',
+    'いいかな',
+    '平気かな',
+    'だめかな',
+    'ダメかな',
+    'どうしたら',
+    'どうすれば',
+    'どう思う',
+    '教えて',
+  ];
+
+  return patterns.some((p) => t.includes(normalizeLooseText(p)));
+}
+
+function isMealDesireOrFeelingText(text) {
+  const t = normalizeLooseText(text);
+  if (!t) return false;
+
+  const patterns = [
+    '食べたい',
+    '飲みたい',
+    'お腹いっぱい食べたい',
+    'おなかいっぱい食べたい',
+    'お腹一杯食べたい',
+    'おなか一杯食べたい',
+    'いっぱい食べたい',
+    '甘いもの食べたい',
+    '何か食べたい',
+    '食欲がある',
+    '食欲がない',
+    '食欲あります',
+    '食欲ない',
+    'お腹すいた',
+    'おなかすいた',
+    '食べたくなる',
+    '食べてしまいそう',
+    '食べそう',
+    '飲みたくなる',
+    '食欲が止まらない',
+    '食欲がすごい',
+    '食べすぎそう',
+    '食べ過ぎそう',
+    '食べすぎたくなる',
+    '甘いものが止まらない',
+    'お腹いっぱい食べれる',
+    'おなかいっぱい食べれる',
+  ];
+
+  if (patterns.some((p) => t.includes(p))) return true;
+  if ((t.includes('食べ') || t.includes('飲み')) && t.includes('たい')) return true;
+
+  return false;
+}
+
+function hasPainOrMedicalContext(text) {
+  const t = normalizeLooseText(text);
+  if (!t) return false;
+
+  const patterns = [
+    '痛い',
+    '痛み',
+    'しびれ',
+    '腫れ',
+    '炎症',
+    '違和感',
+    'だるい',
+    '重い',
+    'つらい',
+    '辛い',
+    '足底腱膜炎',
+    '膝',
+    '腰',
+    '股関節',
+    '肩',
+    '首',
+    'かかと',
+    '足裏',
+    'ふくらはぎ',
+    '整形外科',
+    '病院',
+    '治療',
+    '症状',
+  ];
+
+  return patterns.some((p) => t.includes(normalizeLooseText(p)));
+}
+
+function isExerciseConsultationText(text) {
+  const t = normalizeLooseText(text);
+  if (!t) return false;
+
+  const hasExerciseWord = [
+    '走る',
+    'ジョギング',
+    'ランニング',
+    '歩く',
+    '運動',
+    '筋トレ',
+    'ストレッチ',
+    'スクワット',
+    '散歩',
+    'トレーニング',
+  ].some((w) => t.includes(normalizeLooseText(w)));
+
+  if (!hasExerciseWord) return false;
+  return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
+}
+
+function looksLikeNonMealConversation(text) {
+  const t = normalizeLooseText(text);
+  if (!t) return true;
+
+  if (isMealDesireOrFeelingText(text)) return true;
+  if (isExerciseConsultationText(text)) return true;
+
+  const obviousNonMealPatterns = [
+    '初回診断',
+    'プロフィール',
+    '体重グラフ',
+    '血液検査グラフ',
+    '食事活動グラフ',
+    '予測',
+    'グラフ',
+    'help',
+    'ヘルプ',
+    'メニュー',
+    '使い方',
+    '動画で見たい',
+    'ストレッチしたい',
+    '牛込先生に相談したい',
+  ];
+
+  if (obviousNonMealPatterns.some((p) => t.includes(normalizeLooseText(p)))) {
+    return true;
+  }
+
+  return false;
+}
+
 function normalizeItem(raw) {
   const geminiName = safeText(raw?.name || raw?.item_name || '', 120) || '不明な食品';
   const qtyText = safeText(raw?.qty_text || raw?.qtyText || raw?.estimated_amount || '', 80) || '1つ';
@@ -115,6 +282,13 @@ function buildMealTextPrompt(userText) {
 8. コメントは短く自然に。定型的すぎないこと。
 9. 必ずJSONのみを返すこと。
 
+例:
+- 「ラーメン食べた」→ is_meal = true
+- 「朝食 食パン1枚 ピーナッツバター 青汁」→ is_meal = true
+- 「お腹いっぱい食べたい」→ is_meal = false
+- 「足底腱膜炎です。走ったらダメかな？」→ is_meal = false
+- 「甘いもの食べたい」→ is_meal = false
+
 利用者メッセージ:
 ${userText}
 `.trim();
@@ -155,7 +329,7 @@ function buildMealCorrectionPrompt(currentMeal, correctionText) {
   結果は「パイ + ブラックコーヒー2杯」のままにすること。
 - 既存にご飯があり、訂正文が「ご飯半分」「ご飯少なめ」「ご飯多め」の場合、
   ご飯項目の量とカロリーだけを修正すること。
-- 訂正文が「味噌汁追加」「お茶」「水」「ノンアル」「2個です」のような短文でも、
+- 訂正文が「味噌汁追加」「お茶」「水」「ノンアル」「2個です」「薄く全体に塗りました」のような短文でも、
   現在の食事案に対する差分訂正として解釈すること。
 - 訂正文だけを独立した新しい食事として解釈してはいけない。
 
@@ -411,6 +585,29 @@ function buildBaseItemsForShortCorrection(previousMeal, result) {
   return resultItems;
 }
 
+function adjustSpreadOrSauceItem(item, mode) {
+  const currentKcal = Number(item?.estimated_kcal) || 0;
+  let ratio = 1;
+
+  if (mode === 'thin') ratio = 0.65;
+  if (mode === 'light') ratio = 0.8;
+  if (mode === 'more') ratio = 1.25;
+
+  const nextKcal = currentKcal > 0 ? roundKcal(currentKcal * ratio) : (mode === 'more' ? 40 : 20);
+
+  let qtyText = String(item?.qty_text || '').trim();
+  if (!qtyText) {
+    qtyText = mode === 'thin' ? '薄め' : mode === 'more' ? '多め' : '少なめ';
+  }
+
+  return {
+    ...item,
+    qty_text: qtyText,
+    estimated_kcal: Math.max(0, nextKcal),
+    confidence: Math.max(Number(item?.confidence || 0), 0.93),
+  };
+}
+
 function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText) {
   const rawCorrection = String(correctionText || '').trim();
   const compact = rawCorrection.replace(/\s+/g, '').replace(/[。．]/g, '');
@@ -441,7 +638,13 @@ function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText
     /飲み物はお茶です/.test(rawCorrection) ||
     /飲み物は水です/.test(rawCorrection) ||
     /飲み物はノンアルです/.test(rawCorrection) ||
-    /^(\d+)個(?:です)?$/.test(compact);
+    /^(\d+)個(?:です)?$/.test(compact) ||
+    /ブラックコーヒー/.test(rawCorrection) ||
+    /コーヒー\d+杯/.test(compact) ||
+    /薄く全体に塗りました/.test(rawCorrection) ||
+    /薄めに塗りました/.test(rawCorrection) ||
+    /少し塗りました/.test(rawCorrection) ||
+    /多めに塗りました/.test(rawCorrection);
 
   const mustUsePreviousMealAsBase = isShortRiceCorrection || isShortAddOrDrinkCorrection;
 
@@ -472,6 +675,7 @@ function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText
   const ricePatterns = [/ご飯/, /ごはん/, /ライス/, /白米/, /米/];
   const soupPatterns = [/味噌汁/, /みそ汁/];
   const drinkPatterns = [/コーヒー/, /珈琲/, /カフェオレ/, /ラテ/, /紅茶/, /お茶/, /水/, /ドリンク/, /飲み物/, /ジュース/, /青汁/, /ノンアル/];
+  const spreadPatterns = [/バター/, /ジャム/, /ピーナッツバター/, /マーガリン/, /クリーム/, /ソース/, /ドレッシング/, /はちみつ/, /ハチミツ/, /シロップ/];
 
   const riceIndex = findItemIndexByPatterns(items, ricePatterns);
 
@@ -603,6 +807,49 @@ function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText
     changed = true;
   }
 
+  const blackCoffeeMatch = rawCorrection.match(/ブラックコーヒー\s*(\d+)?\s*杯?/);
+  if (blackCoffeeMatch) {
+    const count = Math.max(1, Number(blackCoffeeMatch[1] || 1));
+    const drinkIndex = findItemIndexByPatterns(items, drinkPatterns);
+    if (drinkIndex >= 0) {
+      items[drinkIndex] = {
+        ...items[drinkIndex],
+        name: 'ブラックコーヒー',
+        gemini_original_name: 'ブラックコーヒー',
+        qty_text: `${count}杯`,
+        estimated_kcal: count * 4,
+        confidence: 0.98,
+      };
+    } else {
+      items.push({
+        name: 'ブラックコーヒー',
+        qty_text: `${count}杯`,
+        estimated_kcal: count * 4,
+        confidence: 0.98,
+        is_main_subject: true,
+        gemini_original_name: 'ブラックコーヒー',
+      });
+    }
+    changed = true;
+  }
+
+  const coffeeCupMatch = compact.match(/コーヒー(\d+)杯/);
+  if (coffeeCupMatch) {
+    const count = Math.max(1, Number(coffeeCupMatch[1]));
+    const drinkIndex = findItemIndexByPatterns(items, drinkPatterns);
+    if (drinkIndex >= 0) {
+      items[drinkIndex] = {
+        ...items[drinkIndex],
+        name: /ブラック/.test(rawCorrection) ? 'ブラックコーヒー' : (items[drinkIndex].name || 'コーヒー'),
+        gemini_original_name: /ブラック/.test(rawCorrection) ? 'ブラックコーヒー' : (items[drinkIndex].gemini_original_name || items[drinkIndex].name || 'コーヒー'),
+        qty_text: `${count}杯`,
+        estimated_kcal: /ブラック/.test(rawCorrection) ? count * 4 : Math.max(6, count * 8),
+        confidence: 0.96,
+      };
+      changed = true;
+    }
+  }
+
   const countMatch = compact.match(/^(\d+)個(?:です)?$/);
   if (countMatch) {
     const count = Math.max(1, Number(countMatch[1]));
@@ -624,6 +871,19 @@ function applySimpleJapaneseCorrectionGuard(result, previousMeal, correctionText
         estimated_kcal: Math.max(0, roundKcal(perItemKcal * count)),
         confidence: Math.max(Number(items[targetIndex].confidence || 0), 0.95),
       };
+      changed = true;
+    }
+  }
+
+  const thinSpread = /薄く全体に塗りました|薄めに塗りました/.test(rawCorrection);
+  const lightSpread = /少し塗りました|少なめに塗りました/.test(rawCorrection);
+  const moreSpread = /多めに塗りました|たっぷり塗りました/.test(rawCorrection);
+
+  if (thinSpread || lightSpread || moreSpread) {
+    const spreadIndex = findItemIndexByPatterns(items, spreadPatterns);
+    if (spreadIndex >= 0) {
+      const mode = thinSpread ? 'thin' : (moreSpread ? 'more' : 'light');
+      items[spreadIndex] = adjustSpreadOrSauceItem(items[spreadIndex], mode);
       changed = true;
     }
   }
@@ -1154,8 +1414,34 @@ async function analyzeMealTextWithGemini(
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}
 ) {
+  const originalText = String(userText || '').trim();
+
+  if (!originalText || looksLikeNonMealConversation(originalText)) {
+    return {
+      is_meal: false,
+      meal_label: '',
+      food_items: [],
+      estimated_kcal: 0,
+      kcal_min: 0,
+      kcal_max: 0,
+      protein_g: null,
+      fat_g: null,
+      carbs_g: null,
+      confidence: 0,
+      uncertainty_notes: [],
+      confirmation_questions: [],
+      ai_comment: '食事記録ではないと判断しました。',
+      raw_model_json: {
+        source: 'gemini_meal_service_text',
+        gemini_result: {},
+        original_text: originalText,
+        skipped_by_local_guard: true,
+      },
+    };
+  }
+
   const parsed = await callGeminiJson({
-    prompt: buildMealTextPrompt(userText),
+    prompt: buildMealTextPrompt(originalText),
     schema: getMealTextResponseSchema(),
     apiKey,
     model,
@@ -1181,7 +1467,7 @@ async function analyzeMealTextWithGemini(
       raw_model_json: {
         source: 'gemini_meal_service_text',
         gemini_result: parsed || {},
-        original_text: userText,
+        original_text: originalText,
       },
     };
   }
@@ -1189,7 +1475,7 @@ async function analyzeMealTextWithGemini(
   const normalized = normalizeGeminiMealResult(parsed);
   return buildLegacyMealFromNormalized(normalized, {
     source: 'gemini_meal_service_text',
-    original_text: userText,
+    original_text: originalText,
     is_meal: true,
   });
 }
