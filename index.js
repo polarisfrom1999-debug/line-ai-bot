@@ -113,6 +113,55 @@ const {
   getWeekdayJaInTZ,
 } = require('./utils/dates');
 
+let analyzePainText = null;
+let generatePainResponse = null;
+let looksLikePainConsultation = null;
+
+try {
+  const painAdvanced = require('./services/pain_support_service');
+  analyzePainText = typeof painAdvanced.analyzePainText === 'function'
+    ? painAdvanced.analyzePainText
+    : null;
+  generatePainResponse = typeof painAdvanced.generatePainResponse === 'function'
+    ? painAdvanced.generatePainResponse
+    : null;
+  looksLikePainConsultation = typeof painAdvanced.looksLikePainConsultation === 'function'
+    ? painAdvanced.looksLikePainConsultation
+    : null;
+} catch (error) {
+  console.warn('⚠️ advanced pain support functions are not available:', error?.message || error);
+}
+
+let generateWeeklyReportDraft = null;
+let generateMonthlyReportDraft = null;
+
+try {
+  const reportDraftService = require('./services/report_draft_service');
+  generateWeeklyReportDraft = typeof reportDraftService.generateWeeklyReportDraft === 'function'
+    ? reportDraftService.generateWeeklyReportDraft
+    : null;
+  generateMonthlyReportDraft = typeof reportDraftService.generateMonthlyReportDraft === 'function'
+    ? reportDraftService.generateMonthlyReportDraft
+    : null;
+} catch (error) {
+  console.warn('⚠️ report_draft_service is not available:', error?.message || error);
+}
+
+let createPainAdminMemo = null;
+let createReportAdminMemo = null;
+
+try {
+  const adminMemoService = require('./services/admin_memo_service');
+  createPainAdminMemo = typeof adminMemoService.createPainAdminMemo === 'function'
+    ? adminMemoService.createPainAdminMemo
+    : null;
+  createReportAdminMemo = typeof adminMemoService.createReportAdminMemo === 'function'
+    ? adminMemoService.createReportAdminMemo
+    : null;
+} catch (error) {
+  console.warn('⚠️ admin_memo_service is not available:', error?.message || error);
+}
+
 const env = getEnv();
 const app = express();
 const PORT = env.PORT;
@@ -469,6 +518,28 @@ function isWeightGraphIntent(text) {
   ].includes(t);
 }
 
+function isWeeklyReportRequest(text) {
+  const s = String(text || '').trim();
+  return /週間報告|週報|1週間報告|一週間報告/.test(s);
+}
+
+function isMonthlyReportRequest(text) {
+  const s = String(text || '').trim();
+  return /月間報告|月報|1か月報告|一か月報告/.test(s);
+}
+
+function isAdminMemoDebugEnabled() {
+  return String(process.env.ADMIN_MEMO_DEBUG || '').trim() === '1';
+}
+
+function safeConsoleLog(label, value) {
+  try {
+    console.log(label, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+  } catch (_error) {
+    console.log(label, value);
+  }
+}
+
 function isCurrentDateTimeQuestion(text) {
   const t = String(text || '')
     .trim()
@@ -568,6 +639,8 @@ function helpMessage() {
     '・体重グラフ',
     '・血液検査グラフ',
     '・食事活動グラフ',
+    '・週間報告',
+    '・月間報告',
     '・食事写真も送れます',
     '・血液検査画像も送れます',
   ].join('\n');
@@ -1460,6 +1533,153 @@ async function getRecentWeightRows(userId, limit = 20) {
   return Array.isArray(data) ? data : [];
 }
 
+async function getRecentBodyFatRows(userId, limit = 20) {
+  try {
+    const { data, error } = await supabase
+      .from('body_fat_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .order('measured_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (isMissingRelationError(error)) return [];
+      throw error;
+    }
+
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('⚠️ getRecentBodyFatRows failed:', error?.message || error);
+    return [];
+  }
+}
+
+async function getRecentMealRows(userId, limit = 50) {
+  const { data, error } = await supabase
+    .from('meal_logs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('eaten_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+async function getRecentActivityRows(userId, limit = 50) {
+  const { data, error } = await supabase
+    .from('activity_logs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('logged_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+async function getRecentSymptomRows(userId, limit = 20) {
+  try {
+    const { data, error } = await supabase
+      .from('conversation_memories')
+      .select('content, created_at, memory_type')
+      .eq('user_id', userId)
+      .in('memory_type', ['pain_pattern', 'symptom_pattern', 'medical_attention'])
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (isMissingRelationError(error)) return [];
+      throw error;
+    }
+
+    return Array.isArray(data)
+      ? data.map((row) => ({
+          date: row.created_at,
+          symptom: row.content,
+          memory_type: row.memory_type,
+        }))
+      : [];
+  } catch (error) {
+    console.error('⚠️ getRecentSymptomRows failed:', error?.message || error);
+    return [];
+  }
+}
+
+function filterRowsWithinDays(rows, dateField, days) {
+  const list = Array.isArray(rows) ? rows : [];
+  const end = new Date();
+  const start = new Date(end.getTime() - (days * 24 * 60 * 60 * 1000));
+
+  return list
+    .filter((row) => {
+      const value = row?.[dateField];
+      if (!value) return false;
+      const dt = new Date(value);
+      return !Number.isNaN(dt.getTime()) && dt >= start && dt <= end;
+    })
+    .sort((a, b) => new Date(a?.[dateField] || 0) - new Date(b?.[dateField] || 0));
+}
+
+async function buildReportDraftInput(user, reportType) {
+  const days = reportType === 'monthly' ? 31 : 7;
+
+  const [weightRows, bodyFatRows, mealRows, activityRows, labRows, symptomRows] = await Promise.all([
+    getRecentWeightRows(user.id, reportType === 'monthly' ? 60 : 20),
+    getRecentBodyFatRows(user.id, reportType === 'monthly' ? 60 : 20),
+    getRecentMealRows(user.id, reportType === 'monthly' ? 200 : 80),
+    getRecentActivityRows(user.id, reportType === 'monthly' ? 200 : 80),
+    getRecentLabResults(supabase, user.id, reportType === 'monthly' ? 12 : 6),
+    getRecentSymptomRows(user.id, reportType === 'monthly' ? 40 : 20),
+  ]);
+
+  const weights = filterRowsWithinDays(weightRows, 'measured_at', days).map((row) => ({
+    date: row.measured_at,
+    weight_kg: row.weight_kg,
+  }));
+
+  const bodyFats = filterRowsWithinDays(bodyFatRows, 'measured_at', days).map((row) => ({
+    date: row.measured_at,
+    body_fat_percent: row.body_fat_percent,
+  }));
+
+  const meals = filterRowsWithinDays(mealRows, 'eaten_at', days).map((row) => ({
+    date: row.eaten_at,
+    calories: row.estimated_kcal,
+    protein_g: row.protein_g,
+    fat_g: row.fat_g,
+    carbs_g: row.carbs_g,
+    meal_type: row.meal_label,
+    meal_time: row.eaten_at ? formatTimeHmInTZ(row.eaten_at, TZ) : '',
+  }));
+
+  const exercises = filterRowsWithinDays(activityRows, 'logged_at', days).map((row) => ({
+    date: row.logged_at,
+    duration_minutes: row.walking_minutes || null,
+    calories_burned: row.estimated_activity_kcal,
+    exercise_type: row.exercise_summary,
+  }));
+
+  const symptoms = filterRowsWithinDays(symptomRows, 'date', days).map((row) => ({
+    date: row.date,
+    symptom: row.symptom,
+  }));
+
+  const periodEnd = currentDateYmdInTZ(TZ);
+  const periodStart = addDaysYmd(periodEnd, -(days - 1));
+
+  return {
+    user_name: getUserDisplayName(user) || '利用者',
+    period_label: `${periodStart}〜${periodEnd}`,
+    weights,
+    body_fats: bodyFats,
+    meals,
+    exercises,
+    symptoms,
+    lab_results: Array.isArray(labRows) ? labRows : [],
+  };
+}
+
 async function saveWeightToLog(userId, weightKg, rawText) {
   const insertPayload = {
     user_id: userId,
@@ -2280,6 +2500,90 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (isWeeklyReportRequest(text)) {
+      if (!generateWeeklyReportDraft) {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, '週間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      const input = await buildReportDraftInput(user, 'weekly');
+      const weeklyDraft = generateWeeklyReportDraft(input);
+
+      if (createReportAdminMemo) {
+        const weeklyMemo = createReportAdminMemo({
+          user_id: user.id,
+          user_name: getUserDisplayName(user) || '利用者',
+          created_at: new Date().toISOString(),
+          report_type: 'weekly',
+          report_period: input.period_label || '',
+          summary_text: '週間報告の下書き生成',
+          highlights: weeklyDraft?.summary?.highlights || [],
+          next_actions: weeklyDraft?.summary?.next_actions || [],
+          draft_text: weeklyDraft?.draft_text || '',
+        });
+
+        if (isAdminMemoDebugEnabled()) {
+          safeConsoleLog('[WEEKLY_REPORT_MEMO]', weeklyMemo?.memo_text || weeklyMemo);
+        }
+      }
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, `週間報告の下書き確認用です。\n\n${weeklyDraft?.draft_text || '下書き生成に失敗しました。'}`),
+          ['月間報告', '体重グラフ', '食事活動グラフ', 'グラフ']
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (isMonthlyReportRequest(text)) {
+      if (!generateMonthlyReportDraft) {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, '月間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      const input = await buildReportDraftInput(user, 'monthly');
+      const monthlyDraft = generateMonthlyReportDraft(input);
+
+      if (createReportAdminMemo) {
+        const monthlyMemo = createReportAdminMemo({
+          user_id: user.id,
+          user_name: getUserDisplayName(user) || '利用者',
+          created_at: new Date().toISOString(),
+          report_type: 'monthly',
+          report_period: input.period_label || '',
+          summary_text: '月間報告の下書き生成',
+          highlights: monthlyDraft?.summary?.highlights || [],
+          next_actions: monthlyDraft?.summary?.next_actions || [],
+          draft_text: monthlyDraft?.draft_text || '',
+        });
+
+        if (isAdminMemoDebugEnabled()) {
+          safeConsoleLog('[MONTHLY_REPORT_MEMO]', monthlyMemo?.memo_text || monthlyMemo);
+        }
+      }
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(
+          prefixWithName(user, `月間報告の下書き確認用です。\n\n${monthlyDraft?.draft_text || '下書き生成に失敗しました。'}`),
+          ['週間報告', '体重グラフ', '血液検査グラフ', 'グラフ']
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     if (isVideoIntent(text)) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || detectPainArea(text);
@@ -2404,13 +2708,72 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    if (isPainLikeText(text) || isExerciseConsultationText(text)) {
+    if (isPainLikeText(text) || isExerciseConsultationText(text) || (looksLikePainConsultation && looksLikePainConsultation(text))) {
       clearMealDraft(user.line_user_id);
       const area = detectPainArea(text);
       setSupportContext(user.line_user_id, { area, mode: 'pain' });
 
-      const painResponse = buildPainSupportResponse(text, area);
-      const replyText = prefixWithName(user, painResponse.message);
+      let painResponse = buildPainSupportResponse(text, area);
+      let replyText = prefixWithName(user, painResponse.message);
+
+      if (analyzePainText) {
+        try {
+          const advancedPain = analyzePainText(text);
+          if (advancedPain?.reply_text) {
+            replyText = prefixWithName(user, advancedPain.reply_text);
+          }
+
+          if (createPainAdminMemo && isAdminMemoDebugEnabled()) {
+            const painMemoResult = createPainAdminMemo({
+              user_id: user.id,
+              user_name: getUserDisplayName(user) || '',
+              created_at: new Date().toISOString(),
+              severity: advancedPain?.severity || 'mild',
+              original_text: advancedPain?.original_text || text || '',
+              body_part: advancedPain?.primary_part?.label || area || '',
+              symptom: advancedPain?.primary_symptom?.label || '',
+              mechanisms: (advancedPain?.mechanisms || []).map((v) => v.label),
+              red_flags: (advancedPain?.red_flags || []).map((v) => v.label),
+              condition_hints: (advancedPain?.condition_hints || []).map((v) => v.label),
+              followup_questions: advancedPain?.followup_questions || [],
+              self_care_advice: advancedPain?.self_care_advice || [],
+            });
+            safeConsoleLog('[PAIN_ADMIN_MEMO]', painMemoResult?.memo_text || painMemoResult);
+          }
+        } catch (advancedPainError) {
+          console.error('⚠️ advanced pain analysis failed:', advancedPainError?.message || advancedPainError);
+          if (generatePainResponse) {
+            try {
+              const fallbackReply = generatePainResponse(text);
+              if (fallbackReply) {
+                replyText = prefixWithName(user, fallbackReply);
+              }
+            } catch (_e) {
+              // ignore
+            }
+          }
+        }
+      } else if (createPainAdminMemo && isAdminMemoDebugEnabled()) {
+        const symptomSummary = typeof buildAdminSymptomSummary === 'function'
+          ? buildAdminSymptomSummary(text, area)
+          : null;
+
+        const painMemoResult = createPainAdminMemo({
+          user_id: user.id,
+          user_name: getUserDisplayName(user) || '',
+          created_at: new Date().toISOString(),
+          severity: 'mild',
+          original_text: text || '',
+          body_part: area || '',
+          symptom: symptomSummary || '症状相談',
+          mechanisms: [],
+          red_flags: [],
+          condition_hints: [],
+          followup_questions: [],
+          self_care_advice: [],
+        });
+        safeConsoleLog('[PAIN_ADMIN_MEMO]', painMemoResult?.memo_text || painMemoResult);
+      }
 
       await replyMessage(
         event.replyToken,
