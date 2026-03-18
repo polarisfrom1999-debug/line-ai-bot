@@ -6,7 +6,8 @@ const {
   MEMBERSHIP_STATUS,
   PLAN_TYPES,
   PLAN_LABELS,
-  PLAN_DESCRIPTIONS,
+  PLAN_SHORT_DESCRIPTIONS,
+  PLAN_DETAIL_LINES,
 } = require('../config/trial_membership_config');
 
 function safeText(value, fallback = '') {
@@ -206,11 +207,14 @@ function isPlanGuideTrigger(text) {
   return [
     'プラン',
     'プラン案内',
+    'プラン案内を見る',
     '体験終了',
     '継続したい',
     '続けたい',
     '入会したい',
     '契約したい',
+    '別プランも見る',
+    '内容を確認する',
   ].includes(value);
 }
 
@@ -218,11 +222,12 @@ function buildTrialStartedMessage() {
   return {
     text:
       'プロフィール登録ありがとうございます。\n' +
-      '今日から1週間の無料体験を開始しました。\n\n' +
-      'この期間で、食事・体重・運動の入力や、やり取りの雰囲気を気軽に試してみてくださいね。',
+      `今日から${TRIAL_DAYS}日間の無料体験が始まりました。\n\n` +
+      'この期間は、食事・体重・運動の記録や、やり取りの雰囲気を気軽に試してみてくださいね。\n' +
+      '無理に完璧を目指さなくて大丈夫です。',
     quickReply: buildQuickReplies([
-      '使い方を見る',
       '今日の記録を始める',
+      '使い方を見る',
       'プロフィール確認',
     ]),
   };
@@ -232,8 +237,8 @@ function buildTrialEndingMessage() {
   return {
     text:
       '1週間の無料体験おつかれさまでした。\n' +
-      'ここまでの振り返りをしながら、この先の続け方もご案内できます。\n\n' +
-      'ご希望に合わせてプランを選びやすくしています。',
+      'ここまでの流れを踏まえて、この先の続け方をご案内できます。\n\n' +
+      'ご自身のペースに合う形を選びやすいようにしています。',
     quickReply: buildQuickReplies([
       'プラン案内を見る',
       'まず相談したい',
@@ -243,13 +248,23 @@ function buildTrialEndingMessage() {
 }
 
 function buildPlanGuideMessage() {
+  const lines = [
+    '続け方は、今後このような形を予定しています。',
+    '',
+    `【${PLAN_LABELS[PLAN_TYPES.LIGHT]}】`,
+    ...PLAN_DETAIL_LINES[PLAN_TYPES.LIGHT],
+    '',
+    `【${PLAN_LABELS[PLAN_TYPES.RECOMMENDED]}】`,
+    ...PLAN_DETAIL_LINES[PLAN_TYPES.RECOMMENDED],
+    '',
+    `【${PLAN_LABELS[PLAN_TYPES.PREMIUM]}】`,
+    ...PLAN_DETAIL_LINES[PLAN_TYPES.PREMIUM],
+    '',
+    '気になるものをそのまま押してください。',
+  ];
+
   return {
-    text:
-      '続け方は、今後このような形を予定しています。\n\n' +
-      `・${PLAN_LABELS[PLAN_TYPES.LIGHT]}：${PLAN_DESCRIPTIONS[PLAN_TYPES.LIGHT]}\n` +
-      `・${PLAN_LABELS[PLAN_TYPES.RECOMMENDED]}：${PLAN_DESCRIPTIONS[PLAN_TYPES.RECOMMENDED]}\n` +
-      `・${PLAN_LABELS[PLAN_TYPES.PREMIUM]}：${PLAN_DESCRIPTIONS[PLAN_TYPES.PREMIUM]}\n\n` +
-      '気になるものをそのまま押してください。',
+    text: lines.join('\n'),
     quickReply: buildQuickReplies([
       'ライト',
       'おすすめ',
@@ -264,15 +279,18 @@ function buildPlanSelectedMessage(planType) {
     ? planType
     : PLAN_TYPES.RECOMMENDED;
 
+  const detailLines = PLAN_DETAIL_LINES[normalizedPlan] || [];
+
   return {
     text:
-      `${PLAN_LABELS[normalizedPlan]}プランを選択ありがとうございます。\n` +
-      'この状態で継続案内を進められるようにしました。\n\n' +
-      '今後は内容や料金文面をさらに整えていけます。',
+      `${PLAN_LABELS[normalizedPlan]}プランを選択ありがとうございます。\n\n` +
+      `${detailLines.join('\n')}\n\n` +
+      'この内容をベースに、今後の継続案内を進めやすい状態にしました。\n' +
+      'あとから変更したくなった時も大丈夫です。',
     quickReply: buildQuickReplies([
-      '内容を確認する',
       'このプランで進めたい',
       '別プランも見る',
+      'まず相談したい',
     ]),
   };
 }
@@ -280,12 +298,16 @@ function buildPlanSelectedMessage(planType) {
 function buildRenewalPromptMessage(user) {
   const currentPlan = getCurrentPlan(user);
   const planLabel = currentPlan ? PLAN_LABELS[currentPlan] : '現在の';
+  const shortDescription = currentPlan
+    ? PLAN_SHORT_DESCRIPTIONS[currentPlan]
+    : '今の使い方に合う形';
 
   return {
     text:
       `${planLabel}プランをご利用いただきありがとうございます。\n` +
-      '1か月続けてみて、今後も継続するか、内容を調整するかをご案内できます。\n\n' +
-      'ご希望に合う形で無理なく続けていきましょう。',
+      `現在は「${shortDescription}」の形で進んでいます。\n\n` +
+      '1か月続けてみて、継続するか、内容を調整するか、別プランにするかをご案内できます。\n' +
+      '無理なく続けられる形を一緒に整えていきましょう。',
     quickReply: buildQuickReplies([
       '継続したい',
       'プラン変更したい',
@@ -298,7 +320,8 @@ module.exports = {
   MEMBERSHIP_STATUS,
   PLAN_TYPES,
   PLAN_LABELS,
-  PLAN_DESCRIPTIONS,
+  PLAN_SHORT_DESCRIPTIONS,
+  PLAN_DETAIL_LINES,
   buildQuickReplies,
   getMembershipStatus,
   getCurrentPlan,
