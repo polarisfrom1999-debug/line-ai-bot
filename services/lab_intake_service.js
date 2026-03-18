@@ -1,437 +1,356 @@
 'use strict';
 
-function pad2(v) {
-  return String(v).padStart(2, '0');
+const {
+  AI_TYPE_VALUES,
+  getAiTypeLabel,
+  normalizeAiTypeInput,
+} = require('../config/ai_type_config');
+
+const INTAKE_STEPS = {
+  CHOOSE_AI_TYPE: 'choose_ai_type',
+  CURRENT_CONDITION: 'current_condition',
+  EXERCISE_HISTORY: 'exercise_history',
+  CURRENT_EXERCISE: 'current_exercise',
+  GOAL_AND_PURPOSE: 'goal_and_purpose',
+  DESIRED_FUTURE: 'desired_future',
+  BARRIERS: 'barriers',
+  CONFIRM_FINISH: 'confirm_finish',
+};
+
+const LAB_FIELD_LABELS = {
+  hba1c: 'HbA1c',
+  fasting_glucose: '空腹時血糖',
+  ldl: 'LDL',
+  hdl: 'HDL',
+  triglycerides: '中性脂肪',
+  ast: 'AST',
+  alt: 'ALT',
+  ggt: 'γ-GTP',
+  uric_acid: '尿酸',
+  creatinine: 'クレアチニン',
+  measured_at: '日付',
+};
+
+function safeText(value, fallback = '') {
+  return String(value || fallback).trim();
 }
 
-function normalizeDateString(value) {
-  if (!value) return '';
-  const s = String(value).trim()
-    .replace(/[年/.]/g, '-')
-    .replace(/月/g, '-')
-    .replace(/日/g, '')
+function normalizeLoose(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
     .replace(/\s+/g, '');
-
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) {
-    return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
-  }
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function normalizeNumber(value) {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-
-  const m = String(value).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
-  if (!m) return null;
-
-  const num = Number(m[0]);
-  return Number.isFinite(num) ? num : null;
-}
-
-function labelForField(field) {
-  const map = {
-    hba1c: 'HbA1c',
-    fasting_glucose: '空腹時血糖',
-    ldl: 'LDL',
-    hdl: 'HDL',
-    triglycerides: '中性脂肪',
-    ast: 'AST',
-    alt: 'ALT',
-    ggt: 'γ-GTP',
-    uric_acid: '尿酸',
-    creatinine: 'クレアチニン',
-    date: '日付',
-  };
-  return map[field] || field;
-}
-
-function buildPanelLines(items) {
-  const defs = [
-    ['hba1c', 'HbA1c'],
-    ['fasting_glucose', '空腹時血糖'],
-    ['ldl', 'LDL'],
-    ['hdl', 'HDL'],
-    ['triglycerides', '中性脂肪'],
-    ['ast', 'AST'],
-    ['alt', 'ALT'],
-    ['ggt', 'γ-GTP'],
-    ['uric_acid', '尿酸'],
-    ['creatinine', 'クレアチニン'],
-  ];
-
-  return defs
-    .map(([key, label]) => {
-      const value = normalizeNumber(items?.[key]);
-      return value === null ? null : `・${label}: ${value}`;
-    })
-    .filter(Boolean);
-}
-
-function buildDateQuickReplies(dates) {
-  const list = Array.isArray(dates) ? dates.slice(0, 10) : [];
-  return [...list, '読み取れた日付を全部保存'];
-}
-
-function findPanelDateFromInput(openLabDraft, text) {
-  const normalized = normalizeDateString(text);
-  if (!normalized) return null;
-
-  const keys = Object.keys(openLabDraft?.working_data_json || {}).map(normalizeDateString);
-  return keys.includes(normalized) ? normalized : null;
-}
-
-function mapCorrectionLabelToField(text) {
-  const t = String(text || '').trim();
-
-  const mappings = [
-    ['日付を修正', 'date'],
-    ['日付', 'date'],
-    ['HbA1cを修正', 'hba1c'],
-    ['HbA1c', 'hba1c'],
-    ['血糖を修正', 'fasting_glucose'],
-    ['空腹時血糖を修正', 'fasting_glucose'],
-    ['空腹時血糖', 'fasting_glucose'],
-    ['LDLを修正', 'ldl'],
-    ['LDL', 'ldl'],
-    ['HDLを修正', 'hdl'],
-    ['HDL', 'hdl'],
-    ['中性脂肪を修正', 'triglycerides'],
-    ['中性脂肪', 'triglycerides'],
-    ['ASTを修正', 'ast'],
-    ['AST', 'ast'],
-    ['ALTを修正', 'alt'],
-    ['ALT', 'alt'],
-    ['γ-GTPを修正', 'ggt'],
-    ['GGTを修正', 'ggt'],
-    ['γ-GTP', 'ggt'],
-    ['GGT', 'ggt'],
-    ['尿酸を修正', 'uric_acid'],
-    ['尿酸', 'uric_acid'],
-    ['クレアチニンを修正', 'creatinine'],
-    ['クレアチニン', 'creatinine'],
-  ];
-
-  const hit = mappings.find(([label]) => t === label);
-  return hit ? hit[1] : null;
-}
-
-function buildLabDraftSummaryMessage(session) {
-  const workingData = session?.working_data_json || {};
-  const dates = Object.keys(workingData).map(normalizeDateString).filter(Boolean).sort();
-
-  if (!dates.length) {
-    return {
-      text: '血液検査の読み取り結果が見つかりませんでした。',
-      quickReplies: [],
-    };
-  }
-
-  const selectedDate = normalizeDateString(session?.selected_date) || dates[dates.length - 1];
-  const items = workingData[selectedDate] || {};
-  const lines = buildPanelLines(items);
-
-  const text = [
-    '血液検査の読み取り結果です。',
-    `対象日: ${selectedDate}`,
-    '',
-    ...(lines.length ? lines : ['読めた項目がまだ少ないようです。必要なら修正してください。']),
-    '',
-    '保存してよければ「この内容で保存」、複数日をまとめて保存するなら「読み取れた日付を全部保存」です。',
-    '修正したい場合は項目名を押してください。',
-  ].join('\n');
-
-  const quickReplies = [
-    'この内容で保存',
-    ...(dates.length > 1 ? ['読み取れた日付を全部保存'] : []),
-    'HbA1c',
-    '空腹時血糖',
-    'LDL',
-    'HDL',
-    '中性脂肪',
-    'AST',
-    'ALT',
-    'γ-GTP',
-    '尿酸',
-    'クレアチニン',
-    '日付',
-  ];
-
-  return { text, quickReplies };
-}
-
-function buildLabDateChoiceMessage(session) {
-  const workingData = session?.working_data_json || {};
-  const dates = Object.keys(workingData).map(normalizeDateString).filter(Boolean).sort();
-
-  return {
-    text: [
-      '複数の日付を読み取りました。',
-      ...dates.map((d) => `・${d}`),
-      '',
-      '1日分を確認するなら日付をそのまま送ってください。',
-      '全部まとめて保存するなら「読み取れた日付を全部保存」と送ってください。',
-    ].join('\n'),
-    quickReplies: buildDateQuickReplies(dates),
-  };
-}
-
-function buildLabCorrectionGuide(field) {
-  const label = labelForField(field);
-  if (field === 'date') {
-    return `${label}を修正します。YYYY/MM/DD の形で送ってください。例: 2025/03/12`;
-  }
-  return `${label}を修正します。数値だけ送ってください。例: 138`;
 }
 
 function createEmptyIntakeAnswers() {
   return {
-    ai_type: null,
-    age: null,
-    sex: null,
-    height_cm: null,
-    weight_kg: null,
-    target_weight_kg: null,
-    activity_level: null,
-    goal_text: '',
-    current_barriers: '',
+    ai_type: AI_TYPE_VALUES.SOFT,
+    current_condition: '',
+    exercise_history: '',
+    current_exercise: '',
+    goal_and_purpose: '',
+    desired_future: '',
+    barriers: '',
   };
 }
 
+function buildQuickReplies(items = []) {
+  return (items || [])
+    .map((item) => safeText(item))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
 function renderIntakeStepMessage(session) {
-  const step = session?.current_step || 'choose_ai_type';
+  const step = safeText(session?.current_step || INTAKE_STEPS.CHOOSE_AI_TYPE);
   const answers = session?.answers_json || createEmptyIntakeAnswers();
 
-  if (step === 'choose_ai_type') {
+  if (step === INTAKE_STEPS.CHOOSE_AI_TYPE) {
     return {
-      text: '最初に、AI牛込の話し方を選んでください。',
-      quickReplies: ['やさしい', '前向き', '分析型', '親しみやすい'],
+      text: [
+        '最初に、話し方のタイプを選んでください。',
+        '今後はこの雰囲気を基本にして伴走します。',
+        '',
+        `・${getAiTypeLabel(AI_TYPE_VALUES.SOFT)}`,
+        `・${getAiTypeLabel(AI_TYPE_VALUES.BRIGHT)}`,
+        `・${getAiTypeLabel(AI_TYPE_VALUES.RELIABLE)}`,
+        `・${getAiTypeLabel(AI_TYPE_VALUES.STRONG)}`,
+      ].join('\n'),
+      quickReplies: buildQuickReplies([
+        getAiTypeLabel(AI_TYPE_VALUES.SOFT),
+        getAiTypeLabel(AI_TYPE_VALUES.BRIGHT),
+        getAiTypeLabel(AI_TYPE_VALUES.RELIABLE),
+        getAiTypeLabel(AI_TYPE_VALUES.STRONG),
+      ]),
     };
   }
 
-  if (step === 'age') {
+  if (step === INTAKE_STEPS.CURRENT_CONDITION) {
     return {
-      text: '年齢を教えてください。例: 55',
+      text: '今の体調や生活の状態を教えてください。\n例: 疲れやすい / 夜に食べすぎやすい / 体が重い',
       quickReplies: [],
     };
   }
 
-  if (step === 'sex') {
+  if (step === INTAKE_STEPS.EXERCISE_HISTORY) {
     return {
-      text: '性別を教えてください。',
-      quickReplies: ['女性', '男性', 'その他'],
-    };
-  }
-
-  if (step === 'height_cm') {
-    return {
-      text: '身長を教えてください。例: 160',
+      text: 'これまでの運動経験を教えてください。\n例: 昔は運動していた / ほとんどしていない / ジム経験あり',
       quickReplies: [],
     };
   }
 
-  if (step === 'weight_kg') {
+  if (step === INTAKE_STEPS.CURRENT_EXERCISE) {
     return {
-      text: '現在の体重を教えてください。例: 63',
+      text: '今の運動習慣を教えてください。\n例: 散歩を週2回 / 特になし / ストレッチだけしている',
       quickReplies: [],
     };
   }
 
-  if (step === 'target_weight_kg') {
+  if (step === INTAKE_STEPS.GOAL_AND_PURPOSE) {
     return {
-      text: '目標体重を教えてください。例: 58',
+      text: '体重や見た目の目標だけでなく、何のために変わりたいかも教えてください。',
       quickReplies: [],
     };
   }
 
-  if (step === 'activity_level') {
+  if (step === INTAKE_STEPS.DESIRED_FUTURE) {
     return {
-      text: '普段の活動量に近いものを選んでください。',
-      quickReplies: ['低い', 'ふつう', '高い'],
-    };
-  }
-
-  if (step === 'goal_text') {
-    return {
-      text: 'どんな未来を目指したいですか？自由に教えてください。',
+      text: 'この先どうなれたら嬉しいか教えてください。\n例: 旅行を楽しみたい / 元気に動ける体になりたい',
       quickReplies: [],
     };
   }
 
-  if (step === 'current_barriers') {
+  if (step === INTAKE_STEPS.BARRIERS) {
     return {
-      text: '今うまくいきにくい理由や悩みがあれば教えてください。',
-      quickReplies: ['食事が乱れやすい', '運動が続かない', '疲れやすい', '特になし'],
+      text: '今まで続かなかった理由や、心配なことがあれば教えてください。',
+      quickReplies: [],
     };
   }
 
-  if (step === 'confirm_finish') {
-    const text = [
-      '初回設定の確認です。',
-      `・話し方: ${answers.ai_type || '未設定'}`,
-      `・年齢: ${answers.age || '未設定'}`,
-      `・性別: ${answers.sex || '未設定'}`,
-      `・身長: ${answers.height_cm || '未設定'} cm`,
-      `・体重: ${answers.weight_kg || '未設定'} kg`,
-      `・目標体重: ${answers.target_weight_kg || '未設定'} kg`,
-      `・活動量: ${answers.activity_level || '未設定'}`,
-      `・目標: ${answers.goal_text || '未入力'}`,
-      `・悩み: ${answers.current_barriers || '未入力'}`,
-      '',
-      'これでよければ「この内容で完了」を押してください。',
-    ].join('\n');
-
-    return {
-      text,
-      quickReplies: ['この内容で完了', '最初からやり直す'],
-    };
-  }
+  const summary = buildIntakeProfileSummary(answers);
 
   return {
-    text: '初回設定を続けます。',
-    quickReplies: [],
+    text: [
+      'この内容で初回設定を完了します。',
+      '',
+      `話し方: ${summary.conversation_style}`,
+      `今の状態: ${summary.current_condition || '未入力'}`,
+      `運動歴: ${summary.exercise_history || '未入力'}`,
+      `現在の運動: ${summary.current_exercise || '未入力'}`,
+      `目的: ${summary.goal_and_purpose || '未入力'}`,
+      `なりたい姿: ${summary.desired_future || '未入力'}`,
+      `気がかり: ${summary.current_barriers || '未入力'}`,
+      '',
+      'よければ「この内容で完了」と送ってください。',
+    ].join('\n'),
+    quickReplies: buildQuickReplies(['この内容で完了', '最初からやり直す']),
   };
 }
 
 function validateIntakeAnswer(step, text) {
-  const t = String(text || '').trim();
+  const value = safeText(text);
 
-  if (step === 'choose_ai_type') {
-    const map = {
-      'やさしい': 'gentle',
-      '前向き': 'energetic',
-      '分析型': 'analytical',
-      '親しみやすい': 'casual',
+  if (step === INTAKE_STEPS.CHOOSE_AI_TYPE) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.CURRENT_CONDITION,
+      patch: {
+        ai_type: normalizeAiTypeInput(value, AI_TYPE_VALUES.SOFT),
+      },
     };
-    const v = map[t];
-    if (!v) return { ok: false };
-    return { ok: true, nextStep: 'age', patch: { ai_type: v } };
   }
 
-  if (step === 'age') {
-    const v = normalizeNumber(t);
-    if (v === null) return { ok: false };
-    return { ok: true, nextStep: 'sex', patch: { age: Math.round(v) } };
+  if (!value) {
+    return {
+      ok: false,
+      nextStep: step,
+      patch: {},
+    };
   }
 
-  if (step === 'sex') {
-    if (!['女性', '男性', 'その他'].includes(t)) return { ok: false };
-    return { ok: true, nextStep: 'height_cm', patch: { sex: t } };
+  if (step === INTAKE_STEPS.CURRENT_CONDITION) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.EXERCISE_HISTORY,
+      patch: { current_condition: value },
+    };
   }
 
-  if (step === 'height_cm') {
-    const v = normalizeNumber(t);
-    if (v === null) return { ok: false };
-    return { ok: true, nextStep: 'weight_kg', patch: { height_cm: v } };
+  if (step === INTAKE_STEPS.EXERCISE_HISTORY) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.CURRENT_EXERCISE,
+      patch: { exercise_history: value },
+    };
   }
 
-  if (step === 'weight_kg') {
-    const v = normalizeNumber(t);
-    if (v === null) return { ok: false };
-    return { ok: true, nextStep: 'target_weight_kg', patch: { weight_kg: v } };
+  if (step === INTAKE_STEPS.CURRENT_EXERCISE) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.GOAL_AND_PURPOSE,
+      patch: { current_exercise: value },
+    };
   }
 
-  if (step === 'target_weight_kg') {
-    const v = normalizeNumber(t);
-    if (v === null) return { ok: false };
-    return { ok: true, nextStep: 'activity_level', patch: { target_weight_kg: v } };
+  if (step === INTAKE_STEPS.GOAL_AND_PURPOSE) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.DESIRED_FUTURE,
+      patch: { goal_and_purpose: value },
+    };
   }
 
-  if (step === 'activity_level') {
-    if (!['低い', 'ふつう', '高い'].includes(t)) return { ok: false };
-    return { ok: true, nextStep: 'goal_text', patch: { activity_level: t } };
+  if (step === INTAKE_STEPS.DESIRED_FUTURE) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.BARRIERS,
+      patch: { desired_future: value },
+    };
   }
 
-  if (step === 'goal_text') {
-    if (!t) return { ok: false };
-    return { ok: true, nextStep: 'current_barriers', patch: { goal_text: t } };
+  if (step === INTAKE_STEPS.BARRIERS) {
+    return {
+      ok: true,
+      nextStep: INTAKE_STEPS.CONFIRM_FINISH,
+      patch: { barriers: value },
+    };
   }
 
-  if (step === 'current_barriers') {
-    return { ok: true, nextStep: 'confirm_finish', patch: { current_barriers: t || '特になし' } };
-  }
-
-  return { ok: false };
-}
-
-function mapAiTypeToStoredValue(aiType) {
-  const map = {
-    gentle: 'gentle',
-    energetic: 'energetic',
-    analytical: 'analytical',
-    casual: 'casual',
+  return {
+    ok: false,
+    nextStep: step,
+    patch: {},
   };
-  return map[aiType] || 'gentle';
-}
-
-function mapActivityLevelToStoredValue(level) {
-  const map = {
-    '低い': 'low',
-    'ふつう': 'moderate',
-    '高い': 'high',
-  };
-  return map[level] || 'moderate';
-}
-
-function mapSexToStoredValue(sex) {
-  const map = {
-    '女性': 'female',
-    '男性': 'male',
-    'その他': 'other',
-    female: 'female',
-    male: 'male',
-    other: 'other',
-  };
-  return map[sex] || null;
 }
 
 function buildIntakeProfilePatch(answers) {
+  const a = answers || {};
+
   return {
-    ai_type: mapAiTypeToStoredValue(answers?.ai_type),
-    age: answers?.age ?? null,
-    sex: mapSexToStoredValue(answers?.sex),
-    height_cm: answers?.height_cm ?? null,
-    weight_kg: answers?.weight_kg ?? null,
-    target_weight_kg: answers?.target_weight_kg ?? null,
-    activity_level: mapActivityLevelToStoredValue(answers?.activity_level),
+    ai_type: normalizeAiTypeInput(a.ai_type, AI_TYPE_VALUES.SOFT),
   };
 }
 
 function buildIntakeProfileSummary(answers) {
-  const conversationStyleMap = {
-    gentle: 'やさしく安心感のある対話',
-    energetic: '明るく背中を押す対話',
-    analytical: '理由を整理して伝える対話',
-    casual: '親しみやすい対話',
-  };
-
-  const encouragementStyleMap = {
-    gentle: '安心型',
-    energetic: '前向き型',
-    analytical: '整理型',
-    casual: '親近感型',
-  };
+  const a = answers || {};
+  const aiType = normalizeAiTypeInput(a.ai_type, AI_TYPE_VALUES.SOFT);
 
   return {
-    conversation_style: conversationStyleMap[answers?.ai_type] || 'やさしく安心感のある対話',
-    encouragement_style: encouragementStyleMap[answers?.ai_type] || '安心型',
-    current_barriers: answers?.current_barriers || '',
+    conversation_style: getAiTypeLabel(aiType),
+    encouragement_style: getAiTypeLabel(aiType),
+    current_condition: safeText(a.current_condition),
+    exercise_history: safeText(a.exercise_history),
+    current_exercise: safeText(a.current_exercise),
+    goal_and_purpose: safeText(a.goal_and_purpose),
+    desired_future: safeText(a.desired_future),
+    current_barriers: safeText(a.barriers),
   };
 }
 
+function findPanelDateFromInput(openLabDraft, text) {
+  const value = safeText(text);
+  if (!value) return '';
+
+  const candidates = Object.keys(openLabDraft?.working_data_json || {});
+  if (!candidates.length) return '';
+
+  const normalized = value.replace(/[年/.]/g, '-').replace(/月/g, '-').replace(/日/g, '').trim();
+
+  const exact = candidates.find((date) => date === normalized);
+  if (exact) return exact;
+
+  const loose = candidates.find((date) => value.includes(date));
+  return loose || '';
+}
+
+function mapCorrectionLabelToField(text) {
+  const t = normalizeLoose(text);
+
+  const pairs = [
+    ['hba1c', ['hba1c', 'ヘモグロビンa1c', 'エイチビーエーワンシー']],
+    ['fasting_glucose', ['空腹時血糖', '血糖', 'グルコース']],
+    ['ldl', ['ldl', '悪玉コレステロール']],
+    ['hdl', ['hdl', '善玉コレステロール']],
+    ['triglycerides', ['中性脂肪', 'tg', 'トリグリセライド']],
+    ['ast', ['ast', 'got']],
+    ['alt', ['alt', 'gpt']],
+    ['ggt', ['γgtp', 'γ-gtp', 'ggt', 'ガンマ']],
+    ['uric_acid', ['尿酸']],
+    ['creatinine', ['クレアチニン']],
+    ['measured_at', ['日付', '測定日', '検査日']],
+  ];
+
+  for (const [field, labels] of pairs) {
+    if (labels.some((label) => t.includes(normalizeLoose(label)))) {
+      return field;
+    }
+  }
+
+  return '';
+}
+
+function buildLabDraftSummaryMessage(session) {
+  const selectedDate = safeText(session?.selected_date);
+  const working = session?.working_data_json || {};
+  const date = selectedDate || Object.keys(working).sort().pop() || '';
+  const data = working[date] || {};
+
+  const lines = [
+    '読み取った内容です。',
+    date ? `日付: ${date}` : null,
+    data.hba1c != null ? `HbA1c: ${data.hba1c}` : null,
+    data.fasting_glucose != null ? `空腹時血糖: ${data.fasting_glucose}` : null,
+    data.ldl != null ? `LDL: ${data.ldl}` : null,
+    data.hdl != null ? `HDL: ${data.hdl}` : null,
+    data.triglycerides != null ? `中性脂肪: ${data.triglycerides}` : null,
+    data.ast != null ? `AST: ${data.ast}` : null,
+    data.alt != null ? `ALT: ${data.alt}` : null,
+    data.ggt != null ? `γ-GTP: ${data.ggt}` : null,
+    data.uric_acid != null ? `尿酸: ${data.uric_acid}` : null,
+    data.creatinine != null ? `クレアチニン: ${data.creatinine}` : null,
+  ].filter(Boolean);
+
+  return {
+    text: lines.join('\n'),
+    quickReplies: buildQuickReplies([
+      'この内容で保存',
+      '日付を修正',
+      'HbA1cを修正',
+      'LDLを修正',
+      '中性脂肪を修正',
+      '全部保存',
+    ]),
+  };
+}
+
+function buildLabDateChoiceMessage(session) {
+  const dates = Object.keys(session?.working_data_json || {}).sort();
+
+  return {
+    text: [
+      '複数の日付を読み取りました。',
+      '保存したい日付を送ってください。',
+      ...dates.map((d) => `・${d}`),
+    ].join('\n'),
+    quickReplies: buildQuickReplies(dates.slice(0, 6)),
+  };
+}
+
+function buildLabCorrectionGuide(field) {
+  const label = LAB_FIELD_LABELS[field] || '項目';
+  return `${label}の修正値を送ってください。`;
+}
+
 module.exports = {
-  findPanelDateFromInput,
-  mapCorrectionLabelToField,
-  buildLabDraftSummaryMessage,
-  buildLabDateChoiceMessage,
-  buildLabCorrectionGuide,
   createEmptyIntakeAnswers,
   renderIntakeStepMessage,
   validateIntakeAnswer,
   buildIntakeProfilePatch,
   buildIntakeProfileSummary,
+  findPanelDateFromInput,
+  mapCorrectionLabelToField,
+  buildLabDraftSummaryMessage,
+  buildLabDateChoiceMessage,
+  buildLabCorrectionGuide,
 };
