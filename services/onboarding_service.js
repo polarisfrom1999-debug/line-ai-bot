@@ -75,6 +75,36 @@ function normalizeUserState(user) {
   };
 }
 
+function buildStateFromCompletedUser(user) {
+  return {
+    current_flow: user?.current_flow || 'support',
+    current_step: user?.current_step || ONBOARDING_STEPS.CONFIRM,
+    onboarding_status: user?.onboarding_status || 'completed',
+    trial_status: user?.trial_status || 'active',
+    profile_data: {
+      ...createEmptyProfile(),
+      ...(user?.onboarding_state_json && typeof user.onboarding_state_json === 'string'
+        ? (safeJsonParse(user.onboarding_state_json, {})?.profile_data || {})
+        : user?.onboarding_state_json?.profile_data || {}),
+      name: user?.display_name || null,
+      age: user?.age ?? null,
+      height_cm: user?.height_cm ?? null,
+      weight_kg: user?.weight_kg ?? null,
+      body_fat_percent: user?.body_fat_percent ?? null,
+      goal_type: user?.goal_type ?? null,
+      goal_weight_kg: user?.goal_weight_kg ?? null,
+      goal_body_fat_percent: user?.goal_body_fat_percent ?? null,
+      goal_period: user?.goal_period ?? null,
+      main_concern: user?.main_concern ?? null,
+      lifestyle: user?.lifestyle ?? null,
+      pain_or_risk: user?.pain_or_risk ?? null,
+      note: user?.note ?? null,
+      tone: user?.ai_type ?? null,
+    },
+    edit_target: null,
+  };
+}
+
 function isOnboardingActive(user) {
   const state = normalizeUserState(user);
   return state.onboarding_status !== 'completed' && state.current_flow === 'onboarding';
@@ -96,12 +126,37 @@ function buildQuickReplyPayload(labels = []) {
   }));
 }
 
+function buildEditSelectMessage() {
+  return {
+    text: `変更したい項目を選んでください🌿`,
+    quickReplies: [
+      '名前',
+      '年齢',
+      '身長',
+      '体重',
+      '体脂肪率',
+      '目標',
+      '目標体重',
+      '目標体脂肪率',
+      '目標時期',
+      '悩み',
+      '生活',
+      '不安',
+      '話し方',
+    ],
+  };
+}
+
 function buildStepMessage(step, profile) {
   if (step === ONBOARDING_STEPS.CONFIRM) {
     return {
       text: buildProfileConfirmMessage(profile),
       quickReplies: ['この内容で保存', '修正する', '最初からやり直す'],
     };
+  }
+
+  if (step === ONBOARDING_STEPS.EDIT_SELECT) {
+    return buildEditSelectMessage();
   }
 
   return ONBOARDING_MESSAGES[step] || {
@@ -291,8 +346,8 @@ function completeOnboardingState(state) {
   return {
     ...state,
     onboarding_status: 'completed',
-    trial_status: 'active',
-    current_flow: 'trial',
+    trial_status: state.trial_status || 'active',
+    current_flow: state.current_flow === 'onboarding' ? 'trial' : (state.current_flow || 'trial'),
     current_step: ONBOARDING_STEPS.SAVED,
     edit_target: null,
   };
@@ -301,6 +356,9 @@ function completeOnboardingState(state) {
 function resetProfileState(state) {
   return {
     ...state,
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    trial_status: state.trial_status || 'not_started',
     profile_data: createEmptyProfile(),
     current_step: ONBOARDING_STEPS.NAME,
     edit_target: null,
@@ -315,6 +373,9 @@ function applyEditSelection(state, text) {
     体重: { step: ONBOARDING_STEPS.WEIGHT, edit_target: 'weight_kg' },
     体脂肪率: { step: ONBOARDING_STEPS.BODY_FAT, edit_target: 'body_fat_percent' },
     目標: { step: ONBOARDING_STEPS.GOAL_TYPE, edit_target: 'goal_type' },
+    目標体重: { step: ONBOARDING_STEPS.GOAL_WEIGHT, edit_target: 'goal_weight_kg' },
+    目標体脂肪率: { step: ONBOARDING_STEPS.GOAL_BODY_FAT, edit_target: 'goal_body_fat_percent' },
+    目標時期: { step: ONBOARDING_STEPS.GOAL_PERIOD, edit_target: 'goal_period' },
     悩み: { step: ONBOARDING_STEPS.CONCERN, edit_target: 'main_concern' },
     生活: { step: ONBOARDING_STEPS.LIFESTYLE, edit_target: 'lifestyle' },
     不安: { step: ONBOARDING_STEPS.PAIN_RISK, edit_target: 'pain_or_risk' },
@@ -353,28 +414,32 @@ function handleCommand(state, text) {
   if (step === ONBOARDING_STEPS.BODY_FAT && command === '不明') {
     const nextState = { ...state };
     nextState.profile_data.body_fat_percent = null;
-    nextState.current_step = ONBOARDING_STEPS.GOAL_TYPE;
+    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_TYPE;
+    nextState.edit_target = state.edit_target ? null : state.edit_target;
     return { ok: true, state: nextState };
   }
 
   if (step === ONBOARDING_STEPS.GOAL_WEIGHT && command === '相談したい') {
     const nextState = { ...state };
     nextState.profile_data.goal_weight_kg = null;
-    nextState.current_step = ONBOARDING_STEPS.GOAL_BODY_FAT;
+    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_BODY_FAT;
+    nextState.edit_target = state.edit_target ? null : state.edit_target;
     return { ok: true, state: nextState };
   }
 
   if (step === ONBOARDING_STEPS.GOAL_BODY_FAT && command === '相談したい') {
     const nextState = { ...state };
     nextState.profile_data.goal_body_fat_percent = null;
-    nextState.current_step = ONBOARDING_STEPS.GOAL_PERIOD;
+    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_PERIOD;
+    nextState.edit_target = state.edit_target ? null : state.edit_target;
     return { ok: true, state: nextState };
   }
 
   if (step === ONBOARDING_STEPS.NOTE && command === 'なし') {
     const nextState = { ...state };
     nextState.profile_data.note = 'なし';
-    nextState.current_step = ONBOARDING_STEPS.TONE;
+    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.TONE;
+    nextState.edit_target = state.edit_target ? null : state.edit_target;
     return { ok: true, state: nextState };
   }
 
@@ -402,7 +467,7 @@ function handleCommand(state, text) {
         },
       };
     }
-    return { ok: false, errorMessage: '修正したい項目をボタンから選んでください。' };
+    return { ok: false, errorMessage: '変更したい項目をボタンから選んでください。' };
   }
 
   return { ok: false, errorMessage: null };
@@ -481,6 +546,28 @@ function buildOnboardingStatePatch(state) {
   };
 }
 
+function startProfileEditFromUser(user, mode = 'confirm') {
+  const state = buildStateFromCompletedUser(user);
+
+  if (mode === 'reset') {
+    return resetProfileState(state);
+  }
+
+  if (mode === 'edit') {
+    return {
+      ...state,
+      current_step: ONBOARDING_STEPS.EDIT_SELECT,
+      edit_target: null,
+    };
+  }
+
+  return {
+    ...state,
+    current_step: ONBOARDING_STEPS.CONFIRM,
+    edit_target: null,
+  };
+}
+
 module.exports = {
   ONBOARDING_STEPS,
   createInitialOnboardingState,
@@ -491,4 +578,5 @@ module.exports = {
   buildReplyPayload,
   advanceOnboardingState,
   buildOnboardingStatePatch,
+  startProfileEditFromUser,
 };
