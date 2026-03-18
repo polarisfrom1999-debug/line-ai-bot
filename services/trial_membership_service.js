@@ -32,6 +32,13 @@ function addDays(date, days) {
   return d;
 }
 
+function formatDateJa(value) {
+  const iso = toIsoOrNull(value);
+  if (!iso) return '未設定';
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function buildQuickReplies(items = []) {
   const cleaned = items
     .map((item) => safeText(item))
@@ -215,6 +222,30 @@ function isPlanGuideTrigger(text) {
     '契約したい',
     '別プランも見る',
     '内容を確認する',
+    'プランをもう一度見る',
+    'プラン再表示',
+  ].includes(value);
+}
+
+function isTrialStatusIntent(text) {
+  const value = safeText(text).replace(/\s+/g, '');
+  return [
+    '体験状況',
+    '体験状況確認',
+    '無料体験',
+    '無料体験確認',
+    '今の体験状況',
+  ].includes(value);
+}
+
+function isCurrentPlanIntent(text) {
+  const value = safeText(text).replace(/\s+/g, '');
+  return [
+    '現在のプラン',
+    'プラン確認',
+    '今のプラン',
+    '契約状況',
+    '現在の契約',
   ].includes(value);
 }
 
@@ -316,6 +347,60 @@ function buildRenewalPromptMessage(user) {
   };
 }
 
+function buildTrialStatusMessage(user) {
+  const status = getMembershipStatus(user);
+  const lines = ['現在の体験状況です。'];
+
+  if (!user?.trial_started_at) {
+    lines.push('無料体験はまだ開始していません。');
+  } else {
+    lines.push(`開始日: ${formatDateJa(user.trial_started_at)}`);
+    lines.push(`終了予定: ${formatDateJa(user.trial_ends_at)}`);
+    lines.push(`状態: ${status === MEMBERSHIP_STATUS.TRIAL ? '無料体験中' : '体験終了または切替済み'}`);
+  }
+
+  if (user?.trial_plan_prompted_at) {
+    lines.push(`プラン案内表示: ${formatDateJa(user.trial_plan_prompted_at)}`);
+  }
+
+  return {
+    text: lines.join('\n'),
+    quickReply: buildQuickReplies([
+      '現在のプラン',
+      'プラン案内を見る',
+      'プロフィール確認',
+    ]),
+  };
+}
+
+function buildCurrentPlanStatusMessage(user) {
+  const status = getMembershipStatus(user);
+  const currentPlan = getCurrentPlan(user);
+
+  const lines = ['現在のプラン状況です。'];
+
+  if (status !== MEMBERSHIP_STATUS.ACTIVE || !currentPlan) {
+    lines.push('本契約プランはまだ設定されていません。');
+  } else {
+    lines.push(`現在のプラン: ${PLAN_LABELS[currentPlan]}`);
+    lines.push(`開始日: ${formatDateJa(user.plan_started_at)}`);
+    lines.push(`案内: ${PLAN_SHORT_DESCRIPTIONS[currentPlan]}`);
+  }
+
+  if (user?.renewal_prompted_at) {
+    lines.push(`継続案内表示: ${formatDateJa(user.renewal_prompted_at)}`);
+  }
+
+  return {
+    text: lines.join('\n'),
+    quickReply: buildQuickReplies([
+      'プラン案内を見る',
+      '体験状況確認',
+      'プラン変更したい',
+    ]),
+  };
+}
+
 module.exports = {
   MEMBERSHIP_STATUS,
   PLAN_TYPES,
@@ -340,9 +425,13 @@ module.exports = {
   shouldPromptRenewal,
   normalizePlanSelection,
   isPlanGuideTrigger,
+  isTrialStatusIntent,
+  isCurrentPlanIntent,
   buildTrialStartedMessage,
   buildTrialEndingMessage,
   buildPlanGuideMessage,
   buildPlanSelectedMessage,
   buildRenewalPromptMessage,
+  buildTrialStatusMessage,
+  buildCurrentPlanStatusMessage,
 };
