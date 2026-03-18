@@ -112,6 +112,14 @@ const {
   formatTimeHmInTZ,
   getWeekdayJaInTZ,
 } = require('./utils/dates');
+const {
+  createInitialOnboardingState,
+  normalizeUserState,
+  isOnboardingActive,
+  buildReplyPayload,
+  advanceOnboardingState,
+  buildOnboardingStatePatch,
+} = require('./services/onboarding_service');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -620,6 +628,7 @@ function parseWeightInput(text) {
 function helpMessage() {
   return [
     '使い方の例です。',
+    '・はじめる',
     '・名前は 牛込',
     '・初回診断',
     '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
@@ -2167,11 +2176,76 @@ async function handleImageMessage(event, user) {
   }
 }
 
+async function handleOnboardingMessage(event, user) {
+  const text = String(event?.message?.text || '').trim();
+
+  let state = normalizeUserState(user);
+
+  if (!user?.onboarding_state_json && !user?.onboarding_status) {
+    state = createInitialOnboardingState();
+    const initialPatch = buildOnboardingStatePatch(state);
+
+    const { error } = await supabase
+      .from('users')
+      .update(initialPatch)
+      .eq('id', user.id);
+
+    if (error) throw error;
+  }
+
+  const currentUserForAdvance = {
+    ...user,
+    onboarding_state_json: JSON.stringify(state),
+  };
+
+  const result = advanceOnboardingState(currentUserForAdvance, text);
+
+  if (!result.ok && result.errorMessage) {
+    const reply = buildReplyPayload(state);
+    const errorText = `${result.errorMessage}\n\n${reply.text}`;
+
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(errorText, reply.quickReplies),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const nextState = result.state || state;
+  const patch = buildOnboardingStatePatch(nextState);
+
+  const { error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('id', user.id);
+
+  if (error) throw error;
+
+  const reply = buildReplyPayload(nextState);
+
+  await replyMessage(
+    event.replyToken,
+    textMessageWithQuickReplies(reply.text, reply.quickReplies),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+}
+
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
 
   try {
+    const shouldEnterOnboarding =
+      isOnboardingActive(user) ||
+      text === 'はじめる' ||
+      (!user?.onboarding_status && !user?.current_flow);
+
+    if (shouldEnterOnboarding) {
+      await handleOnboardingMessage(event, user);
+      return;
+    }
+
     const parsedName = parseDisplayName(text);
     if (parsedName) {
       const safeName = normalizeStoredDisplayName(parsedName);
