@@ -5,8 +5,8 @@
  *
  * 目的:
  * - 管理者向け共有メモを共通フォーマットで作る
- * - 既存の flow を壊さず、あとから index.js に安全に接続できる形にする
  * - 痛み相談 / 血液検査 / 記録漏れ / 週間報告 / 月間報告 に対応
+ * - index.js からそのまま呼びやすい形にする
  */
 
 function safeText(value, fallback = '') {
@@ -16,11 +16,6 @@ function safeText(value, fallback = '') {
 function toNumber(value, fallback = null) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function round1(value) {
-  const n = toNumber(value, null);
-  return n === null ? null : Math.round(n * 10) / 10;
 }
 
 function uniq(arr) {
@@ -320,70 +315,4 @@ function memoToText(memo = {}) {
   }
 
   if (memo.recommended_followup_timing) {
-    lines.push(`確認目安: ${memo.recommended_followup_timing}`);
-  }
-  if (memo.recommended_action) {
-    lines.push(`対応案: ${memo.recommended_action}`);
-  }
-
-  return lines.filter(Boolean).join('\n');
-}
-
-function createPainAdminMemo(input = {}) {
-  const memo = buildPainMemo(input);
-  return {
-    ok: true,
-    memo_type: 'pain',
-    memo,
-    memo_text: memoToText(memo),
-  };
-}
-
-function createLabAdminMemo(input = {}) {
-  const memo = buildLabMemo(input);
-  return {
-    ok: true,
-    memo_type: 'lab_result',
-    memo,
-    memo_text: memoToText(memo),
-  };
-}
-
-function createMissingLogAdminMemo(input = {}) {
-  const memo = buildMissingLogMemo(input);
-  return {
-    ok: true,
-    memo_type: 'missing_log',
-    memo,
-    memo_text: memoToText(memo),
-  };
-}
-
-function createReportAdminMemo(input = {}) {
-  const memo = buildReportMemo(input);
-  return {
-    ok: true,
-    memo_type: memo.memo_type,
-    memo,
-    memo_text: memoToText(memo),
-  };
-}
-
-function createGeneralAdminMemo(input = {}) {
-  const memo = buildGeneralMemo(input);
-  return {
-    ok: true,
-    memo_type: memo.memo_type,
-    memo,
-    memo_text: memoToText(memo),
-  };
-}
-
-module.exports = {
-  createPainAdminMemo,
-  createLabAdminMemo,
-  createMissingLogAdminMemo,
-  createReportAdminMemo,
-  createGeneralAdminMemo,
-  memoToText,
-};
+    lines.push(`確認目安: ${memo.recommended_followup
