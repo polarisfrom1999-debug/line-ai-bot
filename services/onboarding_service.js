@@ -1,580 +1,365 @@
 'use strict';
 
-const {
-  ONBOARDING_STEPS,
-  ONBOARDING_MESSAGES,
-  GOAL_TYPE_OPTIONS,
-  GOAL_PERIOD_OPTIONS,
-  CONCERN_OPTIONS,
-  LIFESTYLE_OPTIONS,
-  PAIN_RISK_OPTIONS,
-  TONE_OPTIONS,
-  buildProfileConfirmMessage,
-} = require('../config/onboarding_messages');
+/**
+ * services/onboarding_service.js
+ *
+ * 目的:
+ * - LINEの初回導線を軽く管理する
+ * - index.js 側の beginProfileManagementFlow / handleOnboardingMessage と安全につなぐ
+ * - 既存の記録・相談・初回診断フローとぶつかりにくくする
+ */
 
-function createEmptyProfile() {
-  return {
-    name: null,
-    age: null,
-    height_cm: null,
-    weight_kg: null,
-    body_fat_percent: null,
-    goal_type: null,
-    goal_weight_kg: null,
-    goal_body_fat_percent: null,
-    goal_period: null,
-    main_concern: null,
-    lifestyle: null,
-    pain_or_risk: null,
-    note: null,
-    tone: null,
-  };
+const ONBOARDING_STEPS = {
+  WELCOME: 'welcome',
+  CONFIRM: 'confirm',
+  EDIT_SELECT: 'edit_select',
+  EDIT_PROMPT: 'edit_prompt',
+  RESET_PROMPT: 'reset_prompt',
+  DONE: 'done',
+};
+
+function safeText(value, fallback = '') {
+  return String(value || fallback).trim();
+}
+
+function normalizeLoose(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
+function buildQuickReplies(items = []) {
+  return (items || []).filter(Boolean).slice(0, 13);
+}
+
+function buildProfileSummaryFromUser(user = {}) {
+  const parts = [
+    user.gender ? `性別: ${user.gender}` : null,
+    user.age != null ? `年齢: ${user.age}` : null,
+    user.height_cm != null ? `身長: ${user.height_cm}cm` : null,
+    user.weight_kg != null ? `体重: ${user.weight_kg}kg` : null,
+    user.target_weight_kg != null ? `目標体重: ${user.target_weight_kg}kg` : null,
+    user.activity_level ? `活動量: ${user.activity_level}` : null,
+    user.ai_type ? `AIタイプ: ${user.ai_type}` : null,
+  ].filter(Boolean);
+
+  return parts.length ? parts.join('\n') : 'プロフィールはまだ十分に登録されていません。';
 }
 
 function createInitialOnboardingState() {
   return {
+    active: true,
+    mode: 'start',
+    step: ONBOARDING_STEPS.WELCOME,
     current_flow: 'onboarding',
-    current_step: ONBOARDING_STEPS.WELCOME,
     onboarding_status: 'in_progress',
-    trial_status: 'not_started',
-    profile_data: createEmptyProfile(),
+    current_step: ONBOARDING_STEPS.WELCOME,
+    started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    collected: {},
+    trial_status: 'active',
     edit_target: null,
   };
 }
 
-function safeJsonParse(text, fallback) {
+function parseStateJson(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
   try {
-    return JSON.parse(text);
-  } catch (_err) {
-    return fallback;
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
   }
 }
 
-function normalizeUserState(user) {
-  const raw = user?.onboarding_state_json;
-  const parsed = typeof raw === 'string'
-    ? safeJsonParse(raw, null)
-    : raw && typeof raw === 'object'
-      ? raw
-      : null;
+function normalizeUserState(user = {}) {
+  const parsed = parseStateJson(user.onboarding_state_json);
 
-  if (!parsed || typeof parsed !== 'object') {
-    return createInitialOnboardingState();
-  }
+  if (parsed && typeof parsed === 'object') {
+    const currentStep = safeText(parsed.current_step || parsed.step || ONBOARDING_STEPS.WELCOME) || ONBOARDING_STEPS.WELCOME;
 
-  return {
-    current_flow: parsed.current_flow || 'onboarding',
-    current_step: parsed.current_step || ONBOARDING_STEPS.WELCOME,
-    onboarding_status: parsed.onboarding_status || 'in_progress',
-    trial_status: parsed.trial_status || 'not_started',
-    profile_data: {
-      ...createEmptyProfile(),
-      ...(parsed.profile_data || {}),
-    },
-    edit_target: parsed.edit_target || null,
-  };
-}
-
-function buildStateFromCompletedUser(user) {
-  return {
-    current_flow: user?.current_flow || 'support',
-    current_step: user?.current_step || ONBOARDING_STEPS.CONFIRM,
-    onboarding_status: user?.onboarding_status || 'completed',
-    trial_status: user?.trial_status || 'active',
-    profile_data: {
-      ...createEmptyProfile(),
-      ...(user?.onboarding_state_json && typeof user.onboarding_state_json === 'string'
-        ? (safeJsonParse(user.onboarding_state_json, {})?.profile_data || {})
-        : user?.onboarding_state_json?.profile_data || {}),
-      name: user?.display_name || null,
-      age: user?.age ?? null,
-      height_cm: user?.height_cm ?? null,
-      weight_kg: user?.weight_kg ?? null,
-      body_fat_percent: user?.body_fat_percent ?? null,
-      goal_type: user?.goal_type ?? null,
-      goal_weight_kg: user?.goal_weight_kg ?? null,
-      goal_body_fat_percent: user?.goal_body_fat_percent ?? null,
-      goal_period: user?.goal_period ?? null,
-      main_concern: user?.main_concern ?? null,
-      lifestyle: user?.lifestyle ?? null,
-      pain_or_risk: user?.pain_or_risk ?? null,
-      note: user?.note ?? null,
-      tone: user?.ai_type ?? null,
-    },
-    edit_target: null,
-  };
-}
-
-function isOnboardingActive(user) {
-  const state = normalizeUserState(user);
-  return state.onboarding_status !== 'completed' && state.current_flow === 'onboarding';
-}
-
-function isTrialActive(user) {
-  const state = normalizeUserState(user);
-  return state.current_flow === 'trial' && state.trial_status === 'active';
-}
-
-function buildQuickReplyPayload(labels = []) {
-  return labels.map((label) => ({
-    type: 'action',
-    action: {
-      type: 'message',
-      label,
-      text: label,
-    },
-  }));
-}
-
-function buildEditSelectMessage() {
-  return {
-    text: `変更したい項目を選んでください🌿`,
-    quickReplies: [
-      '名前',
-      '年齢',
-      '身長',
-      '体重',
-      '体脂肪率',
-      '目標',
-      '目標体重',
-      '目標体脂肪率',
-      '目標時期',
-      '悩み',
-      '生活',
-      '不安',
-      '話し方',
-    ],
-  };
-}
-
-function buildStepMessage(step, profile) {
-  if (step === ONBOARDING_STEPS.CONFIRM) {
     return {
-      text: buildProfileConfirmMessage(profile),
-      quickReplies: ['この内容で保存', '修正する', '最初からやり直す'],
+      active: parsed.active !== false,
+      mode: safeText(parsed.mode || 'start') || 'start',
+      step: currentStep,
+      current_step: currentStep,
+      current_flow: safeText(parsed.current_flow || user.current_flow || 'onboarding') || 'onboarding',
+      onboarding_status: safeText(parsed.onboarding_status || user.onboarding_status || 'in_progress') || 'in_progress',
+      started_at: safeText(parsed.started_at || user.onboarding_started_at || ''),
+      updated_at: new Date().toISOString(),
+      collected: parsed.collected && typeof parsed.collected === 'object' ? parsed.collected : {},
+      trial_status: safeText(parsed.trial_status || user.trial_status || 'active') || 'active',
+      edit_target: parsed.edit_target || null,
     };
   }
 
-  if (step === ONBOARDING_STEPS.EDIT_SELECT) {
-    return buildEditSelectMessage();
+  return createInitialOnboardingState();
+}
+
+function isOnboardingActive(user = {}) {
+  const state = parseStateJson(user.onboarding_state_json);
+  if (state && typeof state === 'object') {
+    return state.active === true;
   }
 
-  return ONBOARDING_MESSAGES[step] || {
-    text: 'もう一度お試しください。',
-    quickReplies: [],
-  };
+  const status = safeText(user.onboarding_status || '');
+  return status === 'active' || status === 'in_progress';
 }
 
-function optionLabelToValue(options, label) {
-  const found = options.find((item) => item.label === label);
-  return found ? found.value : null;
-}
+function buildOnboardingStatePatch(state = {}) {
+  const active = state.active !== false;
+  const mode = safeText(state.mode || 'start') || 'start';
+  const currentStep = safeText(state.current_step || state.step || ONBOARDING_STEPS.WELCOME) || ONBOARDING_STEPS.WELCOME;
+  const nowIso = new Date().toISOString();
 
-function normalizeText(text) {
-  return String(text || '').trim();
-}
-
-function normalizeName(text) {
-  const v = normalizeText(text);
-  if (!v) {
-    return { ok: false, errorMessage: 'お名前を入力してください。' };
-  }
-  return { ok: true, value: v.slice(0, 40) };
-}
-
-function normalizeInteger(text, { min, max, name }) {
-  const cleaned = normalizeText(text).replace(/[^\d]/g, '');
-  if (!cleaned) {
-    return { ok: false, errorMessage: `${name}を数字で入力してください。` };
-  }
-
-  const n = Number(cleaned);
-  if (!Number.isFinite(n) || n < min || n > max) {
-    return { ok: false, errorMessage: `${name}は${min}〜${max}の範囲で入力してください。` };
-  }
-
-  return { ok: true, value: n };
-}
-
-function normalizeFloat(text, { min, max, name }) {
-  const cleaned = normalizeText(text).replace(/[^\d.]/g, '');
-  if (!cleaned) {
-    return { ok: false, errorMessage: `${name}を数字で入力してください。` };
-  }
-
-  const n = Number(cleaned);
-  if (!Number.isFinite(n) || n < min || n > max) {
-    return { ok: false, errorMessage: `${name}は${min}〜${max}の範囲で入力してください。` };
-  }
-
-  return { ok: true, value: Math.round(n * 10) / 10 };
-}
-
-function normalizeAge(text) {
-  return normalizeInteger(text, { min: 10, max: 120, name: '年齢' });
-}
-
-function normalizeHeight(text) {
-  return normalizeInteger(text, { min: 100, max: 220, name: '身長' });
-}
-
-function normalizeWeight(text) {
-  return normalizeFloat(text, { min: 20, max: 250, name: '体重' });
-}
-
-function normalizeBodyFat(text) {
-  const v = normalizeText(text);
-  if (v === '不明') {
-    return { ok: true, value: null };
-  }
-  return normalizeFloat(v, { min: 1, max: 80, name: '体脂肪率' });
-}
-
-function normalizeGoalWeight(text) {
-  const v = normalizeText(text);
-  if (v === '相談したい') {
-    return { ok: true, value: null };
-  }
-  return normalizeFloat(v, { min: 20, max: 250, name: '目標体重' });
-}
-
-function normalizeGoalBodyFat(text) {
-  const v = normalizeText(text);
-  if (v === '相談したい') {
-    return { ok: true, value: null };
-  }
-  return normalizeFloat(v, { min: 1, max: 80, name: '目標体脂肪率' });
-}
-
-function normalizeByOptions(text, options, errorMessage) {
-  const value = optionLabelToValue(options, normalizeText(text));
-  if (!value) {
-    return { ok: false, errorMessage };
-  }
-  return { ok: true, value };
-}
-
-function normalizeNote(text) {
-  const v = normalizeText(text);
-  if (!v || v === 'なし') {
-    return { ok: true, value: 'なし' };
-  }
-  return { ok: true, value: v.slice(0, 300) };
-}
-
-const stepToFieldMap = {
-  [ONBOARDING_STEPS.NAME]: 'name',
-  [ONBOARDING_STEPS.AGE]: 'age',
-  [ONBOARDING_STEPS.HEIGHT]: 'height_cm',
-  [ONBOARDING_STEPS.WEIGHT]: 'weight_kg',
-  [ONBOARDING_STEPS.BODY_FAT]: 'body_fat_percent',
-  [ONBOARDING_STEPS.GOAL_TYPE]: 'goal_type',
-  [ONBOARDING_STEPS.GOAL_WEIGHT]: 'goal_weight_kg',
-  [ONBOARDING_STEPS.GOAL_BODY_FAT]: 'goal_body_fat_percent',
-  [ONBOARDING_STEPS.GOAL_PERIOD]: 'goal_period',
-  [ONBOARDING_STEPS.CONCERN]: 'main_concern',
-  [ONBOARDING_STEPS.LIFESTYLE]: 'lifestyle',
-  [ONBOARDING_STEPS.PAIN_RISK]: 'pain_or_risk',
-  [ONBOARDING_STEPS.NOTE]: 'note',
-  [ONBOARDING_STEPS.TONE]: 'tone',
-};
-
-const nextStepMap = {
-  [ONBOARDING_STEPS.NAME]: ONBOARDING_STEPS.AGE,
-  [ONBOARDING_STEPS.AGE]: ONBOARDING_STEPS.HEIGHT,
-  [ONBOARDING_STEPS.HEIGHT]: ONBOARDING_STEPS.WEIGHT,
-  [ONBOARDING_STEPS.WEIGHT]: ONBOARDING_STEPS.BODY_FAT,
-  [ONBOARDING_STEPS.BODY_FAT]: ONBOARDING_STEPS.GOAL_TYPE,
-  [ONBOARDING_STEPS.GOAL_TYPE]: ONBOARDING_STEPS.GOAL_WEIGHT,
-  [ONBOARDING_STEPS.GOAL_WEIGHT]: ONBOARDING_STEPS.GOAL_BODY_FAT,
-  [ONBOARDING_STEPS.GOAL_BODY_FAT]: ONBOARDING_STEPS.GOAL_PERIOD,
-  [ONBOARDING_STEPS.GOAL_PERIOD]: ONBOARDING_STEPS.CONCERN,
-  [ONBOARDING_STEPS.CONCERN]: ONBOARDING_STEPS.LIFESTYLE,
-  [ONBOARDING_STEPS.LIFESTYLE]: ONBOARDING_STEPS.PAIN_RISK,
-  [ONBOARDING_STEPS.PAIN_RISK]: ONBOARDING_STEPS.NOTE,
-  [ONBOARDING_STEPS.NOTE]: ONBOARDING_STEPS.TONE,
-  [ONBOARDING_STEPS.TONE]: ONBOARDING_STEPS.CONFIRM,
-};
-
-function normalizeInputByStep(step, text) {
-  switch (step) {
-    case ONBOARDING_STEPS.NAME:
-      return normalizeName(text);
-    case ONBOARDING_STEPS.AGE:
-      return normalizeAge(text);
-    case ONBOARDING_STEPS.HEIGHT:
-      return normalizeHeight(text);
-    case ONBOARDING_STEPS.WEIGHT:
-      return normalizeWeight(text);
-    case ONBOARDING_STEPS.BODY_FAT:
-      return normalizeBodyFat(text);
-    case ONBOARDING_STEPS.GOAL_TYPE:
-      return normalizeByOptions(text, GOAL_TYPE_OPTIONS, '目標をボタンから選んでください。');
-    case ONBOARDING_STEPS.GOAL_WEIGHT:
-      return normalizeGoalWeight(text);
-    case ONBOARDING_STEPS.GOAL_BODY_FAT:
-      return normalizeGoalBodyFat(text);
-    case ONBOARDING_STEPS.GOAL_PERIOD:
-      return normalizeByOptions(text, GOAL_PERIOD_OPTIONS, '目標時期をボタンから選んでください。');
-    case ONBOARDING_STEPS.CONCERN:
-      return normalizeByOptions(text, CONCERN_OPTIONS, 'お悩みをボタンから選んでください。');
-    case ONBOARDING_STEPS.LIFESTYLE:
-      return normalizeByOptions(text, LIFESTYLE_OPTIONS, '生活スタイルをボタンから選んでください。');
-    case ONBOARDING_STEPS.PAIN_RISK:
-      return normalizeByOptions(text, PAIN_RISK_OPTIONS, '気になることをボタンから選んでください。');
-    case ONBOARDING_STEPS.NOTE:
-      return normalizeNote(text);
-    case ONBOARDING_STEPS.TONE:
-      return normalizeByOptions(text, TONE_OPTIONS, '話し方をボタンから選んでください。');
-    default:
-      return { ok: false, errorMessage: '入力を確認できませんでした。' };
-  }
-}
-
-function updateStateStep(state, nextStep) {
   return {
-    ...state,
-    current_step: nextStep,
-  };
-}
-
-function moveToStep(state, nextStep) {
-  return updateStateStep(state, nextStep);
-}
-
-function completeOnboardingState(state) {
-  return {
-    ...state,
-    onboarding_status: 'completed',
-    trial_status: state.trial_status || 'active',
-    current_flow: state.current_flow === 'onboarding' ? 'trial' : (state.current_flow || 'trial'),
-    current_step: ONBOARDING_STEPS.SAVED,
-    edit_target: null,
-  };
-}
-
-function resetProfileState(state) {
-  return {
-    ...state,
-    current_flow: 'onboarding',
-    onboarding_status: 'in_progress',
-    trial_status: state.trial_status || 'not_started',
-    profile_data: createEmptyProfile(),
-    current_step: ONBOARDING_STEPS.NAME,
-    edit_target: null,
-  };
-}
-
-function applyEditSelection(state, text) {
-  const map = {
-    名前: { step: ONBOARDING_STEPS.NAME, edit_target: 'name' },
-    年齢: { step: ONBOARDING_STEPS.AGE, edit_target: 'age' },
-    身長: { step: ONBOARDING_STEPS.HEIGHT, edit_target: 'height_cm' },
-    体重: { step: ONBOARDING_STEPS.WEIGHT, edit_target: 'weight_kg' },
-    体脂肪率: { step: ONBOARDING_STEPS.BODY_FAT, edit_target: 'body_fat_percent' },
-    目標: { step: ONBOARDING_STEPS.GOAL_TYPE, edit_target: 'goal_type' },
-    目標体重: { step: ONBOARDING_STEPS.GOAL_WEIGHT, edit_target: 'goal_weight_kg' },
-    目標体脂肪率: { step: ONBOARDING_STEPS.GOAL_BODY_FAT, edit_target: 'goal_body_fat_percent' },
-    目標時期: { step: ONBOARDING_STEPS.GOAL_PERIOD, edit_target: 'goal_period' },
-    悩み: { step: ONBOARDING_STEPS.CONCERN, edit_target: 'main_concern' },
-    生活: { step: ONBOARDING_STEPS.LIFESTYLE, edit_target: 'lifestyle' },
-    不安: { step: ONBOARDING_STEPS.PAIN_RISK, edit_target: 'pain_or_risk' },
-    話し方: { step: ONBOARDING_STEPS.TONE, edit_target: 'tone' },
-  };
-
-  return map[text] || null;
-}
-
-function handleCommand(state, text) {
-  const step = state.current_step;
-  const command = normalizeText(text);
-
-  if (step === ONBOARDING_STEPS.WELCOME) {
-    if (command === 'はじめる') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.TRIAL_INFO) };
-    if (command === '内容を見る') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.SERVICE_INFO) };
-    if (command === 'あとで見る') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.WELCOME_END) };
-  }
-
-  if (step === ONBOARDING_STEPS.SERVICE_INFO) {
-    if (command === '無料体験へ') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.TRIAL_INFO) };
-    if (command === '戻る') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.WELCOME) };
-  }
-
-  if (step === ONBOARDING_STEPS.TRIAL_INFO) {
-    if (command === '無料体験を始める') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.NAME) };
-    if (command === '内容を見る') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.TRIAL_DETAIL) };
-    if (command === '今回はやめる') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.TRIAL_DECLINED) };
-  }
-
-  if (step === ONBOARDING_STEPS.TRIAL_DETAIL) {
-    if (command === '無料体験を始める') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.NAME) };
-    if (command === 'あとで見る') return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.WELCOME_END) };
-  }
-
-  if (step === ONBOARDING_STEPS.BODY_FAT && command === '不明') {
-    const nextState = { ...state };
-    nextState.profile_data.body_fat_percent = null;
-    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_TYPE;
-    nextState.edit_target = state.edit_target ? null : state.edit_target;
-    return { ok: true, state: nextState };
-  }
-
-  if (step === ONBOARDING_STEPS.GOAL_WEIGHT && command === '相談したい') {
-    const nextState = { ...state };
-    nextState.profile_data.goal_weight_kg = null;
-    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_BODY_FAT;
-    nextState.edit_target = state.edit_target ? null : state.edit_target;
-    return { ok: true, state: nextState };
-  }
-
-  if (step === ONBOARDING_STEPS.GOAL_BODY_FAT && command === '相談したい') {
-    const nextState = { ...state };
-    nextState.profile_data.goal_body_fat_percent = null;
-    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.GOAL_PERIOD;
-    nextState.edit_target = state.edit_target ? null : state.edit_target;
-    return { ok: true, state: nextState };
-  }
-
-  if (step === ONBOARDING_STEPS.NOTE && command === 'なし') {
-    const nextState = { ...state };
-    nextState.profile_data.note = 'なし';
-    nextState.current_step = state.edit_target ? ONBOARDING_STEPS.CONFIRM : ONBOARDING_STEPS.TONE;
-    nextState.edit_target = state.edit_target ? null : state.edit_target;
-    return { ok: true, state: nextState };
-  }
-
-  if (step === ONBOARDING_STEPS.CONFIRM) {
-    if (command === 'この内容で保存') {
-      return { ok: true, state: completeOnboardingState(state) };
-    }
-    if (command === '修正する') {
-      return { ok: true, state: moveToStep(state, ONBOARDING_STEPS.EDIT_SELECT) };
-    }
-    if (command === '最初からやり直す') {
-      return { ok: true, state: resetProfileState(state) };
-    }
-  }
-
-  if (step === ONBOARDING_STEPS.EDIT_SELECT) {
-    const edit = applyEditSelection(state, command);
-    if (edit) {
-      return {
-        ok: true,
-        state: {
-          ...state,
-          current_step: edit.step,
-          edit_target: edit.edit_target,
-        },
-      };
-    }
-    return { ok: false, errorMessage: '変更したい項目をボタンから選んでください。' };
-  }
-
-  return { ok: false, errorMessage: null };
-}
-
-function handleInput(state, text) {
-  const step = state.current_step;
-  const field = stepToFieldMap[step];
-  if (!field) {
-    return { ok: false, errorMessage: 'もう一度お試しください。' };
-  }
-
-  const normalized = normalizeInputByStep(step, text);
-  if (!normalized.ok) {
-    return normalized;
-  }
-
-  const nextState = {
-    ...state,
-    profile_data: {
-      ...state.profile_data,
-      [field]: normalized.value,
+    onboarding_status: active ? 'in_progress' : 'completed',
+    current_flow: active ? 'onboarding' : null,
+    onboarding_state_json: {
+      active,
+      mode,
+      step: currentStep,
+      current_step: currentStep,
+      current_flow: active ? 'onboarding' : null,
+      onboarding_status: active ? 'in_progress' : 'completed',
+      started_at: safeText(state.started_at || nowIso),
+      updated_at: nowIso,
+      collected: state.collected && typeof state.collected === 'object' ? state.collected : {},
+      trial_status: safeText(state.trial_status || 'active') || 'active',
+      edit_target: state.edit_target || null,
     },
   };
-
-  if (state.edit_target) {
-    nextState.current_step = ONBOARDING_STEPS.CONFIRM;
-    nextState.edit_target = null;
-  } else {
-    nextState.current_step = nextStepMap[step] || ONBOARDING_STEPS.CONFIRM;
-  }
-
-  return { ok: true, state: nextState };
 }
 
-function buildReplyPayload(state) {
-  const step = state.current_step;
-  const { text, quickReplies } = buildStepMessage(step, state.profile_data);
-
+function buildStateFromCompletedUser(user = {}) {
   return {
-    text,
-    quickReplies,
-    quickReplyItems: buildQuickReplyPayload(quickReplies),
+    active: true,
+    mode: 'confirm',
+    step: ONBOARDING_STEPS.CONFIRM,
+    current_step: ONBOARDING_STEPS.CONFIRM,
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    started_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    collected: {
+      profile_summary: buildProfileSummaryFromUser(user),
+    },
+    trial_status: safeText(user.trial_status || 'active') || 'active',
+    edit_target: null,
   };
 }
 
-function advanceOnboardingState(user, text) {
-  const state = normalizeUserState(user);
-
-  const commandResult = handleCommand(state, text);
-  if (commandResult.ok) {
-    return commandResult;
-  }
-  if (commandResult.errorMessage) {
-    return commandResult;
-  }
-
-  if (
-    state.current_step === ONBOARDING_STEPS.WELCOME_END ||
-    state.current_step === ONBOARDING_STEPS.TRIAL_DECLINED ||
-    state.current_step === ONBOARDING_STEPS.SAVED
-  ) {
-    return { ok: false, errorMessage: null, state };
-  }
-
-  return handleInput(state, text);
+function resetProfileState(base = {}) {
+  return {
+    ...base,
+    mode: 'reset',
+    step: ONBOARDING_STEPS.RESET_PROMPT,
+    current_step: ONBOARDING_STEPS.RESET_PROMPT,
+    collected: {
+      ...(base.collected || {}),
+      profile_summary: buildProfileSummaryFromUser({}),
+    },
+    edit_target: null,
+    updated_at: new Date().toISOString(),
+  };
 }
 
-function buildOnboardingStatePatch(state) {
+function buildReplyPayload(state = {}) {
+  const mode = safeText(state.mode || 'start');
+  const currentStep = safeText(state.current_step || state.step || ONBOARDING_STEPS.WELCOME);
+  const collected = state.collected && typeof state.collected === 'object' ? state.collected : {};
+
+  if (mode === 'confirm' || currentStep === ONBOARDING_STEPS.CONFIRM) {
+    const lines = [
+      '現在のプロフィール確認です。',
+      collected.profile_summary || '登録済みプロフィールを確認してください。',
+      '',
+      '変更したい時は「プロフィール変更」',
+      '最初から入れ直す時は「プロフィール再設定」',
+      'このままでよければ通常どおり記録を送って大丈夫です。',
+    ];
+
+    return {
+      text: lines.join('\n'),
+      quickReplies: buildQuickReplies(['プロフィール変更', 'プロフィール再設定', '体重グラフ', '食事活動グラフ']),
+    };
+  }
+
+  if (mode === 'edit' || currentStep === ONBOARDING_STEPS.EDIT_SELECT || currentStep === ONBOARDING_STEPS.EDIT_PROMPT) {
+    const lines = [
+      'プロフィール変更モードです。',
+      '変更したい内容をそのまま送ってください。',
+      '例: プロフィール 年齢 56 体重 62 目標体重 58',
+      '',
+      '確認だけなら「プロフィール確認」',
+    ];
+
+    return {
+      text: lines.join('\n'),
+      quickReplies: buildQuickReplies(['プロフィール確認', 'プロフィール再設定', '初回診断']),
+    };
+  }
+
+  if (mode === 'reset' || currentStep === ONBOARDING_STEPS.RESET_PROMPT) {
+    const lines = [
+      'プロフィール再設定モードです。',
+      '最初から入れ直したい内容を送ってください。',
+      '例: プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
+      '',
+      '初回診断から深く進めたい場合は「初回診断」でも大丈夫です。',
+    ];
+
+    return {
+      text: lines.join('\n'),
+      quickReplies: buildQuickReplies(['初回診断', 'プロフィール確認', 'プロフィール変更']),
+    };
+  }
+
+  if (currentStep === ONBOARDING_STEPS.WELCOME) {
+    const lines = [
+      'ここから。へようこそ。',
+      'このLINEでは、体重・食事・運動・体調を無理なく整えながら、一緒に流れを作っていきます。',
+      '',
+      '最初は次のどれか1つからで大丈夫です。',
+      '・プロフィール確認',
+      '・初回診断',
+      '・体重 63.2',
+      '・朝食 食パン1枚 コーヒー',
+      '・膝が少し痛いです',
+    ];
+
+    return {
+      text: lines.join('\n'),
+      quickReplies: buildQuickReplies(['プロフィール確認', '初回診断', '体重グラフ', 'グラフ']),
+    };
+  }
+
   return {
-    onboarding_state_json: JSON.stringify(state),
-    onboarding_status: state.onboarding_status,
-    trial_status: state.trial_status,
-    current_flow: state.current_flow,
-    current_step: state.current_step,
+    text: '必要な内容をそのまま送ってください。',
+    quickReplies: buildQuickReplies(['プロフィール確認', '初回診断', 'グラフ']),
   };
+}
+
+function advanceOnboardingState(user = {}, text = '') {
+  const current = normalizeUserState(user);
+  const raw = safeText(text);
+  const t = normalizeLoose(raw);
+
+  if (!raw) {
+    return {
+      ok: false,
+      state: current,
+      errorMessage: 'メッセージが空でした。もう一度送ってください。',
+    };
+  }
+
+  if (current.mode === 'confirm' || current.current_step === ONBOARDING_STEPS.CONFIRM) {
+    if (t === normalizeLoose('プロフィール変更')) {
+      const next = {
+        ...current,
+        mode: 'edit',
+        step: ONBOARDING_STEPS.EDIT_SELECT,
+        current_step: ONBOARDING_STEPS.EDIT_SELECT,
+        updated_at: new Date().toISOString(),
+      };
+      return { ok: true, state: next };
+    }
+
+    if (t === normalizeLoose('プロフィール再設定')) {
+      const next = {
+        ...resetProfileState(current),
+        current_flow: 'onboarding',
+        onboarding_status: 'in_progress',
+        trial_status: current.trial_status || 'active',
+      };
+      return { ok: true, state: next };
+    }
+
+    const next = {
+      ...current,
+      active: false,
+      step: ONBOARDING_STEPS.DONE,
+      current_step: ONBOARDING_STEPS.DONE,
+      updated_at: new Date().toISOString(),
+    };
+    return { ok: true, state: next };
+  }
+
+  if (current.mode === 'edit' || current.mode === 'reset') {
+    const next = {
+      ...current,
+      active: false,
+      step: ONBOARDING_STEPS.DONE,
+      current_step: ONBOARDING_STEPS.DONE,
+      updated_at: new Date().toISOString(),
+      collected: {
+        ...(current.collected || {}),
+        last_input_text: raw,
+      },
+    };
+    return { ok: true, state: next };
+  }
+
+  if (current.current_step === ONBOARDING_STEPS.WELCOME) {
+    const next = {
+      ...current,
+      active: false,
+      step: ONBOARDING_STEPS.DONE,
+      current_step: ONBOARDING_STEPS.DONE,
+      updated_at: new Date().toISOString(),
+      collected: {
+        ...(current.collected || {}),
+        first_message: raw,
+      },
+    };
+    return { ok: true, state: next };
+  }
+
+  return { ok: true, state: current };
 }
 
 function startProfileEditFromUser(user, mode = 'confirm') {
-  const state = buildStateFromCompletedUser(user);
+  const base = buildStateFromCompletedUser(user);
+
+  const editBase = {
+    ...base,
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    edit_target: null,
+  };
 
   if (mode === 'reset') {
-    return resetProfileState(state);
+    return {
+      ...resetProfileState(editBase),
+      current_flow: 'onboarding',
+      onboarding_status: 'in_progress',
+      trial_status: base.trial_status || 'active',
+    };
   }
 
   if (mode === 'edit') {
     return {
-      ...state,
+      ...editBase,
+      mode: 'edit',
+      step: ONBOARDING_STEPS.EDIT_SELECT,
       current_step: ONBOARDING_STEPS.EDIT_SELECT,
-      edit_target: null,
     };
   }
 
   return {
-    ...state,
+    ...editBase,
+    mode: 'confirm',
+    step: ONBOARDING_STEPS.CONFIRM,
     current_step: ONBOARDING_STEPS.CONFIRM,
-    edit_target: null,
   };
 }
 
 module.exports = {
-  ONBOARDING_STEPS,
   createInitialOnboardingState,
-  createEmptyProfile,
   normalizeUserState,
   isOnboardingActive,
-  isTrialActive,
   buildReplyPayload,
   advanceOnboardingState,
   buildOnboardingStatePatch,
