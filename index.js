@@ -356,67 +356,6 @@ function isExerciseConsultationText(text) {
   return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
 }
 
-function shouldTreatAsPainConsultation(text) {
-  const raw = String(text || '').trim();
-  const t = normalizeTextLoose(raw);
-  if (!t) return false;
-
-  const hasPainWord = [
-    '足底腱膜炎',
-    '痛い',
-    '痛み',
-    '炎症',
-    '違和感',
-    'しびれ',
-    '膝',
-    '腰',
-    '股関節',
-    '肩',
-    '首',
-    'かかと',
-    '足裏',
-    'ふくらはぎ',
-    'つる',
-    'しびれ',
-    'ピリピリ',
-    'ジンジン',
-    'ビリビリ',
-  ].some((w) => t.includes(normalizeTextLoose(w)));
-
-  const hasExerciseWord = [
-    '走る',
-    '走ったら',
-    'ジョギング',
-    'ランニング',
-    '歩く',
-    '歩いたら',
-    '運動',
-    '筋トレ',
-    'ストレッチ',
-  ].some((w) => t.includes(normalizeTextLoose(w)));
-
-  const hasConsultWord = [
-    'かな',
-    'ですか',
-    'ますか',
-    'だめ',
-    'ダメ',
-    '大丈夫',
-    '平気',
-    'していい',
-    'してもいい',
-    'どうかな',
-    'どうですか',
-    '教えて',
-  ].some((w) => t.includes(normalizeTextLoose(w)));
-
-  if (hasPainWord && hasConsultWord) return true;
-  if (hasPainWord && hasExerciseWord) return true;
-  if (hasExerciseWord && hasConsultWord && hasPainOrMedicalContext(raw)) return true;
-
-  return false;
-}
-
 function isActivityCommand(text) {
   if (isExerciseConsultationText(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
@@ -817,36 +756,6 @@ function isExplicitMealGuideIntent(text) {
     '食事を入力したい',
     '食べたものを記録したい',
     '飲んだものを記録したい',
-  ].includes(t);
-}
-
-function isSupportFollowupSelection(text) {
-  const t = String(text || '').trim();
-  return [
-    '歩くと痛い',
-    '動くと痛い',
-    'じっとしても痛い',
-    '少し動くと楽',
-    '動くとつらい',
-    'よくわからない',
-    'ぶつけた',
-    'ひねった',
-    '転んだ',
-    '使いすぎかも',
-    '気づいたら痛い',
-    '腫れあり',
-    '内出血あり',
-    'どちらもない',
-    'わからない',
-    'ピリピリする',
-    '力が入りにくい',
-    'しびれはない',
-    '少し気になる',
-    '今つっている',
-    '今は落ち着いた',
-    '夜によくつる',
-    '歩くとつりそう',
-    '牛込先生に共有する',
   ].includes(t);
 }
 
@@ -1261,6 +1170,27 @@ function buildMealNutritionLines(meal) {
   ].filter(Boolean);
 }
 
+function appendMealNutritionText(baseText, meal) {
+  const nutritionLines = buildMealNutritionLines(meal);
+  if (!nutritionLines.length) return String(baseText || '').trim();
+
+  const text = String(baseText || '').trim();
+  const saveGuide = '合っていれば保存、違うところがあればボタンか文字で訂正してください。';
+  const saveGuideTextOnly = '合っていれば保存、違うところがあればそのまま訂正してください。';
+
+  if (text.endsWith(saveGuide)) {
+    const body = text.slice(0, -saveGuide.length).trim();
+    return `${body}\n\n${nutritionLines.join('\n')}\n\n${saveGuide}`;
+  }
+
+  if (text.endsWith(saveGuideTextOnly)) {
+    const body = text.slice(0, -saveGuideTextOnly.length).trim();
+    return `${body}\n\n${nutritionLines.join('\n')}\n\n${saveGuideTextOnly}`;
+  }
+
+  return `${text}\n\n${nutritionLines.join('\n')}`;
+}
+
 function normalizeMealCorrectionText(text) {
   const raw = String(text || '').trim();
   if (!raw) return raw;
@@ -1394,6 +1324,44 @@ function mergeMealDrafts(baseMeal, extraMeal) {
       extra_meal: extraMeal?.raw_model_json || extraMeal || {},
     },
   };
+}
+
+function countDetectedLabItems(extraction) {
+  const panels = Array.isArray(extraction?.panels) ? extraction.panels : [];
+  let count = 0;
+
+  for (const panel of panels) {
+    const items = panel?.items || {};
+    for (const value of Object.values(items)) {
+      if (value !== null && value !== undefined && String(value).trim() !== '') {
+        count += 1;
+      }
+    }
+  }
+
+  return count;
+}
+
+function isLikelyBloodTestExtraction(extraction) {
+  const dates = Array.isArray(extraction?.dates) ? extraction.dates.filter(Boolean) : [];
+  const panels = Array.isArray(extraction?.panels) ? extraction.panels : [];
+  const itemCount = countDetectedLabItems(extraction);
+
+  return dates.length > 0 && panels.length > 0 && itemCount >= 2;
+}
+
+function isMeaningfulMealDraft(meal) {
+  if (!meal || !meal.is_meal) return false;
+
+  const kcal = Number(meal.estimated_kcal || 0);
+  const foodCount = Array.isArray(meal.food_items) ? meal.food_items.length : 0;
+  const label = String(meal.meal_label || '').trim();
+
+  if (kcal > 0) return true;
+  if (foodCount > 0) return true;
+  if (label && label !== '食事' && label !== '食事なし') return true;
+
+  return false;
 }
 
 async function analyzeMealTextPrimary(text) {
@@ -1842,6 +1810,63 @@ async function handleImageMessage(event, user) {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
     const existingMealDraft = getMealDraft(user.line_user_id);
 
+    let bloodExtraction = null;
+    try {
+      bloodExtraction = await extractBloodTestDraftFromImage(buffer, mimeType);
+    } catch (bloodError) {
+      console.error('⚠️ Blood test extraction failed:', bloodError?.message || bloodError);
+    }
+
+    const bloodTestLikely = isLikelyBloodTestExtraction(bloodExtraction);
+
+    if (bloodTestLikely) {
+      const dates = Array.isArray(bloodExtraction?.dates) ? bloodExtraction.dates.filter(Boolean) : [];
+      const panels = Array.isArray(bloodExtraction?.panels) ? bloodExtraction.panels : [];
+
+      const workingData = {};
+      for (const panel of panels) {
+        if (!panel?.date) continue;
+        workingData[panel.date] = panel.items || {};
+      }
+
+      await createLabDraftSession(supabase, {
+        user_id: user.id,
+        line_user_id: user.line_user_id,
+        line_message_id: event.message.id,
+        status: 'draft',
+        detected_dates_json: dates,
+        selected_date: dates.length === 1 ? dates[0] : null,
+        raw_extracted_json: bloodExtraction,
+        working_data_json: workingData,
+        source_image_url: null,
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+
+      clearMealDraft(user.line_user_id);
+
+      if (dates.length > 1) {
+        const msg = buildLabDateChoiceMessage({ working_data_json: workingData });
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(msg.text, msg.quickReplies),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      const msg = buildLabDraftSummaryMessage({
+        working_data_json: workingData,
+        selected_date: dates[0],
+      });
+
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(msg.text, msg.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     let finalMealDraft = null;
 
     try {
@@ -1853,15 +1878,17 @@ async function handleImageMessage(event, user) {
       );
     }
 
-    if (!finalMealDraft) {
+    if (!isMeaningfulMealDraft(finalMealDraft)) {
       const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
-      if (analyzedMeal?.is_meal) {
+      if (isMeaningfulMealDraft(analyzedMeal)) {
         finalMealDraft = analyzedMeal;
+      } else {
+        finalMealDraft = null;
       }
     }
 
     if (existingMealDraft?.awaitingAdditionalPhoto) {
-      if (finalMealDraft?.is_meal) {
+      if (isMeaningfulMealDraft(finalMealDraft)) {
         const mergedMeal = mergeMealDrafts(existingMealDraft.meal, finalMealDraft);
         setMealDraft(user.line_user_id, mergedMeal);
 
@@ -1889,7 +1916,7 @@ async function handleImageMessage(event, user) {
       return;
     }
 
-    if (finalMealDraft?.is_meal) {
+    if (isMeaningfulMealDraft(finalMealDraft)) {
       setMealDraft(user.line_user_id, finalMealDraft);
 
       const mealMessage = buildMealReplyWithSaveGuide(finalMealDraft);
@@ -1905,52 +1932,9 @@ async function handleImageMessage(event, user) {
       return;
     }
 
-    const extraction = await extractBloodTestDraftFromImage(buffer, mimeType);
-    const dates = Array.isArray(extraction?.dates) ? extraction.dates.filter(Boolean) : [];
-    const panels = Array.isArray(extraction?.panels) ? extraction.panels : [];
-
-    if (!dates.length || !panels.length) {
-      await replyMessage(
-        event.replyToken,
-        '画像を読み取りましたが、食事写真や血液検査画像としてはっきり判定できませんでした。もう少し見やすい写真を送ってください。',
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    const workingData = {};
-    for (const panel of panels) {
-      if (!panel?.date) continue;
-      workingData[panel.date] = panel.items || {};
-    }
-
-    await createLabDraftSession(supabase, {
-      user_id: user.id,
-      line_user_id: user.line_user_id,
-      line_message_id: event.message.id,
-      status: 'draft',
-      detected_dates_json: dates,
-      selected_date: dates.length === 1 ? dates[0] : null,
-      raw_extracted_json: extraction,
-      working_data_json: workingData,
-      source_image_url: null,
-      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
-
-    if (dates.length > 1) {
-      const msg = buildLabDateChoiceMessage({ working_data_json: workingData });
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(msg.text, msg.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    const msg = buildLabDraftSummaryMessage({ working_data_json: workingData, selected_date: dates[0] });
     await replyMessage(
       event.replyToken,
-      textMessageWithQuickReplies(msg.text, msg.quickReplies),
+      '画像を読み取りましたが、食事写真や血液検査画像としてはっきり判定できませんでした。もう少し見やすい写真を送ってください。',
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
   } catch (error) {
@@ -2190,77 +2174,9 @@ async function handleTextMessage(event, user) {
     const supportContext = getSupportContext(user.line_user_id);
     const contextArea = supportContext?.area || null;
 
-    if (text === '牛込先生に共有する') {
-      const summaryText = supportContext?.admin_summary;
-      if (summaryText) {
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(prefixWithName(user, summaryText), ['牛込先生に相談したい', '今日はここまで']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        await rememberInteraction(user, text, summaryText);
-        return;
-      }
-
-      const fallbackText = '今の症状メモがまだありません。痛みや気になる症状をそのまま送ってください。';
-      await replyMessage(event.replyToken, fallbackText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      return;
-    }
-
-    if (supportContext?.context && isSupportFollowupSelection(text)) {
-      const baseText =
-        supportContext.context.raw_text ||
-        supportContext.context.area_detail ||
-        contextArea ||
-        '';
-      const mergedText = [baseText, text].filter(Boolean).join(' ');
-      const followupResponse = buildPainSupportResponse(
-        mergedText,
-        supportContext.context.area_detail || contextArea || undefined
-      );
-
-      const displayLines = [followupResponse.message];
-      if (
-        followupResponse.next_question?.text &&
-        ['ask_one', 'consult', 'suggest_after_light_confirm'].includes(followupResponse.next_step)
-      ) {
-        displayLines.push('', followupResponse.next_question.text);
-      }
-
-      const replyText = prefixWithName(user, displayLines.join('\n'));
-      const followupQuickReplies =
-        Array.isArray(followupResponse.next_question?.quickReplies) &&
-        followupResponse.next_question.quickReplies.length
-          ? followupResponse.next_question.quickReplies
-          : followupResponse.quickReplies;
-
-      const adminSummary = buildAdminSymptomSummary({
-        ...followupResponse.context,
-        followup_hint: followupResponse.followup_hint,
-      });
-
-      setSupportContext(user.line_user_id, {
-        area: followupResponse.context.area_detail,
-        mode: followupResponse.context.support_mode,
-        context: followupResponse.context,
-        followup_hint: followupResponse.followup_hint,
-        three_step_flow: followupResponse.three_step_flow,
-        admin_summary: adminSummary,
-      });
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, followupQuickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
     if (text === '牛込先生に相談したい') {
       clearMealDraft(user.line_user_id);
-      const summaryText = supportContext?.admin_summary ? `\n\n${supportContext.admin_summary}` : '';
-      const replyText = prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}${summaryText}`);
+      const replyText = prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`);
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -2488,43 +2404,17 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    if (shouldTreatAsPainConsultation(text) || isPainLikeText(text) || isExerciseConsultationText(text)) {
+    if (isPainLikeText(text) || isExerciseConsultationText(text)) {
       clearMealDraft(user.line_user_id);
       const area = detectPainArea(text);
+      setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
       const painResponse = buildPainSupportResponse(text, area);
-
-      const displayLines = [painResponse.message];
-      if (
-        painResponse.next_question?.text &&
-        ['ask_one', 'consult', 'suggest_after_light_confirm'].includes(painResponse.next_step)
-      ) {
-        displayLines.push('', painResponse.next_question.text);
-      }
-
-      const replyText = prefixWithName(user, displayLines.join('\n'));
-      const painQuickReplies =
-        Array.isArray(painResponse.next_question?.quickReplies) &&
-        painResponse.next_question.quickReplies.length
-          ? painResponse.next_question.quickReplies
-          : [...painResponse.quickReplies];
-
-      const adminSummary = buildAdminSymptomSummary({
-        ...painResponse.context,
-        followup_hint: painResponse.followup_hint,
-      });
-
-      setSupportContext(user.line_user_id, {
-        area: painResponse.context.area_detail,
-        mode: painResponse.context.support_mode,
-        context: painResponse.context,
-        followup_hint: painResponse.followup_hint,
-        three_step_flow: painResponse.three_step_flow,
-        admin_summary: adminSummary,
-      });
+      const replyText = prefixWithName(user, painResponse.message);
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(replyText, painQuickReplies),
+        textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
@@ -2564,40 +2454,13 @@ async function handleTextMessage(event, user) {
       if (text === '腰が重い' || text === '股関節を整えたい') {
         clearMealDraft(user.line_user_id);
         const area = text === '腰が重い' ? '腰' : '股関節';
+        setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
         const painResponse = buildPainSupportResponse(text, area);
-
-        const displayLines = [painResponse.message];
-        if (
-          painResponse.next_question?.text &&
-          ['ask_one', 'consult', 'suggest_after_light_confirm'].includes(painResponse.next_step)
-        ) {
-          displayLines.push('', painResponse.next_question.text);
-        }
-
-        const replyText = prefixWithName(user, displayLines.join('\n'));
-        const quickReplies =
-          Array.isArray(painResponse.next_question?.quickReplies) &&
-          painResponse.next_question.quickReplies.length
-            ? painResponse.next_question.quickReplies
-            : painResponse.quickReplies;
-
-        const adminSummary = buildAdminSymptomSummary({
-          ...painResponse.context,
-          followup_hint: painResponse.followup_hint,
-        });
-
-        setSupportContext(user.line_user_id, {
-          area: painResponse.context.area_detail,
-          mode: painResponse.context.support_mode,
-          context: painResponse.context,
-          followup_hint: painResponse.followup_hint,
-          three_step_flow: painResponse.three_step_flow,
-          admin_summary: adminSummary,
-        });
-
+        const replyText = prefixWithName(user, painResponse.message);
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(replyText, quickReplies),
+          textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         await rememberInteraction(user, text, replyText);
