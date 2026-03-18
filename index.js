@@ -356,6 +356,62 @@ function isExerciseConsultationText(text) {
   return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
 }
 
+function shouldTreatAsPainConsultation(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(raw);
+  if (!t) return false;
+
+  const hasPainWord = [
+    '足底腱膜炎',
+    '痛い',
+    '痛み',
+    '炎症',
+    '違和感',
+    'しびれ',
+    '膝',
+    '腰',
+    '股関節',
+    '肩',
+    '首',
+    'かかと',
+    '足裏',
+    'ふくらはぎ',
+  ].some((w) => t.includes(normalizeTextLoose(w)));
+
+  const hasExerciseWord = [
+    '走る',
+    '走ったら',
+    'ジョギング',
+    'ランニング',
+    '歩く',
+    '歩いたら',
+    '運動',
+    '筋トレ',
+    'ストレッチ',
+  ].some((w) => t.includes(normalizeTextLoose(w)));
+
+  const hasConsultWord = [
+    'かな',
+    'ですか',
+    'ますか',
+    'だめ',
+    'ダメ',
+    '大丈夫',
+    '平気',
+    'していい',
+    'してもいい',
+    'どうかな',
+    'どうですか',
+    '教えて',
+  ].some((w) => t.includes(normalizeTextLoose(w)));
+
+  if (hasPainWord && hasConsultWord) return true;
+  if (hasPainWord && hasExerciseWord) return true;
+  if (hasExerciseWord && hasConsultWord && hasPainOrMedicalContext(raw)) return true;
+
+  return false;
+}
+
 function isActivityCommand(text) {
   if (isExerciseConsultationText(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
@@ -2350,7 +2406,7 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    if (isPainLikeText(text) || isExerciseConsultationText(text)) {
+    if (shouldTreatAsPainConsultation(text) || isPainLikeText(text) || isExerciseConsultationText(text)) {
       clearMealDraft(user.line_user_id);
       const area = detectPainArea(text);
       setSupportContext(user.line_user_id, { area, mode: 'pain' });
