@@ -121,6 +121,22 @@ const {
   buildOnboardingStatePatch,
   startProfileEditFromUser,
 } = require('./services/onboarding_service');
+const {
+  MEMBERSHIP_STATUS,
+  startTrialPatch,
+  activatePlanPatch,
+  markTrialPlanPromptedPatch,
+  markRenewalPromptedPatch,
+  shouldPromptTrialPlan,
+  shouldPromptRenewal,
+  normalizePlanSelection,
+  isPlanGuideTrigger,
+  buildTrialStartedMessage,
+  buildTrialEndingMessage,
+  buildPlanGuideMessage,
+  buildPlanSelectedMessage,
+  buildRenewalPromptMessage,
+} = require('./services/trial_membership_service');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -690,6 +706,26 @@ function buildMealFollowupQuickReplies() {
     '追加で写真',
     '写真取り消し',
   ];
+}
+
+function buildLineTextMessage(text, quickReply = null) {
+  const message = {
+    type: 'text',
+    text: String(text || '').trim(),
+  };
+
+  if (quickReply && Array.isArray(quickReply.items) && quickReply.items.length) {
+    message.quickReply = quickReply;
+  }
+
+  return message;
+}
+
+function buildMembershipReplyMessage(user, payload) {
+  return buildLineTextMessage(
+    prefixWithName(user, payload?.text || ''),
+    payload?.quickReply || null
+  );
 }
 
 function getMealDraft(lineUserId) {
@@ -1746,6 +1782,46 @@ async function saveMealToLog(userId, meal) {
   return insertPayload;
 }
 
+async function updateUserTrialMembership(userId, patch = {}) {
+  if (!userId || !patch || typeof patch !== 'object') return null;
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('id', userId)
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('⚠️ updateUserTrialMembership failed:', error?.message || error);
+    return null;
+  }
+
+  return data || null;
+}
+
+async function ensureTrialStartedForUser(user) {
+  if (!user?.id) {
+    return { user, started: false };
+  }
+
+  const membershipStatus = safeText(user?.membership_status || '', '');
+  const canStartTrial =
+    !user?.trial_started_at &&
+    (!membershipStatus || membershipStatus === MEMBERSHIP_STATUS.NONE);
+
+  if (!canStartTrial) {
+    return { user, started: false };
+  }
+
+  const updatedUser = await updateUserTrialMembership(user.id, startTrialPatch());
+
+  return {
+    user: updatedUser || user,
+    started: Boolean(updatedUser),
+  };
+}
+
 async function defaultChatReply(user, userText) {
   const name = getUserDisplayName(user);
   const recentMemories = await getRecentConversationMemories(user.id, 40);
@@ -2245,6 +2321,30 @@ async function handleOnboardingMessage(event, user) {
 
   const reply = buildReplyPayload(nextState);
 
+  const onboardingCompleted =
+    safeText(patch?.onboarding_status || '', '') === 'completed' ||
+    String(nextState?.current_step || '').trim().toLowerCase() === 'done';
+
+  if (onboardingCompleted) {
+    const refreshedUser = await refreshUserById(supabase, user.id);
+    const trialResult = await ensureTrialStartedForUser(refreshedUser || user);
+    const messages = [
+      textMessageWithQuickReplies(reply.text, reply.quickReplies),
+    ];
+
+    if (trialResult.started) {
+      const trialStarted = buildTrialStartedMessage();
+      messages.push(buildMembershipReplyMessage(trialResult.user || refreshedUser || user, trialStarted));
+    }
+
+    await replyMessage(
+      event.replyToken,
+      messages,
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
   await replyMessage(
     event.replyToken,
     textMessageWithQuickReplies(reply.text, reply.quickReplies),
@@ -2355,9 +2455,28 @@ async function handleTextMessage(event, user) {
 
       if (openIntake.current_step === 'confirm_finish' && text === 'この内容で完了') {
         await completeIntakeSession(user, openIntake);
-        const replyText = prefixWithName(user, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
-        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-        await rememberInteraction(user, text, replyText);
+
+        const refreshedUser = await refreshUserById(supabase, user.id);
+        const trialResult = await ensureTrialStartedForUser(refreshedUser || user);
+        const finalUser = trialResult.user || refreshedUser || user;
+        const completeReplyText = prefixWithName(finalUser, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
+
+        if (trialResult.started) {
+          const trialStarted = buildTrialStartedMessage();
+          await replyMessage(
+            event.replyToken,
+            [
+              buildLineTextMessage(completeReplyText),
+              buildMembershipReplyMessage(finalUser, trialStarted),
+            ],
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(finalUser, text, `${completeReplyText}\n\n${trialStarted.text}`);
+          return;
+        }
+
+        await replyMessage(event.replyToken, completeReplyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(finalUser, text, completeReplyText);
         return;
       }
 
@@ -2385,6 +2504,90 @@ async function handleTextMessage(event, user) {
         textMessageWithQuickReplies(currentMsg.text, currentMsg.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
+      return;
+    }
+
+    if (shouldPromptTrialPlan(user)) {
+      await updateUserTrialMembership(user.id, markTrialPlanPromptedPatch());
+      const msg = buildTrialEndingMessage();
+      await replyMessage(
+        event.replyToken,
+        buildMembershipReplyMessage(user, msg),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (shouldPromptRenewal(user)) {
+      await updateUserTrialMembership(user.id, markRenewalPromptedPatch());
+      const msg = buildRenewalPromptMessage(user);
+      await replyMessage(
+        event.replyToken,
+        buildMembershipReplyMessage(user, msg),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (
+      isPlanGuideTrigger(text) ||
+      ['プラン案内を見る', '別プランも見る', '内容を確認する', 'プラン変更したい'].includes(text)
+    ) {
+      const msg = buildPlanGuideMessage();
+      await replyMessage(
+        event.replyToken,
+        buildMembershipReplyMessage(user, msg),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    const selectedPlan = normalizePlanSelection(text);
+    if (selectedPlan) {
+      const updatedUser = await updateUserTrialMembership(
+        user.id,
+        activatePlanPatch(selectedPlan)
+      );
+
+      const finalUser = updatedUser || user;
+      const msg = buildPlanSelectedMessage(selectedPlan);
+
+      await replyMessage(
+        event.replyToken,
+        buildMembershipReplyMessage(finalUser, msg),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      await rememberInteraction(finalUser, text, msg.text);
+      return;
+    }
+
+    if (text === 'このプランで進めたい' || text === '継続したい') {
+      const replyText = prefixWithName(
+        user,
+        'ありがとうございます。選んだプランで進めやすい状態にしています。必要ならあとから変更もできます。'
+      );
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (text === 'まず相談したい') {
+      const replyText = prefixWithName(
+        user,
+        'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。'
+      );
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (text === 'もう少し体験したい') {
+      const replyText = prefixWithName(
+        user,
+        '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。'
+      );
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
