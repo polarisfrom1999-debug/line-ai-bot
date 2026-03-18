@@ -24,10 +24,28 @@ const PLAN_LABELS = {
   [PLAN_TYPES.PREMIUM]: 'しっかり伴走',
 };
 
-const PLAN_DESCRIPTIONS = {
+const PLAN_SHORT_DESCRIPTIONS = {
   [PLAN_TYPES.LIGHT]: 'まずは気軽に続けたい方向け',
   [PLAN_TYPES.RECOMMENDED]: '迷ったらこれ。いちばんおすすめ',
   [PLAN_TYPES.PREMIUM]: 'より手厚く伴走したい方向け',
+};
+
+const PLAN_DETAIL_LINES = {
+  [PLAN_TYPES.LIGHT]: [
+    '・まずは気軽に続けたい方向け',
+    '・自分のペースで記録を続けやすい形',
+    '・はじめての継続利用にも合わせやすい',
+  ],
+  [PLAN_TYPES.RECOMMENDED]: [
+    '・迷ったらこれの基本プラン',
+    '・記録、振り返り、声かけのバランスが取りやすい',
+    '・ここから。をしっかり活かしたい方におすすめ',
+  ],
+  [PLAN_TYPES.PREMIUM]: [
+    '・より手厚く伴走したい方向け',
+    '・変化確認や継続フォローを厚めにしたい時向け',
+    '・本気で生活改善を進めたい方に相性が良い',
+  ],
 };
 
 module.exports = {
@@ -36,5 +54,6 @@ module.exports = {
   MEMBERSHIP_STATUS,
   PLAN_TYPES,
   PLAN_LABELS,
-  PLAN_DESCRIPTIONS,
+  PLAN_SHORT_DESCRIPTIONS,
+  PLAN_DETAIL_LINES,
 };
