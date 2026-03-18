@@ -6,12 +6,8 @@
  * 目的:
  * - 週間報告 / 月間報告の下書きを安全に生成する
  * - まずは「利用者へ自動送信しない」前提
- * - 管理者確認用メモも同時に作る
- * - 既存フローを壊さず、あとから index.js に接続しやすい構造
- *
- * 想定:
- * - DB集計結果をこのサービスへ渡す
- * - 返ってきた draft_text を管理者確認後に利用者へ送る
+ * - 管理者確認用メモの元データも返しやすい形にする
+ * - index.js からそのまま呼びやすい構造
  */
 
 function toNumber(value, fallback = null) {
@@ -58,10 +54,6 @@ function sum(numbers) {
   const arr = (numbers || []).map((v) => toNumber(v, null)).filter((v) => v !== null);
   if (!arr.length) return 0;
   return arr.reduce((a, b) => a + b, 0);
-}
-
-function countNonEmpty(arr) {
-  return (arr || []).filter(Boolean).length;
 }
 
 function pickLatest(arr) {
@@ -300,7 +292,7 @@ function buildLabSummary(labs) {
 
   return {
     has_data: true,
-    latest_date: latest.exam_date || latest.date || null,
+    latest_date: latest.exam_date || latest.date || latest.measured_at || null,
     latest_summary: summaryParts.join(' / '),
     insight: '血液検査も合わせて見られると、体の内側の変化も追いやすくなります。',
   };
@@ -450,6 +442,11 @@ function buildWeeklyDraftText(input) {
     lines.push('体調面では、無理をしすぎず、その日の状態に合わせて進めていきましょう。');
   }
 
+  if (labSummary.has_data && labSummary.latest_date) {
+    lines.push('');
+    lines.push(`血液検査の最新反映は ${formatDateLabel(labSummary.latest_date)} ごろの内容です。必要に応じて一緒に見ていきましょう。`);
+  }
+
   return {
     report_type: 'weekly',
     draft_text: lines.join('\n'),
@@ -595,20 +592,6 @@ function buildAdminReviewMemo(reportResult, input) {
         : '内容確認後、来月の重点ポイントを一言添えて送信',
   };
 }
-
-/**
- * 入力例:
- * {
- *   user_name: '田中さん',
- *   period_label: '2026-03-01〜2026-03-07',
- *   weights: [{ date: '2026-03-01', weight_kg: 72.3 }, ...],
- *   body_fats: [{ date: '2026-03-01', body_fat_percent: 31.2 }, ...],
- *   meals: [{ date: '2026-03-01', calories: 520, protein_g: 22, fat_g: 18, carbs_g: 61, meal_type: '朝食', meal_time: '08:10' }],
- *   exercises: [{ date: '2026-03-01', duration_minutes: 20, calories_burned: 80, exercise_type: 'ウォーキング' }],
- *   symptoms: [{ date: '2026-03-01', symptom: '左かかとが少し痛い' }],
- *   lab_results: [{ exam_date: '2026-02-20', hba1c: 6.1 }]
- * }
- */
 
 function generateWeeklyReportDraft(input) {
   const result = buildWeeklyDraftText(input || {});
