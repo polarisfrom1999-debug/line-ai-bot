@@ -122,21 +122,9 @@ const {
   startProfileEditFromUser,
 } = require('./services/onboarding_service');
 const {
-  MEMBERSHIP_STATUS,
-  startTrialPatch,
-  activatePlanPatch,
-  markTrialPlanPromptedPatch,
-  markRenewalPromptedPatch,
-  shouldPromptTrialPlan,
-  shouldPromptRenewal,
-  normalizePlanSelection,
-  isPlanGuideTrigger,
-  buildTrialStartedMessage,
-  buildTrialEndingMessage,
-  buildPlanGuideMessage,
-  buildPlanSelectedMessage,
-  buildRenewalPromptMessage,
-} = require('./services/trial_membership_service');
+  AI_TYPE_VALUES,
+  getAiTypeLabel,
+} = require('./config/ai_type_config');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -693,10 +681,44 @@ function helpMessage() {
 }
 
 function buildAiTypePrompt(aiType) {
-  if (aiType === 'energetic') return '話し方は少し前向きで明るく、背中を押す雰囲気にしてください。';
-  if (aiType === 'analytical') return '話し方は落ち着いて、理由や傾向をわかりやすく伝えてください。';
-  if (aiType === 'casual') return '話し方は親しみやすく、気軽に話せる雰囲気にしてください。';
-  return '話し方はやさしく包み込むように、安心感を大切にしてください。';
+  const label = getAiTypeLabel(aiType);
+
+  if (aiType === AI_TYPE_VALUES.BRIGHT) {
+    return [
+      `話し方タイプは「${label}」です。`,
+      '少し前向きで明るい雰囲気にしてください。',
+      '気分が上がる言い回しを使ってください。',
+      '小さな前進も見逃さず、テンポよく励ましてください。',
+      'ただし軽すぎず、安心感は残してください。',
+    ].join('\n');
+  }
+
+  if (aiType === AI_TYPE_VALUES.RELIABLE) {
+    return [
+      `話し方タイプは「${label}」です。`,
+      '落ち着きと信頼感を大切にしてください。',
+      '優先順位をはっきり示し、迷わせにくい話し方にしてください。',
+      '少し包容力のある大人の雰囲気で、頼れる印象にしてください。',
+      '強すぎる命令口調にはしないでください。',
+    ].join('\n');
+  }
+
+  if (aiType === AI_TYPE_VALUES.STRONG) {
+    return [
+      `話し方タイプは「${label}」です。`,
+      '少し力強く、前へ進める雰囲気にしてください。',
+      '気持ちが落ちている相手でも、やさしさを残しながら引っ張ってください。',
+      '必要な時は優先順位を明確にし、はっきり提案してください。',
+      '責めたり否定したりせず、「ここは整えどころですね」のような表現を使ってください。',
+    ].join('\n');
+  }
+
+  return [
+    `話し方タイプは「${label}」です。`,
+    'やさしく包み込むような安心感を大切にしてください。',
+    '相手を急かさず、まず受け止める雰囲気にしてください。',
+    '無理を広げすぎない、小さく整える提案を優先してください。',
+  ].join('\n');
 }
 
 function buildMealFollowupQuickReplies() {
@@ -706,26 +728,6 @@ function buildMealFollowupQuickReplies() {
     '追加で写真',
     '写真取り消し',
   ];
-}
-
-function buildLineTextMessage(text, quickReply = null) {
-  const message = {
-    type: 'text',
-    text: String(text || '').trim(),
-  };
-
-  if (quickReply && Array.isArray(quickReply.items) && quickReply.items.length) {
-    message.quickReply = quickReply;
-  }
-
-  return message;
-}
-
-function buildMembershipReplyMessage(user, payload) {
-  return buildLineTextMessage(
-    prefixWithName(user, payload?.text || ''),
-    payload?.quickReply || null
-  );
 }
 
 function getMealDraft(lineUserId) {
@@ -1782,46 +1784,6 @@ async function saveMealToLog(userId, meal) {
   return insertPayload;
 }
 
-async function updateUserTrialMembership(userId, patch = {}) {
-  if (!userId || !patch || typeof patch !== 'object') return null;
-
-  const { data, error } = await supabase
-    .from('users')
-    .update(patch)
-    .eq('id', userId)
-    .select('*')
-    .single();
-
-  if (error) {
-    console.error('⚠️ updateUserTrialMembership failed:', error?.message || error);
-    return null;
-  }
-
-  return data || null;
-}
-
-async function ensureTrialStartedForUser(user) {
-  if (!user?.id) {
-    return { user, started: false };
-  }
-
-  const membershipStatus = safeText(user?.membership_status || '', '');
-  const canStartTrial =
-    !user?.trial_started_at &&
-    (!membershipStatus || membershipStatus === MEMBERSHIP_STATUS.NONE);
-
-  if (!canStartTrial) {
-    return { user, started: false };
-  }
-
-  const updatedUser = await updateUserTrialMembership(user.id, startTrialPatch());
-
-  return {
-    user: updatedUser || user,
-    started: Boolean(updatedUser),
-  };
-}
-
 async function defaultChatReply(user, userText) {
   const name = getUserDisplayName(user);
   const recentMemories = await getRecentConversationMemories(user.id, 40);
@@ -2321,30 +2283,6 @@ async function handleOnboardingMessage(event, user) {
 
   const reply = buildReplyPayload(nextState);
 
-  const onboardingCompleted =
-    safeText(patch?.onboarding_status || '', '') === 'completed' ||
-    String(nextState?.current_step || '').trim().toLowerCase() === 'done';
-
-  if (onboardingCompleted) {
-    const refreshedUser = await refreshUserById(supabase, user.id);
-    const trialResult = await ensureTrialStartedForUser(refreshedUser || user);
-    const messages = [
-      textMessageWithQuickReplies(reply.text, reply.quickReplies),
-    ];
-
-    if (trialResult.started) {
-      const trialStarted = buildTrialStartedMessage();
-      messages.push(buildMembershipReplyMessage(trialResult.user || refreshedUser || user, trialStarted));
-    }
-
-    await replyMessage(
-      event.replyToken,
-      messages,
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
-    return;
-  }
-
   await replyMessage(
     event.replyToken,
     textMessageWithQuickReplies(reply.text, reply.quickReplies),
@@ -2455,28 +2393,9 @@ async function handleTextMessage(event, user) {
 
       if (openIntake.current_step === 'confirm_finish' && text === 'この内容で完了') {
         await completeIntakeSession(user, openIntake);
-
-        const refreshedUser = await refreshUserById(supabase, user.id);
-        const trialResult = await ensureTrialStartedForUser(refreshedUser || user);
-        const finalUser = trialResult.user || refreshedUser || user;
-        const completeReplyText = prefixWithName(finalUser, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
-
-        if (trialResult.started) {
-          const trialStarted = buildTrialStartedMessage();
-          await replyMessage(
-            event.replyToken,
-            [
-              buildLineTextMessage(completeReplyText),
-              buildMembershipReplyMessage(finalUser, trialStarted),
-            ],
-            env.LINE_CHANNEL_ACCESS_TOKEN
-          );
-          await rememberInteraction(finalUser, text, `${completeReplyText}\n\n${trialStarted.text}`);
-          return;
-        }
-
-        await replyMessage(event.replyToken, completeReplyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-        await rememberInteraction(finalUser, text, completeReplyText);
+        const replyText = prefixWithName(user, '初回設定が完了しました。ここから一緒に整えていきましょうね。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
@@ -2504,90 +2423,6 @@ async function handleTextMessage(event, user) {
         textMessageWithQuickReplies(currentMsg.text, currentMsg.quickReplies),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
-      return;
-    }
-
-    if (shouldPromptTrialPlan(user)) {
-      await updateUserTrialMembership(user.id, markTrialPlanPromptedPatch());
-      const msg = buildTrialEndingMessage();
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    if (shouldPromptRenewal(user)) {
-      await updateUserTrialMembership(user.id, markRenewalPromptedPatch());
-      const msg = buildRenewalPromptMessage(user);
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    if (
-      isPlanGuideTrigger(text) ||
-      ['プラン案内を見る', '別プランも見る', '内容を確認する', 'プラン変更したい'].includes(text)
-    ) {
-      const msg = buildPlanGuideMessage();
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    const selectedPlan = normalizePlanSelection(text);
-    if (selectedPlan) {
-      const updatedUser = await updateUserTrialMembership(
-        user.id,
-        activatePlanPatch(selectedPlan)
-      );
-
-      const finalUser = updatedUser || user;
-      const msg = buildPlanSelectedMessage(selectedPlan);
-
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(finalUser, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      await rememberInteraction(finalUser, text, msg.text);
-      return;
-    }
-
-    if (text === 'このプランで進めたい' || text === '継続したい') {
-      const replyText = prefixWithName(
-        user,
-        'ありがとうございます。選んだプランで進めやすい状態にしています。必要ならあとから変更もできます。'
-      );
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (text === 'まず相談したい') {
-      const replyText = prefixWithName(
-        user,
-        'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。'
-      );
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (text === 'もう少し体験したい') {
-      const replyText = prefixWithName(
-        user,
-        '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。'
-      );
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
       return;
     }
 
