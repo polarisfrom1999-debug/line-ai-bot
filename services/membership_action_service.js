@@ -3,6 +3,7 @@
 const {
   MEMBERSHIP_STATUS,
   PLAN_TYPES,
+  PLAN_LABELS,
 } = require('../config/trial_membership_config');
 
 function safeText(value, fallback = '') {
@@ -23,7 +24,7 @@ function normalizeLoose(text) {
     .replace(/\s+/g, '');
 }
 
-function normalizePlanType(planType, fallback = PLAN_TYPES.RECOMMENDED) {
+function normalizePlanType(planType, fallback = PLAN_TYPES.BASIC) {
   const value = safeText(planType);
   if (Object.values(PLAN_TYPES).includes(value)) return value;
   return fallback;
@@ -60,16 +61,20 @@ function buildActivatePlanPatch(planType, baseNow = null) {
   };
 }
 
-function buildPauseMembershipPatch(baseNow = null) {
+function buildPauseMembershipPatch(baseNow = null, reason = '') {
   return {
     membership_status: MEMBERSHIP_STATUS.PAUSED,
+    paused_reason: safeText(reason),
+    membership_status_updated_at: nowIso(baseNow),
     renewal_prompted_at: nowIso(baseNow),
   };
 }
 
-function buildCancelMembershipPatch(baseNow = null) {
+function buildCancelMembershipPatch(baseNow = null, reason = '') {
   return {
     membership_status: MEMBERSHIP_STATUS.CANCELLED,
+    cancel_reason: safeText(reason),
+    membership_status_updated_at: nowIso(baseNow),
     renewal_prompted_at: nowIso(baseNow),
   };
 }
@@ -79,6 +84,7 @@ function buildResumeMembershipPatch(currentPlan, baseNow = null) {
     membership_status: MEMBERSHIP_STATUS.ACTIVE,
     current_plan: normalizePlanType(currentPlan),
     renewal_prompted_at: null,
+    membership_status_updated_at: nowIso(baseNow),
     plan_started_at: nowIso(baseNow),
   };
 }
@@ -100,7 +106,7 @@ function buildMembershipConfirmMessage(actionType, planLabel = '') {
 
   if (actionType === 'resume') {
     return [
-      `${planLabel || '現在のプラン'}で継続の方向に整えます。`,
+      `${planLabel || '現在のプラン'}で再開の方向に整えます。`,
       '今のペースに合う形で続けやすくしていきましょう。',
     ].join('\n');
   }
@@ -115,6 +121,11 @@ function buildMembershipCancelMessage() {
   return '今回は変更を確定せず、そのままにしておきます。必要な時にまた選べます。';
 }
 
+function getPlanLabel(planType) {
+  const normalized = normalizePlanType(planType);
+  return PLAN_LABELS[normalized] || PLAN_LABELS[PLAN_TYPES.BASIC];
+}
+
 module.exports = {
   isMembershipConfirmIntent,
   isMembershipCancelIntent,
@@ -124,4 +135,5 @@ module.exports = {
   buildResumeMembershipPatch,
   buildMembershipConfirmMessage,
   buildMembershipCancelMessage,
+  getPlanLabel,
 };
