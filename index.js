@@ -126,6 +126,7 @@ const {
 } = require('./config/ai_type_config');
 const {
   MEMBERSHIP_STATUS,
+  PLAN_TYPES,
   startTrialPatch,
   activatePlanPatch,
   markTrialPlanPromptedPatch,
@@ -137,13 +138,29 @@ const {
   isTrialStatusIntent,
   isCurrentPlanIntent,
   buildTrialStartedMessage,
-  buildTrialEndingMessage,
-  buildPlanGuideMessage,
-  buildPlanSelectedMessage,
-  buildRenewalPromptMessage,
   buildTrialStatusMessage,
   buildCurrentPlanStatusMessage,
+  buildPlanSelectedMessage,
+  getMembershipStatus,
 } = require('./services/trial_membership_service');
+const {
+  buildTrialReviewMessage,
+  buildMonthlyRenewalMessage,
+  buildPlanGuideMessageV2,
+  buildPauseReasonPrompt,
+  buildCancelReasonPrompt,
+  buildResumeGuideMessage,
+} = require('./services/membership_flow_service');
+const {
+  isMembershipConfirmIntent,
+  isMembershipCancelIntent,
+  buildPauseMembershipPatch,
+  buildCancelMembershipPatch,
+  buildResumeMembershipPatch,
+  buildMembershipConfirmMessage,
+  buildMembershipCancelMessage,
+  getPlanLabel,
+} = require('./services/membership_action_service');
 const {
   analyzeNewCaptureCandidate,
   isOnboardingStart,
@@ -154,6 +171,17 @@ const {
   mergePendingCaptureReply,
   updateUserWithPendingResult,
 } = require('./services/pending_capture_service');
+const {
+  buildInputHelpMessage,
+  buildRetrySupportMessage,
+  buildPastDateHelpMessage,
+} = require('./services/gentle_followup_service');
+const {
+  buildRewardMessage,
+} = require('./services/reward_message_service');
+const {
+  buildHealthConsultationGuide,
+} = require('./services/health_consultation_service');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -191,6 +219,7 @@ try {
 
 let createPainAdminMemo = null;
 let createReportAdminMemo = null;
+let createMembershipAdminMemo = null;
 
 try {
   const adminMemoService = require('./services/admin_memo_service');
@@ -202,6 +231,15 @@ try {
     : null;
 } catch (error) {
   console.warn('⚠️ admin_memo_service is not available:', error?.message || error);
+}
+
+try {
+  const membershipAdminMemoService = require('./services/membership_admin_memo_service');
+  createMembershipAdminMemo = typeof membershipAdminMemoService.createMembershipAdminMemo === 'function'
+    ? membershipAdminMemoService.createMembershipAdminMemo
+    : null;
+} catch (error) {
+  console.warn('⚠️ membership_admin_memo_service is not available:', error?.message || error);
 }
 
 const env = getEnv();
@@ -402,28 +440,9 @@ function hasQuestionIntent(text) {
   if (/[？?]/.test(raw)) return true;
 
   const patterns = [
-    'かな',
-    'ですか',
-    'ますか',
-    'いいですか',
-    '大丈夫ですか',
-    'だめですか',
-    'ダメですか',
-    'してもいい',
-    'して平気',
-    '問題ない',
-    'どうかな',
-    'どうですか',
-    '良いですか',
-    '悪いですか',
-    'いいかな',
-    '平気かな',
-    'だめかな',
-    'ダメかな',
-    'どうしたら',
-    'どうすれば',
-    'どう思う',
-    '教えて',
+    'かな', 'ですか', 'ますか', 'いいですか', '大丈夫ですか', 'だめですか', 'ダメですか',
+    'してもいい', 'して平気', '問題ない', 'どうかな', 'どうですか', '良いですか', '悪いですか',
+    'いいかな', '平気かな', 'だめかな', 'ダメかな', 'どうしたら', 'どうすれば', 'どう思う', '教えて',
   ];
 
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
@@ -434,29 +453,8 @@ function hasPainOrMedicalContext(text) {
   if (!t) return false;
 
   const patterns = [
-    '痛い',
-    '痛み',
-    'しびれ',
-    '腫れ',
-    '炎症',
-    '違和感',
-    'だるい',
-    '重い',
-    'つらい',
-    '辛い',
-    '足底腱膜炎',
-    '膝',
-    '腰',
-    '股関節',
-    '肩',
-    '首',
-    'かかと',
-    '足裏',
-    'ふくらはぎ',
-    '整形外科',
-    '病院',
-    '治療',
-    '症状',
+    '痛い', '痛み', 'しびれ', '腫れ', '炎症', '違和感', 'だるい', '重い', 'つらい', '辛い',
+    '足底腱膜炎', '膝', '腰', '股関節', '肩', '首', 'かかと', '足裏', 'ふくらはぎ', '整形外科', '病院', '治療', '症状',
   ];
 
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
@@ -467,20 +465,10 @@ function isExerciseConsultationText(text) {
   if (!t) return false;
 
   const hasExerciseWord = [
-    '走る',
-    'ジョギング',
-    'ランニング',
-    '歩く',
-    '運動',
-    '筋トレ',
-    'ストレッチ',
-    'スクワット',
-    '散歩',
-    'トレーニング',
+    '走る', 'ジョギング', 'ランニング', '歩く', '運動', '筋トレ', 'ストレッチ', 'スクワット', '散歩', 'トレーニング',
   ].some((w) => t.includes(normalizeTextLoose(w)));
 
   if (!hasExerciseWord) return false;
-
   return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
 }
 
@@ -500,13 +488,11 @@ function isMealCancelCommand(text) {
 }
 
 function isMealManualEditCommand(text) {
-  const t = String(text || '').trim();
-  return t === '手書きで追加・修正';
+  return String(text || '').trim() === '手書きで追加・修正';
 }
 
 function isMealAddPhotoCommand(text) {
-  const t = String(text || '').trim();
-  return t === '追加で写真';
+  return String(text || '').trim() === '追加で写真';
 }
 
 function isIntakeStartCommand(text) {
@@ -516,95 +502,44 @@ function isIntakeStartCommand(text) {
 
 function isGraphMenuIntent(text) {
   const t = String(text || '').trim().toLowerCase();
-  return [
-    'グラフ',
-    'グラフ見たい',
-    'グラフを見たい',
-    'グラフみたい',
-    '推移を見たい',
-    'データを見たい',
-    '記録を見たい',
-    '見える化',
-  ].includes(t);
+  return ['グラフ', 'グラフ見たい', 'グラフを見たい', 'グラフみたい', '推移を見たい', 'データを見たい', '記録を見たい', '見える化'].includes(t);
 }
 
 function isEnergyGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
   return [
-    '食事活動グラフ',
-    '食事グラフ',
-    '運動グラフ',
-    '活動グラフ',
-    '食事と運動のグラフ',
-    '食事と活動のグラフ',
-    'カロリーグラフ',
-    '摂取カロリーグラフ',
-    '消費カロリーグラフ',
-    '食事量のグラフ',
-    '運動量のグラフ',
-    '食事と運動を見たい',
-    '食事と活動を見たい',
+    '食事活動グラフ', '食事グラフ', '運動グラフ', '活動グラフ', '食事と運動のグラフ', '食事と活動のグラフ',
+    'カロリーグラフ', '摂取カロリーグラフ', '消費カロリーグラフ', '食事量のグラフ', '運動量のグラフ',
+    '食事と運動を見たい', '食事と活動を見たい',
   ].includes(t);
 }
 
 function isHbA1cGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
-  return [
-    'hba1cグラフ',
-    'hba1c',
-    'hba1c見たい',
-    '血糖グラフ',
-    '血糖を見たい',
-    'ヘモグロビンa1cグラフ',
-  ].includes(t);
+  return ['hba1cグラフ', 'hba1c', 'hba1c見たい', '血糖グラフ', '血糖を見たい', 'ヘモグロビンa1cグラフ'].includes(t);
 }
 
 function isLdlGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
-  return [
-    'ldlグラフ',
-    'ldl',
-    'ldl見たい',
-    'コレステロールグラフ',
-    '悪玉コレステロールグラフ',
-    'コレステロールを見たい',
-    'ldlを見たい',
-  ].includes(t);
+  return ['ldlグラフ', 'ldl', 'ldl見たい', 'コレステロールグラフ', '悪玉コレステロールグラフ', 'コレステロールを見たい', 'ldlを見たい'].includes(t);
 }
 
 function isLabGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
-  return [
-    '血液検査グラフ',
-    '血液検査のグラフ',
-    '血液グラフ',
-    '採血グラフ',
-    '血液検査を見たい',
-    '血液データを見たい',
-  ].includes(t) || isHbA1cGraphIntent(t) || isLdlGraphIntent(t);
+  return ['血液検査グラフ', '血液検査のグラフ', '血液グラフ', '採血グラフ', '血液検査を見たい', '血液データを見たい'].includes(t) || isHbA1cGraphIntent(t) || isLdlGraphIntent(t);
 }
 
 function isWeightGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
-  return [
-    '体重グラフ',
-    '体重のグラフ',
-    '体重見たい',
-    '体重を見たい',
-    '体重推移',
-    '体重の推移',
-    '体重の変化',
-  ].includes(t);
+  return ['体重グラフ', '体重のグラフ', '体重見たい', '体重を見たい', '体重推移', '体重の推移', '体重の変化'].includes(t);
 }
 
 function isWeeklyReportRequest(text) {
-  const s = String(text || '').trim();
-  return /週間報告|週報|1週間報告|一週間報告/.test(s);
+  return /週間報告|週報|1週間報告|一週間報告/.test(String(text || '').trim());
 }
 
 function isMonthlyReportRequest(text) {
-  const s = String(text || '').trim();
-  return /月間報告|月報|1か月報告|一か月報告/.test(s);
+  return /月間報告|月報|1か月報告|一か月報告/.test(String(text || '').trim());
 }
 
 function isAdminMemoDebugEnabled() {
@@ -627,39 +562,40 @@ function isCurrentDateTimeQuestion(text) {
     .replace(/\s+/g, '');
 
   const patterns = [
-    '今日は何月何日',
-    'きょうは何月何日',
-    '今日何日',
-    'きょう何日',
-    '今日は何日',
-    '今何時',
-    'いま何時',
-    '今何時ですか',
-    'いま何時ですか',
-    '今は何時',
-    'いまは何時',
-    '今は何時ですか',
-    'いまは何時ですか',
-    '今何時何分',
-    'いま何時何分',
-    '今は何時何分',
-    'いまは何時何分',
-    '何時何分',
-    '現在時刻',
-    '今日の日付',
-    '今日の日時',
-    '今の日時',
-    '今日は何曜日',
-    'きょうは何曜日',
-    '今日何曜日',
-    'きょう何曜日',
-    '今は何月何日',
-    '今日は何月何日ですか',
-    'いま何月何日',
-    '今の日付',
+    '今日は何月何日', 'きょうは何月何日', '今日何日', 'きょう何日', '今日は何日',
+    '今何時', 'いま何時', '今何時ですか', 'いま何時ですか', '今は何時', 'いまは何時',
+    '今は何時ですか', 'いまは何時ですか', '今何時何分', 'いま何時何分', '今は何時何分', 'いまは何時何分',
+    '何時何分', '現在時刻', '今日の日付', '今日の日時', '今の日時', '今日は何曜日', 'きょうは何曜日', '今日何曜日',
+    'きょう何曜日', '今は何月何日', '今日は何月何日ですか', 'いま何月何日', '今の日付',
   ];
 
   return patterns.some((p) => t.includes(p));
+}
+
+function isRetryIntent(text) {
+  const t = normalizeTextLoose(text);
+  return ['やり直し', 'ちがう', '違う', '間違えた', 'さっきのなし', '訂正', '訂正したい']
+    .some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function isInputHelpIntent(text) {
+  const t = normalizeTextLoose(text);
+  return ['入力できない', 'うまくできない', 'やり方がわからない', '送れない', '何を送ればいい', 'わからない']
+    .some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function isPastDateHelpIntent(text) {
+  const t = normalizeTextLoose(text);
+  return ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい']
+    .some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function isPauseReasonOption(text) {
+  return ['忙しい', '費用面', '体調面', 'モチベ低下', '効果を感じにくい', 'その他', '今は答えない'].includes(String(text || '').trim());
+}
+
+function isCancelReasonOption(text) {
+  return ['忙しい', '費用面', '体調面', '効果を感じにくい', '自分で続けたい', 'その他', '今は答えない'].includes(String(text || '').trim());
 }
 
 function buildCurrentDateTimeReply(tz = 'Asia/Tokyo') {
@@ -668,10 +604,7 @@ function buildCurrentDateTimeReply(tz = 'Asia/Tokyo') {
   const weekday = getWeekdayJaInTZ(now, tz);
   const timeText = formatTimeHmInTZ(now, tz);
 
-  return [
-    `東京では、今日は ${dateText}（${weekday}）です。`,
-    `今の時刻は ${timeText} です。`,
-  ].join('\n');
+  return [`東京では、今日は ${dateText}（${weekday}）です。`, `今の時刻は ${timeText} です。`].join('\n');
 }
 
 function parseWeightInput(text) {
@@ -705,11 +638,9 @@ function helpMessage() {
     '・プロフィール再設定',
     '・名前は 牛込',
     '・初回診断',
-    '・プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
     '・体重 63.2',
     '・ジョギング 20分',
     '・ストレッチ 5分',
-    '・スクワット 10回',
     '・朝食 食パン1枚 チーズ1枚 コーヒー',
     '・この内容で食事保存',
     '・膝が重いです',
@@ -766,12 +697,7 @@ function buildAiTypePrompt(aiType) {
 }
 
 function buildMealFollowupQuickReplies() {
-  return [
-    'この内容で食事保存',
-    '手書きで追加・修正',
-    '追加で写真',
-    '写真取り消し',
-  ];
+  return ['この内容で食事保存', '手書きで追加・修正', '追加で写真', '写真取り消し'];
 }
 
 function getMealDraft(lineUserId) {
@@ -786,10 +712,7 @@ function getMealDraft(lineUserId) {
 }
 
 function setMealDraft(lineUserId, mealResult, options = {}) {
-  const {
-    awaitingAdditionalPhoto = false,
-  } = options;
-
+  const { awaitingAdditionalPhoto = false } = options;
   recentMealDrafts.set(lineUserId, {
     meal: mealResult,
     awaitingAdditionalPhoto: Boolean(awaitingAdditionalPhoto),
@@ -852,44 +775,15 @@ function isMealDesireOrFeelingText(text) {
   if (!t) return false;
 
   const patterns = [
-    '食べたい',
-    '飲みたい',
-    'お腹いっぱい食べたい',
-    'おなかいっぱい食べたい',
-    'お腹一杯食べたい',
-    'おなか一杯食べたい',
-    'いっぱい食べたい',
-    '甘いもの食べたい',
-    '何か食べたい',
-    '食欲がある',
-    '食欲がない',
-    '食欲あります',
-    '食欲ない',
-    'お腹すいた',
-    'おなかすいた',
-    '食べたくなる',
-    '食べてしまいそう',
-    '食べそう',
-    '飲みたくなる',
-    '食欲が止まらない',
-    '食欲がすごい',
-    '食べすぎそう',
-    '食べ過ぎそう',
-    '食べすぎたくなる',
-    '甘いものが止まらない',
-    'お腹いっぱい食べれる',
-    'おなかいっぱい食べれる',
+    '食べたい', '飲みたい', 'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
+    'いっぱい食べたい', '甘いもの食べたい', '何か食べたい', '食欲がある', '食欲がない', '食欲あります', '食欲ない',
+    'お腹すいた', 'おなかすいた', '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
+    '食欲が止まらない', '食欲がすごい', '食べすぎそう', '食べ過ぎそう', '食べすぎたくなる',
+    '甘いものが止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
   ];
 
-  if (patterns.some((p) => t.includes(p))) {
-    return true;
-  }
-
-  if ((t.includes('食べ') || t.includes('飲み')) && t.includes('たい')) {
-    return true;
-  }
-
-  return false;
+  if (patterns.some((p) => t.includes(p))) return true;
+  return (t.includes('食べ') || t.includes('飲み')) && t.includes('たい');
 }
 
 function isExplicitMealLogText(text) {
@@ -899,30 +793,11 @@ function isExplicitMealLogText(text) {
   if (hasQuestionIntent(text)) return false;
 
   const directPatterns = [
-    '食べた',
-    '飲んだ',
-    '食べました',
-    '飲みました',
-    '食べたよ',
-    '飲んだよ',
-    '食べたです',
-    '朝食',
-    '昼食',
-    '夕食',
-    '朝ごはん',
-    '昼ごはん',
-    '夜ごはん',
-    '晩ごはん',
-    '朝飯',
-    '昼飯',
-    '夜飯',
-    '今朝',
-    'さっき',
+    '食べた', '飲んだ', '食べました', '飲みました', '食べたよ', '飲んだよ', '食べたです',
+    '朝食', '昼食', '夕食', '朝ごはん', '昼ごはん', '夜ごはん', '晩ごはん', '朝飯', '昼飯', '夜飯', '今朝', 'さっき',
   ];
 
-  if (directPatterns.some((p) => t.includes(p))) {
-    return true;
-  }
+  if (directPatterns.some((p) => t.includes(p))) return true;
 
   const hasMealVerb = /食べた|飲んだ|食べました|飲みました/.test(t);
   const hasFoodLikeWord = /ラーメン|ご飯|ごはん|パン|おにぎり|うどん|そば|パスタ|カレー|寿司|すし|肉|魚|卵|サラダ|スープ|味噌汁|みそ汁|コーヒー|お茶|ジュース|ビール|お酒|ケーキ|チョコ|アイス|青汁|食パン|ピーナッツバター/.test(t);
@@ -933,14 +808,8 @@ function isExplicitMealLogText(text) {
 function isExplicitMealGuideIntent(text) {
   const t = String(text || '').trim();
   return [
-    '食事を記録したい',
-    '食事記録したい',
-    '食事を登録したい',
-    '食事の記録方法',
-    '食事の保存方法',
-    '食事を入力したい',
-    '食べたものを記録したい',
-    '飲んだものを記録したい',
+    '食事を記録したい', '食事記録したい', '食事を登録したい', '食事の記録方法', '食事の保存方法', '食事を入力したい',
+    '食べたものを記録したい', '飲んだものを記録したい',
   ].includes(t);
 }
 
@@ -950,7 +819,6 @@ function sumBy(arr, key) {
 
 function buildDailySeries(rows, field, dateKeys = []) {
   const map = new Map();
-
   for (const ymd of dateKeys || []) {
     if (ymd) map.set(ymd, 0);
   }
@@ -1009,17 +877,10 @@ function isMemoryContentNear(a, b) {
 
 function dedupeMemoryRows(rows) {
   const result = [];
-
   for (const row of rows || []) {
-    const duplicate = result.some((saved) => {
-      return saved.memory_type === row.memory_type && isMemoryContentNear(saved.content, row.content);
-    });
-
-    if (!duplicate) {
-      result.push(row);
-    }
+    const duplicate = result.some((saved) => saved.memory_type === row.memory_type && isMemoryContentNear(saved.content, row.content));
+    if (!duplicate) result.push(row);
   }
-
   return result;
 }
 
@@ -1045,9 +906,7 @@ function buildMemoryRows(user, payload, sourceText, aiReply) {
   const normalized = normalizeMemoryPayload(payload);
   const nowIso = toIsoStringInTZ(new Date(), TZ);
 
-  if (!normalized.should_save || !normalized.memories.length) {
-    return [];
-  }
+  if (!normalized.should_save || !normalized.memories.length) return [];
 
   return dedupeMemoryRows(
     normalized.memories.map((memory) => ({
@@ -1073,9 +932,7 @@ async function getRecentConversationMemories(userId, limit = 30) {
       .limit(limit);
 
     if (error) {
-      if (isMissingRelationError(error)) {
-        return [];
-      }
+      if (isMissingRelationError(error)) return [];
       throw error;
     }
 
@@ -1096,24 +953,16 @@ function splitMemoryContext(memories) {
     if (!content) continue;
 
     if (type === 'follow_up_hint') {
-      if (!followUps.some((x) => isMemoryContentNear(x, content))) {
-        followUps.push(content);
-      }
+      if (!followUps.some((x) => isMemoryContentNear(x, content))) followUps.push(content);
       continue;
     }
 
     if (!grouped.has(type)) grouped.set(type, []);
     const list = grouped.get(type);
-
-    if (!list.some((x) => isMemoryContentNear(x, content))) {
-      list.push(content);
-    }
+    if (!list.some((x) => isMemoryContentNear(x, content))) list.push(content);
   }
 
-  return {
-    followUps: followUps.slice(0, 4),
-    grouped,
-  };
+  return { followUps: followUps.slice(0, 4), grouped };
 }
 
 function buildMemorySummary(memories) {
@@ -1125,50 +974,19 @@ function buildMemorySummary(memories) {
   }
 
   const { followUps, grouped } = splitMemoryContext(memories);
-
   const labels = {
-    goal: '目標',
-    concern: '気がかり',
-    anxiety: '不安',
-    mood_pattern: '気分の傾向',
-    craving_pattern: '食欲の傾向',
-    snacking_pattern: '間食傾向',
-    eating_pattern: '食習慣',
-    routine_pattern: '生活リズム',
-    exercise_pattern: '運動傾向',
-    pain_pattern: '痛み傾向',
-    symptom_pattern: '症状傾向',
-    medical_attention: '医療注意',
-    motivation_barrier: 'やる気の壁',
-    continuation_barrier: '継続の壁',
-    lifestyle_context: '生活背景',
-    work_context: '仕事背景',
-    family_context: '家庭背景',
-    emotional_trigger: '気持ちの引き金',
-    helpful_support_style: '合う声かけ',
-    disliked_support_style: '合わない声かけ',
-    value: '大切にしていること',
-    preference: '好み',
-    personality_tendency: '性格傾向',
-    sleep_pattern: '睡眠傾向',
-    time_of_day_pattern: '時間帯傾向',
-    other: 'その他',
+    goal: '目標', concern: '気がかり', anxiety: '不安', mood_pattern: '気分の傾向', craving_pattern: '食欲の傾向',
+    snacking_pattern: '間食傾向', eating_pattern: '食習慣', routine_pattern: '生活リズム', exercise_pattern: '運動傾向',
+    pain_pattern: '痛み傾向', symptom_pattern: '症状傾向', medical_attention: '医療注意', motivation_barrier: 'やる気の壁',
+    continuation_barrier: '継続の壁', lifestyle_context: '生活背景', work_context: '仕事背景', family_context: '家庭背景',
+    emotional_trigger: '気持ちの引き金', helpful_support_style: '合う声かけ', disliked_support_style: '合わない声かけ',
+    value: '大切にしていること', preference: '好み', personality_tendency: '性格傾向', sleep_pattern: '睡眠傾向',
+    time_of_day_pattern: '時間帯傾向', other: 'その他',
   };
 
   const preferredOrder = [
-    'goal',
-    'concern',
-    'anxiety',
-    'craving_pattern',
-    'eating_pattern',
-    'exercise_pattern',
-    'pain_pattern',
-    'continuation_barrier',
-    'helpful_support_style',
-    'time_of_day_pattern',
-    'work_context',
-    'family_context',
-    'medical_attention',
+    'goal', 'concern', 'anxiety', 'craving_pattern', 'eating_pattern', 'exercise_pattern', 'pain_pattern',
+    'continuation_barrier', 'helpful_support_style', 'time_of_day_pattern', 'work_context', 'family_context', 'medical_attention',
   ];
 
   const memoryLines = [];
@@ -1189,12 +1007,8 @@ function buildMemorySummary(memories) {
   }
 
   return {
-    followUpText: followUps.length
-      ? followUps.map((x) => `- ${x}`).join('\n')
-      : '特に優先フォローはまだありません。',
-    memoryText: memoryLines.length
-      ? memoryLines.join('\n')
-      : '過去記憶はまだありません。',
+    followUpText: followUps.length ? followUps.map((x) => `- ${x}`).join('\n') : '特に優先フォローはまだありません。',
+    memoryText: memoryLines.length ? memoryLines.join('\n') : '過去記憶はまだありません。',
   };
 }
 
@@ -1221,9 +1035,7 @@ async function extractConversationMemory(user, userText, aiReply) {
 
 function filterDuplicateRowsAgainstRecent(rows, recentRows) {
   return (rows || []).filter((row) => {
-    const duplicate = (recentRows || []).some((recent) => {
-      return recent.memory_type === row.memory_type && isMemoryContentNear(recent.content, row.content);
-    });
+    const duplicate = (recentRows || []).some((recent) => recent.memory_type === row.memory_type && isMemoryContentNear(recent.content, row.content));
     return !duplicate;
   });
 }
@@ -1232,12 +1044,10 @@ async function saveConversationMemory(user, userText, aiReply) {
   try {
     const payload = await extractConversationMemory(user, userText, aiReply);
     const rows = buildMemoryRows(user, payload, userText, aiReply);
-
     if (!rows.length) return;
 
     const recentRows = await getRecentConversationMemories(user.id, 120);
     const filteredRows = filterDuplicateRowsAgainstRecent(rows, recentRows);
-
     if (!filteredRows.length) return;
 
     const { error } = await supabase.from('conversation_memories').insert(filteredRows);
@@ -1276,7 +1086,6 @@ function countQuestions(text) {
 
 function limitReplyQuestions(text, maxQuestions = 1) {
   if (countQuestions(text) <= maxQuestions) return text;
-
   let seen = 0;
   return String(text || '').replace(/[？?]/g, (mark) => {
     seen += 1;
@@ -1306,15 +1115,11 @@ function trimReplyLength(text, max = 420) {
   if (normalized.length <= max) return normalized;
 
   const firstBreak = normalized.indexOf('\n');
-  if (firstBreak > 0 && firstBreak < max) {
-    return normalized.slice(0, firstBreak).trim();
-  }
+  if (firstBreak > 0 && firstBreak < max) return normalized.slice(0, firstBreak).trim();
 
   const cut = normalized.slice(0, max);
   const lastPunc = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('！'), cut.lastIndexOf('？'), cut.lastIndexOf('\n'));
-  if (lastPunc >= 40) {
-    return cut.slice(0, lastPunc + 1).trim();
-  }
+  if (lastPunc >= 40) return cut.slice(0, lastPunc + 1).trim();
   return cut.trim();
 }
 
@@ -1324,11 +1129,7 @@ function postProcessAiReply(user, rawReply) {
   text = limitReplyQuestions(text, 1);
   text = trimReplyLength(text, 420);
   text = safeText(text, 600);
-
-  if (!text) {
-    text = '今日はそんな感じなんですね。ここからまた整えていきましょう。';
-  }
-
+  if (!text) text = '今日はそんな感じなんですね。ここからまた整えていきましょう。';
   return prefixWithName(user, text);
 }
 
@@ -1342,10 +1143,7 @@ function buildMealNutritionLines(meal) {
   const protein = roundMacroGram(meal?.protein_g);
   const fat = roundMacroGram(meal?.fat_g);
   const carbs = roundMacroGram(meal?.carbs_g);
-
-  if (protein == null && fat == null && carbs == null) {
-    return [];
-  }
+  if (protein == null && fat == null && carbs == null) return [];
 
   return [
     '栄養の目安',
@@ -1359,9 +1157,7 @@ function normalizeMealCorrectionText(text) {
   const raw = String(text || '').trim();
   if (!raw) return raw;
 
-  const t = raw
-    .replace(/\s+/g, '')
-    .replace(/[。．]/g, '');
+  const t = raw.replace(/\s+/g, '').replace(/[。．]/g, '');
 
   if (/^ご飯半分$/.test(t) || /^ごはん半分$/.test(t)) return 'ご飯は半分です';
   if (/^ご飯少なめ$/.test(t) || /^ごはん少なめ$/.test(t)) return 'ご飯は少なめです';
@@ -1378,7 +1174,6 @@ function normalizeMealCorrectionText(text) {
 
 function buildMealReplyWithSaveGuide(meal, options = {}) {
   const { textOnly = false } = options;
-
   const lines = [
     '食事内容を整理しました。',
     `料理: ${safeText(meal?.meal_label || '食事', 120)}`,
@@ -1419,10 +1214,7 @@ function mergeFoodItems(baseItems = [], extraItems = []) {
 }
 
 function mergeMealLabels(baseLabel, extraLabel) {
-  const labels = [baseLabel, extraLabel]
-    .map((x) => String(x || '').trim())
-    .filter(Boolean);
-
+  const labels = [baseLabel, extraLabel].map((x) => String(x || '').trim()).filter(Boolean);
   return Array.from(new Set(labels)).join(' / ') || '食事';
 }
 
@@ -1431,7 +1223,6 @@ function sumNullableNumber(a, b) {
   const bv = Number(b);
   const hasA = Number.isFinite(av);
   const hasB = Number.isFinite(bv);
-
   if (!hasA && !hasB) return null;
   return (hasA ? av : 0) + (hasB ? bv : 0);
 }
@@ -1474,16 +1265,12 @@ function mergeMealDrafts(baseMeal, extraMeal) {
 function countDetectedLabItems(extraction) {
   const panels = Array.isArray(extraction?.panels) ? extraction.panels : [];
   let count = 0;
-
   for (const panel of panels) {
     const items = panel?.items || {};
     for (const value of Object.values(items)) {
-      if (value !== null && value !== undefined && String(value).trim() !== '') {
-        count += 1;
-      }
+      if (value !== null && value !== undefined && String(value).trim() !== '') count += 1;
     }
   }
-
   return count;
 }
 
@@ -1496,15 +1283,12 @@ function isLikelyBloodTestExtraction(extraction) {
 
 function isMeaningfulMealDraft(meal) {
   if (!meal || !meal.is_meal) return false;
-
   const kcal = Number(meal.estimated_kcal || 0);
   const foodCount = Array.isArray(meal.food_items) ? meal.food_items.length : 0;
   const label = String(meal.meal_label || '').trim();
-
   if (kcal > 0) return true;
   if (foodCount > 0) return true;
   if (label && label !== '食事' && label !== '食事なし') return true;
-
   return false;
 }
 
@@ -1518,7 +1302,6 @@ async function analyzeMealTextPrimary(text) {
       console.error('⚠️ analyzeMealTextWithGemini failed. Fallback to analyzeMealTextWithAI:', error?.message || error);
     }
   }
-
   return analyzeMealTextWithAI(text);
 }
 
@@ -1531,7 +1314,6 @@ async function applyMealCorrectionPrimary(currentMeal, correctionText) {
       console.error('⚠️ applyMealCorrectionWithGemini failed. Fallback to applyMealCorrection:', error?.message || error);
     }
   }
-
   return applyMealCorrection(currentMeal, correctionText);
 }
 
@@ -1561,18 +1343,8 @@ async function getSevenDayEnergyRows(userId) {
   const { endIso } = buildDayRangeIsoInTZ(endYmd, TZ);
 
   const [mealsRes, actsRes] = await Promise.all([
-    supabase
-      .from('meal_logs')
-      .select('eaten_at, estimated_kcal')
-      .eq('user_id', userId)
-      .gte('eaten_at', startIso)
-      .lte('eaten_at', endIso),
-    supabase
-      .from('activity_logs')
-      .select('logged_at, estimated_activity_kcal')
-      .eq('user_id', userId)
-      .gte('logged_at', startIso)
-      .lte('logged_at', endIso),
+    supabase.from('meal_logs').select('eaten_at, estimated_kcal').eq('user_id', userId).gte('eaten_at', startIso).lte('eaten_at', endIso),
+    supabase.from('activity_logs').select('logged_at, estimated_activity_kcal').eq('user_id', userId).gte('logged_at', startIso).lte('logged_at', endIso),
   ]);
 
   if (mealsRes.error) throw mealsRes.error;
@@ -1583,12 +1355,7 @@ async function getSevenDayEnergyRows(userId) {
 
   return intakeSeries.map((row, idx) => {
     const activity = activitySeries[idx]?.value || 0;
-    return {
-      date: row.date,
-      intake_kcal: row.value,
-      activity_kcal: activity,
-      net_kcal: row.value - activity,
-    };
+    return { date: row.date, intake_kcal: row.value, activity_kcal: activity, net_kcal: row.value - activity };
   });
 }
 
@@ -1665,11 +1432,7 @@ async function getRecentSymptomRows(userId, limit = 20) {
     }
 
     return Array.isArray(data)
-      ? data.map((row) => ({
-          date: row.created_at,
-          symptom: row.content,
-          memory_type: row.memory_type,
-        }))
+      ? data.map((row) => ({ date: row.created_at, symptom: row.content, memory_type: row.memory_type }))
       : [];
   } catch (error) {
     console.error('⚠️ getRecentSymptomRows failed:', error?.message || error);
@@ -1704,16 +1467,8 @@ async function buildReportDraftInput(user, reportType) {
     getRecentSymptomRows(user.id, reportType === 'monthly' ? 40 : 20),
   ]);
 
-  const weights = filterRowsWithinDays(weightRows, 'measured_at', days).map((row) => ({
-    date: row.measured_at,
-    weight_kg: row.weight_kg,
-  }));
-
-  const bodyFats = filterRowsWithinDays(bodyFatRows, 'measured_at', days).map((row) => ({
-    date: row.measured_at,
-    body_fat_percent: row.body_fat_percent,
-  }));
-
+  const weights = filterRowsWithinDays(weightRows, 'measured_at', days).map((row) => ({ date: row.measured_at, weight_kg: row.weight_kg }));
+  const bodyFats = filterRowsWithinDays(bodyFatRows, 'measured_at', days).map((row) => ({ date: row.measured_at, body_fat_percent: row.body_fat_percent }));
   const meals = filterRowsWithinDays(mealRows, 'eaten_at', days).map((row) => ({
     date: row.eaten_at,
     calories: row.estimated_kcal,
@@ -1723,18 +1478,13 @@ async function buildReportDraftInput(user, reportType) {
     meal_type: row.meal_label,
     meal_time: row.eaten_at ? formatTimeHmInTZ(row.eaten_at, TZ) : '',
   }));
-
   const exercises = filterRowsWithinDays(activityRows, 'logged_at', days).map((row) => ({
     date: row.logged_at,
     duration_minutes: row.walking_minutes || null,
     calories_burned: row.estimated_activity_kcal,
     exercise_type: row.exercise_summary,
   }));
-
-  const symptoms = filterRowsWithinDays(symptomRows, 'date', days).map((row) => ({
-    date: row.date,
-    symptom: row.symptom,
-  }));
+  const symptoms = filterRowsWithinDays(symptomRows, 'date', days).map((row) => ({ date: row.date, symptom: row.symptom }));
 
   const periodEnd = currentDateYmdInTZ(TZ);
   const periodStart = addDaysYmd(periodEnd, -(days - 1));
@@ -1873,7 +1623,6 @@ async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
 
   const { error } = await supabase.from('activity_logs').insert(insertPayload);
   if (error) throw error;
-
   return insertPayload;
 }
 
@@ -1882,7 +1631,7 @@ async function saveMealSmartPayload(user, payload = {}, rawText = '') {
   return saveMealToLog(user.id, analyzedMeal);
 }
 
-async function handleSmartConversationFlow({ event, user, text }) {
+async function handleSmartConversationFlow({ user, text }) {
   const analysis = analyzeNewCaptureCandidate(text);
 
   if (analysis.route === 'onboarding_start') {
@@ -1949,51 +1698,13 @@ async function handleSmartConversationFlow({ event, user, text }) {
     };
   }
 
-  if (analysis.route === 'save_exercise') {
-    return {
-      handled: true,
-      next: 'save_exercise',
-      payload: analysis.payload,
-    };
-  }
+  if (analysis.route === 'save_exercise') return { handled: true, next: 'save_exercise', payload: analysis.payload };
+  if (analysis.route === 'save_meal') return { handled: true, next: 'save_meal', payload: analysis.payload };
+  if (analysis.route === 'save_weight') return { handled: true, next: 'save_weight', payload: analysis.payload };
+  if (analysis.route === 'save_body_fat') return { handled: true, next: 'save_body_fat', payload: analysis.payload };
+  if (analysis.route === 'consultation_chat') return { handled: false, next: 'consultation_chat', payload: analysis.payload };
 
-  if (analysis.route === 'save_meal') {
-    return {
-      handled: true,
-      next: 'save_meal',
-      payload: analysis.payload,
-    };
-  }
-
-  if (analysis.route === 'save_weight') {
-    return {
-      handled: true,
-      next: 'save_weight',
-      payload: analysis.payload,
-    };
-  }
-
-  if (analysis.route === 'save_body_fat') {
-    return {
-      handled: true,
-      next: 'save_body_fat',
-      payload: analysis.payload,
-    };
-  }
-
-  if (analysis.route === 'consultation_chat') {
-    return {
-      handled: false,
-      next: 'consultation_chat',
-      payload: analysis.payload,
-    };
-  }
-
-  return {
-    handled: false,
-    next: 'general_chat',
-    payload: analysis.payload,
-  };
+  return { handled: false, next: 'general_chat', payload: analysis.payload };
 }
 
 async function updateUserTrialMembership(userId, patch = {}) {
@@ -2018,20 +1729,11 @@ async function ensureTrialStartedForUser(user) {
   if (!user?.id) return { user, started: false };
 
   const membershipStatus = safeText(user?.membership_status || '', '');
-  const canStartTrial =
-    !user?.trial_started_at &&
-    (!membershipStatus || membershipStatus === MEMBERSHIP_STATUS.NONE);
-
-  if (!canStartTrial) {
-    return { user, started: false };
-  }
+  const canStartTrial = !user?.trial_started_at && (!membershipStatus || membershipStatus === MEMBERSHIP_STATUS.NONE);
+  if (!canStartTrial) return { user, started: false };
 
   const updatedUser = await updateUserTrialMembership(user.id, startTrialPatch());
-
-  return {
-    user: updatedUser || user,
-    started: Boolean(updatedUser),
-  };
+  return { user: updatedUser || user, started: Boolean(updatedUser) };
 }
 
 async function defaultChatReply(user, userText) {
@@ -2091,26 +1793,17 @@ function buildLegacyMealFromGeminiResult(result) {
     needs_confirmation: Boolean(normalized.needs_confirmation),
   }));
 
-  const uncertainPoints = Array.isArray(normalized.uncertain_points)
-    ? normalized.uncertain_points.filter(Boolean)
-    : [];
-
-  const confirmationQuestions = Array.isArray(normalized.confirmation_questions)
-    ? normalized.confirmation_questions.filter(Boolean)
-    : [];
+  const uncertainPoints = Array.isArray(normalized.uncertain_points) ? normalized.uncertain_points.filter(Boolean) : [];
+  const confirmationQuestions = Array.isArray(normalized.confirmation_questions) ? normalized.confirmation_questions.filter(Boolean) : [];
 
   const commentLines = [];
   if (uncertainPoints.length) {
     commentLines.push('確認したい点:');
     commentLines.push(...uncertainPoints.map((x) => `・${x}`));
   }
-  if (confirmationQuestions.length) {
-    commentLines.push(...confirmationQuestions.map((x) => `・${x}`));
-  }
+  if (confirmationQuestions.length) commentLines.push(...confirmationQuestions.map((x) => `・${x}`));
 
-  const mealLabel =
-    safeText(normalized.meal_label || '', 100) ||
-    safeText(mainItems.map((item) => item.name).join(' / ') || '食事', 100);
+  const mealLabel = safeText(normalized.meal_label || '', 100) || safeText(mainItems.map((item) => item.name).join(' / ') || '食事', 100);
 
   return {
     is_meal: true,
@@ -2125,34 +1818,22 @@ function buildLegacyMealFromGeminiResult(result) {
     confidence: Math.max(
       0.55,
       mainItems.length
-        ? Math.round(
-            (mainItems.reduce((sum, item) => sum + (Number(item.confidence) || 0.7), 0) / mainItems.length) * 100
-          ) / 100
+        ? Math.round((mainItems.reduce((sum, item) => sum + (Number(item.confidence) || 0.7), 0) / mainItems.length) * 100) / 100
         : 0.75
     ),
     uncertainty_notes: uncertainPoints,
     confirmation_questions: confirmationQuestions,
     ai_comment: safeText(
-      commentLines.length
-        ? commentLines.join('\n')
-        : `写真から推定しました。約${fmt(Number(normalized.total_kcal) || 0)} kcalです。`,
+      commentLines.length ? commentLines.join('\n') : `写真から推定しました。約${fmt(Number(normalized.total_kcal) || 0)} kcalです。`,
       1000
     ),
-    raw_model_json: {
-      source: 'gemini_meal_service',
-      gemini_result: normalized,
-    },
+    raw_model_json: { source: 'gemini_meal_service', gemini_result: normalized },
   };
 }
 
 async function analyzeMealImageWithGeminiPrimary(buffer, mimeType) {
   const base64Image = buffer.toString('base64');
-
-  const result = await analyzeMealPhotoWithGemini({
-    base64Image,
-    mimeType: mimeType || 'image/jpeg',
-  });
-
+  const result = await analyzeMealPhotoWithGemini({ base64Image, mimeType: mimeType || 'image/jpeg' });
   return buildLegacyMealFromGeminiResult(result);
 }
 
@@ -2177,12 +1858,7 @@ function buildPainSituationResponse(text, area = '全身') {
 }
 
 async function extractBloodTestDraftFromImage(buffer, mimeType) {
-  const imagePart = {
-    inlineData: {
-      mimeType,
-      data: buffer.toString('base64'),
-    },
-  };
+  const imagePart = { inlineData: { mimeType, data: buffer.toString('base64') } };
 
   const schema = {
     type: 'object',
@@ -2271,17 +1947,11 @@ async function startOrResumeIntake(user) {
 
   const { data, error } = await supabase
     .from('intake_sessions')
-    .insert({
-      user_id: user.id,
-      status: 'draft',
-      current_step: 'choose_ai_type',
-      answers_json: createEmptyIntakeAnswers(),
-    })
+    .insert({ user_id: user.id, status: 'draft', current_step: 'choose_ai_type', answers_json: createEmptyIntakeAnswers() })
     .select('*')
     .single();
 
   if (error) throw error;
-
   await supabase.from('users').update({ intake_status: 'in_progress' }).eq('id', user.id);
   return data;
 }
@@ -2305,10 +1975,7 @@ async function completeIntakeSession(user, session) {
 
   const { error: userError } = await supabase
     .from('users')
-    .update({
-      ...userPatch,
-      intake_status: 'completed',
-    })
+    .update({ ...userPatch, intake_status: 'completed' })
     .eq('id', user.id);
   if (userError) throw userError;
 
@@ -2321,14 +1988,9 @@ async function completeIntakeSession(user, session) {
       current_barriers: profileSummary.current_barriers,
     }, { onConflict: 'user_id' });
 
-  if (profileError) {
-    console.error('⚠️ user_profiles upsert failed:', profileError?.message || profileError);
-  }
+  if (profileError) console.error('⚠️ user_profiles upsert failed:', profileError?.message || profileError);
 
-  const { error: sessionError } = await supabase
-    .from('intake_sessions')
-    .update({ status: 'completed' })
-    .eq('id', session.id);
+  const { error: sessionError } = await supabase.from('intake_sessions').update({ status: 'completed' }).eq('id', session.id);
   if (sessionError) throw sessionError;
 }
 
@@ -2384,59 +2046,35 @@ async function handleImageMessage(event, user) {
 
       if (dates.length > 1) {
         const msg = buildLabDateChoiceMessage({ working_data_json: workingData });
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(msg.text, msg.quickReplies),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
-      const msg = buildLabDraftSummaryMessage({
-        working_data_json: workingData,
-        selected_date: dates[0],
-      });
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(msg.text, msg.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      const msg = buildLabDraftSummaryMessage({ working_data_json: workingData, selected_date: dates[0] });
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     let finalMealDraft = null;
-
     try {
       finalMealDraft = await analyzeMealImageWithGeminiPrimary(buffer, mimeType);
     } catch (geminiMealError) {
-      console.error(
-        '⚠️ Gemini meal analysis failed. Fallback to meal_image_ai_service:',
-        geminiMealError?.message || geminiMealError
-      );
+      console.error('⚠️ Gemini meal analysis failed. Fallback to meal_image_ai_service:', geminiMealError?.message || geminiMealError);
     }
 
     if (!isMeaningfulMealDraft(finalMealDraft)) {
       const analyzedMeal = await analyzeMealImageWithAI(buffer, mimeType);
-      if (isMeaningfulMealDraft(analyzedMeal)) {
-        finalMealDraft = analyzedMeal;
-      } else {
-        finalMealDraft = null;
-      }
+      finalMealDraft = isMeaningfulMealDraft(analyzedMeal) ? analyzedMeal : null;
     }
 
     if (existingMealDraft?.awaitingAdditionalPhoto) {
       if (isMeaningfulMealDraft(finalMealDraft)) {
         const mergedMeal = mergeMealDrafts(existingMealDraft.meal, finalMealDraft);
         setMealDraft(user.line_user_id, mergedMeal);
-
         const mealMessage = buildMealReplyWithSaveGuide(mergedMeal);
         await replyMessage(
           event.replyToken,
-          textMessageWithQuickReplies(
-            prefixWithName(user, `追加写真も反映しました。\n\n${mealMessage}`),
-            buildMealFollowupQuickReplies()
-          ),
+          textMessageWithQuickReplies(prefixWithName(user, `追加写真も反映しました。\n\n${mealMessage}`), buildMealFollowupQuickReplies()),
           env.LINE_CHANNEL_ACCESS_TOKEN
         );
         return;
@@ -2456,32 +2094,19 @@ async function handleImageMessage(event, user) {
 
     if (isMeaningfulMealDraft(finalMealDraft)) {
       setMealDraft(user.line_user_id, finalMealDraft);
-
       const mealMessage = buildMealReplyWithSaveGuide(finalMealDraft);
-
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, mealMessage),
-          buildMealFollowupQuickReplies()
-        ),
+        textMessageWithQuickReplies(prefixWithName(user, mealMessage), buildMealFollowupQuickReplies()),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
     }
 
-    await replyMessage(
-      event.replyToken,
-      '画像を読み取りましたが、食事写真や血液検査画像としてはっきり判定できませんでした。もう少し見やすい写真を送ってください。',
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+    await replyMessage(event.replyToken, '画像を読み取りましたが、食事写真や血液検査画像としてはっきり判定できませんでした。もう少し見やすい写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
   } catch (error) {
     console.error('❌ handleImageMessage error:', error?.stack || error?.message || error);
-    await replyMessage(
-      event.replyToken,
-      '画像の処理でエラーが起きました。もう一度写真を送ってください。',
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+    await replyMessage(event.replyToken, '画像の処理でエラーが起きました。もう一度写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
   }
 }
 
@@ -2489,99 +2114,62 @@ async function handleOnboardingMessage(event, user) {
   const text = String(event?.message?.text || '').trim();
 
   let state = normalizeUserState(user);
-
   if (!user?.onboarding_state_json && !user?.onboarding_status) {
     state = createInitialOnboardingState();
     const initialPatch = buildOnboardingStatePatch(state);
-
-    const { error } = await supabase
-      .from('users')
-      .update(initialPatch)
-      .eq('id', user.id);
-
+    const { error } = await supabase.from('users').update(initialPatch).eq('id', user.id);
     if (error) throw error;
   }
 
-  const currentUserForAdvance = {
-    ...user,
-    onboarding_state_json: JSON.stringify(state),
-  };
-
+  const currentUserForAdvance = { ...user, onboarding_state_json: JSON.stringify(state) };
   const result = advanceOnboardingState(currentUserForAdvance, text);
 
   if (!result.ok && result.errorMessage) {
     const reply = buildReplyPayload(state);
     const errorText = `${result.errorMessage}\n\n${reply.text}`;
-
-    await replyMessage(
-      event.replyToken,
-      textMessageWithQuickReplies(errorText, reply.quickReplies),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+    await replyMessage(event.replyToken, textMessageWithQuickReplies(errorText, reply.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
     return;
   }
 
   const nextState = result.state || state;
   const patch = buildOnboardingStatePatch(nextState);
-
-  const { error } = await supabase
-    .from('users')
-    .update(patch)
-    .eq('id', user.id);
-
+  const { error } = await supabase.from('users').update(patch).eq('id', user.id);
   if (error) throw error;
 
   const reply = buildReplyPayload(nextState);
-
-  const onboardingCompleted =
-    safeText(patch?.onboarding_status || '', '') === 'completed' ||
-    String(nextState?.current_step || '').trim().toLowerCase() === 'done';
+  const onboardingCompleted = safeText(patch?.onboarding_status || '', '') === 'completed' || String(nextState?.current_step || '').trim().toLowerCase() === 'done';
 
   if (onboardingCompleted) {
     const refreshedUser = await refreshUserById(supabase, user.id);
     const trialResult = await ensureTrialStartedForUser(refreshedUser || user);
-    const messages = [
-      textMessageWithQuickReplies(reply.text, reply.quickReplies),
-    ];
+    const messages = [textMessageWithQuickReplies(reply.text, reply.quickReplies)];
 
     if (trialResult.started) {
       const trialStarted = buildTrialStartedMessage();
       messages.push(buildMembershipReplyMessage(trialResult.user || refreshedUser || user, trialStarted));
     }
 
-    await replyMessage(
-      event.replyToken,
-      messages,
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
     return;
   }
 
-  await replyMessage(
-    event.replyToken,
-    textMessageWithQuickReplies(reply.text, reply.quickReplies),
-    env.LINE_CHANNEL_ACCESS_TOKEN
-  );
+  await replyMessage(event.replyToken, textMessageWithQuickReplies(reply.text, reply.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
 async function beginProfileManagementFlow(event, user, mode) {
   const state = startProfileEditFromUser(user, mode);
   const patch = buildOnboardingStatePatch(state);
-
-  const { error } = await supabase
-    .from('users')
-    .update(patch)
-    .eq('id', user.id);
-
+  const { error } = await supabase.from('users').update(patch).eq('id', user.id);
   if (error) throw error;
 
   const reply = buildReplyPayload(state);
+  await replyMessage(event.replyToken, textMessageWithQuickReplies(reply.text, reply.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+}
 
-  await replyMessage(
-    event.replyToken,
-    textMessageWithQuickReplies(reply.text, reply.quickReplies),
-    env.LINE_CHANNEL_ACCESS_TOKEN
-  );
+async function saveMembershipAdminMemo(input = {}) {
+  if (!createMembershipAdminMemo || !isAdminMemoDebugEnabled()) return;
+  const memo = createMembershipAdminMemo(input);
+  safeConsoleLog('[MEMBERSHIP_ADMIN_MEMO]', memo?.memo_text || memo);
 }
 
 async function handleTextMessage(event, user) {
@@ -2618,6 +2206,38 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (isInputHelpIntent(text)) {
+      const replyText = prefixWithName(user, buildInputHelpMessage());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isPastDateHelpIntent(text)) {
+      const replyText = prefixWithName(user, buildPastDateHelpMessage());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (hasPendingCapture(user) && isRetryIntent(text)) {
+      await saveUserState(user.id, {
+        pending_capture_type: null,
+        pending_capture_status: null,
+        pending_capture_payload: null,
+        pending_capture_missing_fields: null,
+        pending_capture_prompt: null,
+        pending_capture_started_at: null,
+        pending_capture_source_text: null,
+        pending_capture_attempts: 0,
+      });
+
+      const replyText = prefixWithName(user, buildRetrySupportMessage());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
     if (isProfileConfirmCommand(text)) {
       await beginProfileManagementFlow(event, user, 'confirm');
       return;
@@ -2633,35 +2253,154 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isOnboardingActive(user) || isOnboardingStartCommand(text)) {
+    // smart flow をプロフィール更新より前に通す
+    const smartFlowResult = await handleSmartConversationFlow({ user, text });
+
+    if (smartFlowResult?.next === 'onboarding_start') {
       await handleOnboardingMessage(event, user);
       return;
     }
 
-    if (isIntakeStartCommand(text)) {
-      const session = await startOrResumeIntake(user);
-      const msg = renderIntakeStepMessage(session);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(msg.text, msg.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+    if (smartFlowResult?.handled) {
+      if (smartFlowResult.next === 'reply_pending_question') {
+        await replyMessage(event.replyToken, prefixWithName(user, smartFlowResult.replyText), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_exercise' || smartFlowResult.next === 'save_exercise_from_pending') {
+        await saveExerciseSmartPayload(user, smartFlowResult.payload, text);
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+          last_checkin_at: new Date().toISOString(),
+        });
+
+        const totals = await getTodayEnergyTotals(user.id);
+        const energyText = buildEnergySummaryText({
+          estimatedBmr: user.estimated_bmr || 0,
+          estimatedTdee: user.estimated_tdee || 0,
+          intakeKcal: totals.intake_kcal || 0,
+          activityKcal: totals.activity_kcal || 0,
+        });
+
+        const replyText = prefixWithName(user, `ありがとうございます。運動記録として残しました。\n\n${energyText}`);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_meal' || smartFlowResult.next === 'save_meal_from_pending') {
+        const savedMeal = await saveMealSmartPayload(user, smartFlowResult.payload, text);
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+          last_checkin_at: new Date().toISOString(),
+        });
+
+        const totals = await getTodayEnergyTotals(user.id);
+        const nutritionLines = buildMealNutritionLines(savedMeal);
+        const replyText = prefixWithName(
+          user,
+          [
+            'ありがとうございます。食事記録として残しました。',
+            `料理: ${savedMeal.meal_label}`,
+            savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+            nutritionLines.length ? '' : null,
+            ...(nutritionLines.length ? nutritionLines : []),
+            `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+          ].filter(Boolean).join('\n')
+        );
+
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '予測', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_weight' || smartFlowResult.next === 'save_weight_from_pending') {
+        const weightKg = Number(smartFlowResult.payload?.weight_kg);
+        await saveWeightToLog(user.id, weightKg, text);
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+          last_checkin_at: new Date().toISOString(),
+        });
+
+        const recentWeights = await getRecentWeightRows(user.id, 10);
+        const latest = recentWeights[0] || { weight_kg: weightKg };
+        const prev = recentWeights[1] || null;
+
+        const diffText = (() => {
+          if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
+          const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
+          if (diff === 0) return '前回から変化はありません。';
+          if (diff > 0) return `前回より ${diff}kg 増えています。`;
+          return `前回より ${Math.abs(diff)}kg 減っています。`;
+        })();
+
+        const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${weightKg}kg\n${diffText}`);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_body_fat' || smartFlowResult.next === 'save_body_fat_from_pending') {
+        const bodyFatPercent = Number(smartFlowResult.payload?.body_fat_percent);
+        await saveBodyFatToLog(user.id, bodyFatPercent, text);
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+          last_checkin_at: new Date().toISOString(),
+        });
+
+        const replyText = prefixWithName(user, `ありがとうございます。体脂肪率 ${bodyFatPercent}% を記録しました。`);
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+    }
+
+    if (isOnboardingActive(user) || isOnboardingStartCommand(text) || isIntakeStartCommand(text)) {
+      if (isIntakeStartCommand(text)) {
+        const session = await startOrResumeIntake(user);
+        const msg = renderIntakeStepMessage(session);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      await handleOnboardingMessage(event, user);
       return;
     }
 
     const openIntake = await getOpenIntakeSession(user.id);
     if (openIntake) {
       if (text === '最初からやり直す') {
-        const reset = await updateIntakeSession(openIntake.id, {
-          current_step: 'choose_ai_type',
-          answers_json: createEmptyIntakeAnswers(),
-        });
+        const reset = await updateIntakeSession(openIntake.id, { current_step: 'choose_ai_type', answers_json: createEmptyIntakeAnswers() });
         const msg = renderIntakeStepMessage(reset);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(msg.text, msg.quickReplies),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
@@ -2677,10 +2416,7 @@ async function handleTextMessage(event, user) {
           const trialStarted = buildTrialStartedMessage();
           await replyMessage(
             event.replyToken,
-            [
-              buildLineTextMessage(completeReplyText),
-              buildMembershipReplyMessage(finalUser, trialStarted),
-            ],
+            [buildLineTextMessage(completeReplyText), buildMembershipReplyMessage(finalUser, trialStarted)],
             env.LINE_CHANNEL_ACCESS_TOKEN
           );
           await rememberInteraction(finalUser, text, `${completeReplyText}\n\n${trialStarted.text}`);
@@ -2696,128 +2432,242 @@ async function handleTextMessage(event, user) {
       if (validated.ok) {
         const updated = await updateIntakeSession(openIntake.id, {
           current_step: validated.nextStep,
-          answers_json: {
-            ...(openIntake.answers_json || {}),
-            ...validated.patch,
-          },
+          answers_json: { ...(openIntake.answers_json || {}), ...validated.patch },
         });
         const msg = renderIntakeStepMessage(updated);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(msg.text, msg.quickReplies),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
       const currentMsg = renderIntakeStepMessage(openIntake);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(currentMsg.text, currentMsg.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(currentMsg.text, currentMsg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (shouldPromptTrialPlan(user)) {
       await updateUserTrialMembership(user.id, markTrialPlanPromptedPatch());
-      const msg = buildTrialEndingMessage();
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      const msg = buildTrialReviewMessage(user);
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (shouldPromptRenewal(user)) {
       await updateUserTrialMembership(user.id, markRenewalPromptedPatch());
-      const msg = buildRenewalPromptMessage(user);
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      const msg = buildMonthlyRenewalMessage(user);
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (isTrialStatusIntent(text)) {
       const msg = buildTrialStatusMessage(user);
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (isCurrentPlanIntent(text)) {
       const msg = buildCurrentPlanStatusMessage(user);
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
-    if (
-      isPlanGuideTrigger(text) ||
-      ['プラン案内を見る', '別プランも見る', '内容を確認する', 'プラン変更したい', 'プランをもう一度見る', 'プラン再表示'].includes(text)
-    ) {
-      const msg = buildPlanGuideMessage();
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(user, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+    if (isPlanGuideTrigger(text) || ['プラン案内を見る', '別プランも見る', '内容を確認する', 'プラン変更したい', 'プランをもう一度見る', 'プラン再表示'].includes(text)) {
+      await saveUserState(user.id, { current_flow: null, membership_note: null });
+      const msg = buildPlanGuideMessageV2();
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (text === '少し休みたい') {
+      await saveUserState(user.id, { current_flow: 'membership_pause_reason', membership_note: null });
+      const msg = buildPauseReasonPrompt();
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (text === '解約したい') {
+      await saveUserState(user.id, { current_flow: 'membership_cancel_reason', membership_note: null });
+      const msg = buildCancelReasonPrompt();
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if ((getMembershipStatus(user) === MEMBERSHIP_STATUS.PAUSED || getMembershipStatus(user) === MEMBERSHIP_STATUS.CANCELLED) && (text === '再開したい' || text === 'また再開したい')) {
+      const msg = buildResumeGuideMessage(user);
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (user.current_flow === 'membership_pause_reason' && (isPauseReasonOption(text) || safeText(text))) {
+      await saveUserState(user.id, { current_flow: 'membership_pause_confirm', membership_note: safeText(text) });
+      const replyText = prefixWithName(user, [`休止理由: ${safeText(text)}`, '', 'この内容で休止する場合は「この内容で確定」と送ってください。', 'やめる場合は「キャンセル」で大丈夫です。'].join('\n'));
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル']), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (user.current_flow === 'membership_cancel_reason' && (isCancelReasonOption(text) || safeText(text))) {
+      await saveUserState(user.id, { current_flow: 'membership_cancel_confirm', membership_note: safeText(text) });
+      const replyText = prefixWithName(user, [`終了理由: ${safeText(text)}`, '', 'この内容で終了する場合は「この内容で確定」と送ってください。', 'やめる場合は「キャンセル」で大丈夫です。'].join('\n'));
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル']), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (user.current_flow === 'membership_pause_confirm') {
+      if (isMembershipCancelIntent(text)) {
+        await saveUserState(user.id, { current_flow: null, membership_note: null });
+        const replyText = prefixWithName(user, buildMembershipCancelMessage());
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      if (isMembershipConfirmIntent(text)) {
+        const updated = await updateUserTrialMembership(user.id, {
+          ...buildPauseMembershipPatch(new Date(), user.membership_note || ''),
+          membership_note: user.membership_note || '',
+          current_flow: null,
+        });
+
+        await saveMembershipAdminMemo({
+          user_name: getUserDisplayName(user) || '利用者',
+          action_type: 'pause',
+          membership_status: updated?.membership_status || 'paused',
+          current_plan: user.current_plan || '',
+          target_plan: '',
+          note: user.membership_note || '',
+          created_at: new Date().toISOString(),
+        });
+
+        const replyText = prefixWithName(user, buildMembershipConfirmMessage('pause'));
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['また再開したい', 'プラン案内を見る', 'まず相談したい']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+    }
+
+    if (user.current_flow === 'membership_cancel_confirm') {
+      if (isMembershipCancelIntent(text)) {
+        await saveUserState(user.id, { current_flow: null, membership_note: null });
+        const replyText = prefixWithName(user, buildMembershipCancelMessage());
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      if (isMembershipConfirmIntent(text)) {
+        const updated = await updateUserTrialMembership(user.id, {
+          ...buildCancelMembershipPatch(new Date(), user.membership_note || ''),
+          membership_note: user.membership_note || '',
+          current_flow: null,
+        });
+
+        await saveMembershipAdminMemo({
+          user_name: getUserDisplayName(user) || '利用者',
+          action_type: 'cancel',
+          membership_status: updated?.membership_status || 'cancelled',
+          current_plan: user.current_plan || '',
+          target_plan: '',
+          note: user.membership_note || '',
+          created_at: new Date().toISOString(),
+        });
+
+        const replyText = prefixWithName(user, buildMembershipConfirmMessage('cancel'));
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['また再開したい', 'プラン案内を見る', 'まず相談したい']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+    }
+
+    if (text === 'このまま再開したい') {
+      const basePlan = user.current_plan || PLAN_TYPES.BASIC;
+      const updated = await updateUserTrialMembership(user.id, { ...buildResumeMembershipPatch(basePlan), current_flow: null });
+
+      await saveMembershipAdminMemo({
+        user_name: getUserDisplayName(user) || '利用者',
+        action_type: 'resume',
+        membership_status: updated?.membership_status || 'active',
+        current_plan: basePlan,
+        target_plan: basePlan,
+        note: '同プラン再開',
+        created_at: new Date().toISOString(),
+      });
+
+      const rewardText = buildRewardMessage('resumed', { display_name: getUserDisplayName(user) });
+      const replyText = prefixWithName(user, `${buildMembershipConfirmMessage('resume', getPlanLabel(basePlan))}\n\n${rewardText}`);
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['現在のプラン', 'プラン案内を見る', '今日の記録を始める']), env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (text === 'プラン変更して再開したい') {
+      await saveUserState(user.id, { current_flow: 'membership_resume_plan_select' });
+      const msg = buildPlanGuideMessageV2();
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (text === '今はまだ再開しない') {
+      const replyText = prefixWithName(user, '大丈夫です。必要になった時に、またここから再開できます。');
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
     const selectedPlan = normalizePlanSelection(text);
     if (selectedPlan) {
-      const updatedUser = await updateUserTrialMembership(
-        user.id,
-        activatePlanPatch(selectedPlan)
-      );
+      if (user.current_flow === 'membership_resume_plan_select') {
+        const updatedUser = await updateUserTrialMembership(user.id, { ...buildResumeMembershipPatch(selectedPlan), current_flow: null });
 
+        await saveMembershipAdminMemo({
+          user_name: getUserDisplayName(user) || '利用者',
+          action_type: 'resume_with_plan_change',
+          membership_status: updatedUser?.membership_status || 'active',
+          current_plan: user.current_plan || '',
+          target_plan: selectedPlan,
+          note: 'プラン変更して再開',
+          created_at: new Date().toISOString(),
+        });
+
+        const rewardText = buildRewardMessage('resumed', { display_name: getUserDisplayName(user) });
+        const replyText = prefixWithName(user, `${buildMembershipConfirmMessage('resume', getPlanLabel(selectedPlan))}\n\n${rewardText}`);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['現在のプラン', '今日の記録を始める', 'プラン案内を見る']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      const updatedUser = await updateUserTrialMembership(user.id, activatePlanPatch(selectedPlan));
       const finalUser = updatedUser || user;
       const msg = buildPlanSelectedMessage(selectedPlan);
 
-      await replyMessage(
-        event.replyToken,
-        buildMembershipReplyMessage(finalUser, msg),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await saveMembershipAdminMemo({
+        user_name: getUserDisplayName(user) || '利用者',
+        action_type: 'plan_selected',
+        membership_status: finalUser?.membership_status || 'active',
+        current_plan: user.current_plan || '',
+        target_plan: selectedPlan,
+        note: '',
+        created_at: new Date().toISOString(),
+      });
+
+      await replyMessage(event.replyToken, buildMembershipReplyMessage(finalUser, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(finalUser, text, msg.text);
       return;
     }
 
     if (text === 'このプランで進めたい' || text === '継続したい') {
-      const replyText = prefixWithName(
-        user,
-        'ありがとうございます。選んだプランで進めやすい状態にしています。必要ならあとから変更もできます。'
-      );
+      const rewardText = buildRewardMessage('membership_started', { display_name: getUserDisplayName(user) });
+      const replyText = prefixWithName(user, `ありがとうございます。選んだプランで進めやすい状態にしています。必要ならあとから変更もできます。\n\n${rewardText}`);
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (text === 'まず相談したい') {
-      const replyText = prefixWithName(
-        user,
-        'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。'
-      );
+      const replyText = prefixWithName(user, 'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (text === 'もう少し体験したい') {
-      const replyText = prefixWithName(
-        user,
-        '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。'
-      );
+      const replyText = prefixWithName(user, '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -2840,155 +2690,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    const smartFlowResult = await handleSmartConversationFlow({
-      event,
-      user,
-      text,
-    });
-
-    if (smartFlowResult?.next === 'onboarding_start') {
-      await handleOnboardingMessage(event, user);
-      return;
-    }
-
-    if (smartFlowResult?.handled) {
-      if (smartFlowResult.next === 'reply_pending_question') {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, smartFlowResult.replyText),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        return;
-      }
-
-      if (smartFlowResult.next === 'save_exercise' || smartFlowResult.next === 'save_exercise_from_pending') {
-        await saveExerciseSmartPayload(user, smartFlowResult.payload, text);
-
-        await saveUserState(user.id, {
-          pending_capture_type: null,
-          pending_capture_status: null,
-          pending_capture_payload: null,
-          pending_capture_missing_fields: null,
-          pending_capture_prompt: null,
-          pending_capture_started_at: null,
-          pending_capture_source_text: null,
-          pending_capture_attempts: 0,
-        });
-
-        const totals = await getTodayEnergyTotals(user.id);
-        const energyText = buildEnergySummaryText({
-          estimatedBmr: user.estimated_bmr || 0,
-          estimatedTdee: user.estimated_tdee || 0,
-          intakeKcal: totals.intake_kcal || 0,
-          activityKcal: totals.activity_kcal || 0,
-        });
-
-        const replyText = prefixWithName(user, `ありがとうございます。運動記録として残しました。\n\n${energyText}`);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        await rememberInteraction(user, text, replyText);
-        return;
-      }
-
-      if (smartFlowResult.next === 'save_meal' || smartFlowResult.next === 'save_meal_from_pending') {
-        const savedMeal = await saveMealSmartPayload(user, smartFlowResult.payload, text);
-
-        await saveUserState(user.id, {
-          pending_capture_type: null,
-          pending_capture_status: null,
-          pending_capture_payload: null,
-          pending_capture_missing_fields: null,
-          pending_capture_prompt: null,
-          pending_capture_started_at: null,
-          pending_capture_source_text: null,
-          pending_capture_attempts: 0,
-        });
-
-        const totals = await getTodayEnergyTotals(user.id);
-        const nutritionLines = buildMealNutritionLines(savedMeal);
-        const replyText = prefixWithName(
-          user,
-          [
-            'ありがとうございます。食事記録として残しました。',
-            `料理: ${savedMeal.meal_label}`,
-            savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
-            nutritionLines.length ? '' : null,
-            ...(nutritionLines.length ? nutritionLines : []),
-            `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
-          ].filter(Boolean).join('\n')
-        );
-
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '予測', 'グラフ']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        await rememberInteraction(user, text, replyText);
-        return;
-      }
-
-      if (smartFlowResult.next === 'save_weight' || smartFlowResult.next === 'save_weight_from_pending') {
-        const weightKg = Number(smartFlowResult.payload?.weight_kg);
-        await saveWeightToLog(user.id, weightKg, text);
-
-        await saveUserState(user.id, {
-          pending_capture_type: null,
-          pending_capture_status: null,
-          pending_capture_payload: null,
-          pending_capture_missing_fields: null,
-          pending_capture_prompt: null,
-          pending_capture_started_at: null,
-          pending_capture_source_text: null,
-          pending_capture_attempts: 0,
-        });
-
-        const recentWeights = await getRecentWeightRows(user.id, 10);
-        const latest = recentWeights[0] || { weight_kg: weightKg };
-        const prev = recentWeights[1] || null;
-
-        const diffText = (() => {
-          if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
-          const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
-          if (diff === 0) return '前回から変化はありません。';
-          if (diff > 0) return `前回より ${diff}kg 増えています。`;
-          return `前回より ${Math.abs(diff)}kg 減っています。`;
-        })();
-
-        const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${weightKg}kg\n${diffText}`);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
-        await rememberInteraction(user, text, replyText);
-        return;
-      }
-
-      if (smartFlowResult.next === 'save_body_fat' || smartFlowResult.next === 'save_body_fat_from_pending') {
-        const bodyFatPercent = Number(smartFlowResult.payload?.body_fat_percent);
-        await saveBodyFatToLog(user.id, bodyFatPercent, text);
-
-        await saveUserState(user.id, {
-          pending_capture_type: null,
-          pending_capture_status: null,
-          pending_capture_payload: null,
-          pending_capture_missing_fields: null,
-          pending_capture_prompt: null,
-          pending_capture_started_at: null,
-          pending_capture_source_text: null,
-          pending_capture_attempts: 0,
-        });
-
-        const replyText = prefixWithName(user, `ありがとうございます。体脂肪率 ${bodyFatPercent}% を記録しました。`);
-        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-        await rememberInteraction(user, text, replyText);
-        return;
-      }
-    }
-
     const parsedWeight = parseWeightInput(text);
     if (parsedWeight !== null) {
       await saveWeightToLog(user.id, parsedWeight, text);
@@ -3006,11 +2707,7 @@ async function handleTextMessage(event, user) {
       })();
 
       const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${parsedWeight}kg\n${diffText}`);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3021,11 +2718,7 @@ async function handleTextMessage(event, user) {
         try {
           const updated = await applyLabCorrection(supabase, openLabDraft, text);
           const msg = buildLabDraftSummaryMessage(updated);
-          await replyMessage(
-            event.replyToken,
-            textMessageWithQuickReplies(`ありがとうございます。修正しました。\n\n${msg.text}`, msg.quickReplies),
-            env.LINE_CHANNEL_ACCESS_TOKEN
-          );
+          await replyMessage(event.replyToken, textMessageWithQuickReplies(`ありがとうございます。修正しました。\n\n${msg.text}`, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
           return;
         } catch (error) {
           if (String(error?.message).includes('INVALID_DATE')) {
@@ -3042,20 +2735,10 @@ async function handleTextMessage(event, user) {
 
       const chosenDate = findPanelDateFromInput(openLabDraft, text);
       if (chosenDate && !openLabDraft.selected_date) {
-        const { data, error } = await supabase
-          .from('lab_import_sessions')
-          .update({ selected_date: chosenDate })
-          .eq('id', openLabDraft.id)
-          .select('*')
-          .single();
+        const { data, error } = await supabase.from('lab_import_sessions').update({ selected_date: chosenDate }).eq('id', openLabDraft.id).select('*').single();
         if (error) throw error;
-
         const msg = buildLabDraftSummaryMessage(data);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(msg.text, msg.quickReplies),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(msg.text, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
@@ -3064,11 +2747,10 @@ async function handleTextMessage(event, user) {
         await confirmLabDraftToResults(supabase, openLabDraft, selectedDate);
 
         const recentRows = await getRecentLabResults(supabase, user.id, 10);
-        const savedRow =
-          recentRows.find((r) => formatDateOnly(r.measured_at) === selectedDate) || {
-            measured_at: selectedDate,
-            ...(openLabDraft.working_data_json?.[selectedDate] || {}),
-          };
+        const savedRow = recentRows.find((r) => formatDateOnly(r.measured_at) === selectedDate) || {
+          measured_at: selectedDate,
+          ...(openLabDraft.working_data_json?.[selectedDate] || {}),
+        };
 
         const replyText = buildLabSaveMessage(savedRow, recentRows);
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3079,13 +2761,7 @@ async function handleTextMessage(event, user) {
       if (['読み取れた日付を全部保存', '一括保存', 'まとめて保存', '全部保存'].includes(text)) {
         const savedRows = await confirmAllLabDraftToResults(supabase, openLabDraft);
         const count = Array.isArray(savedRows) ? savedRows.length : 0;
-
-        const replyText = [
-          '読み取れた日付をまとめて保存しました。',
-          count ? `保存件数: ${count}件` : null,
-          '血液検査グラフでも確認できます。',
-        ].filter(Boolean).join('\n');
-
+        const replyText = ['読み取れた日付をまとめて保存しました。', count ? `保存件数: ${count}件` : null, '血液検査グラフでも確認できます。'].filter(Boolean).join('\n');
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
@@ -3111,14 +2787,20 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (smartFlowResult?.next === 'consultation_chat') {
+      const consultGuide = buildHealthConsultationGuide(text);
+      const naturalReply = await defaultChatReply(user, text);
+      const replyText = `${naturalReply}\n\n${consultGuide}`;
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
     if (isGraphMenuIntent(text)) {
       await replyMessage(
         event.replyToken,
         textMessageWithQuickReplies(
-          prefixWithName(
-            user,
-            '見たいグラフを選んでください。\n体重なら「体重グラフ」\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'
-          ),
+          prefixWithName(user, '見たいグラフを選んでください。\n体重なら「体重グラフ」\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'),
           buildGraphMenuQuickReplies()
         ),
         env.LINE_CHANNEL_ACCESS_TOKEN
@@ -3192,11 +2874,7 @@ async function handleTextMessage(event, user) {
     if (text === '体重推移を見たい') {
       const weightRows = await getRecentWeightRows(user.id, 20);
       const graph = buildWeightGraphMessage(weightRows);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -3211,11 +2889,7 @@ async function handleTextMessage(event, user) {
 
     if (isWeeklyReportRequest(text)) {
       if (!generateWeeklyReportDraft) {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, '週間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, prefixWithName(user, '週間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
@@ -3235,17 +2909,12 @@ async function handleTextMessage(event, user) {
           draft_text: weeklyDraft?.draft_text || '',
         });
 
-        if (isAdminMemoDebugEnabled()) {
-          safeConsoleLog('[WEEKLY_REPORT_MEMO]', weeklyMemo?.memo_text || weeklyMemo);
-        }
+        if (isAdminMemoDebugEnabled()) safeConsoleLog('[WEEKLY_REPORT_MEMO]', weeklyMemo?.memo_text || weeklyMemo);
       }
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, `週間報告の下書き確認用です。\n\n${weeklyDraft?.draft_text || '下書き生成に失敗しました。'}`),
-          ['月間報告', '体重グラフ', '食事活動グラフ', 'グラフ']
-        ),
+        textMessageWithQuickReplies(prefixWithName(user, `週間報告の下書き確認用です。\n\n${weeklyDraft?.draft_text || '下書き生成に失敗しました。'}`), ['月間報告', '体重グラフ', '食事活動グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
@@ -3253,11 +2922,7 @@ async function handleTextMessage(event, user) {
 
     if (isMonthlyReportRequest(text)) {
       if (!generateMonthlyReportDraft) {
-        await replyMessage(
-          event.replyToken,
-          prefixWithName(user, '月間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, prefixWithName(user, '月間報告の下書き機能はまだ準備中です。report_draft_service.js を追加したあとに使えるようになります。'), env.LINE_CHANNEL_ACCESS_TOKEN);
         return;
       }
 
@@ -3277,21 +2942,19 @@ async function handleTextMessage(event, user) {
           draft_text: monthlyDraft?.draft_text || '',
         });
 
-        if (isAdminMemoDebugEnabled()) {
-          safeConsoleLog('[MONTHLY_REPORT_MEMO]', monthlyMemo?.memo_text || monthlyMemo);
-        }
+        if (isAdminMemoDebugEnabled()) safeConsoleLog('[MONTHLY_REPORT_MEMO]', monthlyMemo?.memo_text || monthlyMemo);
       }
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(
-          prefixWithName(user, `月間報告の下書き確認用です。\n\n${monthlyDraft?.draft_text || '下書き生成に失敗しました。'}`),
-          ['週間報告', '体重グラフ', '血液検査グラフ', 'グラフ']
-        ),
+        textMessageWithQuickReplies(prefixWithName(user, `月間報告の下書き確認用です。\n\n${monthlyDraft?.draft_text || '下書き生成に失敗しました。'}`), ['週間報告', '体重グラフ', '血液検査グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       return;
     }
+
+    const supportContext = getSupportContext(user.line_user_id);
+    const contextArea = supportContext?.area || null;
 
     if (isVideoIntent(text)) {
       clearMealDraft(user.line_user_id);
@@ -3300,11 +2963,7 @@ async function handleTextMessage(event, user) {
 
       const videoResponse = buildVideoSupportResponse(area);
       const replyText = prefixWithName(user, videoResponse.text);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, videoResponse.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, videoResponse.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3314,11 +2973,7 @@ async function handleTextMessage(event, user) {
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, '1min');
       const replyText = prefixWithName(user, menu.text);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, menu.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, menu.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3328,11 +2983,7 @@ async function handleTextMessage(event, user) {
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, '3min');
       const replyText = prefixWithName(user, menu.text);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, menu.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, menu.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3342,11 +2993,7 @@ async function handleTextMessage(event, user) {
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, 'gentle');
       const replyText = prefixWithName(user, menu.text);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, menu.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, menu.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3356,11 +3003,7 @@ async function handleTextMessage(event, user) {
       const area = contextArea || '全身';
       const menu = buildExerciseMenuResponse(area, 'explain');
       const replyText = prefixWithName(user, menu.text);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, menu.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, menu.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3372,11 +3015,7 @@ async function handleTextMessage(event, user) {
 
       const stretchResponse = buildStretchSupportResponse(area);
       const replyText = prefixWithName(user, stretchResponse.message);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, [...stretchResponse.quickReplies, '動画で見たい']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...stretchResponse.quickReplies, '動画で見たい']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3391,11 +3030,7 @@ async function handleTextMessage(event, user) {
       ].join('\n');
 
       const replyText = prefixWithName(user, message);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3404,14 +3039,9 @@ async function handleTextMessage(event, user) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || '全身';
       const followup = buildPainSituationResponse(text, area);
-
       if (followup) {
         const replyText = prefixWithName(user, followup.message);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, followup.quickReplies),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, followup.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -3428,9 +3058,7 @@ async function handleTextMessage(event, user) {
       if (analyzePainText) {
         try {
           const advancedPain = analyzePainText(text);
-          if (advancedPain?.reply_text) {
-            replyText = prefixWithName(user, advancedPain.reply_text);
-          }
+          if (advancedPain?.reply_text) replyText = prefixWithName(user, advancedPain.reply_text);
 
           if (createPainAdminMemo && isAdminMemoDebugEnabled()) {
             const painMemoResult = createPainAdminMemo({
@@ -3454,19 +3082,14 @@ async function handleTextMessage(event, user) {
           if (generatePainResponse) {
             try {
               const fallbackReply = generatePainResponse(text);
-              if (fallbackReply) {
-                replyText = prefixWithName(user, fallbackReply);
-              }
+              if (fallbackReply) replyText = prefixWithName(user, fallbackReply);
             } catch (_e) {
               // ignore
             }
           }
         }
       } else if (createPainAdminMemo && isAdminMemoDebugEnabled()) {
-        const symptomSummary = typeof buildAdminSymptomSummary === 'function'
-          ? buildAdminSymptomSummary(text, area)
-          : null;
-
+        const symptomSummary = typeof buildAdminSymptomSummary === 'function' ? buildAdminSymptomSummary(text, area) : null;
         const painMemoResult = createPainAdminMemo({
           user_id: user.id,
           user_name: getUserDisplayName(user) || '',
@@ -3484,11 +3107,7 @@ async function handleTextMessage(event, user) {
         safeConsoleLog('[PAIN_ADMIN_MEMO]', painMemoResult?.memo_text || painMemoResult);
       }
 
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3503,22 +3122,14 @@ async function handleTextMessage(event, user) {
 
       if (text === 'できた') {
         const replyText = prefixWithName(user, 'いいですね。その一歩が次につながります。少しずつ整えていきましょう。');
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, ['まだ少しやる', '動画で見たい', '予測', '体重グラフ', 'グラフ', '今日はここまで']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['まだ少しやる', '動画で見たい', '予測', '体重グラフ', 'グラフ', '今日はここまで']), env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
 
       if (text === 'まだ少しやる') {
         const replyText = prefixWithName(user, 'いい流れですね。無理なくもう少しだけいきましょう。');
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, ['1分メニュー', '3分メニュー', 'やさしい版', '今日はここまで']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['1分メニュー', '3分メニュー', 'やさしい版', '今日はここまで']), env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -3527,14 +3138,9 @@ async function handleTextMessage(event, user) {
         clearMealDraft(user.line_user_id);
         const area = text === '腰が重い' ? '腰' : '股関節';
         setSupportContext(user.line_user_id, { area, mode: 'pain' });
-
         const painResponse = buildPainSupportResponse(text, area);
         const replyText = prefixWithName(user, painResponse.message);
-        await replyMessage(
-          event.replyToken,
-          textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']),
-          env.LINE_CHANNEL_ACCESS_TOKEN
-        );
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']), env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
       }
@@ -3556,15 +3162,13 @@ async function handleTextMessage(event, user) {
 
     if (currentMealDraft && isMealManualEditCommand(text)) {
       markMealDraftAwaitingAdditionalPhoto(user.line_user_id, false);
-      const replyText = 'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です';
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(event.replyToken, 'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です', env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (currentMealDraft && isMealAddPhotoCommand(text)) {
       markMealDraftAwaitingAdditionalPhoto(user.line_user_id, true);
-      const replyText = '追加した写真をそのまま送ってください。次の写真を追加分として反映します。';
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(event.replyToken, '追加した写真をそのまま送ってください。次の写真を追加分として反映します。', env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -3581,7 +3185,6 @@ async function handleTextMessage(event, user) {
       });
 
       const nutritionLines = buildMealNutritionLines(savedMeal);
-
       const saveLines = [
         '食事を保存しました。',
         `料理: ${savedMeal.meal_label}`,
@@ -3592,12 +3195,7 @@ async function handleTextMessage(event, user) {
       ].filter(Boolean);
 
       const replyText = prefixWithName(user, `${saveLines.join('\n')}\n\n${energyText}`);
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', '体重グラフ', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', 'ストレッチしたい', '予測', '体重グラフ', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3612,23 +3210,10 @@ async function handleTextMessage(event, user) {
 
     if (currentMealDraft && seemsMealCorrectionText(text)) {
       const normalizedCorrectionText = normalizeMealCorrectionText(text);
-      const correctedMeal = await applyMealCorrectionPrimary(
-        currentMealDraft.meal,
-        normalizedCorrectionText
-      );
-
+      const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, normalizedCorrectionText);
       setMealDraft(user.line_user_id, correctedMeal);
-
-      const replyText = prefixWithName(
-        user,
-        buildMealReplyWithSaveGuide(correctedMeal)
-      );
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(correctedMeal));
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
@@ -3643,22 +3228,15 @@ async function handleTextMessage(event, user) {
     if (isExplicitMealLogText(text) || seemsMealTextCandidate(text)) {
       const analyzedMeal = await analyzeMealTextPrimary(text);
       setMealDraft(user.line_user_id, analyzedMeal);
-
       const mealMessage = buildMealReplyWithSaveGuide(analyzedMeal, { textOnly: true });
       const replyText = prefixWithName(user, mealMessage);
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (text === '飲み物を訂正' || text === '量を訂正') {
-      const replyText = 'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です';
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(event.replyToken, 'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です', env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -3714,12 +3292,7 @@ async function handleTextMessage(event, user) {
       });
 
       const replyText = prefixWithName(user, `${lines.join('\n')}\n\n${energyText}`);
-
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
