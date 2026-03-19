@@ -144,6 +144,16 @@ const {
   buildTrialStatusMessage,
   buildCurrentPlanStatusMessage,
 } = require('./services/trial_membership_service');
+const {
+  analyzeNewCaptureCandidate,
+  isOnboardingStart,
+} = require('./services/capture_router_service');
+const {
+  createPendingCapture,
+  hasPendingCapture,
+  mergePendingCaptureReply,
+  updateUserWithPendingResult,
+} = require('./services/pending_capture_service');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -373,7 +383,7 @@ function isProfileResetCommand(text) {
 
 function isOnboardingStartCommand(text) {
   const t = String(text || '').trim();
-  return ['はじめる', 'スタート', '開始'].includes(t);
+  return ['はじめる', 'スタート', '開始'].includes(t) || isOnboardingStart(t);
 }
 
 function normalizeTextLoose(text) {
@@ -1777,6 +1787,215 @@ async function saveMealToLog(userId, meal) {
   return insertPayload;
 }
 
+async function saveUserState(userId, patch = {}) {
+  if (!userId || !patch || typeof patch !== 'object') return null;
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('id', userId)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function saveBodyFatToLog(userId, bodyFatPercent, rawText) {
+  const insertPayload = {
+    user_id: userId,
+    measured_at: toIsoStringInTZ(new Date(), TZ),
+    body_fat_percent: bodyFatPercent,
+    source: 'line',
+    raw_text: safeText(rawText || '', 300),
+  };
+
+  const { error } = await supabase.from('body_fat_logs').insert(insertPayload);
+  if (error) {
+    if (isMissingRelationError(error)) {
+      console.warn('⚠️ body_fat_logs table not found. Body fat save skipped.');
+      return null;
+    }
+    throw error;
+  }
+
+  return insertPayload;
+}
+
+async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
+  const activity = {
+    steps: null,
+    walking_minutes: payload.activity === 'walking' ? Number(payload.duration_min || 0) : null,
+    estimated_activity_kcal: null,
+    exercise_summary: null,
+    raw_detail_json: {
+      source: 'smart_capture',
+      activity: payload.activity || null,
+      duration_min: payload.duration_min || null,
+      distance_km: payload.distance_km || null,
+      source_text: safeText(rawText || payload.source_text || '', 300),
+    },
+  };
+
+  if (payload.activity === 'jogging') {
+    activity.exercise_summary = payload.distance_km
+      ? `ジョギング ${payload.distance_km}km ${payload.duration_min}分`
+      : `ジョギング ${payload.duration_min}分`;
+    activity.walking_minutes = Number(payload.duration_min || 0);
+  } else if (payload.activity === 'walking') {
+    activity.exercise_summary = payload.distance_km
+      ? `ウォーキング ${payload.distance_km}km ${payload.duration_min}分`
+      : `ウォーキング ${payload.duration_min}分`;
+  } else if (payload.activity === 'strength_training') {
+    activity.exercise_summary = `筋トレ ${payload.duration_min}分`;
+    activity.walking_minutes = null;
+  } else {
+    activity.exercise_summary = safeText(rawText || '運動記録', 100);
+    activity.walking_minutes = Number(payload.duration_min || 0) || null;
+  }
+
+  activity.estimated_activity_kcal = estimateActivityKcalWithStrength(
+    activity.steps,
+    activity.walking_minutes,
+    user.weight_kg || 60,
+    activity.raw_detail_json || {}
+  );
+
+  const insertPayload = {
+    user_id: user.id,
+    logged_at: toIsoStringInTZ(new Date(), TZ),
+    steps: activity.steps,
+    walking_minutes: activity.walking_minutes,
+    estimated_activity_kcal: activity.estimated_activity_kcal,
+    exercise_summary: activity.exercise_summary,
+    raw_detail_json: activity.raw_detail_json,
+  };
+
+  const { error } = await supabase.from('activity_logs').insert(insertPayload);
+  if (error) throw error;
+
+  return insertPayload;
+}
+
+async function saveMealSmartPayload(user, payload = {}, rawText = '') {
+  const analyzedMeal = await analyzeMealTextPrimary(rawText || payload.raw_text || payload.source_text || '');
+  return saveMealToLog(user.id, analyzedMeal);
+}
+
+async function handleSmartConversationFlow({ event, user, text }) {
+  const analysis = analyzeNewCaptureCandidate(text);
+
+  if (analysis.route === 'onboarding_start') {
+    return { handled: false, next: 'onboarding_start' };
+  }
+
+  if (hasPendingCapture(user)) {
+    const pendingResult = mergePendingCaptureReply(user, text);
+    const updatedUser = updateUserWithPendingResult(user, pendingResult, text);
+
+    await saveUserState(user.id, {
+      pending_capture_type: updatedUser.pending_capture_type,
+      pending_capture_status: updatedUser.pending_capture_status,
+      pending_capture_payload: updatedUser.pending_capture_payload,
+      pending_capture_missing_fields: updatedUser.pending_capture_missing_fields,
+      pending_capture_prompt: updatedUser.pending_capture_prompt,
+      pending_capture_started_at: updatedUser.pending_capture_started_at,
+      pending_capture_source_text: updatedUser.pending_capture_source_text,
+      pending_capture_attempts: updatedUser.pending_capture_attempts,
+    });
+
+    if (pendingResult.isReadyToSave) {
+      return {
+        handled: true,
+        next: `save_${pendingResult.captureType}_from_pending`,
+        payload: pendingResult.payload,
+        updatedUser,
+      };
+    }
+
+    return {
+      handled: true,
+      next: 'reply_pending_question',
+      replyText: updatedUser.pending_capture_prompt || 'もう少しだけ教えてください。',
+      updatedUser,
+    };
+  }
+
+  if (analysis.route === 'pending_clarification') {
+    const nextUser = createPendingCapture(user, {
+      captureType: analysis.captureType,
+      payload: analysis.payload,
+      missingFields: analysis.missingFields,
+      replyText: analysis.replyText,
+      sourceText: text,
+    });
+
+    await saveUserState(user.id, {
+      pending_capture_type: nextUser.pending_capture_type,
+      pending_capture_status: nextUser.pending_capture_status,
+      pending_capture_payload: nextUser.pending_capture_payload,
+      pending_capture_missing_fields: nextUser.pending_capture_missing_fields,
+      pending_capture_prompt: nextUser.pending_capture_prompt,
+      pending_capture_started_at: nextUser.pending_capture_started_at,
+      pending_capture_source_text: nextUser.pending_capture_source_text,
+      pending_capture_attempts: nextUser.pending_capture_attempts,
+    });
+
+    return {
+      handled: true,
+      next: 'reply_pending_question',
+      replyText: analysis.replyText,
+      updatedUser: nextUser,
+    };
+  }
+
+  if (analysis.route === 'save_exercise') {
+    return {
+      handled: true,
+      next: 'save_exercise',
+      payload: analysis.payload,
+    };
+  }
+
+  if (analysis.route === 'save_meal') {
+    return {
+      handled: true,
+      next: 'save_meal',
+      payload: analysis.payload,
+    };
+  }
+
+  if (analysis.route === 'save_weight') {
+    return {
+      handled: true,
+      next: 'save_weight',
+      payload: analysis.payload,
+    };
+  }
+
+  if (analysis.route === 'save_body_fat') {
+    return {
+      handled: true,
+      next: 'save_body_fat',
+      payload: analysis.payload,
+    };
+  }
+
+  if (analysis.route === 'consultation_chat') {
+    return {
+      handled: false,
+      next: 'consultation_chat',
+      payload: analysis.payload,
+    };
+  }
+
+  return {
+    handled: false,
+    next: 'general_chat',
+    payload: analysis.payload,
+  };
+}
+
 async function updateUserTrialMembership(userId, patch = {}) {
   if (!userId || !patch || typeof patch !== 'object') return null;
 
@@ -2619,6 +2838,155 @@ async function handleTextMessage(event, user) {
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(refreshedUser, text, replyText);
       return;
+    }
+
+    const smartFlowResult = await handleSmartConversationFlow({
+      event,
+      user,
+      text,
+    });
+
+    if (smartFlowResult?.next === 'onboarding_start') {
+      await handleOnboardingMessage(event, user);
+      return;
+    }
+
+    if (smartFlowResult?.handled) {
+      if (smartFlowResult.next === 'reply_pending_question') {
+        await replyMessage(
+          event.replyToken,
+          prefixWithName(user, smartFlowResult.replyText),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_exercise' || smartFlowResult.next === 'save_exercise_from_pending') {
+        await saveExerciseSmartPayload(user, smartFlowResult.payload, text);
+
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+        });
+
+        const totals = await getTodayEnergyTotals(user.id);
+        const energyText = buildEnergySummaryText({
+          estimatedBmr: user.estimated_bmr || 0,
+          estimatedTdee: user.estimated_tdee || 0,
+          intakeKcal: totals.intake_kcal || 0,
+          activityKcal: totals.activity_kcal || 0,
+        });
+
+        const replyText = prefixWithName(user, `ありがとうございます。運動記録として残しました。\n\n${energyText}`);
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_meal' || smartFlowResult.next === 'save_meal_from_pending') {
+        const savedMeal = await saveMealSmartPayload(user, smartFlowResult.payload, text);
+
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+        });
+
+        const totals = await getTodayEnergyTotals(user.id);
+        const nutritionLines = buildMealNutritionLines(savedMeal);
+        const replyText = prefixWithName(
+          user,
+          [
+            'ありがとうございます。食事記録として残しました。',
+            `料理: ${savedMeal.meal_label}`,
+            savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+            nutritionLines.length ? '' : null,
+            ...(nutritionLines.length ? nutritionLines : []),
+            `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+          ].filter(Boolean).join('\n')
+        );
+
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '予測', 'グラフ']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_weight' || smartFlowResult.next === 'save_weight_from_pending') {
+        const weightKg = Number(smartFlowResult.payload?.weight_kg);
+        await saveWeightToLog(user.id, weightKg, text);
+
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+        });
+
+        const recentWeights = await getRecentWeightRows(user.id, 10);
+        const latest = recentWeights[0] || { weight_kg: weightKg };
+        const prev = recentWeights[1] || null;
+
+        const diffText = (() => {
+          if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
+          const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
+          if (diff === 0) return '前回から変化はありません。';
+          if (diff > 0) return `前回より ${diff}kg 増えています。`;
+          return `前回より ${Math.abs(diff)}kg 減っています。`;
+        })();
+
+        const replyText = prefixWithName(user, `体重を保存しました。\n今回: ${weightKg}kg\n${diffText}`);
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (smartFlowResult.next === 'save_body_fat' || smartFlowResult.next === 'save_body_fat_from_pending') {
+        const bodyFatPercent = Number(smartFlowResult.payload?.body_fat_percent);
+        await saveBodyFatToLog(user.id, bodyFatPercent, text);
+
+        await saveUserState(user.id, {
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+        });
+
+        const replyText = prefixWithName(user, `ありがとうございます。体脂肪率 ${bodyFatPercent}% を記録しました。`);
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
     }
 
     const parsedWeight = parseWeightInput(text);
