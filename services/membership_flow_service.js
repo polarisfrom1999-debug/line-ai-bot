@@ -4,234 +4,215 @@
  * services/membership_flow_service.js
  *
  * 役割:
- * - 無料体験終了時の振り返り文
- * - 月末継続案内
- * - 休止中ユーザーの再開導線
- * - プラン比較の見せ分け
- * - スペシャルを「特別枠」として扱う
+ * - 7日無料開始文面
+ * - プラン一覧文面
+ * - プラン個別案内文
+ * - 7日目継続案内文
+ * - スペシャル案内文
  */
-
-const {
-  PLAN_TYPES,
-  PLAN_LABELS,
-  PLAN_PRICES,
-  PLAN_FEATURES,
-  PLAN_SHORT_DESCRIPTIONS,
-  SPECIAL_PLAN_NOTE,
-  ENTRY_TRIAL_LABEL,
-  POINT_RULES,
-  REWARD_RULES,
-  REFERRAL_RULES,
-} = require('../config/trial_membership_config');
 
 function safeText(value, fallback = '') {
   return String(value || fallback).trim();
 }
 
 function buildQuickReplies(items = []) {
-  const cleaned = items
-    .map((item) => safeText(item))
+  return items
     .filter(Boolean)
-    .slice(0, 8);
-
-  if (!cleaned.length) return null;
-
-  return {
-    items: cleaned.map((label) => ({
+    .map((item) => ({
       type: 'action',
       action: {
         type: 'message',
-        label: label.slice(0, 20),
-        text: label,
+        label: safeText(item.label, '').slice(0, 20),
+        text: safeText(item.text, '').slice(0, 300),
       },
-    })),
+    }));
+}
+
+function getTrialStartMessage() {
+  return {
+    text:
+      'ありがとうございます。\n' +
+      'これから7日間、ここから。を無料で体験していただけます。\n\n' +
+      '完璧を目指さなくて大丈夫です。\n' +
+      'まずは食事、体調、気分など、気軽に送ってくださいね。\n' +
+      '無理なく、今のあなたに合うペースを一緒に見つけていきましょう。',
   };
 }
 
-function formatPlanPrice(planType) {
-  const price = PLAN_PRICES?.[planType];
-  if (price == null) return '';
-  return `${Number(price).toLocaleString('ja-JP')}円`;
+function getPlanMenuMessage() {
+  return {
+    text:
+      'ここから先の続け方を選べます。\n' +
+      'ご自身のペースや、ほしい支え方に合わせて選んでくださいね。',
+    quickReply: {
+      items: buildQuickReplies([
+        { label: 'ライト', text: 'プラン:ライト' },
+        { label: 'ベーシック', text: 'プラン:ベーシック' },
+        { label: 'プレミアム', text: 'プラン:プレミアム' },
+        { label: 'スペシャル', text: 'プラン:スペシャル' },
+      ]),
+    },
+  };
 }
 
-function buildPlanCardLines(planType) {
-  const label = PLAN_LABELS?.[planType] || planType;
-  const price = formatPlanPrice(planType);
-  const shortDescription = PLAN_SHORT_DESCRIPTIONS?.[planType] || '';
-  const features = Array.isArray(PLAN_FEATURES?.[planType]) ? PLAN_FEATURES[planType] : [];
-
-  return [
-    `【${label}】${price ? ` 月額 ${price}` : ''}`,
-    shortDescription || null,
-    ...features.map((x) => `・${x}`),
-  ].filter(Boolean);
+function getTrialCompletionMessage() {
+  return {
+    text:
+      '7日間、おつかれさまでした。\n' +
+      'ここまで続けてこられたこと自体が、とても大切な一歩です。\n\n' +
+      'ここから先の続け方を選べます。',
+    quickReply: {
+      items: buildQuickReplies([
+        { label: 'ライト', text: 'プラン:ライト' },
+        { label: 'ベーシック', text: 'プラン:ベーシック' },
+        { label: 'プレミアム', text: 'プラン:プレミアム' },
+        { label: 'スペシャル', text: 'プラン:スペシャル' },
+      ]),
+    },
+  };
 }
 
-function buildTrialReviewMessage(user = {}, options = {}) {
-  const displayName = safeText(options.display_name || user.display_name || '');
-  const heading = displayName
-    ? `${displayName}さん、1週間の無料体験おつかれさまでした。`
-    : '1週間の無料体験おつかれさまでした。';
+function buildPlanGuideText(planKey, links = {}) {
+  if (planKey === 'light') {
+    return (
+      'ライト｜2,980円\n' +
+      'AI毎日返信のみ\n\n' +
+      'まずは気軽に習慣化したい方に向いています。\n' +
+      (links.light ? `\nお申込みはこちら\n${links.light}` : '\nこのプランでお申込みできます。')
+    );
+  }
 
-  const lines = [
-    heading,
-    '',
-    `ここまでの体験では、まず ${ENTRY_TRIAL_LABEL} の雰囲気を試していただく形で進んできました。`,
-    '続け方は、ご自身のペースやサポートの深さに合わせて選べます。',
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.LIGHT),
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.BASIC),
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.PREMIUM),
-    '',
-    `【${PLAN_LABELS[PLAN_TYPES.SPECIAL]}】 月額 ${formatPlanPrice(PLAN_TYPES.SPECIAL)}`,
-    SPECIAL_PLAN_NOTE,
-    ...((PLAN_FEATURES?.[PLAN_TYPES.SPECIAL] || []).map((x) => `・${x}`)),
-    '',
-    `毎日の記録や継続でポイントもたまり、${POINT_RULES.exchange_points}ポイントで${POINT_RULES.exchange_reward_yen}円分の整骨院サービス券にできます。`,
-    `ご紹介特典として、紹介した方は翌月${REFERRAL_RULES.referrer_discount_yen}円引きの対象にしやすい設計です。`,
-    '',
-    '気になる続け方をそのまま押してください。',
-  ];
+  if (planKey === 'basic') {
+    return (
+      'ベーシック｜5,980円\n' +
+      'AI毎日返信・週間報告\n\n' +
+      '毎日のやり取りに加えて、1週間ごとの振り返りがほしい方に向いています。\n' +
+      (links.basic ? `\nお申込みはこちら\n${links.basic}` : '\nこのプランでお申込みできます。')
+    );
+  }
+
+  if (planKey === 'premium') {
+    return (
+      'プレミアム｜9,800円\n' +
+      'AI毎日返信・牛込手書き週間報告・月間報告\n\n' +
+      'より深く寄り添う伴走をご希望の方に向いています。\n' +
+      (links.premium ? `\nお申込みはこちら\n${links.premium}` : '\nこのプランでお申込みできます。')
+    );
+  }
+
+  return (
+    '人数限定！絶対痩せたいスペシャル｜29,800円\n' +
+    'AI毎日返信・牛込手書き毎日・週間報告・月間報告・整骨院優先予約枠あり\n\n' +
+    '本気で変わりたい方のための特別伴走枠です。\n' +
+    'ご希望の方へ個別にご案内します。'
+  );
+}
+
+function getPlanGuideMessage(planKey, links = {}) {
+  const text = buildPlanGuideText(planKey, links);
+
+  if (planKey === 'special') {
+    return {
+      text,
+      quickReply: {
+        items: buildQuickReplies([
+          { label: '内容を詳しく見る', text: 'スペシャル詳細' },
+          { label: 'スペシャル希望', text: 'スペシャル希望' },
+          { label: '通常プランを見る', text: 'プランを見る' },
+        ]),
+      },
+    };
+  }
 
   return {
-    text: lines.join('\n'),
-    quickReply: buildQuickReplies([
-      'ライト',
-      'ベーシック',
-      'プレミアム',
-      'スペシャル',
-      'まず相談したい',
-      '少し休みたい',
-    ]),
+    text,
+    quickReply: {
+      items: buildQuickReplies([
+        { label: 'このプランで申し込む', text: `申込:${planKey}` },
+        { label: '他のプランも見る', text: 'プランを見る' },
+      ]),
+    },
   };
 }
 
-function buildMonthlyRenewalMessage(user = {}, options = {}) {
-  const currentPlan = safeText(options.current_plan || user.current_plan || '');
-  const currentLabel = PLAN_LABELS?.[currentPlan] || '現在のプラン';
-  const currentPrice = currentPlan ? formatPlanPrice(currentPlan) : '';
-  const heading = currentPlan
-    ? `${currentLabel}${currentPrice ? `（月額 ${currentPrice}）` : ''}をご利用ありがとうございます。`
-    : 'ここまでご利用ありがとうございます。';
-
-  const lines = [
-    heading,
-    '',
-    '今の使い方に合わせて、このまま継続するか、少し軽くするか、手厚くするかを選べます。',
-    '無理なく続けられる形を一緒に整えていきましょう。',
-    '',
-    `ポイントは、1日1ポイント・7日連続で+${POINT_RULES.streak_7_bonus_points}・30日継続で+${POINT_RULES.streak_30_bonus_points}です。`,
-    `プレミアムを${REWARD_RULES.premium_bvlgari_after_months}か月継続、スペシャルを${REWARD_RULES.special_bvlgari_after_months}か月継続で、特別ごほうび候補も用意しています。`,
-  ];
-
+function getAllPlansSummaryMessage() {
   return {
-    text: lines.join('\n'),
-    quickReply: buildQuickReplies([
-      '継続したい',
-      'プラン変更したい',
-      '少し休みたい',
-      'まず相談したい',
-    ]),
+    text:
+      'ありがとうございます。\n' +
+      'ここから先は、あなたに合うペースで続けられるプランを選んでいただけます。\n\n' +
+      'ライト｜2,980円\nAI毎日返信のみ\n\n' +
+      'ベーシック｜5,980円\nAI毎日返信・週間報告\n\n' +
+      'プレミアム｜9,800円\nAI毎日返信・牛込手書き週間報告・月間報告\n\n' +
+      '人数限定！絶対痩せたいスペシャル｜29,800円\n' +
+      'AI毎日返信・牛込手書き毎日・週間報告・月間報告・整骨院優先予約枠あり\n\n' +
+      '気になるプランを選んでくださいね。',
+    quickReply: {
+      items: buildQuickReplies([
+        { label: 'ライト', text: 'プラン:ライト' },
+        { label: 'ベーシック', text: 'プラン:ベーシック' },
+        { label: 'プレミアム', text: 'プラン:プレミアム' },
+        { label: 'スペシャル', text: 'プラン:スペシャル' },
+      ]),
+    },
   };
 }
 
-function buildPlanGuideMessageV2() {
-  const lines = [
-    'ここから。の続け方はこちらです。',
-    '',
-    `入口: ${ENTRY_TRIAL_LABEL}`,
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.LIGHT),
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.BASIC),
-    '',
-    ...buildPlanCardLines(PLAN_TYPES.PREMIUM),
-    '',
-    `【${PLAN_LABELS[PLAN_TYPES.SPECIAL]}】 月額 ${formatPlanPrice(PLAN_TYPES.SPECIAL)}`,
-    SPECIAL_PLAN_NOTE,
-    ...((PLAN_FEATURES?.[PLAN_TYPES.SPECIAL] || []).map((x) => `・${x}`)),
-    '',
-    `ポイント特典: ${POINT_RULES.exchange_points}ポイントで${POINT_RULES.exchange_reward_yen}円分の整骨院サービス券`,
-    `継続ごほうび: プレミアム${REWARD_RULES.premium_bvlgari_after_months}か月 / スペシャル${REWARD_RULES.special_bvlgari_after_months}か月`,
-  ];
-
+function getSpecialIntroMessage() {
   return {
-    text: lines.join('\n'),
-    quickReply: buildQuickReplies([
-      'ライト',
-      'ベーシック',
-      'プレミアム',
-      'スペシャル',
-      'まず相談したい',
-    ]),
+    text:
+      'スペシャルは、人数限定の特別伴走枠です。\n' +
+      '本気で生活を変えたい方、しっかり伴走を受けながら進みたい方向けです。\n\n' +
+      '内容は、\n' +
+      '・AI毎日返信\n' +
+      '・牛込手書き毎日\n' +
+      '・週間報告\n' +
+      '・月間報告\n' +
+      '・整骨院優先予約枠あり\n\n' +
+      'です。',
+    quickReply: {
+      items: buildQuickReplies([
+        { label: '内容を詳しく見る', text: 'スペシャル詳細' },
+        { label: 'スペシャル希望', text: 'スペシャル希望' },
+        { label: '通常プランを見る', text: 'プランを見る' },
+      ]),
+    },
   };
 }
 
-function buildPauseReasonPrompt() {
+function getSpecialRequestMessage() {
   return {
-    text: [
-      '少し休む方向で大丈夫です。',
-      'よければ理由を教えてください。無理に書かなくても大丈夫です。',
-    ].join('\n'),
-    quickReply: buildQuickReplies([
-      '忙しい',
-      '費用面',
-      '体調面',
-      'モチベ低下',
-      '効果を感じにくい',
-      'その他',
-      '今は答えない',
-    ]),
+    text:
+      'ありがとうございます。\n' +
+      'スペシャルは、本気で生活を変えたい方へ向けた人数限定の特別枠です。\n\n' +
+      'ご希望内容や今の状況をふまえてご案内したいので、簡単に次のどちらかに近いお気持ちを教えてください。',
+    quickReply: {
+      items: buildQuickReplies([
+        { label: '毎日しっかり伴走してほしい', text: 'スペシャル回答:毎日伴走希望' },
+        { label: 'まずは詳しく内容を知りたい', text: 'スペシャル回答:詳細希望' },
+      ]),
+    },
   };
 }
 
-function buildCancelReasonPrompt() {
-  return {
-    text: [
-      '終了の方向で大丈夫です。',
-      'よければ理由を教えてください。今後の改善の参考にしたいです。',
-      '無理に書かなくても大丈夫です。',
-    ].join('\n'),
-    quickReply: buildQuickReplies([
-      '忙しい',
-      '費用面',
-      '体調面',
-      '効果を感じにくい',
-      '自分で続けたい',
-      'その他',
-      '今は答えない',
-    ]),
-  };
-}
+function parsePlanSelection(text) {
+  const raw = safeText(text);
 
-function buildResumeGuideMessage(user = {}) {
-  const currentPlan = safeText(user.current_plan || '');
-  const currentLabel = PLAN_LABELS?.[currentPlan] || '今までのプラン';
+  if (raw === 'プラン:ライト' || raw === 'ライト') return 'light';
+  if (raw === 'プラン:ベーシック' || raw === 'ベーシック') return 'basic';
+  if (raw === 'プラン:プレミアム' || raw === 'プレミアム') return 'premium';
+  if (raw === 'プラン:スペシャル' || raw === 'スペシャル') return 'special';
 
-  return {
-    text: [
-      'また再開したくなった時は、ここからすぐ戻れます。',
-      `${currentLabel}で再開することも、別プランに変えることもできます。`,
-      `再開時には +${POINT_RULES.resume_bonus_points}ポイントの対象にしやすい設計です。`,
-      '',
-      'ご希望に近いものを押してください。',
-    ].join('\n'),
-    quickReply: buildQuickReplies([
-      'このまま再開したい',
-      'プラン変更して再開したい',
-      'まず相談したい',
-      '今はまだ再開しない',
-    ]),
-  };
+  return null;
 }
 
 module.exports = {
-  buildTrialReviewMessage,
-  buildMonthlyRenewalMessage,
-  buildPlanGuideMessageV2,
-  buildPauseReasonPrompt,
-  buildCancelReasonPrompt,
-  buildResumeGuideMessage,
+  getTrialStartMessage,
+  getPlanMenuMessage,
+  getTrialCompletionMessage,
+  buildPlanGuideText,
+  getPlanGuideMessage,
+  getAllPlansSummaryMessage,
+  getSpecialIntroMessage,
+  getSpecialRequestMessage,
+  parsePlanSelection,
 };
