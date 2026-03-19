@@ -59,14 +59,14 @@ function includesAny(text, words = []) {
 function extractMinutes(text) {
   const t = safeText(text);
 
-  let m = t.match(/(\d+(?:\.\d+)?)\s*分/);
+  let m = t.match(/(\d+)\s*時間\s*(\d+)\s*分/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+
+  m = t.match(/(\d+(?:\.\d+)?)\s*分/);
   if (m) return Number(m[1]);
 
   m = t.match(/(\d+(?:\.\d+)?)\s*時間/);
   if (m) return Math.round(Number(m[1]) * 60);
-
-  m = t.match(/(\d+)\s*時間\s*(\d+)\s*分/);
-  if (m) return Number(m[1]) * 60 + Number(m[2]);
 
   return null;
 }
