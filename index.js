@@ -613,8 +613,8 @@ async function updateUserAiPersona(userId, personaType) {
   const { data, error } = await supabase
     .from('users')
     .update(patch)
-    .eq('id',
-            .select('*')
+    .eq('id', userId)
+    .select('*')
     .single();
 
   if (error) throw error;
