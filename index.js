@@ -3810,7 +3810,14 @@ async function handleTextMessage(event, user) {
         return;
       }
     }
-
+    const guideIntent = detectGuideIntent(text);
+    if (guideIntent) {
+      const guideText = buildGuideReplyByIntent(user, guideIntent);
+      if (guideText) {
+        await replyMessage(event.replyToken, prefixWithName(user, guideText), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+    }
     if (isOnboardingActive(user) || isOnboardingStartCommand(text) || isIntakeStartCommand(text)) {
       if (isIntakeStartCommand(text)) {
         const session = await startOrResumeIntake(user);
