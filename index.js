@@ -924,6 +924,7 @@ function isExplicitMealGuideIntent(text) {
     '食事を記録したい', '食事記録したい', '食事を登録したい', '食事の記録方法', '食事の保存方法', '食事を入力したい',
     '食べたものを記録したい', '飲んだものを記録したい',
   ].includes(t);
+  }
   function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
