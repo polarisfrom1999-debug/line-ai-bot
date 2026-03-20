@@ -3328,14 +3328,7 @@ if (pendingConfirmation) {
       return;
     }
 
-    const guideIntent = detectGuideIntent(text);
-    if (guideIntent) {
-      const guideText = buildGuideReplyByIntent(user, guideIntent);
-      if (guideText) {
-        await replyMessage(event.replyToken, prefixWithName(user, guideText), env.LINE_CHANNEL_ACCESS_TOKEN);
-        return;
-      }
-    }
+  
 
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage(), env.LINE_CHANNEL_ACCESS_TOKEN);
