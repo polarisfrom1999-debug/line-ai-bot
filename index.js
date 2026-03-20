@@ -215,7 +215,9 @@ const {
 const {
   buildTrialMessageExamples,
 } = require('./services/trial_message_examples_service');
-
+const {
+  analyzeChatCapture,
+} = require('./services/chat_capture_service');
 let analyzePainText = null;
 let generatePainResponse = null;
 let looksLikePainConsultation = null;
