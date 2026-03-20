@@ -1069,6 +1069,35 @@ async function saveMemoryCandidatesForUser(user, userText, aiReply, memoryCandid
     return false;
   }
 }
+function buildExerciseCaptureSavePayload(payload = {}, rawText = '') {
+  const first = Array.isArray(payload?.exercise_items)
+    ? payload.exercise_items.find(Boolean)
+    : null;
+
+  const name = safeText(first?.name || '', 80);
+  const summaryText = safeText(payload?.exercise_text || rawText || '', 300);
+  const mergedText = `${name} ${summaryText}`.trim();
+
+  let activity = 'exercise';
+  if (/(ウォーキング|散歩|歩いた|歩きました|歩く)/i.test(mergedText)) {
+    activity = 'walking';
+  } else if (/(ジョギング|ランニング|走った|走りました|走る)/i.test(mergedText)) {
+    activity = 'jogging';
+  } else if (/(筋トレ|スクワット|トレーニング|腹筋|腕立て)/i.test(mergedText)) {
+    activity = 'strength_training';
+  }
+
+  const durationMin = Number(first?.duration_minutes);
+  const distanceKm = Number(first?.distance_km);
+
+  return {
+    activity,
+    duration_min: Number.isFinite(durationMin) ? durationMin : null,
+    distance_km: Number.isFinite(distanceKm) ? distanceKm : null,
+    source_text: summaryText || safeText(rawText || '', 300),
+  };
+}
+
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
