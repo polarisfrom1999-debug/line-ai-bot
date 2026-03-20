@@ -146,7 +146,8 @@ function normalizeMemoryCandidates(items) {
 
 function normalizeResult(raw, originalText) {
   const intent = safeText(raw?.intent || 'unknown', 50) || 'unknown';
-  const captureType = safeText(raw?.capture_type || '', 50) || null;
+  const captureTypeRaw = raw?.capture_type;
+  const captureType = captureTypeRaw === null ? null : (safeText(captureTypeRaw || '', 50) || null);
 
   const weightKg = clampOrNull(raw?.payload?.weight_kg, 20, 300);
   const bodyFatPercent = clampOrNull(raw?.payload?.body_fat_percent, 1, 80);
@@ -228,93 +229,6 @@ async function analyzeChatCapture({ userText, user = {} }) {
     '- 夜に崩れやすい',
     '- 強い言い方よりやさしい励ましの方が続く',
     '- 膝の外側が走ると痛みやすい',
-    '',
-    `利用者名: ${safeText(user?.display_name || '', 80) || '未設定'}`,
-    `利用者発言: ${JSON.stringify(text)}`,
-  ].join('\n');
-
-  try {
-    const raw = await generateTextOnly(prompt, 0.2);
-    const parsed = safeParseJson(raw, null);
-
-    if (!parsed || typeof parsed !== 'object') {
-      return {
-        ...buildFallbackBodyMetrics(text),
-        source_text: text,
-      };
-    }
-
-    const normalized = normalizeResult(parsed, text);
-
-    if (
-      normalized.intent === 'body_metrics' &&
-      (normalized.payload.weight_kg !== null || normalized.payload.body_fat_percent !== null)
-    ) {
-      if (!normalized.reply_text) {
-        const fallback = buildFallbackBodyMetrics(text);
-        return {
-          ...normalized,
-          reply_text: fallback.reply_text,
-        };
-      }
-      return normalized;
-    }
-
-    const fallback = buildFallbackBodyMetrics(text);
-    if (fallback.capture_type === 'body_metrics') {
-      return {
-        ...fallback,
-        source_text: text,
-      };
-    }
-
-    return normalized;
-  } catch (_error) {
-    return {
-      ...buildFallbackBodyMetrics(text),
-      source_text: text,
-    };
-  }
-}
-
-  const prompt = [
-    'あなたはLINE上の伴走AI「AI牛込」です。',
-    '利用者の自然文をまず人間のように理解し、記録候補や返信方針をJSONで返してください。',
-    '',
-    '大事な方針:',
-    '- 必ずJSONのみを返す',
-    '- 機械的なエラー表現は使わない',
-    '- 年配の方でも自然に進められる、やさしい返答文にする',
-    '- 明確な体重・体脂肪率は auto_save=true にしてよい',
-    '- 少し曖昧なら needs_confirmation=true にしてよい',
-    '- 相談や雑談は chat / consultation にして、自然な返答文を短く作る',
-    '',
-    'intent 候補:',
-    '- body_metrics',
-    '- consultation',
-    '- chat',
-    '- unknown',
-    '',
-    'capture_type 候補:',
-    '- body_metrics',
-    '- memory_note',
-    '- null',
-    '',
-    '返却JSONスキーマ:',
-    '{',
-    '  "intent": "body_metrics | consultation | chat | unknown",',
-    '  "capture_type": "body_metrics | memory_note | null",',
-    '  "auto_save": true,',
-    '  "needs_confirmation": false,',
-    '  "reply_text": "利用者に返す自然な日本語。短め。",',
-    '  "payload": {',
-    '    "weight_kg": null,',
-    '    "body_fat_percent": null',
-    '  },',
-    '  "memory_candidates": [',
-    '    { "memory_type": "emotional_trigger | work_context | pain_pattern | goal | helpful_support_style | other", "content": "短い要約" }',
-    '  ]',
-    '}',
     '',
     `利用者名: ${safeText(user?.display_name || '', 80) || '未設定'}`,
     `利用者発言: ${JSON.stringify(text)}`,
