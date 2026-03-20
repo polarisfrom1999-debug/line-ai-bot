@@ -3159,61 +3159,150 @@ async function handleTextMessage(event, user) {
       return;
     }
     const pendingConfirmation = getRecentCaptureConfirmation(user.line_user_id);
-if (pendingConfirmation) {
-  if (isConfirmSaveText(text)) {
-    if (pendingConfirmation.capture_type === 'body_metrics') {
-      const savedReply = await saveBodyMetricsFromPayload(user, pendingConfirmation.payload, pendingConfirmation.source_text || text);
-      clearRecentCaptureConfirmation(user.line_user_id);
+    if (pendingConfirmation) {
+      if (isConfirmSaveText(text)) {
+        if (pendingConfirmation.capture_type === 'body_metrics') {
+          const savedReply = await saveBodyMetricsFromPayload(
+            user,
+            pendingConfirmation.payload,
+            pendingConfirmation.source_text || text
+          );
 
-      const replyText = prefixWithName(user, savedReply);
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      await rememberInteraction(user, text, replyText);
-      return;
+          clearRecentCaptureConfirmation(user.line_user_id);
+
+          const replyText = prefixWithName(user, savedReply);
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (pendingConfirmation.capture_type === 'meal_record') {
+          const savedMeal = await saveMealSmartPayload(
+            user,
+            pendingConfirmation.payload || {},
+            pendingConfirmation.source_text || text
+          );
+
+          clearRecentCaptureConfirmation(user.line_user_id);
+
+          await saveUserState(user.id, {
+            last_checkin_at: new Date().toISOString(),
+            last_any_log_at: new Date().toISOString(),
+            last_meal_logged_at: new Date().toISOString(),
+          });
+
+          const totals = await getTodayEnergyTotals(user.id);
+          const nutritionLines = buildMealNutritionLines(savedMeal);
+
+          const replyText = prefixWithName(
+            user,
+            [
+              'ありがとうございます。食事記録として残しました。',
+              `料理: ${savedMeal.meal_label}`,
+              savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+              nutritionLines.length ? '' : null,
+              ...(nutritionLines.length ? nutritionLines : []),
+              `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+            ].filter(Boolean).join('\n')
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '予測', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (pendingConfirmation.capture_type === 'exercise_record') {
+          const exercisePayload = buildExerciseCaptureSavePayload(
+            pendingConfirmation.payload || {},
+            pendingConfirmation.source_text || text
+          );
+
+          await saveExerciseSmartPayload(
+            user,
+            exercisePayload,
+            pendingConfirmation.source_text || text
+          );
+
+          clearRecentCaptureConfirmation(user.line_user_id);
+
+          await saveUserState(user.id, {
+            last_checkin_at: new Date().toISOString(),
+            last_any_log_at: new Date().toISOString(),
+            last_exercise_logged_at: new Date().toISOString(),
+          });
+
+          const totals = await getTodayEnergyTotals(user.id);
+          const energyText = buildEnergySummaryText({
+            estimatedBmr: user.estimated_bmr || 0,
+            estimatedTdee: user.estimated_tdee || 0,
+            intakeKcal: totals.intake_kcal || 0,
+            activityKcal: totals.activity_kcal || 0,
+          });
+
+          const replyText = prefixWithName(
+            user,
+            `ありがとうございます。運動記録として残しました。\n\n${energyText}`
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(
+              replyText,
+              [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']
+            ),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (pendingConfirmation.capture_type === 'memory_note') {
+          const saved = await saveMemoryCandidatesForUser(
+            user,
+            pendingConfirmation.source_text || text,
+            pendingConfirmation.reply_text || '',
+            pendingConfirmation.memory_candidates || []
+          );
+
+          clearRecentCaptureConfirmation(user.line_user_id);
+
+          const replyText = prefixWithName(
+            user,
+            saved
+              ? 'ありがとうございます。今後の伴走に役立つように、このことは静かに覚えておきますね。'
+              : 'ありがとうございます。今後の流れに活かせるよう、このことは意識して寄り添っていきますね。'
+          );
+
+          await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+
+      if (isDeclineSaveText(text)) {
+        clearRecentCaptureConfirmation(user.line_user_id);
+        const replyText = prefixWithName(user, '大丈夫です。今回は保存せず、このまま会話を続けましょう。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (isEditSaveText(text)) {
+        clearRecentCaptureConfirmation(user.line_user_id);
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。こちらで整えます。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
     }
-
-    if (pendingConfirmation.capture_type === 'memory_note') {
-      const saved = await saveMemoryCandidatesForUser(
-        user,
-        pendingConfirmation.source_text || text,
-        pendingConfirmation.reply_text || '',
-        pendingConfirmation.memory_candidates || []
-      );
-
-      clearRecentCaptureConfirmation(user.line_user_id);
-
-      const replyText = prefixWithName(
-        user,
-        saved
-          ? 'ありがとうございます。今後の伴走に役立つように、このことは静かに覚えておきますね。'
-          : 'ありがとうございます。今後の流れに活かせるよう、このことは意識して寄り添っていきますね。'
-      );
-
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-  }
-
-  if (isDeclineSaveText(text)) {
-    clearRecentCaptureConfirmation(user.line_user_id);
-    const replyText = prefixWithName(user, '大丈夫です。今回は保存せず、このまま会話を続けましょう。');
-    await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-    await rememberInteraction(user, text, replyText);
-    return;
-  }
-
-  if (isEditSaveText(text)) {
-    clearRecentCaptureConfirmation(user.line_user_id);
-    const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。こちらで整えます。');
-    await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-    await rememberInteraction(user, text, replyText);
-    return;
-  }
-}
 
     const chatCapture = await analyzeChatCapture({ userText: text, user });
 
