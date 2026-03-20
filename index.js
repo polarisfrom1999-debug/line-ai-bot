@@ -3228,6 +3228,32 @@ if (pendingConfirmation) {
         }
       }
     }
+
+    if (
+  chatCapture?.capture_type === 'memory_note' &&
+  Array.isArray(chatCapture?.memory_candidates) &&
+  chatCapture.memory_candidates.length
+) {
+  setRecentCaptureConfirmation(user.line_user_id, {
+    capture_type: 'memory_note',
+    memory_candidates: chatCapture.memory_candidates,
+    source_text: text,
+    reply_text: chatCapture.reply_text || '',
+  });
+
+  const replyText = prefixWithName(
+    user,
+    chatCapture.reply_text || '今後の伴走に役立ちそうなので、このことは覚えておいてもよければ残しておきますか？'
+  );
+
+  await replyMessage(
+    event.replyToken,
+    textMessageWithQuickReplies(replyText, ['はい、保存', '今回は保存しない', '修正する']),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+  await rememberInteraction(user, text, replyText);
+  return;
+}
     const earlyParsedMetrics = parseBodyMetricsInput(text);
     if (earlyParsedMetrics.weightKg !== null || earlyParsedMetrics.bodyFatPercent !== null) {
       if (earlyParsedMetrics.weightKg !== null) {
