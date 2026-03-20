@@ -757,26 +757,69 @@ function buildCurrentDateTimeReply(tz = 'Asia/Tokyo') {
   return [`東京では、今日は ${dateText}（${weekday}）です。`, `今の時刻は ${timeText} です。`].join('\n');
 }
 
-function parseWeightInput(text) {
+function parseBodyMetricsInput(text) {
   const raw = String(text || '').trim();
-
-  if (/^(体重|今朝の体重|本日の体重|今日の体重)/.test(raw)) {
-    const m = raw.match(/-?\d+(?:\.\d+)?/);
-    if (!m) return null;
-    const value = Number(m[0]);
-    if (!Number.isFinite(value)) return null;
-    if (value < 20 || value > 300) return null;
-    return value;
+  if (!raw) {
+    return {
+      weightKg: null,
+      bodyFatPercent: null,
+    };
   }
 
-  if (/^-?\d+(?:\.\d+)?\s*kg$/i.test(raw)) {
-    const value = Number(raw.replace(/kg/i, '').trim());
-    if (!Number.isFinite(value)) return null;
-    if (value < 20 || value > 300) return null;
-    return value;
+  const normalized = raw
+    .replace(/[　]/g, ' ')
+    .replace(/％/g, '%')
+    .replace(/ｋｇ/gi, 'kg');
+
+  let weightKg = null;
+  let bodyFatPercent = null;
+
+  const weightPatterns = [
+    /(?:^|[\s、,，/])(?:体重|今朝の体重|本日の体重|今日の体重)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:kg|キロ))?/i,
+    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:kg|キロ)\b/i,
+  ];
+
+  const bodyFatPatterns = [
+    /(?:^|[\s、,，/])(?:体脂肪率|体脂肪)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:%|パーセント|パー))?/i,
+    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:%|パーセント|パー)\b/i,
+  ];
+
+  for (const re of weightPatterns) {
+    const m = normalized.match(re);
+    if (m && m[1] != null) {
+      const value = Number(m[1]);
+      if (Number.isFinite(value) && value >= 20 && value <= 300) {
+        weightKg = value;
+        break;
+      }
+    }
   }
 
-  return null;
+  for (const re of bodyFatPatterns) {
+    const m = normalized.match(re);
+    if (m && m[1] != null) {
+      const value = Number(m[1]);
+      if (Number.isFinite(value) && value >= 1 && value <= 80) {
+        bodyFatPercent = value;
+        break;
+      }
+    }
+  }
+
+  return {
+    weightKg,
+    bodyFatPercent,
+  };
+}
+
+function parseWeightInput(text) {
+  const parsed = parseBodyMetricsInput(text);
+  return parsed.weightKg;
+}
+
+function parseBodyFatInput(text) {
+  const parsed = parseBodyMetricsInput(text);
+  return parsed.bodyFatPercent;
 }
 
 function helpMessage() {
