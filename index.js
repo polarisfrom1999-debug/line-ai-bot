@@ -2225,42 +2225,11 @@ function buildDiagnosisQuestionReply(state) {
   const q = questions[state.stepIndex];
   if (!q) return null;
 
-  const questionText =
-    String(
-      q?.text ||
-      q?.question ||
-      q?.prompt ||
-      ''
-    ).trim();
-
+  const questionText = String(q?.text || '').trim();
   const options = Array.isArray(q?.options) ? q.options.filter(Boolean) : [];
 
-  if (typeof diagnosisService?.buildDiagnosisQuestionMessage === 'function') {
-    try {
-      const result = diagnosisService.buildDiagnosisQuestionMessage(state, {
-        ...q,
-        text: questionText,
-        question: questionText,
-        prompt: questionText,
-        options,
-      });
-
-      const resultText = String(result?.text || '').trim();
-      const resultQuickReplies = Array.isArray(result?.quickReplies)
-        ? result.quickReplies.filter(Boolean)
-        : options;
-
-      if (resultText && !resultText.includes('undefined')) {
-        return {
-          text: resultText,
-          quickReplies: resultQuickReplies,
-        };
-      }
-    } catch (_error) {}
-  }
-
   return {
-    text: `【無料診断 ${state.stepIndex + 1}/7】\n${questionText || '今のあなたに合う進め方を整理するため、下から近いものを選んでください。'}`,
+    text: `【無料診断 ${state.stepIndex + 1}/7】\n${questionText}`,
     quickReplies: options,
   };
 }
