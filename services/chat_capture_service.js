@@ -191,6 +191,102 @@ async function analyzeChatCapture({ userText, user = {} }) {
     '- 年配の方でも自然に進められる、やさしい返答文にする',
     '- 明確な体重・体脂肪率は auto_save=true にしてよい',
     '- 少し曖昧なら needs_confirmation=true にしてよい',
+    '- 相談や雑談の中に、今後の伴走に役立つ情報があれば memory_candidates に入れてよい',
+    '- 相談や雑談で、保存した方が今後役立ちそうなら capture_type を memory_note にしてよい',
+    '- ただし、重すぎる表現や長すぎる要約は避ける',
+    '',
+    'intent 候補:',
+    '- body_metrics',
+    '- consultation',
+    '- chat',
+    '- unknown',
+    '',
+    'capture_type 候補:',
+    '- body_metrics',
+    '- memory_note',
+    '- null',
+    '',
+    '返却JSONスキーマ:',
+    '{',
+    '  "intent": "body_metrics | consultation | chat | unknown",',
+    '  "capture_type": "body_metrics | memory_note | null",',
+    '  "auto_save": true,',
+    '  "needs_confirmation": false,',
+    '  "reply_text": "利用者に返す自然な日本語。短め。",',
+    '  "payload": {',
+    '    "weight_kg": null,',
+    '    "body_fat_percent": null',
+    '  },',
+    '  "memory_candidates": [',
+    '    { "memory_type": "emotional_trigger | work_context | pain_pattern | goal | helpful_support_style | craving_pattern | continuation_barrier | other", "content": "短い要約" }',
+    '  ]',
+    '}',
+    '',
+    'memory_note にしてよい例:',
+    '- 仕事の疲れで夜に甘いものが増える',
+    '- 恋愛ストレスで食べ過ぎやすい',
+    '- 夜に崩れやすい',
+    '- 強い言い方よりやさしい励ましの方が続く',
+    '- 膝の外側が走ると痛みやすい',
+    '',
+    `利用者名: ${safeText(user?.display_name || '', 80) || '未設定'}`,
+    `利用者発言: ${JSON.stringify(text)}`,
+  ].join('\n');
+
+  try {
+    const raw = await generateTextOnly(prompt, 0.2);
+    const parsed = safeParseJson(raw, null);
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        ...buildFallbackBodyMetrics(text),
+        source_text: text,
+      };
+    }
+
+    const normalized = normalizeResult(parsed, text);
+
+    if (
+      normalized.intent === 'body_metrics' &&
+      (normalized.payload.weight_kg !== null || normalized.payload.body_fat_percent !== null)
+    ) {
+      if (!normalized.reply_text) {
+        const fallback = buildFallbackBodyMetrics(text);
+        return {
+          ...normalized,
+          reply_text: fallback.reply_text,
+        };
+      }
+      return normalized;
+    }
+
+    const fallback = buildFallbackBodyMetrics(text);
+    if (fallback.capture_type === 'body_metrics') {
+      return {
+        ...fallback,
+        source_text: text,
+      };
+    }
+
+    return normalized;
+  } catch (_error) {
+    return {
+      ...buildFallbackBodyMetrics(text),
+      source_text: text,
+    };
+  }
+}
+
+  const prompt = [
+    'あなたはLINE上の伴走AI「AI牛込」です。',
+    '利用者の自然文をまず人間のように理解し、記録候補や返信方針をJSONで返してください。',
+    '',
+    '大事な方針:',
+    '- 必ずJSONのみを返す',
+    '- 機械的なエラー表現は使わない',
+    '- 年配の方でも自然に進められる、やさしい返答文にする',
+    '- 明確な体重・体脂肪率は auto_save=true にしてよい',
+    '- 少し曖昧なら needs_confirmation=true にしてよい',
     '- 相談や雑談は chat / consultation にして、自然な返答文を短く作る',
     '',
     'intent 候補:',
