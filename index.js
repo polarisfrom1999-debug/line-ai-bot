@@ -21,6 +21,19 @@ const {
   applyMealCorrectionWithGemini,
 } = require('./services/gemini_meal_service');
 const {
+  detectMessageIntent,
+  shouldAvoidMealExerciseAutoCapture,
+} = require('./services/message_intent_service');
+const {
+  AI_PERSONA_TYPES,
+  PERSONA_LABELS,
+  normalizePersonaType,
+  getPersonaLabel,
+  getPersonaQuickReplyItems,
+  getPersonaSystemStyle,
+  getPersonaSelectionMessage,
+} = require('./services/ai_persona_service');
+const {
   parseDisplayName,
   normalizeStoredDisplayName,
   getUserDisplayName,
@@ -539,7 +552,57 @@ function isExerciseConsultationText(text) {
   return hasQuestionIntent(text) || hasPainOrMedicalContext(text);
 }
 
+function getEffectivePersonaType(user) {
+  return normalizePersonaType(
+    user?.ai_persona_type ||
+    user?.ai_type ||
+    AI_PERSONA_TYPES.GENTLE
+  );
+}
+
+function buildAiPersonaQuickReplies() {
+  return getPersonaQuickReplyItems().map((item) => item.label);
+}
+
+function isAiPersonaChangeCommand(text) {
+  const t = String(text || '').trim();
+  return ['AIタイプ変更', '話し方を変更', '人格変更', 'AI人格変更', 'タイプ変更'].includes(t);
+}
+
+function isPersonaSelectionText(text) {
+  return Object.values(PERSONA_LABELS).includes(String(text || '').trim());
+}
+
+function getPersonaTypeFromLabel(text) {
+  const v = String(text || '').trim();
+  if (v === PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE]) return AI_PERSONA_TYPES.GENTLE;
+  if (v === PERSONA_LABELS[AI_PERSONA_TYPES.BRIGHT]) return AI_PERSONA_TYPES.BRIGHT;
+  if (v === PERSONA_LABELS[AI_PERSONA_TYPES.RELIABLE]) return AI_PERSONA_TYPES.RELIABLE;
+  if (v === PERSONA_LABELS[AI_PERSONA_TYPES.STRONG]) return AI_PERSONA_TYPES.STRONG;
+  return AI_PERSONA_TYPES.GENTLE;
+}
+
+async function updateUserAiPersona(userId, personaType) {
+  const normalized = normalizePersonaType(personaType);
+  const patch = {
+    ai_persona_type: normalized,
+    ai_persona_selected_at: new Date().toISOString(),
+    ai_type: normalized,
+  };
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('id', userId)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data || null;
+}
+
 function isActivityCommand(text) {
+  if (shouldAvoidMealExerciseAutoCapture(text)) return false;
   if (isExerciseConsultationText(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
 }
@@ -600,6 +663,7 @@ function isWeightGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
   return ['体重グラフ', '体重のグラフ', '体重見たい', '体重を見たい', '体重推移', '体重の推移', '体重の変化'].includes(t);
 }
+
 function isWeeklyReportRequest(text) {
   return /週間報告|週報|1週間報告|一週間報告/.test(String(text || '').trim());
 }
@@ -705,6 +769,7 @@ function helpMessage() {
     '・名前は 牛込',
     '・初回診断',
     '・無料診断',
+    '・AIタイプ変更',
     '・体重 63.2',
     '・ジョギング 20分',
     '・ストレッチ 5分',
@@ -730,36 +795,16 @@ function helpMessage() {
   ].join('\n');
 }
 
-function buildAiTypePrompt(aiType) {
-  if (aiType === AI_TYPE_VALUES.BRIGHT) {
-    return [
-      '話し方は少し前向きで明るく、背中を押す雰囲気にしてください。',
-      '気分が少し上がるような言い回しを入れてください。',
-      'ただし軽すぎず、安心感は残してください。',
-    ].join('\n');
-  }
-
-  if (aiType === AI_TYPE_VALUES.RELIABLE) {
-    return [
-      '話し方は落ち着いて、信頼感のある雰囲気にしてください。',
-      '少し包容力のある大人っぽい印象で、優先順位をわかりやすく示してください。',
-      '強すぎる命令口調にはしないでください。',
-    ].join('\n');
-  }
-
-  if (aiType === AI_TYPE_VALUES.STRONG) {
-    return [
-      '話し方は少し力強く、前へ進める雰囲気にしてください。',
-      '気持ちが落ちている相手でも、やさしさを残しながら引っ張ってください。',
-      '必要な時は優先順位を明確にし、はっきり提案してください。',
-      '責めたり否定したりせず、「ここは整えどころですね」のような表現を使ってください。',
-    ].join('\n');
-  }
+function buildAiTypePrompt(userOrType) {
+  const personaType = normalizePersonaType(
+    typeof userOrType === 'string'
+      ? userOrType
+      : (userOrType?.ai_persona_type || userOrType?.ai_type || AI_PERSONA_TYPES.GENTLE)
+  );
 
   return [
-    '話し方はやさしく包み込むように、安心感を大切にしてください。',
-    '相手を急かさず、まず受け止める雰囲気にしてください。',
-    '無理を広げすぎない、小さく整える提案を優先してください。',
+    `現在のAI人格タイプ: ${getPersonaLabel(personaType)}`,
+    getPersonaSystemStyle(personaType),
   ].join('\n');
 }
 
@@ -856,6 +901,7 @@ function isMealDesireOrFeelingText(text) {
 function isExplicitMealLogText(text) {
   const t = normalizeMealIntentText(text);
   if (!t) return false;
+  if (shouldAvoidMealExerciseAutoCapture(text)) return false;
   if (isMealDesireOrFeelingText(t)) return false;
   if (hasQuestionIntent(text)) return false;
 
@@ -878,9 +924,7 @@ function isExplicitMealGuideIntent(text) {
     '食事を記録したい', '食事記録したい', '食事を登録したい', '食事の記録方法', '食事の保存方法', '食事を入力したい',
     '食べたものを記録したい', '飲んだものを記録したい',
   ].includes(t);
-}
-
-function sumBy(arr, key) {
+  function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
 
@@ -1482,7 +1526,6 @@ async function getRecentActivityRows(userId, limit = 50) {
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
-
 async function getRecentSymptomRows(userId, limit = 20) {
   try {
     const { data, error } = await supabase
@@ -1700,6 +1743,7 @@ async function saveMealSmartPayload(user, payload = {}, rawText = '') {
 
 async function handleSmartConversationFlow({ user, text }) {
   const analysis = analyzeNewCaptureCandidate(text);
+  const intent = detectMessageIntent(text);
 
   if (analysis.route === 'onboarding_start') {
     return { handled: false, next: 'onboarding_start' };
@@ -1765,6 +1809,14 @@ async function handleSmartConversationFlow({ user, text }) {
     };
   }
 
+  if ((analysis.route === 'save_exercise' || analysis.route === 'save_meal') && shouldAvoidMealExerciseAutoCapture(text)) {
+    return {
+      handled: false,
+      next: intent.type === 'consultation' ? 'consultation_chat' : 'general_chat',
+      payload: analysis.payload,
+    };
+  }
+
   if (analysis.route === 'save_exercise') return { handled: true, next: 'save_exercise', payload: analysis.payload };
   if (analysis.route === 'save_meal') return { handled: true, next: 'save_meal', payload: analysis.payload };
   if (analysis.route === 'save_weight') return { handled: true, next: 'save_weight', payload: analysis.payload };
@@ -1810,7 +1862,7 @@ async function defaultChatReply(user, userText) {
 
   const prompt = [
     AI_BASE_PROMPT,
-    buildAiTypePrompt(user.ai_type),
+    buildAiTypePrompt(user),
     name ? `利用者の呼び名: ${name}さん` : '',
     '',
     '【優先フォロー項目】',
@@ -2165,7 +2217,6 @@ function mapDiagnosisAiTypeLabelToValue(label) {
   if (normalized === '力強く支える') return AI_TYPE_VALUES.STRONG;
   return AI_TYPE_VALUES.GENTLE || AI_TYPE_VALUES.SOFT || 'gentle';
 }
-
 function scoreDiagnosisFallback(answers = {}) {
   const goal = String(answers.goal || '');
   const pace = String(answers.pace || '');
@@ -2508,6 +2559,8 @@ async function completeDiagnosisForUser(user, result, answers) {
     diagnosis_recommended_ai_type: result?.recommended_ai_type || null,
     diagnosis_special_interest: Boolean(result?.special_interest),
     ai_type: result?.recommended_ai_type || user?.ai_type || null,
+    ai_persona_type: result?.recommended_ai_type || user?.ai_persona_type || null,
+    ai_persona_selected_at: new Date().toISOString(),
   };
 
   const updated = await saveUserState(user.id, patch);
@@ -2727,6 +2780,7 @@ async function handleImageMessage(event, user) {
     await replyMessage(event.replyToken, '画像の処理でエラーが起きました。もう一度写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
   }
 }
+
 async function handleOnboardingMessage(event, user) {
   const text = String(event?.message?.text || '').trim();
 
@@ -2788,7 +2842,6 @@ async function saveMembershipAdminMemo(input = {}) {
   const memo = createMembershipAdminMemo(input);
   safeConsoleLog('[MEMBERSHIP_ADMIN_MEMO]', memo?.memo_text || memo);
 }
-
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
@@ -2815,6 +2868,25 @@ async function handleTextMessage(event, user) {
       const replyText = buildCurrentDateTimeReply(TZ);
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isAiPersonaChangeCommand(text)) {
+      const replyText = prefixWithName(user, getPersonaSelectionMessage());
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(replyText, buildAiPersonaQuickReplies()),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (isPersonaSelectionText(text)) {
+      const updatedUser = await updateUserAiPersona(user.id, getPersonaTypeFromLabel(text));
+      const label = getPersonaLabel(getEffectivePersonaType(updatedUser || user));
+      const replyText = prefixWithName(updatedUser || user, `これからは「${label}」の雰囲気で伴走しますね。必要ならまた変えられます。`);
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(updatedUser || user, text, replyText);
       return;
     }
 
@@ -2967,6 +3039,8 @@ async function handleTextMessage(event, user) {
           pending_capture_source_text: null,
           pending_capture_attempts: 0,
           last_checkin_at: new Date().toISOString(),
+          last_any_log_at: new Date().toISOString(),
+          last_exercise_logged_at: new Date().toISOString(),
         });
 
         const totals = await getTodayEnergyTotals(user.id);
@@ -2995,6 +3069,8 @@ async function handleTextMessage(event, user) {
           pending_capture_source_text: null,
           pending_capture_attempts: 0,
           last_checkin_at: new Date().toISOString(),
+          last_any_log_at: new Date().toISOString(),
+          last_meal_logged_at: new Date().toISOString(),
         });
 
         const totals = await getTodayEnergyTotals(user.id);
@@ -3029,6 +3105,8 @@ async function handleTextMessage(event, user) {
           pending_capture_source_text: null,
           pending_capture_attempts: 0,
           last_checkin_at: new Date().toISOString(),
+          last_any_log_at: new Date().toISOString(),
+          last_weight_logged_at: new Date().toISOString(),
         });
 
         const recentWeights = await getRecentWeightRows(user.id, 10);
@@ -3062,6 +3140,8 @@ async function handleTextMessage(event, user) {
           pending_capture_source_text: null,
           pending_capture_attempts: 0,
           last_checkin_at: new Date().toISOString(),
+          last_any_log_at: new Date().toISOString(),
+          last_body_fat_logged_at: new Date().toISOString(),
         });
 
         const replyText = prefixWithName(user, `ありがとうございます。体脂肪率 ${bodyFatPercent}% を記録しました。`);
@@ -3381,6 +3461,10 @@ async function handleTextMessage(event, user) {
     const parsedWeight = parseWeightInput(text);
     if (parsedWeight !== null) {
       await saveWeightToLog(user.id, parsedWeight, text);
+      await saveUserState(user.id, {
+        last_any_log_at: new Date().toISOString(),
+        last_weight_logged_at: new Date().toISOString(),
+      });
 
       const recentWeights = await getRecentWeightRows(user.id, 10);
       const latest = recentWeights[0] || { weight_kg: parsedWeight };
@@ -3790,6 +3874,12 @@ async function handleTextMessage(event, user) {
         safeConsoleLog('[PAIN_ADMIN_MEMO]', painMemoResult?.memo_text || painMemoResult);
       }
 
+      await saveUserState(user.id, {
+        pain_followup_status: 'watching',
+        pain_last_noted_at: new Date().toISOString(),
+        pain_area_last: area || null,
+      });
+
       await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, [...painResponse.quickReplies, '動画で見たい']), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -3859,6 +3949,11 @@ async function handleTextMessage(event, user) {
       const savedMeal = await saveMealToLog(user.id, currentMealDraft.meal);
       clearMealDraft(user.line_user_id);
 
+      await saveUserState(user.id, {
+        last_any_log_at: new Date().toISOString(),
+        last_meal_logged_at: new Date().toISOString(),
+      });
+
       const totals = await getTodayEnergyTotals(user.id);
       const energyText = buildEnergySummaryText({
         estimatedBmr: user.estimated_bmr || 0,
@@ -3908,14 +4003,24 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isExplicitMealLogText(text) || seemsMealTextCandidate(text)) {
+    const detectedIntent = detectMessageIntent(text);
+    const shouldOpenMealDraft =
+      !shouldAvoidMealExerciseAutoCapture(text) &&
+      (
+        detectedIntent.type === 'meal_log' ||
+        isExplicitMealLogText(text) ||
+        seemsMealTextCandidate(text)
+      );
+
+    if (shouldOpenMealDraft) {
       const analyzedMeal = await analyzeMealTextPrimary(text);
-      setMealDraft(user.line_user_id, analyzedMeal);
-      const mealMessage = buildMealReplyWithSaveGuide(analyzedMeal, { textOnly: true });
-      const replyText = prefixWithName(user, mealMessage);
-      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()), env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
+      if (analyzedMeal?.is_meal || isMeaningfulMealDraft(analyzedMeal)) {
+        setMealDraft(user.line_user_id, analyzedMeal);
+        const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(analyzedMeal, { textOnly: true }));
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
     }
 
     if (text === '飲み物を訂正' || text === '量を訂正') {
@@ -3956,6 +4061,11 @@ async function handleTextMessage(event, user) {
 
       const { error } = await supabase.from('activity_logs').insert(insertPayload);
       if (error) throw error;
+
+      await saveUserState(user.id, {
+        last_any_log_at: new Date().toISOString(),
+        last_exercise_logged_at: new Date().toISOString(),
+      });
 
       const totals = await getTodayEnergyTotals(user.id);
       const lines = [
