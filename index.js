@@ -933,7 +933,110 @@ function setSupportContext(lineUserId, patch) {
   const prev = getSupportContext(lineUserId) || {};
   recentSupportContexts.set(lineUserId, { ...prev, ...patch, updatedAt: Date.now() });
 }
+function getRecentCaptureConfirmation(lineUserId) {
+  const data = recentCaptureConfirmations.get(lineUserId);
+  if (!data) return null;
 
+  const ageMs = Date.now() - Number(data.updatedAt || 0);
+  if (ageMs > 30 * 60 * 1000) {
+    recentCaptureConfirmations.delete(lineUserId);
+    return null;
+  }
+
+  return data;
+}
+
+function setRecentCaptureConfirmation(lineUserId, payload) {
+  recentCaptureConfirmations.set(lineUserId, {
+    ...payload,
+    updatedAt: Date.now(),
+  });
+}
+
+function clearRecentCaptureConfirmation(lineUserId) {
+  recentCaptureConfirmations.delete(lineUserId);
+}
+
+function isConfirmSaveText(text) {
+  return ['はい、保存', 'はい保存', '保存する', 'この内容で保存', 'はい'].includes(String(text || '').trim());
+}
+
+function isDeclineSaveText(text) {
+  return ['今回は保存しない', '保存しない', 'やめておく', '今回はやめる'].includes(String(text || '').trim());
+}
+
+function isEditSaveText(text) {
+  return ['修正する', '訂正する', '違います', 'ちがいます'].includes(String(text || '').trim());
+}
+
+async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
+  const weightKg = Number(payload.weight_kg);
+  const bodyFatPercent = Number(payload.body_fat_percent);
+
+  if (Number.isFinite(weightKg) && weightKg >= 20 && weightKg <= 300) {
+    await saveWeightToLog(user.id, weightKg, rawText);
+  }
+
+  if (Number.isFinite(bodyFatPercent) && bodyFatPercent >= 1 && bodyFatPercent <= 80) {
+    await saveBodyFatToLog(user.id, bodyFatPercent, rawText);
+  }
+
+  const statePatch = {
+    last_any_log_at: new Date().toISOString(),
+  };
+
+  if (Number.isFinite(weightKg) && weightKg >= 20 && weightKg <= 300) {
+    statePatch.last_weight_logged_at = new Date().toISOString();
+  }
+
+  if (Number.isFinite(bodyFatPercent) && bodyFatPercent >= 1 && bodyFatPercent <= 80) {
+    statePatch.last_body_fat_logged_at = new Date().toISOString();
+  }
+
+  await saveUserState(user.id, statePatch);
+
+  let diffText = null;
+  if (Number.isFinite(weightKg) && weightKg >= 20 && weightKg <= 300) {
+    const recentWeights = await getRecentWeightRows(user.id, 10);
+    const latest = recentWeights[0] || { weight_kg: weightKg };
+    const prev = recentWeights[1] || null;
+
+    diffText = (() => {
+      if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
+      const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
+      if (diff === 0) return '前回から変化はありません。';
+      if (diff > 0) return `前回より ${diff}kg 増えています。`;
+      return `前回より ${Math.abs(diff)}kg 減っています。`;
+    })();
+  }
+
+  const lines = [];
+  if (Number.isFinite(weightKg) && Number.isFinite(bodyFatPercent)) {
+    lines.push('体重と体脂肪率を記録しておきました。');
+    lines.push(`体重: ${weightKg}kg`);
+    lines.push(`体脂肪率: ${bodyFatPercent}%`);
+  } else if (Number.isFinite(weightKg)) {
+    lines.push('体重を記録しておきました。');
+    lines.push(`今回: ${weightKg}kg`);
+  } else if (Number.isFinite(bodyFatPercent)) {
+    lines.push('体脂肪率を記録しておきました。');
+    lines.push(`今回: ${bodyFatPercent}%`);
+  }
+
+  if (diffText) {
+    lines.push(diffText);
+  }
+
+  if (Number.isFinite(weightKg) && !Number.isFinite(bodyFatPercent)) {
+    lines.push('体脂肪率も分かれば、そのまま続けて送ってくださいね。');
+  }
+
+  if (Number.isFinite(bodyFatPercent) && !Number.isFinite(weightKg)) {
+    lines.push('体重も分かれば、そのまま続けて送ってくださいね。');
+  }
+
+  return lines.join('\n');
+}
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
