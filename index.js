@@ -2939,7 +2939,78 @@ function buildGuideReplyByIntent(user, intent) {
   }
   return '';
 }
+function buildPlanBridgeMessage(user, options = {}) {
+  const {
+    mode = 'guide',
+    planType = '',
+    includeTrial = true,
+  } = options;
 
+  const name = getUserDisplayName(user);
+  const planLabel = planType ? getPlanNameLabel(planType) : '';
+  const priceLabel = planType ? getPlanPriceLabel(planType) : '';
+
+  if (mode === 'selected') {
+    return prefixWithName(
+      user,
+      [
+        `${planLabel}で進める流れですね。`,
+        priceLabel ? `料金は ${priceLabel} です。` : null,
+        'このあと案内に沿って進めれば大丈夫です。',
+        '迷うところがあれば、その場で聞いてください。こちらで自然に整えます。',
+      ].filter(Boolean).join('\n')
+    );
+  }
+
+  if (mode === 'trial') {
+    return prefixWithName(
+      user,
+      [
+        'まずは無料体験から入って、合いそうなら本プランへ進む形で大丈夫です。',
+        '最初から完璧に決めなくて大丈夫なので、使いながら合う形を一緒に見ていきましょう。',
+      ].join('\n')
+    );
+  }
+
+  return prefixWithName(
+    user,
+    [
+      '今の段階では、まず内容の違いだけ軽く見てもらえれば十分です。',
+      includeTrial ? '迷う時は、無料体験をしながら相性を見てから決めても大丈夫です。' : null,
+      '気になるプランがあれば、そのまま選んでもらえれば次へつなぎますね。',
+    ].filter(Boolean).join('\n')
+  );
+}
+
+function buildPlanContinueSupportMessage(user, text) {
+  const t = normalizeTextLoose(text);
+
+  if (t.includes(normalizeTextLoose('まず相談したい'))) {
+    return prefixWithName(
+      user,
+      'ありがとうございます。今の生活や続けにくさを見ながら、どの形が合うか一緒に整理できます。気になっていることをそのまま送ってください。'
+    );
+  }
+
+  if (t.includes(normalizeTextLoose('もう少し体験したい'))) {
+    return prefixWithName(
+      user,
+      '大丈夫です。まずは体験の中で、続けやすさや相性を見ながら決めていきましょう。急がなくて大丈夫です。'
+    );
+  }
+
+  if (t.includes(normalizeTextLoose('このプランで進めたい')) || t.includes(normalizeTextLoose('継続したい'))) {
+    return prefixWithName(
+      user,
+      'ありがとうございます。進める気持ちが固まってきましたね。ここから先も、無理なく続けやすい流れで整えていきます。'
+    );
+  }
+
+  return prefixWithName(
+    user,
+    'ありがとうございます。今の気持ちに合う進め方で大丈夫です。無理のない形を一緒に整えていきましょう。'
+  );
+}
 async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
