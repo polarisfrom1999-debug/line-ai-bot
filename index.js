@@ -2937,14 +2937,14 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isPersonaSelectionText(text)) {
-      const updatedUser = await updateUserAiPersona(user.id, getPersonaTypeFromLabel(text));
-      const label = getPersonaLabel(getEffectivePersonaType(updatedUser || user));
-      const replyText = prefixWithName(updatedUser || user, `これからは「${label}」の雰囲気で伴走しますね。必要ならまた変えられます。`);
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(updatedUser || user, text, replyText);
-      return;
-    }
+if (isPersonaSelectionText(text) && !isDiagnosisActive(user)) {
+  const updatedUser = await updateUserAiPersona(user.id, getPersonaTypeFromLabel(text));
+  const label = getPersonaLabel(getEffectivePersonaType(updatedUser || user));
+  const replyText = prefixWithName(updatedUser || user, `これからは「${label}」の雰囲気で伴走しますね。必要ならまた変えられます。`);
+  await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+  await rememberInteraction(updatedUser || user, text, replyText);
+  return;
+}
 
     const guideIntent = detectGuideIntent(text);
     if (guideIntent) {
