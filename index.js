@@ -4174,12 +4174,12 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
   return;
 }
 
-    if (text === 'まず相談したい') {
-      const replyText = prefixWithName(user, 'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。');
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
+ if (text === 'まず相談したい') {
+  const replyText = buildPlanContinueSupportMessage(user, text);
+  await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+  await rememberInteraction(user, text, replyText);
+  return;
+}
 
     if (text === 'もう少し体験したい') {
       const replyText = prefixWithName(user, '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。');
