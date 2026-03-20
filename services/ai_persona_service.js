@@ -1,14 +1,5 @@
 'use strict';
 
-/**
- * services/ai_persona_service.js
- *
- * 目的:
- * - AI人格4タイプの定義を一元管理
- * - 会話文体の指針を返す
- * - Quick Replyや表示文言を統一
- */
-
 const AI_PERSONA_TYPES = {
   GENTLE: 'gentle',
   BRIGHT: 'bright',
@@ -23,33 +14,55 @@ const PERSONA_LABELS = {
   [AI_PERSONA_TYPES.STRONG]: '力強く支える',
 };
 
+function safeText(value, fallback = '') {
+  return String(value || fallback).trim();
+}
+
+function normalizeLoose(text) {
+  return safeText(text)
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
 function normalizePersonaType(value) {
-  const v = String(value || '').trim().toLowerCase();
+  const raw = normalizeLoose(value);
+
+  if (!raw) return AI_PERSONA_TYPES.GENTLE;
 
   if (
-    v === AI_PERSONA_TYPES.GENTLE ||
-    v === PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE]
+    raw === 'gentle' ||
+    raw.includes('そっと寄り添う') ||
+    raw.includes('寄り添う') ||
+    raw.includes('やさしい') ||
+    raw.includes('優しい')
   ) {
     return AI_PERSONA_TYPES.GENTLE;
   }
 
   if (
-    v === AI_PERSONA_TYPES.BRIGHT ||
-    v === PERSONA_LABELS[AI_PERSONA_TYPES.BRIGHT]
+    raw === 'bright' ||
+    raw.includes('明るく後押し') ||
+    raw.includes('明るい') ||
+    raw.includes('後押し')
   ) {
     return AI_PERSONA_TYPES.BRIGHT;
   }
 
   if (
-    v === AI_PERSONA_TYPES.RELIABLE ||
-    v === PERSONA_LABELS[AI_PERSONA_TYPES.RELIABLE]
+    raw === 'reliable' ||
+    raw.includes('頼もしく導く') ||
+    raw.includes('頼もしい') ||
+    raw.includes('導く')
   ) {
     return AI_PERSONA_TYPES.RELIABLE;
   }
 
   if (
-    v === AI_PERSONA_TYPES.STRONG ||
-    v === PERSONA_LABELS[AI_PERSONA_TYPES.STRONG]
+    raw === 'strong' ||
+    raw.includes('力強く支える') ||
+    raw.includes('力強い') ||
+    raw.includes('支える')
   ) {
     return AI_PERSONA_TYPES.STRONG;
   }
@@ -57,66 +70,86 @@ function normalizePersonaType(value) {
   return AI_PERSONA_TYPES.GENTLE;
 }
 
-function getPersonaLabel(type) {
-  const normalized = normalizePersonaType(type);
+function getPersonaLabel(personaType) {
+  const normalized = normalizePersonaType(personaType);
   return PERSONA_LABELS[normalized] || PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE];
 }
 
 function getPersonaQuickReplyItems() {
   return [
-    { label: PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE], data: AI_PERSONA_TYPES.GENTLE },
-    { label: PERSONA_LABELS[AI_PERSONA_TYPES.BRIGHT], data: AI_PERSONA_TYPES.BRIGHT },
-    { label: PERSONA_LABELS[AI_PERSONA_TYPES.RELIABLE], data: AI_PERSONA_TYPES.RELIABLE },
-    { label: PERSONA_LABELS[AI_PERSONA_TYPES.STRONG], data: AI_PERSONA_TYPES.STRONG },
+    {
+      type: AI_PERSONA_TYPES.GENTLE,
+      label: PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE],
+      description: 'やさしく安心感のある伴走',
+    },
+    {
+      type: AI_PERSONA_TYPES.BRIGHT,
+      label: PERSONA_LABELS[AI_PERSONA_TYPES.BRIGHT],
+      description: '少し前向きに背中を押す伴走',
+    },
+    {
+      type: AI_PERSONA_TYPES.RELIABLE,
+      label: PERSONA_LABELS[AI_PERSONA_TYPES.RELIABLE],
+      description: '落ち着いて整理しながら導く伴走',
+    },
+    {
+      type: AI_PERSONA_TYPES.STRONG,
+      label: PERSONA_LABELS[AI_PERSONA_TYPES.STRONG],
+      description: 'やさしさを残しつつ力強く支える伴走',
+    },
   ];
 }
 
-function getPersonaSystemStyle(type) {
-  const normalized = normalizePersonaType(type);
-
-  switch (normalized) {
-    case AI_PERSONA_TYPES.BRIGHT:
-      return `
-あなたは「ここから。」の伴走AIです。
-会話は自然で、あたたかく、少し明るめにしてください。
-元気づけるが、軽すぎないこと。
-褒めすぎ・テンプレ感・営業感は避けてください。
-一言ごとに相手の努力や気持ちを自然に拾ってください。
-語尾は柔らかく、人間らしく。`;
-    case AI_PERSONA_TYPES.RELIABLE:
-      return `
-あなたは「ここから。」の伴走AIです。
-会話は落ち着いていて、安心感があり、頼れる印象で返してください。
-断定しすぎず、筋道を立てて、相手が次に動きやすいよう導いてください。
-褒め言葉の連発は避け、自然な励ましにしてください。
-語尾は丁寧だが堅すぎず、伴走者らしく。`;
-    case AI_PERSONA_TYPES.STRONG:
-      return `
-あなたは「ここから。」の伴走AIです。
-会話は前向きで、芯があり、背中を押す力強さを持たせてください。
-ただし威圧的・命令的にはしないでください。
-相手の弱さも受け止めつつ、「ここからまた進めます」という姿勢を大切にしてください。
-短めでも熱量が伝わる自然会話にしてください。`;
-    case AI_PERSONA_TYPES.GENTLE:
-    default:
-      return `
-あなたは「ここから。」の伴走AIです。
-会話はやさしく、安心感があり、そっと寄り添う雰囲気で返してください。
-相手のしんどさや迷いを受け止め、急かさず、自然な共感を入れてください。
-褒めすぎ・テンプレ感・説明過多は避けてください。
-語尾はやわらかく、牛込らしい温かさを意識してください。`;
-  }
-}
-
 function getPersonaSelectionMessage() {
-  return [
-    'これからの話し方は、次の4タイプから選べます。',
-    '今の気分に近いものを選んでくださいね。',
+  const lines = [
+    'AI牛込の雰囲気を選べます。',
+    '今の気分や、続けやすい話し方で選んでください。',
     '',
     `・${PERSONA_LABELS[AI_PERSONA_TYPES.GENTLE]}`,
     `・${PERSONA_LABELS[AI_PERSONA_TYPES.BRIGHT]}`,
     `・${PERSONA_LABELS[AI_PERSONA_TYPES.RELIABLE]}`,
     `・${PERSONA_LABELS[AI_PERSONA_TYPES.STRONG]}`,
+    '',
+    'あとで変更もできます。',
+  ];
+  return lines.join('\n');
+}
+
+function getPersonaSystemStyle(personaType) {
+  const normalized = normalizePersonaType(personaType);
+
+  if (normalized === AI_PERSONA_TYPES.BRIGHT) {
+    return [
+      '話し方は少し前向きで明るく、背中を押す雰囲気にしてください。',
+      '気分が少し上がるような言い回しを入れてください。',
+      'ただし軽すぎず、安心感は残してください。',
+      'テンションを上げすぎず、自然な会話を優先してください。',
+    ].join('\n');
+  }
+
+  if (normalized === AI_PERSONA_TYPES.RELIABLE) {
+    return [
+      '話し方は落ち着いて、信頼感のある雰囲気にしてください。',
+      '少し包容力のある大人っぽい印象で、優先順位をわかりやすく示してください。',
+      '強すぎる命令口調にはしないでください。',
+      '整理が必要な時は、短く要点を示してください。',
+    ].join('\n');
+  }
+
+  if (normalized === AI_PERSONA_TYPES.STRONG) {
+    return [
+      '話し方は少し力強く、前へ進める雰囲気にしてください。',
+      '気持ちが落ちている相手でも、やさしさを残しながら引っ張ってください。',
+      '必要な時は優先順位を明確にし、はっきり提案してください。',
+      '責めたり否定したりせず、「ここは整えどころですね」のような表現を使ってください。',
+    ].join('\n');
+  }
+
+  return [
+    '話し方はやさしく包み込むように、安心感を大切にしてください。',
+    '相手を急かさず、まず受け止める雰囲気にしてください。',
+    '無理を広げすぎない、小さく整える提案を優先してください。',
+    'やさしすぎて曖昧になりすぎないよう、必要な時は短く方向性を示してください。',
   ].join('\n');
 }
 
