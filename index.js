@@ -4143,20 +4143,25 @@ if (text === 'プラン案内を見る') {
 
       const updatedUser = await updateUserTrialMembership(user.id, activatePlanPatch(selectedPlan));
       const finalUser = updatedUser || user;
-      const msg = buildPlanSelectedMessage(selectedPlan);
+  const msg = buildPlanSelectedMessage(selectedPlan);
+  const bridgeText = buildPlanBridgeMessage(finalUser, {
+    mode: 'selected',
+    planType: selectedPlan,
+    includeTrial: false,
+  });
 
-      await saveMembershipAdminMemo({
-        user_name: getUserDisplayName(user) || '利用者',
-        action_type: 'plan_selected',
-        membership_status: finalUser?.membership_status || 'active',
-        current_plan: user.current_plan || '',
-        target_plan: selectedPlan,
-        note: '',
-        created_at: new Date().toISOString(),
-      });
+  const mergedText = [bridgeText, '', msg.text].join('\n\n');
 
-      await replyMessage(event.replyToken, buildMembershipReplyMessage(finalUser, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(finalUser, text, msg.text);
+  await replyMessage(
+    event.replyToken,
+    textMessageWithQuickReplies(
+      mergedText,
+      ['このプランで進めたい', 'まず相談したい', 'プラン案内を見る', 'もう少し体験したい']
+    ),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+  await rememberInteraction(finalUser, text, mergedText);
+  return;
       return;
     }
 
