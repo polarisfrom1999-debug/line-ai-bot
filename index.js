@@ -1037,6 +1037,38 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
 
   return lines.join('\n');
 }
+async function saveMemoryCandidatesForUser(user, userText, aiReply, memoryCandidates = []) {
+  try {
+    const rows = (Array.isArray(memoryCandidates) ? memoryCandidates : [])
+      .map((item) => ({
+        user_id: user.id,
+        line_user_id: user.line_user_id,
+        memory_type: safeText(item?.memory_type || '', 80),
+        content: safeText(item?.content || '', 200),
+        detail_json: {},
+        source_text: safeText(userText, 1000),
+        assistant_reply: safeText(aiReply, 1000),
+        created_at: toIsoStringInTZ(new Date(), TZ),
+      }))
+      .filter((row) => row.memory_type && row.content);
+
+    if (!rows.length) return false;
+
+    const { error } = await supabase.from('conversation_memories').insert(rows);
+    if (error) {
+      if (isMissingRelationError(error)) {
+        console.warn('⚠️ conversation_memories table not found. Memory save skipped.');
+        return false;
+      }
+      throw error;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('⚠️ saveMemoryCandidatesForUser failed:', error?.message || error);
+    return false;
+  }
+}
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
