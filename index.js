@@ -2764,10 +2764,10 @@ async function handleDiagnosisAnswer(event, user, text) {
   const matched = findDiagnosisOptionMatch(question, text);
   if (!matched) {
     const currentQ = buildDiagnosisQuestionReply(current);
-    await replyMessage(
+        await replyMessage(
       event.replyToken,
       textMessageWithQuickReplies(
-        `この質問は、下の選択肢から選んでください。\n\n${currentQ.text}`,
+        `ありがとうございます。ここは下の選択肢から選んでもらえると、こちらでぶれずに続けやすいです。\n\n${currentQ.text}`,
         currentQ.quickReplies
       ),
       env.LINE_CHANNEL_ACCESS_TOKEN
