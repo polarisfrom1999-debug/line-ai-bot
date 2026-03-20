@@ -4165,13 +4165,14 @@ if (text === 'プラン案内を見る') {
       return;
     }
 
-    if (text === 'このプランで進めたい' || text === '継続したい') {
-      const rewardText = buildRewardMessage('membership_started', { display_name: getUserDisplayName(user) });
-      const replyText = prefixWithName(user, `ありがとうございます。選んだプランで進めやすい状態にしています。必要ならあとから変更もできます。\n\n${rewardText}`);
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
+if (text === 'このプランで進めたい' || text === '継続したい') {
+  const rewardText = buildRewardMessage('membership_started', { display_name: getUserDisplayName(user) });
+  const supportText = buildPlanContinueSupportMessage(user, text);
+  const replyText = `${supportText}\n\n${rewardText}`;
+  await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+  await rememberInteraction(user, text, replyText);
+  return;
+}
 
     if (text === 'まず相談したい') {
       const replyText = prefixWithName(user, 'ありがとうございます。今の使い方や続け方は、無理のない形で一緒に整理できます。気になることをそのまま送ってください。');
