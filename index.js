@@ -4181,12 +4181,12 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
   return;
 }
 
-    if (text === 'もう少し体験したい') {
-      const replyText = prefixWithName(user, '大丈夫です。まずは今のやり取りを見ながら、合う続け方を一緒に整えていきましょう。');
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
+if (text === 'もう少し体験したい') {
+  const replyText = buildPlanContinueSupportMessage(user, text);
+  await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+  await rememberInteraction(user, text, replyText);
+  return;
+}
 
     if (isProfileCommand(lower)) {
       const payload = buildProfileUpdatePayload(user, text);
