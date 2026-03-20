@@ -322,7 +322,7 @@ const AI_MEMORY_PROMPT_PATHS = [
 
 const recentMealDrafts = new Map();
 const recentSupportContexts = new Map();
-
+const recentCaptureConfirmations = new Map();
 const FALLBACK_DIAGNOSIS_QUESTIONS = [
   {
     key: 'goal',
