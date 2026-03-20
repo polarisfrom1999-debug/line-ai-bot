@@ -2978,9 +2978,13 @@ async function handleImageMessage(event, user) {
     }
 
     await replyMessage(event.replyToken, '画像を読み取りましたが、食事写真や血液検査画像としてはっきり判定できませんでした。もう少し見やすい写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
-  } catch (error) {
+   } catch (error) {
     console.error('❌ handleImageMessage error:', error?.stack || error?.message || error);
-    await replyMessage(event.replyToken, '画像の処理でエラーが起きました。もう一度写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
+    await replyMessage(
+      event.replyToken,
+      '写真ありがとうございます。こちらでうまく整理しきれなかったので、もう一度だけ送ってもらえると助かります。少し見やすい角度だと読み取りやすいです。',
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
   }
 }
 
