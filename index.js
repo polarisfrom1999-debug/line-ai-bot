@@ -2163,9 +2163,6 @@ function buildLabSaveMessage(savedRow, recentRows) {
 }
 
 function getDiagnosisQuestions() {
-  if (Array.isArray(diagnosisService?.DIAGNOSIS_QUESTIONS) && diagnosisService.DIAGNOSIS_QUESTIONS.length === 7) {
-    return diagnosisService.DIAGNOSIS_QUESTIONS;
-  }
   return FALLBACK_DIAGNOSIS_QUESTIONS;
 }
 
