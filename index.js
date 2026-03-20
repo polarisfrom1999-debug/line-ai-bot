@@ -3835,12 +3835,20 @@ async function handleTextMessage(event, user) {
           await replyMessage(event.replyToken, textMessageWithQuickReplies(`ありがとうございます。修正しました。\n\n${msg.text}`, msg.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
           return;
         } catch (error) {
-          if (String(error?.message).includes('INVALID_DATE')) {
-            await replyMessage(event.replyToken, '日付がうまく読み取れませんでした。YYYY/MM/DD の形で送ってください。例: 2025/03/12', env.LINE_CHANNEL_ACCESS_TOKEN);
+                    if (String(error?.message).includes('INVALID_DATE')) {
+            await replyMessage(
+              event.replyToken,
+              'ありがとうございます。日付のところだけ、こちらでもう少しはっきり受け取りたいです。たとえば 2025/03/12 のように送ってもらえれば大丈夫です。',
+              env.LINE_CHANNEL_ACCESS_TOKEN
+            );
             return;
           }
           if (String(error?.message).includes('INVALID_NUMBER')) {
-            await replyMessage(event.replyToken, '数値だけを送ってください。例: 138', env.LINE_CHANNEL_ACCESS_TOKEN);
+            await replyMessage(
+              event.replyToken,
+              'ありがとうございます。ここは数値のところだけ受け取りたいので、たとえば 138 のようにそのまま数字で送ってもらえれば大丈夫です。',
+              env.LINE_CHANNEL_ACCESS_TOKEN
+            );
             return;
           }
           throw error;
