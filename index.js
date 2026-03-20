@@ -242,6 +242,35 @@ try {
   console.warn('⚠️ membership_admin_memo_service is not available:', error?.message || error);
 }
 
+let diagnosisService = {};
+let diagnosisMembershipFlowService = {};
+let diagnosisTrialFlowService = {};
+let diagnosisPlanLinks = {};
+
+try {
+  diagnosisService = require('./services/diagnosis_service');
+} catch (error) {
+  console.warn('⚠️ diagnosis_service is not available:', error?.message || error);
+}
+
+try {
+  diagnosisMembershipFlowService = require('./services/diagnosis_membership_flow_service');
+} catch (error) {
+  console.warn('⚠️ diagnosis_membership_flow_service is not available:', error?.message || error);
+}
+
+try {
+  diagnosisTrialFlowService = require('./services/diagnosis_trial_flow_service');
+} catch (error) {
+  console.warn('⚠️ diagnosis_trial_flow_service is not available:', error?.message || error);
+}
+
+try {
+  diagnosisPlanLinks = require('./services/diagnosis_plan_links');
+} catch (error) {
+  console.warn('⚠️ diagnosis_plan_links is not available:', error?.message || error);
+}
+
 const env = getEnv();
 const app = express();
 const PORT = env.PORT;
@@ -258,6 +287,44 @@ const AI_MEMORY_PROMPT_PATHS = [
 
 const recentMealDrafts = new Map();
 const recentSupportContexts = new Map();
+
+const FALLBACK_DIAGNOSIS_QUESTIONS = [
+  {
+    key: 'goal',
+    text: 'まず、今いちばん近い目的はどれですか？',
+    options: ['しっかり減量したい', '健康的に整えたい', '痛みや不調も気になる', '本気で人生を変えたい'],
+  },
+  {
+    key: 'pace',
+    text: '進め方の希望はどれに近いですか？',
+    options: ['まずは気楽に', '少しずつ確実に', 'できれば早めに変えたい', '本気で手厚く進めたい'],
+  },
+  {
+    key: 'support_need',
+    text: 'サポートの濃さはどれが合いそうですか？',
+    options: ['AIだけで十分', '週の振り返りが欲しい', '手書き報告も欲しい', '毎日しっかり見てほしい'],
+  },
+  {
+    key: 'input_style',
+    text: '入力のしかたはどれがやりやすいですか？',
+    options: ['短文で送りたい', '写真中心がいい', '必要なら少し詳しく送れる', '細かく見てもらいたい'],
+  },
+  {
+    key: 'continuity',
+    text: '続ける上で今いちばん不安なのはどれですか？',
+    options: ['続けられるか不安', '結果が出るか不安', '入力が面倒になりそう', '一人では甘えそう'],
+  },
+  {
+    key: 'report_need',
+    text: '振り返りはどれくらい欲しいですか？',
+    options: ['毎日の返信だけでいい', '週間報告が欲しい', '週間と月間の報告が欲しい', '毎日手厚く見てほしい'],
+  },
+  {
+    key: 'ai_style',
+    text: 'AI牛込の雰囲気はどれが好きですか？',
+    options: ['そっと寄り添う', '明るく後押し', '頼もしく導く', '力強く支える'],
+  },
+];
 
 function readTextFileOrFallback(filePaths, fallbackLines) {
   const candidates = Array.isArray(filePaths) ? filePaths : [filePaths];
@@ -533,7 +600,6 @@ function isWeightGraphIntent(text) {
   const t = String(text || '').trim().toLowerCase();
   return ['体重グラフ', '体重のグラフ', '体重見たい', '体重を見たい', '体重推移', '体重の推移', '体重の変化'].includes(t);
 }
-
 function isWeeklyReportRequest(text) {
   return /週間報告|週報|1週間報告|一週間報告/.test(String(text || '').trim());
 }
@@ -638,6 +704,7 @@ function helpMessage() {
     '・プロフィール再設定',
     '・名前は 牛込',
     '・初回診断',
+    '・無料診断',
     '・体重 63.2',
     '・ジョギング 20分',
     '・ストレッチ 5分',
@@ -2005,6 +2072,557 @@ function buildLabSaveMessage(savedRow, recentRows) {
   ].join('\n');
 }
 
+function getDiagnosisQuestions() {
+  if (Array.isArray(diagnosisService?.DIAGNOSIS_QUESTIONS) && diagnosisService.DIAGNOSIS_QUESTIONS.length === 7) {
+    return diagnosisService.DIAGNOSIS_QUESTIONS;
+  }
+  return FALLBACK_DIAGNOSIS_QUESTIONS;
+}
+
+function normalizeDiagnosisState(user) {
+  const raw = user?.diagnosis_state_json;
+  const parsed = typeof raw === 'string' ? safeParseJson(raw, null) : (raw && typeof raw === 'object' ? raw : null);
+  if (parsed && typeof parsed === 'object') return parsed;
+
+  return {
+    active: false,
+    stepIndex: 0,
+    answers: {},
+    recommended_plan: null,
+    recommended_ai_type: null,
+    special_interest: false,
+    completed: false,
+  };
+}
+
+function isDiagnosisStartTrigger(text) {
+  const t = normalizeTextLoose(text);
+  if (!t) return false;
+
+  if (typeof diagnosisService?.isDiagnosisStartIntent === 'function') {
+    try {
+      return Boolean(diagnosisService.isDiagnosisStartIntent(text));
+    } catch (_error) {}
+  }
+
+  return [
+    '無料診断',
+    '診断',
+    '体質診断',
+    'ダイエット診断',
+    '診断したい',
+    '無料で診断',
+    '診断お願いします',
+  ].some((x) => t === normalizeTextLoose(x) || t.includes(normalizeTextLoose(x)));
+}
+
+function isDiagnosisActive(user) {
+  const state = normalizeDiagnosisState(user);
+  return Boolean(state.active && !state.completed);
+}
+
+function buildDiagnosisStartReply() {
+  if (typeof diagnosisService?.buildDiagnosisStartMessage === 'function') {
+    try {
+      return diagnosisService.buildDiagnosisStartMessage();
+    } catch (_error) {}
+  }
+
+  return {
+    text: [
+      'ありがとうございます。7問の無料診断で、今のあなたに合う進め方を一緒に整理します。',
+      '終わったら、おすすめプランとAI牛込タイプ、7日無料ライト体験の案内までお返しします。',
+      '',
+      '準備がよければ始めますね。',
+    ].join('\n'),
+    quickReplies: ['診断スタート', 'またあとで'],
+  };
+}
+
+function buildDiagnosisQuestionReply(state) {
+  const questions = getDiagnosisQuestions();
+  const q = questions[state.stepIndex];
+  if (!q) return null;
+
+  if (typeof diagnosisService?.buildDiagnosisQuestionMessage === 'function') {
+    try {
+      const result = diagnosisService.buildDiagnosisQuestionMessage(state, q);
+      if (result?.text) return result;
+    } catch (_error) {}
+  }
+
+  return {
+    text: `【無料診断 ${state.stepIndex + 1}/7】\n${q.text}`,
+    quickReplies: q.options || [],
+  };
+}
+
+function mapDiagnosisAiTypeLabelToValue(label) {
+  const normalized = String(label || '').trim();
+
+  if (normalized === '明るく後押し') return AI_TYPE_VALUES.BRIGHT;
+  if (normalized === '頼もしく導く') return AI_TYPE_VALUES.RELIABLE;
+  if (normalized === '力強く支える') return AI_TYPE_VALUES.STRONG;
+  return AI_TYPE_VALUES.GENTLE || AI_TYPE_VALUES.SOFT || 'gentle';
+}
+
+function scoreDiagnosisFallback(answers = {}) {
+  const goal = String(answers.goal || '');
+  const pace = String(answers.pace || '');
+  const supportNeed = String(answers.support_need || '');
+  const inputStyle = String(answers.input_style || '');
+  const continuity = String(answers.continuity || '');
+  const reportNeed = String(answers.report_need || '');
+  const aiStyle = String(answers.ai_style || '');
+
+  let recommendedPlan = PLAN_TYPES.LIGHT;
+  let specialInterest = false;
+
+  const specialSignals = [
+    goal.includes('人生を変えたい'),
+    pace.includes('本気で手厚く'),
+    supportNeed.includes('毎日しっかり見てほしい'),
+    reportNeed.includes('毎日手厚く見てほしい'),
+    continuity.includes('一人では甘えそう'),
+  ].filter(Boolean).length;
+
+  if (specialSignals >= 2) {
+    recommendedPlan = PLAN_TYPES.SPECIAL;
+    specialInterest = true;
+  } else if (
+    supportNeed.includes('手書き報告') ||
+    reportNeed.includes('週間と月間')
+  ) {
+    recommendedPlan = PLAN_TYPES.PREMIUM;
+  } else if (
+    supportNeed.includes('週の振り返り') ||
+    reportNeed.includes('週間報告')
+  ) {
+    recommendedPlan = PLAN_TYPES.BASIC;
+  } else {
+    recommendedPlan = PLAN_TYPES.LIGHT;
+  }
+
+  const recommendedAiType = mapDiagnosisAiTypeLabelToValue(aiStyle);
+  const recommendedAiLabel = aiStyle || 'そっと寄り添う';
+
+  return {
+    recommended_plan: recommendedPlan,
+    recommended_ai_type: recommendedAiType,
+    recommended_ai_label: recommendedAiLabel,
+    special_interest: specialInterest,
+    summary: {
+      goal,
+      pace,
+      supportNeed,
+      inputStyle,
+      continuity,
+      reportNeed,
+    },
+  };
+}
+
+function scoreDiagnosisResult(answers = {}) {
+  if (typeof diagnosisService?.scoreDiagnosisResult === 'function') {
+    try {
+      const result = diagnosisService.scoreDiagnosisResult(answers);
+      if (result?.recommended_plan) return result;
+    } catch (_error) {}
+  }
+  return scoreDiagnosisFallback(answers);
+}
+
+function getPlanPriceLabel(planType) {
+  if (planType === PLAN_TYPES.SPECIAL) return '29,800円';
+  if (planType === PLAN_TYPES.PREMIUM) return '9,800円';
+  if (planType === PLAN_TYPES.BASIC) return '5,980円';
+  return '2,980円';
+}
+
+function getPlanNameLabel(planType) {
+  if (planType === PLAN_TYPES.SPECIAL) return '人数限定！絶対痩せたいスペシャル';
+  if (planType === PLAN_TYPES.PREMIUM) return 'プレミアム';
+  if (planType === PLAN_TYPES.BASIC) return 'ベーシック';
+  return 'ライト';
+}
+
+function getPlanDescriptionLabel(planType) {
+  if (planType === PLAN_TYPES.SPECIAL) return 'AI毎日・牛込手書き毎日・週間報告・月間報告・整骨院優先予約枠あり';
+  if (planType === PLAN_TYPES.PREMIUM) return 'AI毎日・牛込手書き週間報告、月間報告';
+  if (planType === PLAN_TYPES.BASIC) return 'AI毎日・週間報告';
+  return 'AI毎日返信のみ';
+}
+
+function getDiagnosisPlanLink(planType) {
+  if (!diagnosisPlanLinks || typeof diagnosisPlanLinks !== 'object') return '';
+  if (typeof diagnosisPlanLinks.getPlanLink === 'function') {
+    try {
+      return diagnosisPlanLinks.getPlanLink(planType) || '';
+    } catch (_error) {
+      return '';
+    }
+  }
+  return diagnosisPlanLinks?.[planType] || diagnosisPlanLinks?.links?.[planType] || '';
+}
+
+function buildDiagnosisResultReply(result, user) {
+  if (typeof diagnosisService?.buildDiagnosisResultMessage === 'function') {
+    try {
+      const payload = diagnosisService.buildDiagnosisResultMessage(result, user);
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  const planType = result?.recommended_plan || PLAN_TYPES.LIGHT;
+  const aiLabel = result?.recommended_ai_label || 'そっと寄り添う';
+  const specialLine = result?.special_interest
+    ? '今回は、かなり本気度が高そうなので「人数限定！絶対痩せたいスペシャル」導線も相性が良いです。'
+    : null;
+
+  const planLink = getDiagnosisPlanLink(planType);
+
+  const lines = [
+    '無料診断ありがとうございました。',
+    '',
+    `おすすめプラン: ${getPlanNameLabel(planType)}（${getPlanPriceLabel(planType)}）`,
+    `内容: ${getPlanDescriptionLabel(planType)}`,
+    `おすすめAI牛込タイプ: ${aiLabel}`,
+    '',
+    '今のあなたは、無理に詰め込みすぎるより「続けやすさ」と「伴走の濃さ」のバランスが大切そうです。',
+    specialLine,
+    '',
+    'まずは 7日無料ライト体験 から始めて、合えば本プランへ進む形がおすすめです。',
+    planLink ? `参考リンク: ${planLink}` : null,
+  ].filter(Boolean);
+
+  return {
+    text: lines.join('\n'),
+    quickReplies: ['7日無料ライト体験へ進む', 'プラン案内を見る', 'スペシャル希望', 'またあとで'],
+  };
+}
+
+function buildDiagnosisPlanGuideReply() {
+  if (typeof diagnosisMembershipFlowService?.buildDiagnosisPlanGuideMessage === 'function') {
+    try {
+      const payload = diagnosisMembershipFlowService.buildDiagnosisPlanGuideMessage();
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  const lightLink = getDiagnosisPlanLink(PLAN_TYPES.LIGHT);
+  const basicLink = getDiagnosisPlanLink(PLAN_TYPES.BASIC);
+  const premiumLink = getDiagnosisPlanLink(PLAN_TYPES.PREMIUM);
+  const specialLink = getDiagnosisPlanLink(PLAN_TYPES.SPECIAL);
+
+  const lines = [
+    'プラン案内です。',
+    '',
+    `ライト 2,980円\nAI毎日返信のみ${lightLink ? `\n${lightLink}` : ''}`,
+    '',
+    `ベーシック 5,980円\nAI毎日・週間報告${basicLink ? `\n${basicLink}` : ''}`,
+    '',
+    `プレミアム 9,800円\nAI毎日・牛込手書き週間報告、月間報告${premiumLink ? `\n${premiumLink}` : ''}`,
+    '',
+    `人数限定！絶対痩せたいスペシャル 29,800円\nAI毎日・牛込手書き毎日・週間報告・月間報告・整骨院優先予約枠あり${specialLink ? `\n${specialLink}` : ''}`,
+  ];
+
+  return {
+    text: lines.join('\n'),
+    quickReplies: ['ライト', 'ベーシック', 'プレミアム', '人数限定！絶対痩せたいスペシャル'],
+  };
+}
+
+function buildDiagnosisSpecialReply() {
+  if (typeof diagnosisMembershipFlowService?.buildDiagnosisSpecialFlowMessage === 'function') {
+    try {
+      const payload = diagnosisMembershipFlowService.buildDiagnosisSpecialFlowMessage();
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  return {
+    text: [
+      'スペシャル希望、ありがとうございます。',
+      '本気で変えたい時は、毎日の伴走と手書きの深い振り返りがかなり力になります。',
+      '',
+      '人数限定！絶対痩せたいスペシャル',
+      '29,800円',
+      'AI毎日・牛込手書き毎日・週間報告・月間報告・整骨院優先予約枠あり',
+      '',
+      'まずは7日無料ライト体験から入って、途中でスペシャルへ進む流れでも大丈夫です。',
+    ].join('\n'),
+    quickReplies: ['7日無料ライト体験へ進む', 'プラン案内を見る', 'まず相談したい', 'またあとで'],
+  };
+}
+
+function buildDiagnosisTrialStartedReply(user) {
+  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialStartedMessage === 'function') {
+    try {
+      const payload = diagnosisTrialFlowService.buildDiagnosisTrialStartedMessage(user);
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  return {
+    text: [
+      '7日無料ライト体験を開始しました。',
+      'この期間は、まず「毎日やり取りしやすいか」「続けやすいか」を一緒に見ていきましょう。',
+      '',
+      '困った時はそのまま送って大丈夫です。',
+      '食事・運動・体重・相談、どこからでも始められます。',
+    ].join('\n'),
+    quickReplies: ['食事を記録したい', '体重を記録したい', '少し歩いた', 'プラン案内を見る'],
+  };
+}
+
+async function buildDiagnosisDay5Reply(user) {
+  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialDay5Message === 'function') {
+    try {
+      const payload = await diagnosisTrialFlowService.buildDiagnosisTrialDay5Message(user);
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  if (generateWeeklyReportDraft) {
+    try {
+      const input = await buildReportDraftInput(user, 'weekly');
+      const weeklyDraft = generateWeeklyReportDraft(input);
+      if (weeklyDraft?.draft_text) {
+        return {
+          text: [
+            '体験5日目の振り返りです。',
+            '',
+            weeklyDraft.draft_text,
+            '',
+            'ここまで続けられている所を土台に、あと2日で合う続け方を一緒に見ていきましょう。',
+          ].join('\n'),
+          quickReplies: ['プラン案内を見る', '現在のプラン', '体重グラフ', 'グラフ'],
+        };
+      }
+    } catch (error) {
+      console.error('⚠️ diagnosis day5 weekly draft failed:', error?.message || error);
+    }
+  }
+
+  return {
+    text: [
+      '体験5日目の振り返りです。',
+      'ここまでで、少しずつ使い方や続けやすさが見えてきた頃だと思います。',
+      '完璧を目指すより、続けられる流れを作れているかが大事です。',
+      '',
+      'あと2日で、あなたに合う本プランも整理していきましょう。',
+    ].join('\n'),
+    quickReplies: ['プラン案内を見る', '現在のプラン', '体重グラフ', 'グラフ'],
+  };
+}
+
+function buildDiagnosisDay7Reply(user) {
+  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialDay7Message === 'function') {
+    try {
+      const payload = diagnosisTrialFlowService.buildDiagnosisTrialDay7Message(user);
+      if (payload?.text) return payload;
+    } catch (_error) {}
+  }
+
+  const planType = user?.diagnosis_recommended_plan || PLAN_TYPES.BASIC;
+  return {
+    text: [
+      '7日無料ライト体験、おつかれさまでした。',
+      '',
+      'ここまで試してみて、続ける価値がありそうなら本プランへ進むタイミングです。',
+      `おすすめは ${getPlanNameLabel(planType)}（${getPlanPriceLabel(planType)}）です。`,
+      getPlanDescriptionLabel(planType),
+      '',
+      'もちろん、他のプランと見比べてから決めても大丈夫です。',
+    ].join('\n'),
+    quickReplies: ['プラン案内を見る', 'ライト', 'ベーシック', 'プレミアム', '人数限定！絶対痩せたいスペシャル'],
+  };
+}
+
+async function saveDiagnosisState(userId, state) {
+  const patch = {
+    diagnosis_state_json: state,
+    diagnosis_status: state.active ? 'in_progress' : (state.completed ? 'completed' : null),
+    diagnosis_step: Number(state.stepIndex || 0),
+    diagnosis_answers_json: state.answers || {},
+    diagnosis_recommended_plan: state.recommended_plan || null,
+    diagnosis_recommended_ai_type: state.recommended_ai_type || null,
+    diagnosis_special_interest: Boolean(state.special_interest),
+    diagnosis_completed_at: state.completed ? new Date().toISOString() : null,
+  };
+
+  return saveUserState(userId, patch);
+}
+
+async function startDiagnosisForUser(user) {
+  const state = {
+    active: true,
+    stepIndex: 0,
+    answers: {},
+    recommended_plan: null,
+    recommended_ai_type: null,
+    special_interest: false,
+    completed: false,
+    started_at: new Date().toISOString(),
+  };
+  const updated = await saveDiagnosisState(user.id, state);
+  return updated || { ...user, diagnosis_state_json: state };
+}
+
+async function resetDiagnosisForUser(user) {
+  const state = {
+    active: true,
+    stepIndex: 0,
+    answers: {},
+    recommended_plan: null,
+    recommended_ai_type: null,
+    special_interest: false,
+    completed: false,
+    started_at: new Date().toISOString(),
+  };
+  const updated = await saveDiagnosisState(user.id, state);
+  return updated || { ...user, diagnosis_state_json: state };
+}
+
+async function completeDiagnosisForUser(user, result, answers) {
+  const state = {
+    active: false,
+    stepIndex: 7,
+    answers: answers || {},
+    recommended_plan: result?.recommended_plan || null,
+    recommended_ai_type: result?.recommended_ai_type || null,
+    recommended_ai_label: result?.recommended_ai_label || null,
+    special_interest: Boolean(result?.special_interest),
+    completed: true,
+    completed_at: new Date().toISOString(),
+  };
+
+  const patch = {
+    diagnosis_state_json: state,
+    diagnosis_status: 'completed',
+    diagnosis_step: 7,
+    diagnosis_answers_json: answers || {},
+    diagnosis_started_at: user?.diagnosis_started_at || new Date().toISOString(),
+    diagnosis_completed_at: new Date().toISOString(),
+    diagnosis_recommended_plan: result?.recommended_plan || null,
+    diagnosis_recommended_ai_type: result?.recommended_ai_type || null,
+    diagnosis_special_interest: Boolean(result?.special_interest),
+    ai_type: result?.recommended_ai_type || user?.ai_type || null,
+  };
+
+  const updated = await saveUserState(user.id, patch);
+  return updated || { ...user, ...patch };
+}
+
+function getDiagnosisQuestionByStep(stepIndex) {
+  const questions = getDiagnosisQuestions();
+  return questions[stepIndex] || null;
+}
+
+function findDiagnosisOptionMatch(question, text) {
+  const raw = String(text || '').trim();
+  if (!question || !Array.isArray(question.options)) return null;
+  return question.options.find((opt) => normalizeTextLoose(opt) === normalizeTextLoose(raw)) || null;
+}
+
+async function handleDiagnosisAnswer(event, user, text) {
+  const current = normalizeDiagnosisState(user);
+  const question = getDiagnosisQuestionByStep(current.stepIndex);
+  if (!question) {
+    const resetUser = await resetDiagnosisForUser(user);
+    const state = normalizeDiagnosisState(resetUser);
+    const firstQ = buildDiagnosisQuestionReply(state);
+    await replyMessage(event.replyToken, textMessageWithQuickReplies(firstQ.text, firstQ.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return;
+  }
+
+  const matched = findDiagnosisOptionMatch(question, text);
+  if (!matched) {
+    const currentQ = buildDiagnosisQuestionReply(current);
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(
+        `この質問は、下の選択肢から選んでください。\n\n${currentQ.text}`,
+        currentQ.quickReplies
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const nextAnswers = { ...(current.answers || {}), [question.key]: matched };
+  const nextStep = current.stepIndex + 1;
+
+  if (nextStep >= 7) {
+    const result = scoreDiagnosisResult(nextAnswers);
+    const completedUser = await completeDiagnosisForUser(user, result, nextAnswers);
+    const resultReply = buildDiagnosisResultReply(result, completedUser);
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(prefixWithName(completedUser, resultReply.text), resultReply.quickReplies),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    await rememberInteraction(completedUser, text, resultReply.text);
+    return;
+  }
+
+  const nextState = {
+    ...current,
+    active: true,
+    completed: false,
+    answers: nextAnswers,
+    stepIndex: nextStep,
+  };
+  const updatedUser = await saveDiagnosisState(user.id, nextState);
+  const nextReply = buildDiagnosisQuestionReply(normalizeDiagnosisState(updatedUser || { ...user, diagnosis_state_json: nextState }));
+  await replyMessage(event.replyToken, textMessageWithQuickReplies(nextReply.text, nextReply.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+}
+
+async function startDiagnosisLightTrial(user) {
+  const trialPatch = startTrialPatch();
+  const patch = {
+    ...trialPatch,
+    current_plan: PLAN_TYPES.LIGHT,
+    diagnosis_trial_started_at: new Date().toISOString(),
+    diagnosis_trial_day5_sent_at: null,
+    diagnosis_trial_day7_sent_at: null,
+  };
+  const updated = await updateUserTrialMembership(user.id, patch);
+  return updated || { ...user, ...patch };
+}
+
+function calcDaysSince(isoString) {
+  if (!isoString) return null;
+  const dt = new Date(isoString);
+  if (Number.isNaN(dt.getTime())) return null;
+  const diff = Date.now() - dt.getTime();
+  return Math.floor(diff / (24 * 60 * 60 * 1000));
+}
+
+async function maybeSendDiagnosisTrialFollowup(event, user) {
+  const startedAt = user?.diagnosis_trial_started_at;
+  if (!startedAt) return false;
+
+  const days = calcDaysSince(startedAt);
+  if (days == null) return false;
+
+  if (days >= 7 && !user?.diagnosis_trial_day7_sent_at) {
+    const payload = buildDiagnosisDay7Reply(user);
+    await saveUserState(user.id, { diagnosis_trial_day7_sent_at: new Date().toISOString() });
+    await replyMessage(event.replyToken, textMessageWithQuickReplies(prefixWithName(user, payload.text), payload.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  if (days >= 5 && !user?.diagnosis_trial_day5_sent_at) {
+    const payload = await buildDiagnosisDay5Reply(user);
+    await saveUserState(user.id, { diagnosis_trial_day5_sent_at: new Date().toISOString() });
+    await replyMessage(event.replyToken, textMessageWithQuickReplies(prefixWithName(user, payload.text), payload.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  return false;
+}
+
 async function handleImageMessage(event, user) {
   try {
     const { buffer, mimeType } = await getLineImageContent(event.message.id, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -2109,7 +2727,6 @@ async function handleImageMessage(event, user) {
     await replyMessage(event.replyToken, '画像の処理でエラーが起きました。もう一度写真を送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
   }
 }
-
 async function handleOnboardingMessage(event, user) {
   const text = String(event?.message?.text || '').trim();
 
@@ -2206,6 +2823,78 @@ async function handleTextMessage(event, user) {
       return;
     }
 
+    if (await maybeSendDiagnosisTrialFollowup(event, user)) {
+      return;
+    }
+
+    if (text === '診断スタート') {
+      const startedUser = await startDiagnosisForUser(user);
+      const state = normalizeDiagnosisState(startedUser);
+      const firstQuestion = buildDiagnosisQuestionReply(state);
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(firstQuestion.text, firstQuestion.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isDiagnosisStartTrigger(text)) {
+      const startReply = buildDiagnosisStartReply();
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(prefixWithName(user, startReply.text), startReply.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+
+    if (isDiagnosisActive(user)) {
+      if (text === 'またあとで') {
+        const pausedState = { ...normalizeDiagnosisState(user), active: false };
+        await saveDiagnosisState(user.id, pausedState);
+        const replyText = prefixWithName(user, '大丈夫です。また「無料診断」や「診断スタート」で再開できます。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      if (text === '最初からやり直す') {
+        const resetUser = await resetDiagnosisForUser(user);
+        const state = normalizeDiagnosisState(resetUser);
+        const firstQuestion = buildDiagnosisQuestionReply(state);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(firstQuestion.text, firstQuestion.quickReplies), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+
+      await handleDiagnosisAnswer(event, user, text);
+      return;
+    }
+
+    if (text === '7日無料ライト体験へ進む') {
+      const trialUser = await startDiagnosisLightTrial(user);
+      const payload = buildDiagnosisTrialStartedReply(trialUser);
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(trialUser, payload.text), payload.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      await rememberInteraction(trialUser, text, payload.text);
+      return;
+    }
+
+    if (text === 'プラン案内を見る') {
+      const payload = buildDiagnosisPlanGuideReply();
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(user, payload.text), payload.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    if (text === 'スペシャル希望') {
+      const updatedUser = await saveUserState(user.id, { diagnosis_special_interest: true });
+      const payload = buildDiagnosisSpecialReply();
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(prefixWithName(updatedUser || user, payload.text), payload.quickReplies),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
     if (isInputHelpIntent(text)) {
       const replyText = prefixWithName(user, buildInputHelpMessage());
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -2253,7 +2942,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    // smart flow をプロフィール更新より前に通す
     const smartFlowResult = await handleSmartConversationFlow({ user, text });
 
     if (smartFlowResult?.next === 'onboarding_start') {
@@ -2953,9 +3641,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    const supportContext = getSupportContext(user.line_user_id);
-    const contextArea = supportContext?.area || null;
-
     if (isVideoIntent(text)) {
       clearMealDraft(user.line_user_id);
       const area = contextArea || detectPainArea(text);
@@ -3083,9 +3768,7 @@ async function handleTextMessage(event, user) {
             try {
               const fallbackReply = generatePainResponse(text);
               if (fallbackReply) replyText = prefixWithName(user, fallbackReply);
-            } catch (_e) {
-              // ignore
-            }
+            } catch (_e) {}
           }
         }
       } else if (createPainAdminMemo && isAdminMemoDebugEnabled()) {
