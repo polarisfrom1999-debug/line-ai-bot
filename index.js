@@ -195,6 +195,26 @@ const {
 const {
   buildHealthConsultationGuide,
 } = require('./services/health_consultation_service');
+const {
+  buildTypeRecommendationBlock,
+  normalizeTypeKey,
+  getTypeProfile,
+  buildTypeSelectionGuide,
+} = require('./services/type_recommendation_service');
+const {
+  detectGuideIntent,
+  buildFirstGuideMessage,
+  buildFoodGuideMessage,
+  buildExerciseGuideMessage,
+  buildWeightGuideMessage,
+  buildConsultGuideMessage,
+  buildLabGuideMessage,
+  buildHelpMenuMessage,
+  buildFaqMessage,
+} = require('./services/user_guide_service');
+const {
+  buildTrialMessageExamples,
+} = require('./services/trial_message_examples_service');
 
 let analyzePainText = null;
 let generatePainResponse = null;
@@ -593,8 +613,8 @@ async function updateUserAiPersona(userId, personaType) {
   const { data, error } = await supabase
     .from('users')
     .update(patch)
-    .eq('id', userId)
-    .select('*')
+    .eq('id',
+            .select('*')
     .single();
 
   if (error) throw error;
@@ -792,6 +812,12 @@ function helpMessage() {
     '・体験状況確認',
     '・現在のプラン',
     '・プラン案内',
+    '・無料体験',
+    '・食事の送り方',
+    '・運動の送り方',
+    '・相談の送り方',
+    '・血液検査の送り方',
+    '・AIタイプ',
   ].join('\n');
 }
 
@@ -924,8 +950,21 @@ function isExplicitMealGuideIntent(text) {
     '食事を記録したい', '食事記録したい', '食事を登録したい', '食事の記録方法', '食事の保存方法', '食事を入力したい',
     '食べたものを記録したい', '飲んだものを記録したい',
   ].includes(t);
-  }
-  function sumBy(arr, key) {
+}
+
+function isTrialGuideIntent(text) {
+  const t = normalizeTextLoose(text);
+  return ['無料体験', '体験', '体験中', '7日無料', '7日無料体験', '体験状況確認']
+    .some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function isPlanSelectionByLinkFlow(text) {
+  const t = normalizeTextLoose(text);
+  return ['ライト', 'ベーシック', 'プレミアム', 'スペシャル', '人数限定絶対痩せたいスペシャル']
+    .some((x) => t === normalizeTextLoose(x));
+}
+
+function sumBy(arr, key) {
   return (arr || []).reduce((sum, row) => sum + (Number(row?.[key]) || 0), 0);
 }
 
@@ -1076,7 +1115,6 @@ function splitMemoryContext(memories) {
 
   return { followUps: followUps.slice(0, 4), grouped };
 }
-
 function buildMemorySummary(memories) {
   if (!Array.isArray(memories) || !memories.length) {
     return {
@@ -1527,6 +1565,7 @@ async function getRecentActivityRows(userId, limit = 50) {
   if (error) throw error;
   return Array.isArray(data) ? data : [];
 }
+
 async function getRecentSymptomRows(userId, limit = 20) {
   try {
     const { data, error } = await supabase
@@ -1565,7 +1604,6 @@ function filterRowsWithinDays(rows, dateField, days) {
     })
     .sort((a, b) => new Date(a?.[dateField] || 0) - new Date(b?.[dateField] || 0));
 }
-
 async function buildReportDraftInput(user, reportType) {
   const days = reportType === 'monthly' ? 31 : 7;
 
@@ -2046,7 +2084,6 @@ async function extractBloodTestDraftFromImage(buffer, mimeType) {
 
   throw lastError || new Error('Blood test image analysis failed');
 }
-
 async function getOpenIntakeSession(userId) {
   const { data, error } = await supabase
     .from('intake_sessions')
@@ -2175,16 +2212,10 @@ function isDiagnosisActive(user) {
 }
 
 function buildDiagnosisStartReply() {
-  if (typeof diagnosisService?.buildDiagnosisStartMessage === 'function') {
-    try {
-      return diagnosisService.buildDiagnosisStartMessage();
-    } catch (_error) {}
-  }
-
   return {
     text: [
       'ありがとうございます。7問の無料診断で、今のあなたに合う進め方を一緒に整理します。',
-      '終わったら、おすすめプランとAI牛込タイプ、7日無料ライト体験の案内までお返しします。',
+      '終わったら、おすすめタイプ・7日無料体験・本プランの流れまで自然につなげます。',
       '',
       '準備がよければ始めますね。',
     ].join('\n'),
@@ -2218,6 +2249,7 @@ function mapDiagnosisAiTypeLabelToValue(label) {
   if (normalized === '力強く支える') return AI_TYPE_VALUES.STRONG;
   return AI_TYPE_VALUES.GENTLE || AI_TYPE_VALUES.SOFT || 'gentle';
 }
+
 function scoreDiagnosisFallback(answers = {}) {
   const goal = String(answers.goal || '');
   const pace = String(answers.pace || '');
@@ -2307,26 +2339,22 @@ function getPlanDescriptionLabel(planType) {
 
 function getDiagnosisPlanLink(planType) {
   if (!diagnosisPlanLinks || typeof diagnosisPlanLinks !== 'object') return '';
-  if (typeof diagnosisPlanLinks.getPlanLink === 'function') {
+  if (typeof diagnosisPlanLinks.getPlanPaymentLink === 'function') {
     try {
-      return diagnosisPlanLinks.getPlanLink(planType) || '';
+      return diagnosisPlanLinks.getPlanPaymentLink(planType) || '';
     } catch (_error) {
       return '';
     }
   }
-  return diagnosisPlanLinks?.[planType] || diagnosisPlanLinks?.links?.[planType] || '';
+  return '';
 }
 
 function buildDiagnosisResultReply(result, user) {
-  if (typeof diagnosisService?.buildDiagnosisResultMessage === 'function') {
-    try {
-      const payload = diagnosisService.buildDiagnosisResultMessage(result, user);
-      if (payload?.text) return payload;
-    } catch (_error) {}
-  }
-
   const planType = result?.recommended_plan || PLAN_TYPES.LIGHT;
   const aiLabel = result?.recommended_ai_label || 'そっと寄り添う';
+  const typeBlock = buildTypeRecommendationBlock(aiLabel, {
+    reason: `${aiLabel}タイプは、今の進め方や気持ちに合わせやすそうです。`,
+  });
   const specialLine = result?.special_interest
     ? '今回は、かなり本気度が高そうなので「人数限定！絶対痩せたいスペシャル」導線も相性が良いです。'
     : null;
@@ -2336,9 +2364,10 @@ function buildDiagnosisResultReply(result, user) {
   const lines = [
     '無料診断ありがとうございました。',
     '',
+    typeBlock,
+    '',
     `おすすめプラン: ${getPlanNameLabel(planType)}（${getPlanPriceLabel(planType)}）`,
     `内容: ${getPlanDescriptionLabel(planType)}`,
-    `おすすめAI牛込タイプ: ${aiLabel}`,
     '',
     '今のあなたは、無理に詰め込みすぎるより「続けやすさ」と「伴走の濃さ」のバランスが大切そうです。',
     specialLine,
@@ -2349,18 +2378,11 @@ function buildDiagnosisResultReply(result, user) {
 
   return {
     text: lines.join('\n'),
-    quickReplies: ['7日無料ライト体験へ進む', 'プラン案内を見る', 'スペシャル希望', 'またあとで'],
+    quickReplies: ['7日無料ライト体験へ進む', 'プラン案内を見る', '無料体験', 'AIタイプ'],
   };
 }
 
 function buildDiagnosisPlanGuideReply() {
-  if (typeof diagnosisMembershipFlowService?.buildDiagnosisPlanGuideMessage === 'function') {
-    try {
-      const payload = diagnosisMembershipFlowService.buildDiagnosisPlanGuideMessage();
-      if (payload?.text) return payload;
-    } catch (_error) {}
-  }
-
   const lightLink = getDiagnosisPlanLink(PLAN_TYPES.LIGHT);
   const basicLink = getDiagnosisPlanLink(PLAN_TYPES.BASIC);
   const premiumLink = getDiagnosisPlanLink(PLAN_TYPES.PREMIUM);
@@ -2380,18 +2402,11 @@ function buildDiagnosisPlanGuideReply() {
 
   return {
     text: lines.join('\n'),
-    quickReplies: ['ライト', 'ベーシック', 'プレミアム', '人数限定！絶対痩せたいスペシャル'],
+    quickReplies: ['ライト', 'ベーシック', 'プレミアム', 'スペシャル'],
   };
 }
 
 function buildDiagnosisSpecialReply() {
-  if (typeof diagnosisMembershipFlowService?.buildDiagnosisSpecialFlowMessage === 'function') {
-    try {
-      const payload = diagnosisMembershipFlowService.buildDiagnosisSpecialFlowMessage();
-      if (payload?.text) return payload;
-    } catch (_error) {}
-  }
-
   return {
     text: [
       'スペシャル希望、ありがとうございます。',
@@ -2408,31 +2423,43 @@ function buildDiagnosisSpecialReply() {
 }
 
 function buildDiagnosisTrialStartedReply(user) {
-  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialStartedMessage === 'function') {
-    try {
-      const payload = diagnosisTrialFlowService.buildDiagnosisTrialStartedMessage(user);
-      if (payload?.text) return payload;
-    } catch (_error) {}
-  }
+  const trialPayload = typeof diagnosisTrialFlowService?.buildTrialStartPayload === 'function'
+    ? diagnosisTrialFlowService.buildTrialStartPayload({
+        userName: getUserDisplayName(user),
+        recommendedType: user?.diagnosis_recommended_ai_type || user?.recommended_ai_type || user?.ai_persona_type || 'そっと寄り添う',
+      })
+    : null;
+
+  const guideText = typeof diagnosisTrialFlowService?.buildTrialQuickGuideMessage === 'function'
+    ? diagnosisTrialFlowService.buildTrialQuickGuideMessage({ userName: getUserDisplayName(user) })
+    : buildFirstGuideMessage({ userName: getUserDisplayName(user) });
+
+  const valueText = typeof diagnosisTrialFlowService?.buildTrialValueGuideMessage === 'function'
+    ? diagnosisTrialFlowService.buildTrialValueGuideMessage()
+    : '';
+
+  const examplesText = buildTrialMessageExamples();
 
   return {
     text: [
-      '7日無料ライト体験を開始しました。',
-      'この期間は、まず「毎日やり取りしやすいか」「続けやすいか」を一緒に見ていきましょう。',
+      trialPayload?.message || '7日無料ライト体験を開始しました。',
       '',
-      '困った時はそのまま送って大丈夫です。',
-      '食事・運動・体重・相談、どこからでも始められます。',
-    ].join('\n'),
-    quickReplies: ['食事を記録したい', '体重を記録したい', '少し歩いた', 'プラン案内を見る'],
+      guideText,
+      '',
+      valueText,
+      '',
+      examplesText,
+    ].filter(Boolean).join('\n\n'),
+    quickReplies: ['食事の送り方', '運動の送り方', '体重の送り方', '相談の送り方'],
   };
 }
 
 async function buildDiagnosisDay5Reply(user) {
-  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialDay5Message === 'function') {
-    try {
-      const payload = await diagnosisTrialFlowService.buildDiagnosisTrialDay5Message(user);
-      if (payload?.text) return payload;
-    } catch (_error) {}
+  if (typeof diagnosisTrialFlowService?.buildTrialDay5Message === 'function') {
+    return {
+      text: diagnosisTrialFlowService.buildTrialDay5Message({ userName: getUserDisplayName(user) }),
+      quickReplies: ['プラン案内を見る', '現在のプラン', '体重グラフ', 'グラフ'],
+    };
   }
 
   if (generateWeeklyReportDraft) {
@@ -2469,11 +2496,11 @@ async function buildDiagnosisDay5Reply(user) {
 }
 
 function buildDiagnosisDay7Reply(user) {
-  if (typeof diagnosisTrialFlowService?.buildDiagnosisTrialDay7Message === 'function') {
-    try {
-      const payload = diagnosisTrialFlowService.buildDiagnosisTrialDay7Message(user);
-      if (payload?.text) return payload;
-    } catch (_error) {}
+  if (typeof diagnosisTrialFlowService?.buildTrialDay7Message === 'function') {
+    return {
+      text: diagnosisTrialFlowService.buildTrialDay7Message({ userName: getUserDisplayName(user) }),
+      quickReplies: ['プラン案内を見る', 'ライト', 'ベーシック', 'プレミアム', 'スペシャル'],
+    };
   }
 
   const planType = user?.diagnosis_recommended_plan || PLAN_TYPES.BASIC;
@@ -2487,7 +2514,7 @@ function buildDiagnosisDay7Reply(user) {
       '',
       'もちろん、他のプランと見比べてから決めても大丈夫です。',
     ].join('\n'),
-    quickReplies: ['プラン案内を見る', 'ライト', 'ベーシック', 'プレミアム', '人数限定！絶対痩せたいスペシャル'],
+    quickReplies: ['プラン案内を見る', 'ライト', 'ベーシック', 'プレミアム', 'スペシャル'],
   };
 }
 
@@ -2549,6 +2576,9 @@ async function completeDiagnosisForUser(user, result, answers) {
     completed_at: new Date().toISOString(),
   };
 
+  const normalizedType = normalizeTypeKey(result?.recommended_ai_label || result?.recommended_ai_type || 'そっと寄り添う');
+  const typeProfile = getTypeProfile(normalizedType);
+
   const patch = {
     diagnosis_state_json: state,
     diagnosis_status: 'completed',
@@ -2559,6 +2589,7 @@ async function completeDiagnosisForUser(user, result, answers) {
     diagnosis_recommended_plan: result?.recommended_plan || null,
     diagnosis_recommended_ai_type: result?.recommended_ai_type || null,
     diagnosis_special_interest: Boolean(result?.special_interest),
+    recommended_ai_type: typeProfile.label,
     ai_type: result?.recommended_ai_type || user?.ai_type || null,
     ai_persona_type: result?.recommended_ai_type || user?.ai_persona_type || null,
     ai_persona_selected_at: new Date().toISOString(),
@@ -2578,7 +2609,6 @@ function findDiagnosisOptionMatch(question, text) {
   if (!question || !Array.isArray(question.options)) return null;
   return question.options.find((opt) => normalizeTextLoose(opt) === normalizeTextLoose(raw)) || null;
 }
-
 async function handleDiagnosisAnswer(event, user, text) {
   const current = normalizeDiagnosisState(user);
   const question = getDiagnosisQuestionByStep(current.stepIndex);
@@ -2637,6 +2667,8 @@ async function startDiagnosisLightTrial(user) {
   const patch = {
     ...trialPatch,
     current_plan: PLAN_TYPES.LIGHT,
+    membership_status: 'trial',
+    trial_status: 'active',
     diagnosis_trial_started_at: new Date().toISOString(),
     diagnosis_trial_day5_sent_at: null,
     diagnosis_trial_day7_sent_at: null,
@@ -2675,6 +2707,35 @@ async function maybeSendDiagnosisTrialFollowup(event, user) {
   }
 
   return false;
+}
+
+function buildGuideReplyByIntent(user, intent) {
+  if (intent === 'food') return buildFoodGuideMessage();
+  if (intent === 'exercise') return buildExerciseGuideMessage();
+  if (intent === 'weight') return buildWeightGuideMessage();
+  if (intent === 'consult') return buildConsultGuideMessage();
+  if (intent === 'lab') return buildLabGuideMessage();
+  if (intent === 'type') return buildTypeSelectionGuide();
+  if (intent === 'faq') return buildFaqMessage();
+  if (intent === 'help') return buildHelpMenuMessage();
+  if (intent === 'trial') {
+    return [
+      typeof diagnosisTrialFlowService?.buildTrialQuickGuideMessage === 'function'
+        ? diagnosisTrialFlowService.buildTrialQuickGuideMessage({ userName: getUserDisplayName(user) })
+        : buildFirstGuideMessage({ userName: getUserDisplayName(user) }),
+      '',
+      typeof diagnosisTrialFlowService?.buildTrialValueGuideMessage === 'function'
+        ? diagnosisTrialFlowService.buildTrialValueGuideMessage()
+        : '',
+      '',
+      buildTrialMessageExamples(),
+    ].filter(Boolean).join('\n\n');
+  }
+  if (intent === 'plan') {
+    const guide = buildDiagnosisPlanGuideReply();
+    return guide.text;
+  }
+  return '';
 }
 
 async function handleImageMessage(event, user) {
@@ -2843,6 +2904,7 @@ async function saveMembershipAdminMemo(input = {}) {
   const memo = createMembershipAdminMemo(input);
   safeConsoleLog('[MEMBERSHIP_ADMIN_MEMO]', memo?.memo_text || memo);
 }
+
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
@@ -2889,6 +2951,15 @@ async function handleTextMessage(event, user) {
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(updatedUser || user, text, replyText);
       return;
+    }
+
+    const guideIntent = detectGuideIntent(text);
+    if (guideIntent) {
+      const guideText = buildGuideReplyByIntent(user, guideIntent);
+      if (guideText) {
+        await replyMessage(event.replyToken, prefixWithName(user, guideText), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
     }
 
     if (isHelpCommand(lower)) {
@@ -3227,7 +3298,7 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isTrialStatusIntent(text)) {
+    if (isTrialStatusIntent(text) || isTrialGuideIntent(text)) {
       const msg = buildTrialStatusMessage(user);
       await replyMessage(event.replyToken, buildMembershipReplyMessage(user, msg), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
@@ -3641,22 +3712,6 @@ async function handleTextMessage(event, user) {
         textMessageWithQuickReplies(prefixWithName(user, prediction.text), [...prediction.quickReplies, '体重グラフ', 'グラフ']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
-      return;
-    }
-
-    if (text === '体重推移を見たい') {
-      const weightRows = await getRecentWeightRows(user.id, 20);
-      const graph = buildWeightGraphMessage(weightRows);
-      await replyMessage(event.replyToken, textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ']), env.LINE_CHANNEL_ACCESS_TOKEN);
-      return;
-    }
-
-    if (text === '血液検査の流れを見たい') {
-      const recentRows = await getRecentLabResults(supabase, user.id, 12);
-      const graph = buildLabGraphMessage(recentRows, 'hba1c');
-      const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
-      if (graph.messages.length) messages.push(...graph.messages);
-      await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
