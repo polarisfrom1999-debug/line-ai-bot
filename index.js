@@ -3093,7 +3093,83 @@ async function handleTextMessage(event, user) {
       await rememberInteraction(updatedUser || user, text, replyText);
       return;
     }
+    const pendingConfirmation = getRecentCaptureConfirmation(user.line_user_id);
+    if (pendingConfirmation) {
+      if (isConfirmSaveText(text)) {
+        if (pendingConfirmation.capture_type === 'body_metrics') {
+          const savedReply = await saveBodyMetricsFromPayload(user, pendingConfirmation.payload, pendingConfirmation.source_text || text);
+          clearRecentCaptureConfirmation(user.line_user_id);
 
+          const replyText = prefixWithName(user, savedReply);
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+
+      if (isDeclineSaveText(text)) {
+        clearRecentCaptureConfirmation(user.line_user_id);
+        const replyText = prefixWithName(user, '大丈夫です。今回は保存せず、このまま会話を続けましょう。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (isEditSaveText(text)) {
+        clearRecentCaptureConfirmation(user.line_user_id);
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。こちらで整えます。');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+    }
+
+    const chatCapture = await analyzeChatCapture({ userText: text, user });
+
+    if (chatCapture?.capture_type === 'body_metrics') {
+      const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
+      const hasBodyFat = Number.isFinite(Number(chatCapture?.payload?.body_fat_percent));
+
+      if (hasWeight || hasBodyFat) {
+        if (chatCapture.auto_save) {
+          const savedReply = await saveBodyMetricsFromPayload(user, chatCapture.payload, text);
+          const replyText = prefixWithName(user, savedReply);
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (chatCapture.needs_confirmation) {
+          setRecentCaptureConfirmation(user.line_user_id, {
+            capture_type: 'body_metrics',
+            payload: chatCapture.payload,
+            source_text: text,
+          });
+
+          const replyText = prefixWithName(
+            user,
+            chatCapture.reply_text || 'こちらでこう受け取っています。違っていなければ保存しておきますか？'
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['はい、保存', '修正する', '今回は保存しない']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+    }
     const earlyParsedMetrics = parseBodyMetricsInput(text);
     if (earlyParsedMetrics.weightKg !== null || earlyParsedMetrics.bodyFatPercent !== null) {
       if (earlyParsedMetrics.weightKg !== null) {
