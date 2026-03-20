@@ -3716,14 +3716,7 @@ async function handleTextMessage(event, user) {
         await rememberInteraction(user, text, replyText);
         return;
       }
-    const guideIntent = detectGuideIntent(text);
-    if (guideIntent) {
-      const guideText = buildGuideReplyByIntent(user, guideIntent);
-      if (guideText) {
-        await replyMessage(event.replyToken, prefixWithName(user, guideText), env.LINE_CHANNEL_ACCESS_TOKEN);
-        return;
-      }
-    }
+
       if (smartFlowResult.next === 'save_meal' || smartFlowResult.next === 'save_meal_from_pending') {
         const savedMeal = await saveMealSmartPayload(user, smartFlowResult.payload, text);
         await saveUserState(user.id, {
