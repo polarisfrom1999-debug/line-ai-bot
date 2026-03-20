@@ -3677,15 +3677,18 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (text === 'プラン案内を見る') {
-      const payload = buildDiagnosisPlanGuideReply();
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(prefixWithName(user, payload.text), payload.quickReplies),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
+if (text === 'プラン案内を見る') {
+  const payload = buildDiagnosisPlanGuideReply();
+  const intro = buildPlanBridgeMessage(user, { mode: 'guide', includeTrial: true });
+  const replyText = [intro, '', payload.text].join('\n\n');
+
+  await replyMessage(
+    event.replyToken,
+    textMessageWithQuickReplies(replyText, payload.quickReplies),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+  return;
+}
 
     if (text === 'スペシャル希望') {
       const updatedUser = await saveUserState(user.id, { diagnosis_special_interest: true });
