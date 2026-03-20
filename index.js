@@ -4419,9 +4419,13 @@ async function handleTextMessage(event, user) {
     const reply = await defaultChatReply(user, text);
     await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
     await rememberInteraction(user, text, reply);
-  } catch (error) {
+   } catch (error) {
     console.error('❌ handleTextMessage error:', error?.stack || error?.message || error);
-    await replyMessage(event.replyToken, '入力の処理でエラーが起きました。もう一度ゆっくり送ってください。', env.LINE_CHANNEL_ACCESS_TOKEN);
+    await replyMessage(
+      event.replyToken,
+      'ありがとうございます。こちらで少し受け取り方がずれてしまったので、言い方はそのままで大丈夫ですから、もう一度だけ送ってもらえますか。こちらで自然につなげますね。',
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
   }
 }
 
