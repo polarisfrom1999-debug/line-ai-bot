@@ -2980,14 +2980,88 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-if (isPersonaSelectionText(text) && !isDiagnosisActive(user)) {
-  const updatedUser = await updateUserAiPersona(user.id, getPersonaTypeFromLabel(text));
-  const label = getPersonaLabel(getEffectivePersonaType(updatedUser || user));
-  const replyText = prefixWithName(updatedUser || user, `これからは「${label}」の雰囲気で伴走しますね。必要ならまた変えられます。`);
-  await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-  await rememberInteraction(updatedUser || user, text, replyText);
-  return;
-}
+    if (isPersonaSelectionText(text) && !isDiagnosisActive(user)) {
+      const updatedUser = await updateUserAiPersona(user.id, getPersonaTypeFromLabel(text));
+      const label = getPersonaLabel(getEffectivePersonaType(updatedUser || user));
+      const replyText = prefixWithName(updatedUser || user, `これからは「${label}」の雰囲気で伴走しますね。必要ならまた変えられます。`);
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(updatedUser || user, text, replyText);
+      return;
+    }
+
+    const earlyParsedMetrics = parseBodyMetricsInput(text);
+    if (earlyParsedMetrics.weightKg !== null || earlyParsedMetrics.bodyFatPercent !== null) {
+      if (earlyParsedMetrics.weightKg !== null) {
+        await saveWeightToLog(user.id, earlyParsedMetrics.weightKg, text);
+      }
+
+      if (earlyParsedMetrics.bodyFatPercent !== null) {
+        await saveBodyFatToLog(user.id, earlyParsedMetrics.bodyFatPercent, text);
+      }
+
+      const statePatch = {
+        last_any_log_at: new Date().toISOString(),
+      };
+
+      if (earlyParsedMetrics.weightKg !== null) {
+        statePatch.last_weight_logged_at = new Date().toISOString();
+      }
+
+      if (earlyParsedMetrics.bodyFatPercent !== null) {
+        statePatch.last_body_fat_logged_at = new Date().toISOString();
+      }
+
+      await saveUserState(user.id, statePatch);
+
+      let diffText = null;
+      if (earlyParsedMetrics.weightKg !== null) {
+        const recentWeights = await getRecentWeightRows(user.id, 10);
+        const latest = recentWeights[0] || { weight_kg: earlyParsedMetrics.weightKg };
+        const prev = recentWeights[1] || null;
+
+        diffText = (() => {
+          if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
+          const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
+          if (diff === 0) return '前回から変化はありません。';
+          if (diff > 0) return `前回より ${diff}kg 増えています。`;
+          return `前回より ${Math.abs(diff)}kg 減っています。`;
+        })();
+      }
+
+      const lines = [];
+      if (earlyParsedMetrics.weightKg !== null && earlyParsedMetrics.bodyFatPercent !== null) {
+        lines.push('体重と体脂肪率を保存しました。');
+        lines.push(`体重: ${earlyParsedMetrics.weightKg}kg`);
+        lines.push(`体脂肪率: ${earlyParsedMetrics.bodyFatPercent}%`);
+      } else if (earlyParsedMetrics.weightKg !== null) {
+        lines.push('体重を保存しました。');
+        lines.push(`今回: ${earlyParsedMetrics.weightKg}kg`);
+      } else if (earlyParsedMetrics.bodyFatPercent !== null) {
+        lines.push('体脂肪率を保存しました。');
+        lines.push(`今回: ${earlyParsedMetrics.bodyFatPercent}%`);
+      }
+
+      if (diffText) {
+        lines.push(diffText);
+      }
+
+      if (earlyParsedMetrics.weightKg !== null && earlyParsedMetrics.bodyFatPercent === null) {
+        lines.push('体脂肪率も分かれば、続けてそのまま送ってください。');
+      }
+
+      if (earlyParsedMetrics.bodyFatPercent !== null && earlyParsedMetrics.weightKg === null) {
+        lines.push('体重も分かれば、続けてそのまま送ってください。');
+      }
+
+      const replyText = prefixWithName(user, lines.join('\n'));
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
 
     const guideIntent = detectGuideIntent(text);
     if (guideIntent) {
