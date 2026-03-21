@@ -27,6 +27,25 @@ function isProcedureIntent(text = '') {
   ]);
 }
 
+function isGraphIntent(text = '') {
+  return hasAny(text, [
+    'グラフ', 'グラフ見たい', 'グラフを見たい', 'グラフみたい', '見える化',
+    '体重グラフ', '体重のグラフ', '体重推移',
+    '食事活動グラフ', '食事グラフ', '活動グラフ', '運動グラフ',
+    'hba1cグラフ', '血糖グラフ', 'ldlグラフ',
+    '血液検査グラフ', '血液グラフ', '採血グラフ'
+  ]);
+}
+
+function detectGraphType(text = '') {
+  if (hasAny(text, ['体重グラフ', '体重のグラフ', '体重推移', '体重の推移', '体重を見たい'])) return 'weight';
+  if (hasAny(text, ['食事活動グラフ', '食事グラフ', '活動グラフ', '運動グラフ', '食事と運動のグラフ'])) return 'energy';
+  if (hasAny(text, ['hba1cグラフ', 'hba1c', '血糖グラフ', 'ヘモグロビンa1cグラフ'])) return 'hba1c';
+  if (hasAny(text, ['ldlグラフ', 'ldl', 'コレステロールグラフ', '悪玉コレステロールグラフ'])) return 'ldl';
+  if (hasAny(text, ['血液検査グラフ', '血液グラフ', '採血グラフ', '血液データを見たい'])) return 'lab';
+  return 'menu';
+}
+
 function isConsultationIntent(text = '') {
   return hasAny(text, [
     '痛い', '痛み', 'つらい', 'しんどい', '不安', '心配', '相談', '悩み', '困って', 'どうしたら',
@@ -130,6 +149,16 @@ async function routeConversation({ currentUserText = '' } = {}) {
       is_ambiguous: false,
       needs_clarification: false,
       meta: { topic_hints: { procedure: true } },
+    };
+  }
+
+  if (isGraphIntent(text)) {
+    return {
+      route: 'graph',
+      is_ambiguous: false,
+      needs_clarification: false,
+      graph_type: detectGraphType(text),
+      meta: { topic_hints: { graph: true } },
     };
   }
 
