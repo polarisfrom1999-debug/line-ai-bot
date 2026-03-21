@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -715,6 +716,26 @@ function hasConsultationLikeIntent(text) {
   ];
 
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
+}
+
+function shouldPrioritizeConsultation(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(raw);
+  if (!t) return false;
+
+  if (isContinueConsultText(raw)) return true;
+  if (hasConsultationLikeIntent(raw)) return true;
+  if (isPainLikeText(raw)) return true;
+  if (isExerciseConsultationText(raw)) return true;
+  if (looksLikePainConsultation && looksLikePainConsultation(raw)) return true;
+
+  const consultMarkers = [
+    'どうしたら', 'どうすれば', 'いいですか', 'かな', 'でしょうか', '教えて', '相談', '不安', '心配',
+    'つらい', 'しんどい', '困る', '困ってる', '悩み', '痛いけど', '痛いです', '歩いていい', '走っていい',
+  ];
+
+  if (consultMarkers.some((p) => t.includes(normalizeTextLoose(p)))) return true;
+  return false;
 }
 
 
@@ -5388,7 +5409,9 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     const detectedIntent = detectMessageIntent(text);
+    const consultPriority = shouldPrioritizeConsultation(text);
     const shouldOpenMealDraft =
+      !consultPriority &&
       !shouldAvoidMealExerciseAutoCapture(text) &&
       !hasConsultationLikeIntent(text) &&
       (
@@ -5420,7 +5443,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
       return;
     }
 
-    if (isActivityCommand(lower)) {
+    if (isActivityCommand(text)) {
       const activity = parseActivity(text, user.weight_kg || 60);
       if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal && !activity.exercise_summary) {
         const replyText = buildNaturalClarificationReply(user, 'activity');
