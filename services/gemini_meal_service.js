@@ -107,6 +107,98 @@ ${safeText(userText)}
 `.trim();
 }
 
+
+function normalizeMealLabelText(label = '') {
+  let value = safeText(label || '', 120);
+  if (!value) return '';
+
+  value = value
+    .replace(/^(今日は?|きょうは?|今朝|朝|昼|夜|夕食|昼食|朝食)\s*[:：]*/g, '')
+    .replace(/(?:でした|です)$/g, '')
+    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|飲んだ|のんだ|飲みました|のみました)$/g, '')
+    .replace(/[。！!？?]+$/g, '')
+    .trim();
+
+  value = value
+    .replace(/緑の飲み物/g, 'お茶')
+    .replace(/グリーンドリンク/g, 'お茶')
+    .replace(/^らーめん$/i, 'ラーメン')
+    .replace(/^ぱん$/i, 'パン');
+
+  if (/ラーメン食べた|らーめん食べた/.test(value)) return 'ラーメン';
+  if (/パン食べた|ぱん食べた/.test(value)) return 'パン';
+  if (/カレーでした|かれーでした/.test(value)) return 'カレー';
+
+  return value;
+}
+
+function chooseNaturalMealLabel(raw = {}) {
+  const direct = normalizeMealLabelText(raw?.meal_label || raw?.corrected_meal_label || '');
+  const items = Array.isArray(raw?.food_items || raw?.corrected_food_items)
+    ? (raw.food_items || raw.corrected_food_items)
+    : [];
+  const itemNames = items
+    .map((item) => normalizeMealLabelText(item?.name || item?.food_name || item?.dish_name || ''))
+    .filter(Boolean);
+
+  if (direct) {
+    if ((direct === '中華風煮込み' || direct === '煮込み') && itemNames.some((name) => /ラーメン|麺|うどん|そば/.test(name))) {
+      return itemNames.find((name) => /ラーメン|麺|うどん|そば/.test(name)) || direct;
+    }
+    return direct;
+  }
+
+  if (!itemNames.length) return '';
+  return itemNames.slice(0, 2).join('、');
+}
+
+function toMeaningfulMacro(value, fallback = null) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+function mergeMeaningfulNumber(primary, fallback = null) {
+  const first = toMeaningfulMacro(primary, null);
+  if (first != null) return first;
+  const second = toMeaningfulMacro(fallback, null);
+  return second;
+}
+
+function buildSimpleMealHeuristic(label = '', currentMeal = {}) {
+  const text = `${safeText(label || '')} ${Array.isArray(currentMeal?.food_items) ? currentMeal.food_items.map((item) => safeText(item?.name || '')).join(' ') : ''}`;
+  const normalized = String(text || '').toLowerCase();
+
+  if (/豚骨ラーメン|とんこつラーメン/.test(text)) {
+    return { meal_label: '豚骨ラーメン', estimated_kcal: 650, kcal_min: 550, kcal_max: 780, protein_g: 23, fat_g: 24, carbs_g: 68 };
+  }
+  if (/味噌ラーメン/.test(text)) {
+    return { meal_label: '味噌ラーメン', estimated_kcal: 620, kcal_min: 520, kcal_max: 760, protein_g: 22, fat_g: 20, carbs_g: 72 };
+  }
+  if (/醤油ラーメン/.test(text)) {
+    return { meal_label: '醤油ラーメン', estimated_kcal: 540, kcal_min: 440, kcal_max: 660, protein_g: 20, fat_g: 16, carbs_g: 68 };
+  }
+  if (/塩ラーメン/.test(text)) {
+    return { meal_label: '塩ラーメン', estimated_kcal: 520, kcal_min: 430, kcal_max: 640, protein_g: 20, fat_g: 15, carbs_g: 66 };
+  }
+  if (/ラーメン|らーめん/.test(text)) {
+    return { meal_label: 'ラーメン', estimated_kcal: 550, kcal_min: 450, kcal_max: 700, protein_g: 20, fat_g: 18, carbs_g: 65 };
+  }
+  if (/トースト|パン/.test(text)) {
+    return { meal_label: normalizeMealLabelText(label) || 'トースト', estimated_kcal: 300, kcal_min: 220, kcal_max: 380, protein_g: 8, fat_g: 15, carbs_g: 55 };
+  }
+
+  return {
+    meal_label: normalizeMealLabelText(label) || normalizeMealLabelText(currentMeal?.meal_label || '') || '',
+    estimated_kcal: null,
+    kcal_min: null,
+    kcal_max: null,
+    protein_g: null,
+    fat_g: null,
+    carbs_g: null,
+  };
+}
+
 function normalizeFoodItems(items = []) {
   if (!Array.isArray(items)) return [];
   return items
@@ -120,10 +212,11 @@ function normalizeFoodItems(items = []) {
 }
 
 function normalizeMealResult(raw = {}) {
+  const naturalLabel = chooseNaturalMealLabel(raw);
   return {
     intent: safeText(raw.intent || ''),
     is_meal_related: raw.is_meal_related === true,
-    meal_label: safeText(raw.meal_label || raw.corrected_meal_label || ''),
+    meal_label: naturalLabel,
     meal_time_hint: safeText(raw.meal_time_hint || ''),
     estimated_kcal: round0(raw.estimated_kcal ?? raw.corrected_estimated_kcal),
     kcal_min: round0(raw.kcal_min ?? raw.corrected_kcal_min),
@@ -260,15 +353,17 @@ async function analyzeMealTextWithGemini(userText = '', previousMealSummary = ''
     return { is_meal: false, rejection_reason: result?.meal_result?.rejection_reason || '' };
   }
 
+  const heuristic = buildSimpleMealHeuristic(payload.meal_label || result?.meal_result?.meal_label || '', result?.meal_result || {});
+
   return {
     is_meal: true,
-    meal_label: safeText(payload.meal_label || result?.meal_result?.meal_label || ''),
-    estimated_kcal: toNumberOrNull(payload.estimated_kcal),
-    kcal_min: toNumberOrNull(payload.kcal_min),
-    kcal_max: toNumberOrNull(payload.kcal_max),
-    protein_g: toNumberOrNull(payload.protein_g),
-    fat_g: toNumberOrNull(payload.fat_g),
-    carbs_g: toNumberOrNull(payload.carbs_g),
+    meal_label: safeText(payload.meal_label || result?.meal_result?.meal_label || heuristic.meal_label || ''),
+    estimated_kcal: toNumberOrNull(payload.estimated_kcal) ?? heuristic.estimated_kcal,
+    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min,
+    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max,
+    protein_g: mergeMeaningfulNumber(payload.protein_g, heuristic.protein_g),
+    fat_g: mergeMeaningfulNumber(payload.fat_g, heuristic.fat_g),
+    carbs_g: mergeMeaningfulNumber(payload.carbs_g, heuristic.carbs_g),
     food_items: Array.isArray(payload.food_items)
       ? payload.food_items.map((item) => ({
           name: safeText(item?.name || ''),
@@ -299,16 +394,19 @@ async function applyMealCorrectionWithGemini(currentMeal = {}, correctionText = 
     return currentMeal;
   }
 
+  const explicitCorrectionLabel = normalizeMealLabelText(correctionText || '');
+  const heuristic = buildSimpleMealHeuristic(explicitCorrectionLabel || payload.meal_label || currentMeal?.meal_label || '', currentMeal || {});
+
   return {
     ...currentMeal,
     is_meal: true,
-    meal_label: safeText(payload.meal_label || currentMeal?.meal_label || ''),
-    estimated_kcal: toNumberOrNull(payload.estimated_kcal),
-    kcal_min: toNumberOrNull(payload.kcal_min),
-    kcal_max: toNumberOrNull(payload.kcal_max),
-    protein_g: toNumberOrNull(payload.protein_g),
-    fat_g: toNumberOrNull(payload.fat_g),
-    carbs_g: toNumberOrNull(payload.carbs_g),
+    meal_label: safeText(explicitCorrectionLabel || payload.meal_label || currentMeal?.meal_label || heuristic.meal_label || ''),
+    estimated_kcal: toNumberOrNull(payload.estimated_kcal) ?? heuristic.estimated_kcal ?? currentMeal?.estimated_kcal ?? null,
+    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min ?? currentMeal?.kcal_min ?? null,
+    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max ?? currentMeal?.kcal_max ?? null,
+    protein_g: mergeMeaningfulNumber(payload.protein_g, heuristic.protein_g ?? currentMeal?.protein_g),
+    fat_g: mergeMeaningfulNumber(payload.fat_g, heuristic.fat_g ?? currentMeal?.fat_g),
+    carbs_g: mergeMeaningfulNumber(payload.carbs_g, heuristic.carbs_g ?? currentMeal?.carbs_g),
     food_items: Array.isArray(payload.food_items)
       ? payload.food_items.map((item) => ({
           name: safeText(item?.name || ''),
