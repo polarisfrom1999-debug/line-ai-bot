@@ -37,16 +37,21 @@ function isConsultationIntent(text = '') {
 function isWeightOnly(text = '') {
   const t = normalizeText(text);
   if (!t) return false;
-  if (/^\d{2,3}(?:\.\d)?kg$/.test(t)) return true;
-  if (/^\d{2,3}(?:\.\d)?$/.test(t)) return true;
+
+  if (/^\d{2,3}(?:\.\d)?(?:kg|キロ|きろ)?$/.test(t)) return true;
   if (t.includes('体重')) return true;
+
   return false;
 }
 
 function isBodyFatOnly(text = '') {
   const t = normalizeText(text);
   if (!t) return false;
-  return t.includes('体脂肪') || /\d{1,2}(?:\.\d)?%/.test(t);
+
+  if (t.includes('体脂肪')) return true;
+  if (/^\d{1,2}(?:\.\d)?(?:%|％)$/.test(t)) return true;
+
+  return false;
 }
 
 function isExerciseRecord(text = '') {
@@ -66,6 +71,7 @@ function isMealRecord(text = '') {
 function buildWeightCandidate(text = '') {
   const value = parseNumber(text);
   if (!Number.isFinite(value)) return null;
+
   return {
     type: 'weight',
     parsed_payload: { weight_kg: value },
@@ -77,6 +83,7 @@ function buildWeightCandidate(text = '') {
 function buildBodyFatCandidate(text = '') {
   const value = parseNumber(text);
   if (!Number.isFinite(value)) return null;
+
   return {
     type: 'body_fat',
     parsed_payload: { body_fat_percent: value },
@@ -90,6 +97,15 @@ function buildExerciseCandidate(text = '') {
     type: 'exercise',
     parsed_payload: { raw_text: String(text || '').trim() },
     confidence: 0.8,
+    source_text: text,
+  };
+}
+
+function buildMealCandidate(text = '') {
+  return {
+    type: 'meal',
+    parsed_payload: { raw_text: String(text || '').trim() },
+    confidence: 0.78,
     source_text: text,
   };
 }
@@ -156,20 +172,13 @@ async function routeConversation({ currentUserText = '' } = {}) {
     };
   }
 
-  // 食事は record_candidate に送らず、既存の Gemini / 従来フローに渡す
-  // ここで smalltalk 扱いにしつつ、meal ヒントだけ残す
   if (isMealRecord(text)) {
     return {
-      route: 'smalltalk',
+      route: 'record_candidate',
       is_ambiguous: false,
       needs_clarification: false,
-      meta: {
-        topic_hints: {
-          meal: true,
-          meal_like_text: true,
-          use_legacy_meal_flow: true,
-        },
-      },
+      top_record_candidate: buildMealCandidate(text),
+      meta: { topic_hints: { meal: true } },
     };
   }
 
