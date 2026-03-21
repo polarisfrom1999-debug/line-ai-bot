@@ -7,10 +7,6 @@
  * - 体重 / 食事活動 / HbA1c / LDL / 血液検査 のグラフ画像を返す
  * - LINE にそのまま送れる image message を作る
  * - データが少ない時も落ちずにテキスト + 画像の両方を返す
- *
- * 方針:
- * - まずは確実に画像を出すことを優先し、QuickChart の URL 画像を使う
- * - index.js 側は graph.messages をそのまま reply しているため、このファイル差し替えで反映できる
  */
 
 function safeText(value, fallback = '') {
@@ -51,16 +47,16 @@ function buildGraphRequestSummary(graphType = '') {
   const t = safeText(graphType).toLowerCase();
 
   if (t.includes('weight') || t.includes('体重')) {
-    return '体重の流れを見える化します。';
+    return '体重の流れを見やすくまとめます。';
   }
   if (t.includes('meal') || t.includes('food') || t.includes('energy') || t.includes('食事') || t.includes('活動') || t.includes('運動')) {
-    return '食事と活動の流れを見える化します。';
+    return '食事と活動の流れを見やすくまとめます。';
   }
   if (t.includes('hba1c') || t.includes('ldl') || t.includes('lab') || t.includes('血液')) {
-    return '血液検査の流れを見える化します。';
+    return '血液検査の流れを見やすくまとめます。';
   }
 
-  return '記録の流れを見える化します。';
+  return '記録の流れを見やすくまとめます。';
 }
 
 function formatDateLabel(value) {
@@ -111,45 +107,45 @@ function buildWeightInsightText({ latest = null, previous = null } = {}) {
   const prevNum = toNumberOrNull(previous);
 
   if (latestNum === null) {
-    return '体重データがたまってくると、変化の流れが見やすくなります。';
+    return '体重グラフです。記録がたまってくるほど、流れが見やすくなります。';
   }
 
   if (prevNum === null) {
-    return `最新の体重は ${latestNum}kg です。ここから流れを見ていきましょう。`;
+    return `体重グラフです。最新は ${latestNum}kg でした。`;
   }
 
   const diff = Math.round((latestNum - prevNum) * 10) / 10;
   if (diff === 0) {
-    return `最新の体重は ${latestNum}kg で、大きな変化はありませんでした。`;
+    return `体重グラフです。最新は ${latestNum}kg で、大きな変化はありませんでした。`;
   }
   if (diff < 0) {
-    return `最新の体重は ${latestNum}kg で、前回より ${Math.abs(diff)}kg 下がっていました。`;
+    return `体重グラフです。最新は ${latestNum}kg で、前回より ${Math.abs(diff)}kg 下がっていました。`;
   }
-  return `最新の体重は ${latestNum}kg で、前回より ${diff}kg 上がっていました。`;
+  return `体重グラフです。最新は ${latestNum}kg で、前回より ${diff}kg 上がっていました。`;
 }
 
 function buildMealInsightText({ averageKcal = null } = {}) {
   const kcal = toNumberOrNull(averageKcal);
   if (kcal === null) {
-    return '食事記録が増えるほど、食事の傾向が見やすくなります。';
+    return '食事と活動の流れです。記録が増えるほど、傾向が見やすくなります。';
   }
-  return `最近の食事は、1回あたり平均 ${kcal} kcal 前後の傾向です。`;
+  return `食事と活動の流れです。最近の食事は、1回あたり平均 ${kcal} kcal 前後でした。`;
 }
 
 function buildActivityInsightText({ totalMinutes = null } = {}) {
   const min = toNumberOrNull(totalMinutes);
   if (min === null) {
-    return '活動記録が増えるほど、動けた日の流れが見やすくなります。';
+    return '動けた日の波も、ここから少しずつ見やすくなります。';
   }
-  return `最近の活動時間は合計 ${min}分でした。`;
+  return `活動時間は、今回まとまって ${min}分ぶん確認できています。`;
 }
 
 function buildLabInsightText({ latestHbA1c = null } = {}) {
   const value = toNumberOrNull(latestHbA1c);
   if (value === null) {
-    return '血液検査の記録が増えると、長い流れが見やすくなります。';
+    return '血液検査の流れです。記録が増えるほど、変化が見やすくなります。';
   }
-  return `最新の HbA1c は ${value} です。継続して流れを見ていきましょう。`;
+  return `血液検査の流れです。最新の HbA1c は ${value} でした。`;
 }
 
 function buildQuickChartUrl(config) {
@@ -258,17 +254,15 @@ function buildEnergyChartMessages(rows = []) {
       'duration_minutes',
     ]);
 
-    if (kcal === null && minutes === null) continue;
-
     labels.push(pickDateLabel(row) || `${labels.length + 1}`);
-    kcalValues.push(kcal === null ? null : kcal);
-    minutesValues.push(minutes === null ? null : minutes);
+    kcalValues.push(kcal !== null ? kcal : 0);
+    minutesValues.push(minutes !== null ? minutes : 0);
   }
 
   if (!labels.length) return [];
 
-  const compacted = compactSeries(labels, kcalValues, 10);
-  const minutesCompacted = compactSeries(labels, minutesValues, 10);
+  const compacted = compactSeries(labels, kcalValues, 12);
+  const compactedMinutes = compactSeries(labels, minutesValues, 12);
 
   const url = buildQuickChartUrl({
     type: 'bar',
@@ -279,16 +273,17 @@ function buildEnergyChartMessages(rows = []) {
           type: 'bar',
           label: '食事 kcal',
           data: compacted.values,
-          backgroundColor: 'rgba(249,115,22,0.6)',
-          borderColor: '#f97316',
+          backgroundColor: 'rgba(245,158,11,0.65)',
+          borderColor: '#f59e0b',
+          borderWidth: 1,
           yAxisID: 'y1',
         },
         {
           type: 'line',
           label: '活動 分',
-          data: minutesCompacted.values,
+          data: compactedMinutes.values,
           borderColor: '#16a34a',
-          backgroundColor: 'rgba(22,163,74,0.15)',
+          backgroundColor: 'rgba(22,163,74,0.12)',
           fill: false,
           tension: 0.25,
           pointRadius: 3,
@@ -307,13 +302,11 @@ function buildEnergyChartMessages(rows = []) {
             id: 'y1',
             position: 'left',
             ticks: { beginAtZero: true },
-            scaleLabel: { display: true, labelString: 'kcal' },
           },
           {
             id: 'y2',
             position: 'right',
             ticks: { beginAtZero: true },
-            scaleLabel: { display: true, labelString: '分' },
             gridLines: { drawOnChartArea: false },
           },
         ],
@@ -325,32 +318,24 @@ function buildEnergyChartMessages(rows = []) {
   return message ? [message] : [];
 }
 
-function extractLabSeriesValue(row = {}, field = '') {
-  const normalizedField = safeText(field).toLowerCase();
-
-  if (normalizedField === 'hba1c') {
-    return pickNumber(row, ['hba1c', 'hb_a1c', 'hemoglobin_a1c']);
+function extractLabSeriesValue(row = {}, field = 'hba1c') {
+  const key = safeText(field).toLowerCase();
+  if (key === 'ldl') {
+    return pickNumber(row, ['ldl', 'ldl_cholesterol', 'ldl_value']);
   }
-
-  if (normalizedField === 'ldl') {
-    return pickNumber(row, ['ldl', 'ldl_cholesterol']);
-  }
-
-  return (
-    pickNumber(row, [normalizedField]) ??
-    pickNumber(row, ['hba1c', 'hb_a1c', 'ldl'])
-  );
+  return pickNumber(row, ['hba1c', 'hb_a1c', 'hb1ac']);
 }
 
 function buildLabChartMessages(rows = [], field = 'hba1c') {
   const sorted = sortRowsByDateAsc(rows);
   const labels = [];
   const values = [];
-  const normalizedField = safeText(field).toLowerCase() === 'ldl' ? 'ldl' : 'hba1c';
-  const label = normalizedField === 'ldl' ? 'LDL' : 'HbA1c';
+  const key = safeText(field).toLowerCase();
+  const label = key === 'ldl' ? 'LDL' : 'HbA1c';
+  const targetValue = key === 'ldl' ? 120 : 5.6;
 
   for (const row of sorted) {
-    const value = extractLabSeriesValue(row, normalizedField);
+    const value = extractLabSeriesValue(row, field);
     if (value === null) continue;
     labels.push(pickDateLabel(row) || `${labels.length + 1}`);
     values.push(value);
@@ -359,7 +344,10 @@ function buildLabChartMessages(rows = [], field = 'hba1c') {
   if (!values.length) return [];
 
   const compacted = compactSeries(labels, values, 12);
-  const targetValue = normalizedField === 'ldl' ? 120 : 5.6;
+  const targetLine = new Array(compacted.values.length).fill(targetValue);
+  const min = Math.min(...compacted.values, targetValue);
+  const max = Math.max(...compacted.values, targetValue);
+  const padding = Math.max(key === 'ldl' ? 5 : 0.1, (max - min) * 0.2);
 
   const url = buildQuickChartUrl({
     type: 'line',
@@ -369,19 +357,17 @@ function buildLabChartMessages(rows = [], field = 'hba1c') {
         {
           label,
           data: compacted.values,
-          borderColor: normalizedField === 'ldl' ? '#7c3aed' : '#dc2626',
-          backgroundColor: normalizedField === 'ldl'
-            ? 'rgba(124,58,237,0.15)'
-            : 'rgba(220,38,38,0.15)',
+          borderColor: key === 'ldl' ? '#9333ea' : '#dc2626',
+          backgroundColor: key === 'ldl' ? 'rgba(147,51,234,0.12)' : 'rgba(220,38,38,0.12)',
           fill: true,
-          tension: 0.25,
+          tension: 0.2,
           pointRadius: 3,
         },
         {
-          label: normalizedField === 'ldl' ? '目安線 120' : '目安線 5.6',
-          data: compacted.labels.map(() => targetValue),
+          label: key === 'ldl' ? '目安 120' : '目安 5.6',
+          data: targetLine,
           borderColor: '#6b7280',
-          borderDash: [6, 6],
+          borderDash: [5, 5],
           fill: false,
           pointRadius: 0,
         },
@@ -393,7 +379,12 @@ function buildLabChartMessages(rows = [], field = 'hba1c') {
         legend: { display: true },
       },
       scales: {
-        yAxes: [{ ticks: { beginAtZero: false } }],
+        yAxes: [{
+          ticks: {
+            suggestedMin: Math.max(0, Math.floor((min - padding) * 10) / 10),
+            suggestedMax: Math.ceil((max + padding) * 10) / 10,
+          },
+        }],
       },
     },
   });
@@ -414,15 +405,9 @@ function buildWeightGraphMessage(rows = []) {
     ? pickNumber(previousRow, ['weight_kg', 'weight', 'value'])
     : null;
 
-  const count = normalized.length;
-
   let text = buildWeightInsightText({ latest, previous });
-  if (count >= 2) {
-    text += `\n直近 ${count} 件の体重記録をもとに流れを見ています。`;
-  } else if (count === 1) {
-    text += '\nまだ記録が少ないので、これから流れが見やすくなっていきます。';
-  } else {
-    text = 'まだ体重記録が少ないので、最初の数回が入るとグラフが見やすくなります。';
+  if (!normalized.length) {
+    text = 'まだ体重記録が少ないので、数回たまると流れが見やすくなります。';
   }
 
   return {
@@ -489,13 +474,9 @@ function buildLabGraphMessage(rows = [], field = 'hba1c') {
 
   let text = '';
   if (latestValue === null) {
-    text = `${label} の記録が増えると、流れが見やすくなります。`;
+    text = `${label}グラフです。記録が増えるほど、変化が見やすくなります。`;
   } else {
-    text = `最新の ${label} は ${latestValue} です。流れを見ながら整えていきましょう。`;
-  }
-
-  if (normalized.length >= 2) {
-    text += `\n直近 ${normalized.length} 件の血液検査記録をもとに見ています。`;
+    text = `${label}グラフです。最新は ${latestValue} でした。流れを見ながら整えていきましょう。`;
   }
 
   return {
