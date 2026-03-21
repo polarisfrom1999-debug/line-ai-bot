@@ -574,6 +574,27 @@ function hasConsultationLikeIntent(text) {
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
 }
 
+
+function shouldAppendConsultGuide(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(text);
+  if (!t) return false;
+
+  if (isContinueConsultText(raw)) return false;
+
+  const urgentPatterns = [
+    '強い痛み', 'かなり痛い', '激痛', '悪化', 'ひどくなった', '長引く', '続いている',
+    '歩けない', '眠れない', 'しびれが強い', '力が入らない', '腫れが強い', '熱を持つ',
+    '病院', '受診', '医療機関', '整形外科',
+  ];
+
+  if (urgentPatterns.some((p) => t.includes(normalizeTextLoose(p)))) return true;
+
+  if (hasPainOrMedicalContext(raw) && hasQuestionIntent(raw)) return true;
+
+  return false;
+}
+
 function buildNaturalClarificationReply(user, kind = 'general') {
   const name = getUserDisplayName(user);
 
