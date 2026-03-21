@@ -594,6 +594,23 @@ function buildNaturalClarificationReply(user, kind = 'general') {
 違うところや足したいことだけ、そのままの言い方で送ってもらえれば大丈夫です。`);
 }
 
+function buildConsultContinuationReply(user, text = '') {
+  const t = normalizeTextLoose(text);
+  const name = getUserDisplayName(user);
+
+  const baseReplies = [
+    `${name ? `${name}さん、` : ''}もちろんです。このまま続けましょう。気になっていることを、そのまま話してくださいね。`,
+    `${name ? `${name}さん、` : ''}大丈夫です。このまま一緒に整理していきましょう。言葉がまとまっていなくても、そのままで大丈夫です。`,
+    `${name ? `${name}さん、` : ''}はい、このまま話しましょう。今いちばん気になっていることからで大丈夫ですよ。`,
+  ];
+
+  if (t.includes(normalizeTextLoose('相談を続ける'))) return prefixWithName(user, baseReplies[0]);
+  if (t.includes(normalizeTextLoose('このまま話したい'))) return prefixWithName(user, baseReplies[1]);
+  if (t.includes(normalizeTextLoose('このまま相談したい'))) return prefixWithName(user, baseReplies[2]);
+
+  return prefixWithName(user, baseReplies[0]);
+}
+
 function isExerciseConsultationText(text) {
   const t = normalizeTextLoose(text);
   if (!t) return false;
@@ -4070,14 +4087,14 @@ if (text === 'プラン案内を見る') {
     if (user.current_flow === 'membership_pause_reason' && (isPauseReasonOption(text) || safeText(text))) {
       await saveUserState(user.id, { current_flow: 'membership_pause_confirm', membership_note: safeText(text) });
       const replyText = prefixWithName(user, [`休止理由: ${safeText(text)}`, '', 'この内容で休止する場合は「この内容で確定」と送ってください。', 'やめる場合は「キャンセル」で大丈夫です。'].join('\n'));
-      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル']), env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル', 'まず相談したい']), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
     if (user.current_flow === 'membership_cancel_reason' && (isCancelReasonOption(text) || safeText(text))) {
       await saveUserState(user.id, { current_flow: 'membership_cancel_confirm', membership_note: safeText(text) });
       const replyText = prefixWithName(user, [`終了理由: ${safeText(text)}`, '', 'この内容で終了する場合は「この内容で確定」と送ってください。', 'やめる場合は「キャンセル」で大丈夫です。'].join('\n'));
-      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル']), env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['この内容で確定', 'キャンセル', 'まず相談したい']), env.LINE_CHANNEL_ACCESS_TOKEN);
       return;
     }
 
@@ -4223,7 +4240,6 @@ if (text === 'プラン案内を見る') {
   );
   await rememberInteraction(finalUser, text, mergedText);
   return;
-      return;
     }
 
 if (text === 'このプランで進めたい' || text === '継続したい') {
