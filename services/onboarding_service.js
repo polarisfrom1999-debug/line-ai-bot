@@ -29,7 +29,14 @@ function safeText(value, fallback = '') {
 function buildQuickReplies(items = []) {
   return (Array.isArray(items) ? items : [])
     .filter(Boolean)
-    .map((item) => ({ type: 'action', action: { type: 'message', label: item, text: item } }));
+    .map((item) => ({
+      type: 'action',
+      action: {
+        type: 'message',
+        label: item,
+        text: item,
+      },
+    }));
 }
 
 function buildWelcomeReply() {
@@ -59,6 +66,62 @@ function buildGoalCaptureReply(selectedPersona = '') {
   };
 }
 
+function isValidPersona(value = '') {
+  const text = safeText(value);
+  return PERSONA_OPTIONS.includes(text);
+}
+
+function isOnboardingActive(user = {}) {
+  return String(user?.current_flow || '').trim() === 'onboarding'
+    && String(user?.onboarding_status || '').trim() === 'in_progress';
+}
+
+function isOnboardingDone(user = {}) {
+  return String(user?.onboarding_status || '').trim() === 'done'
+    || String(user?.current_step || '').trim() === ONBOARDING_STEPS.DONE;
+}
+
+function buildInitialOnboardingState() {
+  return {
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    current_step: ONBOARDING_STEPS.WELCOME,
+    selected_persona: null,
+    onboarding_goal: null,
+  };
+}
+
+function moveToPersonaSelect(user = {}) {
+  return {
+    ...user,
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    current_step: ONBOARDING_STEPS.PERSONA_SELECT,
+  };
+}
+
+function moveToGoalCapture(user = {}, selectedPersona = '') {
+  return {
+    ...user,
+    current_flow: 'onboarding',
+    onboarding_status: 'in_progress',
+    current_step: ONBOARDING_STEPS.GOAL_CAPTURE,
+    selected_persona: isValidPersona(selectedPersona)
+      ? safeText(selectedPersona)
+      : safeText(user?.selected_persona),
+  };
+}
+
+function finishOnboarding(user = {}, goalText = '') {
+  return {
+    ...user,
+    current_flow: null,
+    onboarding_status: 'done',
+    current_step: ONBOARDING_STEPS.DONE,
+    onboarding_goal: safeText(goalText),
+  };
+}
+
 module.exports = {
   PERSONA_OPTIONS,
   ONBOARDING_STEPS,
@@ -66,4 +129,11 @@ module.exports = {
   buildWelcomeReply,
   buildPersonaSelectReply,
   buildGoalCaptureReply,
+  isValidPersona,
+  isOnboardingActive,
+  isOnboardingDone,
+  buildInitialOnboardingState,
+  moveToPersonaSelect,
+  moveToGoalCapture,
+  finishOnboarding,
 };
