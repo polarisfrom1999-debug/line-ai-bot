@@ -3372,11 +3372,11 @@ async function getRecentConversationTurns(userId, limit = 6) {
   }
 }
 
-function shouldSkipConversationRouterFallback(text = '') {
+function shouldSkipConversationRouterFallback(user, text = '') {
   return (
     isHelpCommand(String(text || '').toLowerCase()) ||
     isDiagnosisStartTrigger(text) ||
-    isDiagnosisActiveTrigger(text) ||
+    isDiagnosisActive(user) ||
     isGraphMenuIntent(text) ||
     isWeightGraphIntent(text) ||
     isMealActivityGraphIntent(text) ||
@@ -3408,7 +3408,7 @@ function mapRecordCandidateTypeToCaptureType(type = '') {
 }
 
 async function tryHandleConversationRouterFallback(event, user, text) {
-  if (!text || shouldSkipConversationRouterFallback(text)) return false;
+  if (!text || shouldSkipConversationRouterFallback(user, text)) return false;
 
   const recentMessages = await getRecentConversationTurns(user.id, 6);
   const routing = await routeConversation({
