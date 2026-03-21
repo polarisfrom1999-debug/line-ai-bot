@@ -3619,7 +3619,256 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-  
+      let chatCapture = null;
+    try {
+      chatCapture = await analyzeChatCapture({ userText: text, user });
+
+      if (chatCapture?.capture_type === 'body_metrics') {
+        const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
+        const hasBodyFat = Number.isFinite(Number(chatCapture?.payload?.body_fat_percent));
+
+        if (hasWeight || hasBodyFat) {
+          if (chatCapture.action === 'auto_save' || chatCapture.auto_save) {
+            const savedReply = await saveBodyMetricsFromPayload(user, chatCapture.payload, text);
+            const replyText = prefixWithName(user, savedReply);
+
+            await replyMessage(
+              event.replyToken,
+              textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+              env.LINE_CHANNEL_ACCESS_TOKEN
+            );
+            await rememberInteraction(user, text, replyText);
+            return;
+          }
+
+          if (chatCapture.action === 'needs_confirmation' || chatCapture.needs_confirmation) {
+            setRecentCaptureConfirmation(user.line_user_id, {
+              capture_type: 'body_metrics',
+              payload: chatCapture.payload,
+              source_text: text,
+            });
+
+            const replyText = prefixWithName(
+              user,
+              chatCapture.reply_text || 'こちらでこう受け取っています。違っていなければ保存しておきますか？'
+            );
+
+            await replyMessage(
+              event.replyToken,
+              textMessageWithQuickReplies(replyText, ['はい、保存', '修正する', '今回は保存しない']),
+              env.LINE_CHANNEL_ACCESS_TOKEN
+            );
+            await rememberInteraction(user, text, replyText);
+            return;
+          }
+        }
+      }
+
+      if (
+        chatCapture?.capture_type === 'memory_note' &&
+        Array.isArray(chatCapture?.memory_candidates) &&
+        chatCapture.memory_candidates.length
+      ) {
+        setRecentCaptureConfirmation(user.line_user_id, {
+          capture_type: 'memory_note',
+          memory_candidates: chatCapture.memory_candidates,
+          source_text: text,
+          reply_text: chatCapture.reply_text || '',
+        });
+
+        const replyText = prefixWithName(
+          user,
+          chatCapture.reply_text || '今後の伴走に役立ちそうなので、このことは覚えておいてもよければ残しておきますか？'
+        );
+
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, ['はい、保存', '今回は保存しない', '修正する']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (chatCapture?.category === 'meal_record') {
+        if (chatCapture.action === 'auto_save') {
+          const savedMeal = await saveMealSmartPayload(user, chatCapture.payload || {}, text);
+
+          await saveUserState(user.id, {
+            last_checkin_at: new Date().toISOString(),
+            last_any_log_at: new Date().toISOString(),
+            last_meal_logged_at: new Date().toISOString(),
+          });
+
+          const totals = await getTodayEnergyTotals(user.id);
+          const nutritionLines = buildMealNutritionLines(savedMeal);
+
+          const replyText = prefixWithName(
+            user,
+            [
+              'ありがとうございます。食事記録として残しました。',
+              `料理: ${savedMeal.meal_label}`,
+              savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+              nutritionLines.length ? '' : null,
+              ...(nutritionLines.length ? nutritionLines : []),
+              `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+            ].filter(Boolean).join('\n')
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '予測', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (chatCapture.action === 'needs_confirmation') {
+          setRecentCaptureConfirmation(user.line_user_id, {
+            capture_type: 'meal_record',
+            payload: chatCapture.payload || {},
+            source_text: text,
+            reply_text: chatCapture.reply_text || '',
+          });
+
+          const replyText = prefixWithName(
+            user,
+            chatCapture.reply_text || '食事のこととして受け取っています。合っていれば保存しておきますか？'
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['はい、保存', '修正する', '今回は保存しない']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+
+      if (chatCapture?.category === 'exercise_record') {
+        if (chatCapture.action === 'auto_save') {
+          const exercisePayload = buildExerciseCaptureSavePayload(chatCapture.payload || {}, text);
+          await saveExerciseSmartPayload(user, exercisePayload, text);
+
+          await saveUserState(user.id, {
+            last_checkin_at: new Date().toISOString(),
+            last_any_log_at: new Date().toISOString(),
+            last_exercise_logged_at: new Date().toISOString(),
+          });
+
+          const totals = await getTodayEnergyTotals(user.id);
+          const energyText = buildEnergySummaryText({
+            estimatedBmr: user.estimated_bmr || 0,
+            estimatedTdee: user.estimated_tdee || 0,
+            intakeKcal: totals.intake_kcal || 0,
+            activityKcal: totals.activity_kcal || 0,
+          });
+
+          const replyText = prefixWithName(
+            user,
+            `ありがとうございます。運動記録として残しました。\n\n${energyText}`
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(
+              replyText,
+              [...buildExerciseFollowupQuickReplies(), '予測', 'グラフ']
+            ),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+
+        if (chatCapture.action === 'needs_confirmation') {
+          setRecentCaptureConfirmation(user.line_user_id, {
+            capture_type: 'exercise_record',
+            payload: chatCapture.payload || {},
+            source_text: text,
+            reply_text: chatCapture.reply_text || '',
+          });
+
+          const replyText = prefixWithName(
+            user,
+            chatCapture.reply_text || '運動のこととして受け取っています。合っていれば保存しておきますか？'
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['はい、保存', '修正する', '今回は保存しない']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+
+      if (
+        chatCapture?.category === 'pain_consult' &&
+        chatCapture.action === 'reply_only'
+      ) {
+        clearMealDraft(user.line_user_id);
+
+        const area = detectPainArea(text);
+        setSupportContext(user.line_user_id, { area, mode: 'pain' });
+
+        await saveUserState(user.id, {
+          pain_followup_status: 'watching',
+          pain_last_noted_at: new Date().toISOString(),
+          pain_area_last: area || null,
+        });
+
+        const consultGuide = buildHealthConsultationGuide(text);
+        const replyText = prefixWithName(
+          user,
+          [chatCapture.reply_text || 'それは気になりますね。', consultGuide].filter(Boolean).join('\n\n')
+        );
+
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, ['ストレッチしたい', '動画で見たい', '牛込先生に相談したい', '今日はここまで']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (
+        (chatCapture?.category === 'general_consult' || chatCapture?.category === 'mixed_record_consult') &&
+        chatCapture.action === 'reply_only'
+      ) {
+        const baseReply = chatCapture.reply_text || await defaultChatReply(user, text);
+        const consultGuide = buildHealthConsultationGuide(text);
+        const replyText = [baseReply, consultGuide].filter(Boolean).join('\n\n');
+
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      if (
+        chatCapture?.category === 'mixed_record_consult' &&
+        chatCapture.action === 'needs_confirmation'
+      ) {
+        const replyText = prefixWithName(
+          user,
+          chatCapture.reply_text || '食事や運動の記録として残せそうな内容もあります。まずは合っている部分から一緒に整えていきましょう。'
+        );
+
+        await replyMessage(
+          event.replyToken,
+          textMessageWithQuickReplies(replyText, ['修正する', '今回は保存しない', '相談を続ける']),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+    } catch (chatCaptureError) {
+      console.error('⚠️ chatCapture block failed:', chatCaptureError?.stack || chatCaptureError?.message || chatCaptureError);
+    }
 
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage(), env.LINE_CHANNEL_ACCESS_TOKEN);
