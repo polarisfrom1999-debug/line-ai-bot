@@ -3375,6 +3375,11 @@ async function handleTextMessage(event, user) {
       }
     }
 
+    const chatCapture = await analyzeChatCapture({
+      userText: text,
+      user,
+    });
+
     if (chatCapture?.capture_type === 'body_metrics') {
       const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
       const hasBodyFat = Number.isFinite(Number(chatCapture?.payload?.body_fat_percent));
