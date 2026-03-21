@@ -784,7 +784,8 @@ function shouldSuppressContextualPrefix(text = '') {
     isDeclineSaveText(raw) ||
     seemsMealCorrectionText(raw) ||
     seemsMealTextCandidate(raw) ||
-    isExplicitMealLogText(raw)
+    isExplicitMealLogText(raw) ||
+    /^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|パン|トースト|カレー|お茶|水)$/i.test(raw)
   ) {
     return true;
   }
@@ -989,7 +990,8 @@ function isMealCancelCommand(text) {
 }
 
 function isMealManualEditCommand(text) {
-  return String(text || '').trim() === '手書きで追加・修正';
+  const t = String(text || '').trim();
+  return ['手書きで追加・修正', '修正する', '訂正する', '違います', 'ちがいます'].includes(t);
 }
 
 function isMealAddPhotoCommand(text) {
@@ -1513,6 +1515,11 @@ function buildExerciseCaptureSavePayload(payload = {}, rawText = '') {
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
+
+  if (/^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|パン|トースト|カレー|お茶|水|コーヒー|うどん|そば|パスタ|おにぎり)$/i.test(t)) {
+    return true;
+  }
+
   return [
     'です', 'ではない', 'じゃない', '違います', 'ちがいます', '個です', '杯です', '本です',
     'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
@@ -1989,8 +1996,8 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   const { textOnly = false } = options;
   const mealLabel = normalizeMealLabelForDisplay(meal?.meal_label || '食事');
   const intro = mealLabel && mealLabel !== '食事'
-    ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
-    : '教えてもらえた内容を、いったん今の情報で整えてみました。';
+    ? `${mealLabel}で受け取っています。`
+    : '食事内容を受け取っています。';
 
   const lines = [
     intro,
@@ -2013,8 +2020,8 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   lines.push('');
   lines.push(
     textOnly
-      ? 'この内容でよければ保存で大丈夫です。違うところがあれば、そのまま言い直してください。'
-      : 'この内容でよければ保存で大丈夫です。違うところがあれば、ボタンでも言い直しでも大丈夫です。'
+      ? 'この内容でよければ保存してください。違うところがあれば、そのまま送り直して大丈夫です。'
+      : 'この内容でよければ保存してください。違うところがあれば、ボタンでも言い直しでも大丈夫です。'
   );
 
   return lines.join('\n');
@@ -3876,7 +3883,7 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
     markMealDraftManualCorrection(user.line_user_id, true);
     await replyMessage(
       event.replyToken,
-      'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です',
+      '違うところをそのまま送ってください。料理名だけでも大丈夫です。\n例: 豚骨ラーメン / 味噌汁追加 / ご飯半分 / お茶です',
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
     return true;
@@ -3995,25 +4002,6 @@ async function tryHandleConversationRouterFallback(event, user, text) {
         })
       );
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return true;
-    }
-
-    if (captureType === 'meal_record') {
-      const mealPayload = routing.top_record_candidate.parsed_payload || {};
-      const pendingMealDraft = buildMealDraftFromPayload(mealPayload, text);
-      setMealDraft(user.line_user_id, pendingMealDraft, {
-        awaitingAdditionalPhoto: false,
-        manualCorrectionExpected: false,
-      });
-      clearRecentCaptureConfirmation(user.line_user_id);
-
-      const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(pendingMealDraft));
-      await replyMessage(
-        event.replyToken,
-        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
       await rememberInteraction(user, text, replyText);
       return true;
     }
@@ -4278,7 +4266,7 @@ async function handleTextMessage(event, user) {
         }
 
         clearRecentCaptureConfirmation(user.line_user_id);
-        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。たとえば「豚骨ラーメン」「お茶です」「2個です」のように短くで大丈夫です。こちらで整えます。');
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。料理名だけでも大丈夫です。こちらで整えます。');
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
