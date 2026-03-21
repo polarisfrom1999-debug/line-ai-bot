@@ -3599,7 +3599,7 @@ async function handleTextMessage(event, user) {
     ) {
       const baseReply = chatCapture.reply_text || await defaultChatReply(user, text);
       const consultGuide = buildHealthConsultationGuide(text);
-      const replyText = [baseReply, consultGuide].filter(Boolean).join('\n\n');
+      const replyText = prefixWithName(user, [baseReply, consultGuide].filter(Boolean).join('\n\n'));
 
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
@@ -3617,7 +3617,7 @@ async function handleTextMessage(event, user) {
 
       await replyMessage(
         event.replyToken,
-        textMessageWithQuickReplies(replyText, ['修正する', '今回は保存しない', '相談を続ける']),
+        textMessageWithQuickReplies(replyText, ['牛込先生に相談したい', '今回は保存しない', 'そのまま話を続ける']),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
       await rememberInteraction(user, text, replyText);
