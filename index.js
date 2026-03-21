@@ -649,54 +649,30 @@ function hasConsultationLikeIntent(text) {
 }
 
 
-function normalizeConsultGuideText(text = '') {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[　\s]+/g, '')
-    .replace(/[!！?？。、,.]/g, '');
-}
-
-function detectConsultRiskLevel(text = '') {
-  const t = normalizeConsultGuideText(text);
-  if (!t) return 'none';
-
-  const emergencyWords = [
-    '救急', '緊急', '意識がない', '意識ない', '息ができない', '息苦しい', '呼吸できない', '呼吸苦',
-    '胸が痛い', '胸痛', '激痛', '強い胸痛', 'ろれつが回らない', '片麻痺', '麻痺', 'しびれが強い',
-    '倒れた', '失神', '吐血', '下血', 'けいれん', '痙攣', '頭を強く打った', '強く打った',
-    '骨が折れた', '骨折した', '出血が止まらない', '歩けないほど痛い', '立てないほど痛い'
-  ];
-
-  const urgentWords = [
-    'かなり痛い', 'すごく痛い', '強い痛み', '痛みが強い', '悪化している', '悪化した',
-    '腫れがひどい', '熱をもっている', '熱感', 'しびれ', '力が入らない', '動かせない',
-    '眠れないほど痛い', '長引いている', 'ずっと痛い', '何日も痛い', '数日続く', '発熱', '熱がある'
-  ];
-
-  if (emergencyWords.some((w) => t.includes(normalizeConsultGuideText(w)))) return 'emergency';
-  if (urgentWords.some((w) => t.includes(normalizeConsultGuideText(w)))) return 'urgent';
-  return 'none';
-}
-
-function replyAlreadyContainsMedicalGuide(replyText = '') {
-  const t = normalizeConsultGuideText(replyText);
+function shouldAppendConsultGuide(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(text);
   if (!t) return false;
 
-  const guideHints = [
-    '医療機関', '受診', '病院', '整形外科', '救急', '相談してください', '受診してください', '早めに相談', '無理をしないで'
+  if (isContinueConsultText(raw)) return false;
+
+  const urgentPatterns = [
+    '強い痛み', 'かなり痛い', '激痛', '悪化', 'ひどくなった', '長引く', '続いている',
+    '歩けない', '歩行困難', '眠れない', 'しびれが強い', '力が入らない',
+    '腫れが強い', '熱を持つ', '夜も痛い', '夜間痛', '麻痺',
   ];
 
-  return guideHints.some((w) => t.includes(normalizeConsultGuideText(w)));
-}
+  if (urgentPatterns.some((p) => t.includes(normalizeTextLoose(p)))) return true;
 
-function shouldAppendConsultGuide(text, assistantReply = '') {
-  const raw = String(text || '').trim();
-  if (!raw) return false;
-  if (isContinueConsultText(raw)) return false;
-  if (replyAlreadyContainsMedicalGuide(assistantReply)) return false;
+  const severeCombo =
+    (t.includes(normalizeTextLoose('しびれ')) && t.includes(normalizeTextLoose('強い'))) ||
+    (t.includes(normalizeTextLoose('腫れ')) && t.includes(normalizeTextLoose('強い'))) ||
+    (t.includes(normalizeTextLoose('痛み')) && t.includes(normalizeTextLoose('悪化'))) ||
+    (t.includes(normalizeTextLoose('痛い')) && t.includes(normalizeTextLoose('歩けない')));
 
-  const risk = detectConsultRiskLevel(raw);
-  return risk === 'urgent' || risk === 'emergency';
+  if (severeCombo) return true;
+
+  return false;
 }
 
 function buildNaturalClarificationReply(user, kind = 'general') {
@@ -818,6 +794,11 @@ function isContinueConsultText(text) {
 function isMealSaveCommand(text) {
   const t = String(text || '').trim();
   return ['この内容で食事保存', '食事を保存', '保存', 'これで保存', 'この内容で保存'].includes(t);
+}
+
+function isImmediateMealSaveCommand(text) {
+  const t = String(text || '').trim();
+  return ['この内容で食事保存', '食事を保存', '保存', 'これで保存', 'この内容で保存', 'はい、保存', 'はい保存'].includes(t);
 }
 
 function isMealCancelCommand(text) {
@@ -1144,7 +1125,16 @@ function clearRecentCaptureConfirmation(lineUserId) {
 }
 
 function isConfirmSaveText(text) {
-  return ['はい、保存', 'はい保存', '保存する', 'この内容で保存', 'はい'].includes(String(text || '').trim());
+  return [
+    'はい、保存',
+    'はい保存',
+    '保存する',
+    'この内容で保存',
+    'この内容で食事保存',
+    '食事を保存',
+    '保存',
+    'はい',
+  ].includes(String(text || '').trim());
 }
 
 function isDeclineSaveText(text) {
@@ -3500,7 +3490,7 @@ async function tryHandleConversationRouterFallback(event, user, text) {
 
   if (routing.route === 'consultation' || routing.route === 'smalltalk') {
     const baseReply = await defaultChatReply(user, text);
-    const consultGuide = routing.route === 'consultation' && shouldAppendConsultGuide(text, baseReply)
+    const consultGuide = routing.route === 'consultation' && shouldAppendConsultGuide(text)
       ? buildHealthConsultationGuide(text)
       : '';
     const replyText = prefixWithName(user, [baseReply, consultGuide].filter(Boolean).join('\n\n'));
@@ -3559,6 +3549,9 @@ async function handleTextMessage(event, user) {
       await rememberInteraction(updatedUser || user, text, replyText);
       return;
     }
+
+    // グラフ分岐は handleTextMessage の前半へ移動
+
     const pendingConfirmation = getRecentCaptureConfirmation(user.line_user_id);
     if (pendingConfirmation) {
       if (isConfirmSaveText(text)) {
@@ -5006,7 +4999,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
       return;
     }
 
-    if (currentMealDraft && isMealSaveCommand(text)) {
+    if (currentMealDraft && isImmediateMealSaveCommand(text)) {
       const savedMeal = await saveMealToLog(user.id, currentMealDraft.meal);
       clearMealDraft(user.line_user_id);
 
