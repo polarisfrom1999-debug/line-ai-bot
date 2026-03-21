@@ -117,4 +117,10 @@ async function analyzeChatCapture({ userText = "" } = {}) {
 
 module.exports = {
   analyzeChatCapture,
+  normalizeText,
+  parseNumber,
+  extractAllNumbers,
+  parseBodyMetrics,
+  buildBodyMetricReply,
+  looksLikeConsultation,
 };
