@@ -1376,9 +1376,6 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
     lines.push('体重も分かれば、そのまま続けて送ってくださいね。');
   }
 
-  if (bodyFatSaveResult?.skipped) {
-    lines.push('※ 体脂肪率の履歴保存は、body_fat_logs テーブルを作ると安定して残せます。');
-  }
 
   return lines.join('\n');
 }
@@ -1845,11 +1842,38 @@ function roundMacroGram(value) {
   return Math.round(n * 10) / 10;
 }
 
+function normalizeMealLabelForDisplay(value = '') {
+  let label = safeText(value || '食事', 120);
+  if (!label) return '食事';
+
+  label = label
+    .replace(/^(今日は?|さっき|今|夜|朝|昼)[、\s]*/g, '')
+    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|食べる|たべる|食べたよ|たべたよ|食べたよー|食べたよ〜|食べたよ〜|食べましたよ|食べましたよー)$/g, '')
+    .replace(/(?:飲んだ|のみました|飲みました|飲んだよ)$/g, '')
+    .replace(/[。！!？?]+$/g, '')
+    .trim();
+
+  if (/ラーメン食べた|らーめん食べた/.test(label)) return 'ラーメン';
+  if (/^らーめん$/.test(label)) return 'ラーメン';
+  if (!label) return '食事';
+  return label;
+}
+
+function hasMeaningfulMealNutrition(meal) {
+  const protein = roundMacroGram(meal?.protein_g);
+  const fat = roundMacroGram(meal?.fat_g);
+  const carbs = roundMacroGram(meal?.carbs_g);
+  const values = [protein, fat, carbs].filter((v) => v != null);
+  if (!values.length) return false;
+  return values.some((v) => Number(v) > 0);
+}
+
 function buildMealNutritionLines(meal) {
   const protein = roundMacroGram(meal?.protein_g);
   const fat = roundMacroGram(meal?.fat_g);
   const carbs = roundMacroGram(meal?.carbs_g);
   if (protein == null && fat == null && carbs == null) return [];
+  if (![protein, fat, carbs].some((v) => v != null && Number(v) > 0)) return [];
 
   return [
     '栄養の目安',
@@ -1880,7 +1904,7 @@ function normalizeMealCorrectionText(text) {
 
 function buildMealReplyWithSaveGuide(meal, options = {}) {
   const { textOnly = false } = options;
-  const mealLabel = safeText(meal?.meal_label || '食事', 120);
+  const mealLabel = normalizeMealLabelForDisplay(meal?.meal_label || '食事');
   const intro = mealLabel && mealLabel !== '食事'
     ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
     : '教えてもらえた内容を、いったん今の情報で整えてみました。';
@@ -2229,7 +2253,7 @@ async function saveMealToLog(userId, meal) {
   const insertPayload = {
     user_id: userId,
     eaten_at: toIsoStringInTZ(new Date(), TZ),
-    meal_label: safeText(meal.meal_label || '食事', 100),
+    meal_label: normalizeMealLabelForDisplay(meal.meal_label || '食事'),
     food_items: Array.isArray(meal.food_items) ? meal.food_items : [],
     estimated_kcal: meal.estimated_kcal ?? null,
     kcal_min: meal.kcal_min ?? null,
@@ -2338,17 +2362,35 @@ async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
 
 function buildFallbackMealFromText(rawText = '', payload = {}) {
   const sourceText = safeText(rawText || payload.raw_text || payload.source_text || payload.meal_label || '食事', 120);
-  const mealLabel = safeText(payload.meal_label || sourceText || '食事', 120);
+  const mealLabel = normalizeMealLabelForDisplay(payload.meal_label || sourceText || '食事');
+  const sourceNorm = String(sourceText || '').replace(/\s+/g, '').toLowerCase();
+
+  let estimatedKcal = Number.isFinite(Number(payload.estimated_kcal)) ? Number(payload.estimated_kcal) : null;
+  let kcalMin = Number.isFinite(Number(payload.kcal_min)) ? Number(payload.kcal_min) : null;
+  let kcalMax = Number.isFinite(Number(payload.kcal_max)) ? Number(payload.kcal_max) : null;
+  let proteinG = Number.isFinite(Number(payload.protein_g)) ? Number(payload.protein_g) : null;
+  let fatG = Number.isFinite(Number(payload.fat_g)) ? Number(payload.fat_g) : null;
+  let carbsG = Number.isFinite(Number(payload.carbs_g)) ? Number(payload.carbs_g) : null;
+
+  if (/ラーメン|らーめん/.test(sourceNorm)) {
+    if (estimatedKcal == null || estimatedKcal <= 0) estimatedKcal = 550;
+    if (kcalMin == null || kcalMin <= 0) kcalMin = 450;
+    if (kcalMax == null || kcalMax <= 0) kcalMax = 700;
+    if (proteinG == null || proteinG <= 0) proteinG = 20;
+    if (fatG == null || fatG <= 0) fatG = 18;
+    if (carbsG == null || carbsG <= 0) carbsG = 65;
+  }
+
   return {
     is_meal: true,
     meal_label: mealLabel || '食事',
     food_items: Array.isArray(payload.food_items) ? payload.food_items : [],
-    estimated_kcal: Number.isFinite(Number(payload.estimated_kcal)) ? Number(payload.estimated_kcal) : null,
-    kcal_min: Number.isFinite(Number(payload.kcal_min)) ? Number(payload.kcal_min) : null,
-    kcal_max: Number.isFinite(Number(payload.kcal_max)) ? Number(payload.kcal_max) : null,
-    protein_g: Number.isFinite(Number(payload.protein_g)) ? Number(payload.protein_g) : null,
-    fat_g: Number.isFinite(Number(payload.fat_g)) ? Number(payload.fat_g) : null,
-    carbs_g: Number.isFinite(Number(payload.carbs_g)) ? Number(payload.carbs_g) : null,
+    estimated_kcal: estimatedKcal,
+    kcal_min: kcalMin,
+    kcal_max: kcalMax,
+    protein_g: proteinG,
+    fat_g: fatG,
+    carbs_g: carbsG,
     confidence: Number.isFinite(Number(payload.confidence)) ? Number(payload.confidence) : 0.45,
     ai_comment: '教えてもらえた内容で食事記録としてまとめました。',
     raw_model_json: { source: 'fallback_meal_text', raw_text: sourceText, original_payload: payload },
@@ -2545,7 +2587,7 @@ function buildLegacyMealFromGeminiResult(result) {
   }
   if (confirmationQuestions.length) commentLines.push(...confirmationQuestions.map((x) => `・${x}`));
 
-  const mealLabel = safeText(normalized.meal_label || '', 100) || safeText(mainItems.map((item) => item.name).join(' / ') || '食事', 100);
+  const mealLabel = normalizeMealLabelForDisplay(normalized.meal_label || '') || normalizeMealLabelForDisplay(mainItems.map((item) => item.name).join(' / ') || '食事');
 
   return {
     is_meal: true,
@@ -4001,7 +4043,7 @@ async function handleTextMessage(event, user) {
           const replyText = prefixWithName(
             user,
             [
-              '受け取れているので、食事記録として残しておきました。',
+              '食事記録として残しておきました。',
               `料理: ${savedMeal.meal_label}`,
               savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
               nutritionLines.length ? '' : null,
@@ -4192,7 +4234,7 @@ async function handleTextMessage(event, user) {
         const replyText = prefixWithName(
           user,
           [
-            '受け取れているので、食事記録として残しておきました。',
+            '食事記録として残しておきました。',
             `料理: ${savedMeal.meal_label}`,
             savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
             nutritionLines.length ? '' : null,
@@ -4550,7 +4592,7 @@ if (text === 'プラン案内を見る') {
         const replyText = prefixWithName(
           user,
           [
-            '受け取れているので、食事記録として残しておきました。',
+            '食事記録として残しておきました。',
             `料理: ${savedMeal.meal_label}`,
             savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
             nutritionLines.length ? '' : null,
