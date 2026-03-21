@@ -3,24 +3,18 @@
 /**
  * services/chat_capture_service.js
  *
- * 目的:
- * - 直前会話から ChatGPT に渡すための「会話記憶メモ」を軽く作る
- * - 雑談 / 相談 / 記録 / 手続き の流れを次のターンへ渡しやすくする
- * - 高齢者相手でも機械っぽくならない会話継続の補助
- *
- * 注意:
- * - 既存の大きな chat_capture_service.js がある場合でも、
- *   補助関数群として使えるようにしている
- * - 最終的に index.js から必要関数だけ呼べる形
+ * 互換修正版:
+ * - 既存 index.js から呼ばれている analyzeChatCapture を残す
+ * - 新しい補助関数群もそのまま使える
  */
 
 const { safeText } = require('./chat_context_service');
+const { routeConversation } = require('./chatgpt_conversation_router');
 
 function summarizeUserState(user = {}) {
   if (!user || typeof user !== 'object') return '';
 
   const parts = [];
-
   if (user.display_name) parts.push(`名前: ${safeText(user.display_name)}`);
   if (user.nickname) parts.push(`呼び名: ${safeText(user.nickname)}`);
   if (user.goal) parts.push(`目標: ${safeText(user.goal)}`);
@@ -28,7 +22,6 @@ function summarizeUserState(user = {}) {
   if (user.ai_tone_label) parts.push(`AIトーン: ${safeText(user.ai_tone_label)}`);
   if (user.trial_status) parts.push(`体験状況: ${safeText(user.trial_status)}`);
   if (user.current_plan) parts.push(`プラン: ${safeText(user.current_plan)}`);
-
   return parts.join(' / ');
 }
 
@@ -101,22 +94,67 @@ function buildNaturalFollowupSuggestion({
   if (latestRoute === 'consultation') {
     return '気持ちや状況をもう少しだけ聞きながら寄り添って返す';
   }
-
   if (latestRoute === 'smalltalk') {
     return '無理に記録や案内へ進めず、自然に会話を続ける';
   }
-
   if (latestRoute === 'record_candidate') {
     if (topicHints.hasMealTopic) return '食事記録として整理しつつ、合っているかやさしく確認する';
     if (topicHints.hasExerciseTopic) return '運動記録として整理しつつ、時間や内容をやさしく確認する';
     return '記録候補として整理しつつ、保存を急がせず確認する';
   }
-
   if (latestRoute === 'procedure') {
     return '希望する手続きだけを簡潔に案内する';
   }
-
   return '無理に分類せず、自然に一言聞き返して意味を確かめる';
+}
+
+/**
+ * 既存互換:
+ * index.js から analyzeChatCapture(...) として呼ばれても落ちないようにする
+ */
+async function analyzeChatCapture({
+  user = null,
+  text = '',
+  currentUserText = '',
+  recentMessages = [],
+  profileSummary = '',
+} = {}) {
+  const inputText = safeText(currentUserText || text);
+
+  const routed = await routeConversation({
+    user,
+    currentUserText: inputText,
+    recentMessages,
+    profileSummary,
+  });
+
+  const latestRoute = routed?.route || 'unknown';
+  const topRecordCandidate = routed?.top_record_candidate || null;
+  const topicHints = routed?.meta?.topic_hints || {};
+
+  return {
+    success: true,
+    route: latestRoute,
+    category: latestRoute,
+    isAmbiguous: Boolean(routed?.is_ambiguous),
+    needsClarification: Boolean(routed?.needs_clarification),
+    replyText: safeText(routed?.reply_text),
+    recordCandidate: topRecordCandidate,
+    recordCandidates: Array.isArray(routed?.record_candidates) ? routed.record_candidates : [],
+    topicHints,
+    followupSuggestion: buildNaturalFollowupSuggestion({
+      latestRoute,
+      topicHints,
+    }),
+    memorySnippet: buildCompanionMemorySnippet({
+      user,
+      recentMessages,
+      latestRoute,
+      latestSummary: inputText,
+      latestRecordCandidate: topRecordCandidate,
+    }),
+    raw: routed,
+  };
 }
 
 module.exports = {
@@ -125,4 +163,5 @@ module.exports = {
   buildCompanionMemorySnippet,
   buildAssistantReplyGuard,
   buildNaturalFollowupSuggestion,
+  analyzeChatCapture,
 };
