@@ -217,6 +217,15 @@ const {
 const {
   analyzeChatCapture,
 } = require('./services/chat_capture_service');
+const {
+  routeConversation,
+} = require('./services/chatgpt_conversation_router');
+const {
+  buildConfirmationMessage,
+} = require('./services/record_confirmation_service');
+const {
+  buildSoftFollowup,
+} = require('./services/chat_recovery_service');
 let analyzePainText = null;
 let generatePainResponse = null;
 let looksLikePainConsultation = null;
@@ -249,6 +258,71 @@ try {
     : null;
 } catch (error) {
   console.warn('⚠️ report_draft_service is not available:', error?.message || error);
+}
+
+let buildWeeklyReportDraftSimple = null;
+let buildMonthlyReportDraftSimple = null;
+
+try {
+  const reportService = require('./services/report_service');
+  buildWeeklyReportDraftSimple = typeof reportService.buildWeeklyReportDraft === 'function'
+    ? reportService.buildWeeklyReportDraft
+    : null;
+  buildMonthlyReportDraftSimple = typeof reportService.buildMonthlyReportDraft === 'function'
+    ? reportService.buildMonthlyReportDraft
+    : null;
+} catch (error) {
+  console.warn('⚠️ report_service is not available:', error?.message || error);
+}
+
+if (!generateWeeklyReportDraft && buildWeeklyReportDraftSimple) {
+  generateWeeklyReportDraft = (input = {}) => {
+    const weights = Array.isArray(input.weights) ? input.weights : [];
+    const firstWeight = Number(weights[0]?.weight_kg);
+    const lastWeight = Number(weights[weights.length - 1]?.weight_kg);
+    const weightChangeKg = Number.isFinite(firstWeight) && Number.isFinite(lastWeight)
+      ? Math.round((lastWeight - firstWeight) * 10) / 10
+      : null;
+
+    return {
+      draft_text: buildWeeklyReportDraftSimple({
+        userName: input.user_name || '',
+        weightChangeKg,
+        mealRecordCount: Array.isArray(input.meals) ? input.meals.length : null,
+        exerciseRecordCount: Array.isArray(input.exercises) ? input.exercises.length : null,
+      }),
+      summary: {
+        highlights: [],
+        next_actions: [],
+      },
+    };
+  };
+}
+
+if (!generateMonthlyReportDraft && buildMonthlyReportDraftSimple) {
+  generateMonthlyReportDraft = (input = {}) => {
+    const weights = Array.isArray(input.weights) ? input.weights : [];
+    const firstWeight = Number(weights[0]?.weight_kg);
+    const lastWeight = Number(weights[weights.length - 1]?.weight_kg);
+    const totalWeightChangeKg = Number.isFinite(firstWeight) && Number.isFinite(lastWeight)
+      ? Math.round((lastWeight - firstWeight) * 10) / 10
+      : null;
+
+    return {
+      draft_text: buildMonthlyReportDraftSimple({
+        userName: input.user_name || '',
+        monthLabel: input.period_label || '',
+        totalWeightChangeKg,
+        highlight: Array.isArray(input.meals) && input.meals.length
+          ? `食事記録 ${input.meals.length}件 / 運動記録 ${Array.isArray(input.exercises) ? input.exercises.length : 0}件`
+          : '',
+      }),
+      summary: {
+        highlights: [],
+        next_actions: [],
+      },
+    };
+  };
 }
 
 let createPainAdminMemo = null;
@@ -3266,6 +3340,148 @@ async function saveMembershipAdminMemo(input = {}) {
   safeConsoleLog('[MEMBERSHIP_ADMIN_MEMO]', memo?.memo_text || memo);
 }
 
+
+async function getRecentConversationTurns(userId, limit = 6) {
+  try {
+    const { data, error } = await supabase
+      .from('conversation_memories')
+      .select('source_text, assistant_reply, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (isMissingRelationError(error)) return [];
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? data.slice().reverse() : [];
+    const messages = [];
+
+    for (const row of rows) {
+      const userText = String(row?.source_text || '').trim();
+      const aiText = String(row?.assistant_reply || '').trim();
+      if (userText) messages.push({ role: 'user', text: userText, timestamp: row?.created_at || null });
+      if (aiText) messages.push({ role: 'assistant', text: aiText, timestamp: row?.created_at || null });
+    }
+
+    return messages.slice(-12);
+  } catch (error) {
+    console.error('⚠️ getRecentConversationTurns failed:', error?.message || error);
+    return [];
+  }
+}
+
+function shouldSkipConversationRouterFallback(text = '') {
+  return (
+    isHelpCommand(String(text || '').toLowerCase()) ||
+    isDiagnosisStartTrigger(text) ||
+    isDiagnosisActiveTrigger(text) ||
+    isGraphMenuIntent(text) ||
+    isWeightGraphIntent(text) ||
+    isMealActivityGraphIntent(text) ||
+    isLabGraphIntent(text) ||
+    isPredictionIntent(text) ||
+    isWeeklyReportRequest(text) ||
+    isMonthlyReportRequest(text) ||
+    isProfileConfirmCommand(text) ||
+    isProfileEditCommand(text) ||
+    isProfileResetCommand(text) ||
+    isInputHelpIntent(text) ||
+    isPastDateHelpIntent(text) ||
+    isCurrentDateTimeQuestion(text) ||
+    text === '予測' ||
+    text === 'グラフ' ||
+    text === '診断スタート' ||
+    text === '7日無料ライト体験へ進む' ||
+    text === 'プラン案内を見る' ||
+    text === 'スペシャル希望'
+  );
+}
+
+function mapRecordCandidateTypeToCaptureType(type = '') {
+  const t = String(type || '').trim();
+  if (t === 'meal') return 'meal_record';
+  if (t === 'exercise') return 'exercise_record';
+  if (t === 'weight' || t === 'body_fat') return 'body_metrics';
+  return '';
+}
+
+async function tryHandleConversationRouterFallback(event, user, text) {
+  if (!text || shouldSkipConversationRouterFallback(text)) return false;
+
+  const recentMessages = await getRecentConversationTurns(user.id, 6);
+  const routing = await routeConversation({
+    user,
+    currentUserText: text,
+    recentMessages,
+    profileSummary: [
+      user?.goal || '',
+      user?.purpose || '',
+      user?.current_plan || user?.selected_plan || '',
+      user?.trial_status || '',
+    ].filter(Boolean).join(' / '),
+  });
+
+  if (!routing) return false;
+
+  if (routing.is_ambiguous && routing.needs_clarification && routing.reply_text) {
+    const replyText = prefixWithName(user, routing.reply_text);
+    await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  if (routing.route === 'record_candidate' && routing.top_record_candidate) {
+    const captureType = mapRecordCandidateTypeToCaptureType(routing.top_record_candidate.type);
+
+    if (!captureType) {
+      const replyText = prefixWithName(
+        user,
+        buildSoftFollowup({
+          route: routing.route,
+          userText: text,
+          topicHints: routing?.meta?.topic_hints || {},
+        })
+      );
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return true;
+    }
+
+    const confirmation = buildConfirmationMessage(routing.top_record_candidate);
+    setRecentCaptureConfirmation(user.line_user_id, {
+      capture_type: captureType,
+      payload: routing.top_record_candidate.parsed_payload || {},
+      source_text: text,
+      reply_text: confirmation.text,
+      record_candidate: routing.top_record_candidate,
+    });
+
+    const replyText = prefixWithName(user, confirmation.text);
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(replyText, ['保存', '訂正する', '今回は保存しない']),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  if (routing.route === 'consultation' || routing.route === 'smalltalk') {
+    const baseReply = await defaultChatReply(user, text);
+    const consultGuide = routing.route === 'consultation' && shouldAppendConsultGuide(text)
+      ? buildHealthConsultationGuide(text)
+      : '';
+    const replyText = prefixWithName(user, [baseReply, consultGuide].filter(Boolean).join('\n\n'));
+    await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  return false;
+}
+
 async function handleTextMessage(event, user) {
   const text = String(event.message.text || '').trim();
   const lower = text.toLowerCase();
@@ -3709,6 +3925,10 @@ async function handleTextMessage(event, user) {
     }
 
   
+
+    if (await tryHandleConversationRouterFallback(event, user, text)) {
+      return;
+    }
 
     if (isHelpCommand(lower)) {
       await replyMessage(event.replyToken, helpMessage(), env.LINE_CHANNEL_ACCESS_TOKEN);
