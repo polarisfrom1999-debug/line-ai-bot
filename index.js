@@ -1150,6 +1150,7 @@ function isExplicitMealLogText(text) {
   if (shouldAvoidMealExerciseAutoCapture(text)) return false;
   if (isMealDesireOrFeelingText(t)) return false;
   if (hasQuestionIntent(text)) return false;
+  if (hasPainOrMedicalContext(text)) return false;
 
   const directPatterns = [
     '食べた', '飲んだ', '食べました', '飲みました', '食べたよ', '飲んだよ', '食べたです',
@@ -3900,6 +3901,14 @@ if (text === 'プラン案内を見る') {
         return;
       }
     }
+
+    if (isContinueConsultText(text)) {
+      const replyText = prefixWithName(user, 'もちろんです。このまま続けましょう。気になっていることを、そのままの言い方で教えてくださいね。');
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
     const guideIntent = smartFlowResult?.next === 'consultation_chat'
       ? null
       : detectGuideIntent(text);
@@ -4756,7 +4765,9 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     if (text === '飲み物を訂正' || text === '量を訂正') {
-      await replyMessage(event.replyToken, 'そのまま文字で教えてください。例: ジャスミンティーです / お酒ではないです / 大福は2個です', env.LINE_CHANNEL_ACCESS_TOKEN);
+      const replyText = prefixWithName(user, 'ありがとうございます。違うところだけ、そのまま文字で教えてくださいね。例: ジャスミンティーです / お酒ではないです / 大福は2個です');
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
