@@ -58,7 +58,9 @@ function isExerciseRecord(text = '') {
 function isMealRecord(text = '') {
   return hasAny(text, [
     '食べた', '食事', '朝ごはん', '昼ごはん', '夜ごはん', '朝食', '昼食', '夕食', 'おやつ', '飲んだ'
-  ]) && !hasAny(text, ['食べたい', 'お腹いっぱい食べたい', '食欲']);
+  ]) && !hasAny(text, [
+    '食べたい', 'お腹いっぱい食べたい', '食欲'
+  ]);
 }
 
 function buildWeightCandidate(text = '') {
@@ -88,15 +90,6 @@ function buildExerciseCandidate(text = '') {
     type: 'exercise',
     parsed_payload: { raw_text: String(text || '').trim() },
     confidence: 0.8,
-    source_text: text,
-  };
-}
-
-function buildMealCandidate(text = '') {
-  return {
-    type: 'meal',
-    parsed_payload: { raw_text: String(text || '').trim() },
-    confidence: 0.78,
     source_text: text,
   };
 }
@@ -163,13 +156,20 @@ async function routeConversation({ currentUserText = '' } = {}) {
     };
   }
 
+  // 食事は record_candidate に送らず、既存の Gemini / 従来フローに渡す
+  // ここで smalltalk 扱いにしつつ、meal ヒントだけ残す
   if (isMealRecord(text)) {
     return {
-      route: 'record_candidate',
+      route: 'smalltalk',
       is_ambiguous: false,
       needs_clarification: false,
-      top_record_candidate: buildMealCandidate(text),
-      meta: { topic_hints: { meal: true } },
+      meta: {
+        topic_hints: {
+          meal: true,
+          meal_like_text: true,
+          use_legacy_meal_flow: true,
+        },
+      },
     };
   }
 
