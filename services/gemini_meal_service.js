@@ -121,7 +121,9 @@ function normalizeMealLabelText(label = '') {
 
   value = value
     .replace(/緑の飲み物/g, 'お茶')
+    .replace(/緑茶|お茶っぽい飲み物|温かい飲み物/g, 'お茶')
     .replace(/グリーンドリンク/g, 'お茶')
+    .replace(/中華風煮込みラーメン/g, 'ラーメン')
     .replace(/^らーめん$/i, 'ラーメン')
     .replace(/^ぱん$/i, 'パン');
 
@@ -144,6 +146,9 @@ function chooseNaturalMealLabel(raw = {}) {
   if (direct) {
     if ((direct === '中華風煮込み' || direct === '煮込み') && itemNames.some((name) => /ラーメン|麺|うどん|そば/.test(name))) {
       return itemNames.find((name) => /ラーメン|麺|うどん|そば/.test(name)) || direct;
+    }
+    if ((direct === '中華風煮込み' || direct === '煮込み') && itemNames.length) {
+      return itemNames[0] || direct;
     }
     return direct;
   }
