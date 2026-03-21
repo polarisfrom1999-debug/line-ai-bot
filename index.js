@@ -82,10 +82,10 @@ const {
   isPredictionIntent,
 } = require('./services/prediction_service');
 const {
-  buildLabGraphMessage,
-  buildEnergyGraphMessage,
-  buildWeightGraphMessage,
-  buildGraphMenuQuickReplies,
+  buildLabGraphMessage: importedBuildLabGraphMessage,
+  buildEnergyGraphMessage: importedBuildEnergyGraphMessage,
+  buildWeightGraphMessage: importedBuildWeightGraphMessage,
+  buildGraphMenuQuickReplies: importedBuildGraphMenuQuickReplies,
 } = require('./services/graph_service');
 const {
   findPanelDateFromInput,
@@ -3459,7 +3459,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
   if (isGraphMenuIntent(text)) {
     await replyMessage(
       event.replyToken,
-      textMessageWithQuickReplies(prefixWithName(user, '見たいグラフを選んでくださいね。'), buildGraphMenuQuickReplies()),
+      textMessageWithQuickReplies(prefixWithName(user, '見たいグラフを選んでくださいね。'), safeBuildGraphMenuQuickReplies()),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
     return true;
@@ -3467,7 +3467,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
 
   if (isWeightGraphIntent(text)) {
     const rows = await getRecentWeightRows(user.id, 30);
-    const graph = buildWeightGraphMessage(rows);
+    const graph = safeBuildWeightGraphMessage(rows);
     const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', 'HbA1cグラフ', 'LDLグラフ', '予測'])];
     if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
     await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3476,7 +3476,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
 
   if (isEnergyGraphIntent(text)) {
     const rows = await getSevenDayEnergyRows(user.id);
-    const graph = buildEnergyGraphMessage(rows);
+    const graph = safeBuildEnergyGraphMessage(rows);
     const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['体重グラフ', 'HbA1cグラフ', 'LDLグラフ', '予測'])];
     if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
     await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3485,7 +3485,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
 
   if (isHbA1cGraphIntent(text)) {
     const recentRows = await getRecentLabResults(supabase, user.id, 12);
-    const graph = buildLabGraphMessage(recentRows, 'hba1c');
+    const graph = safeBuildLabGraphMessage(recentRows, 'hba1c');
     const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
     if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
     await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3494,7 +3494,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
 
   if (isLdlGraphIntent(text)) {
     const recentRows = await getRecentLabResults(supabase, user.id, 12);
-    const graph = buildLabGraphMessage(recentRows, 'ldl');
+    const graph = safeBuildLabGraphMessage(recentRows, 'ldl');
     const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
     if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
     await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3503,7 +3503,7 @@ async function tryHandleGraphIntentMessage(event, user, text) {
 
   if (isLabGraphIntent(text)) {
     const recentRows = await getRecentLabResults(supabase, user.id, 12);
-    const graph = buildLabGraphMessage(recentRows, 'hba1c');
+    const graph = safeBuildLabGraphMessage(recentRows, 'hba1c');
     const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '体重グラフ', '食事活動グラフ'])];
     if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
     await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4826,7 +4826,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
         event.replyToken,
         textMessageWithQuickReplies(
           prefixWithName(user, '見たいグラフを選んでください。\n体重なら「体重グラフ」\n食事や運動なら「食事活動グラフ」\n血液検査なら「血液検査グラフ」「HbA1cグラフ」「LDLグラフ」で見られます。'),
-          buildGraphMenuQuickReplies()
+          safeBuildGraphMenuQuickReplies()
         ),
         env.LINE_CHANNEL_ACCESS_TOKEN
       );
@@ -4835,7 +4835,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (isWeightGraphIntent(text)) {
       const weightRows = await getRecentWeightRows(user.id, 20);
-      const graph = buildWeightGraphMessage(weightRows);
+      const graph = safeBuildWeightGraphMessage(weightRows);
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', '血液検査グラフ', '予測', 'グラフ'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4844,7 +4844,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (isEnergyGraphIntent(text)) {
       const dayRows = await getSevenDayEnergyRows(user.id);
-      const graph = buildEnergyGraphMessage(dayRows);
+      const graph = safeBuildEnergyGraphMessage(dayRows);
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['体重グラフ', '血液検査グラフ', '予測', '今日はここまで'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4853,7 +4853,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (isHbA1cGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
-      const graph = buildLabGraphMessage(recentRows, 'hba1c');
+      const graph = safeBuildLabGraphMessage(recentRows, 'hba1c');
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4862,7 +4862,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (isLdlGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
-      const graph = buildLabGraphMessage(recentRows, 'ldl');
+      const graph = safeBuildLabGraphMessage(recentRows, 'ldl');
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4871,7 +4871,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (isLabGraphIntent(text)) {
       const recentRows = await getRecentLabResults(supabase, user.id, 12);
-      const graph = buildLabGraphMessage(recentRows, 'hba1c');
+      const graph = safeBuildLabGraphMessage(recentRows, 'hba1c');
       const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
       if (graph.messages.length) messages.push(...graph.messages);
       await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -5182,7 +5182,16 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     if (currentMealDraft && isImmediateMealSaveCommand(text)) {
-      const savedMeal = await saveMealToLog(user.id, currentMealDraft.meal);
+      const draftMeal = currentMealDraft.meal;
+      if (!draftMeal || !isMeaningfulMealDraft(draftMeal)) {
+        const replyText = prefixWithName(user, '今の食事内容がまだうまくまとまり切っていないようです。違うところだけそのまま送ってください。例: チキン南蛮と油淋鶏のハーフです');
+        markMealDraftManualCorrection(user.line_user_id, true);
+        await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['手書きで追加・修正', '追加で写真', '写真取り消し']), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
+        return;
+      }
+
+      const savedMeal = await saveMealToLog(user.id, draftMeal);
       clearMealDraft(user.line_user_id);
 
       await saveUserState(user.id, {
@@ -5222,10 +5231,13 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
       return;
     }
 
-    if (currentMealDraft && seemsMealCorrectionText(text)) {
+    if (currentMealDraft && (currentMealDraft.manualCorrectionExpected || seemsMealCorrectionText(text))) {
       const normalizedCorrectionText = normalizeMealCorrectionText(text);
       const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, normalizedCorrectionText);
-      setMealDraft(user.line_user_id, correctedMeal);
+      setMealDraft(user.line_user_id, correctedMeal, {
+        awaitingAdditionalPhoto: false,
+        manualCorrectionExpected: false,
+      });
       const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(correctedMeal));
       await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()), env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
