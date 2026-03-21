@@ -1,315 +1,186 @@
 'use strict';
 
-/**
- * services/chatgpt_conversation_router.js
- *
- * 目的:
- * - ChatGPT先行処理拡張の土台
- * - 直前会話の流れを踏まえて、
- *   smalltalk / consultation / record_candidate / procedure / unknown
- *   を先に判定する
- * - index.js 側では「まずこの router に投げる」形へ寄せていく
- *
- * 今回の調整:
- * - 「プラン教えて」「料金」などは procedure を最優先
- * - 「体重62.4kg」「体脂肪率28%」などは record_candidate を最優先
- * - 明確入力の時は ambiguous に倒しにくくする
- */
-
-const {
-  buildInterpretationInput,
-  safeText,
-} = require('./chat_context_service');
-const {
-  buildSoftFollowup,
-  buildDisambiguationReply,
-} = require('./chat_recovery_service');
-const {
-  extractRecordCandidatesFromText,
-  looksLikeConsultation,
-} = require('./record_candidate_service');
-
-const ROUTES = {
-  SMALLTALK: 'smalltalk',
-  CONSULTATION: 'consultation',
-  RECORD_CANDIDATE: 'record_candidate',
-  PROCEDURE: 'procedure',
-  UNKNOWN: 'unknown',
-};
-
-function normalizeLoose(text = '') {
-  return safeText(text)
+function normalizeText(text = '') {
+  return String(text || '')
+    .trim()
     .toLowerCase()
-    .replace(/[！!？?\s　]/g, ' ')
-    .trim();
+    .replace(/[　\s]+/g, '')
+    .replace(/[!！?？。、,.]/g, '');
 }
 
-function includesAny(text = '', patterns = []) {
-  return patterns.some((pattern) => pattern.test(text));
+function hasAny(text = '', patterns = []) {
+  const t = normalizeText(text);
+  return patterns.some((pattern) => t.includes(normalizeText(pattern)));
 }
 
-function detectProcedureIntent(text = '') {
-  const t = normalizeLoose(text);
-  return includesAny(t, [
-    /プラン/,
-    /料金/,
-    /値段/,
-    /無料体験/,
-    /体験/,
-    /会員/,
-    /登録/,
-    /入会/,
-    /決済/,
-    /支払い/,
-    /変更/,
-    /継続/,
-    /解約/,
-    /使い方/,
-    /説明/,
-    /教えて/,
-    /コース/,
+function parseNumber(text = '') {
+  const match = String(text || '').match(/(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function isProcedureIntent(text = '') {
+  return hasAny(text, [
+    'プラン教えて', '料金教えて', '料金', 'プラン', '無料体験', '体験', '入会', '会員', '契約',
+    '継続', '停止', '再開', '現在のプラン', '今のプラン', '使い方', 'ヘルプ', 'メニュー'
   ]);
 }
 
-function detectStrongProcedureIntent(text = '') {
-  const t = normalizeLoose(text);
-  return includesAny(t, [
-    /プラン.*教えて/,
-    /料金.*教えて/,
-    /プラン教えて/,
-    /料金教えて/,
-    /会員.*教えて/,
-    /継続.*したい/,
-    /入会.*したい/,
-    /プラン.*知りたい/,
-    /料金.*知りたい/,
+function isConsultationIntent(text = '') {
+  return hasAny(text, [
+    '痛い', '痛み', 'つらい', 'しんどい', '不安', '心配', '相談', '悩み', '困って', 'どうしたら',
+    'どうすれば', 'かな', 'ですか', 'ますか', '大丈夫', '平気', 'だめ', 'ダメ', '歩いてよい', '歩いていい'
   ]);
 }
 
-function detectSmalltalkIntent(text = '') {
-  const t = normalizeLoose(text);
-  return includesAny(t, [
-    /こんにちは/,
-    /こんばんは/,
-    /おはよう/,
-    /ありがとう/,
-    /疲れた/,
-    /眠い/,
-    /雑談/,
-    /なんとなく/,
-    /話したい/,
-    /聞いて/,
-  ]);
+function isWeightOnly(text = '') {
+  const t = normalizeText(text);
+  if (!t) return false;
+  if (/^\d{2,3}(?:\.\d)?kg$/.test(t)) return true;
+  if (/^\d{2,3}(?:\.\d)?$/.test(t)) return true;
+  if (t.includes('体重')) return true;
+  return false;
 }
 
-function isStrongWeightInput(text = '') {
-  const t = safeText(text);
-  return /体重\s*\d+(?:\.\d+)?\s*(kg|ｋｇ|キロ)/i.test(t)
-    || /^\d+(?:\.\d+)?\s*(kg|ｋｇ|キロ)$/i.test(t);
+function isBodyFatOnly(text = '') {
+  const t = normalizeText(text);
+  if (!t) return false;
+  return t.includes('体脂肪') || /\d{1,2}(?:\.\d)?%/.test(t);
 }
 
-function isStrongBodyFatInput(text = '') {
-  const t = safeText(text);
-  return /体脂肪(?:率)?\s*\d+(?:\.\d+)?\s*%/i.test(t)
-    || /^\d+(?:\.\d+)?\s*%$/i.test(t);
+function isExerciseRecord(text = '') {
+  return hasAny(text, [
+    '歩いた', 'ウォーキング', '散歩', '走った', 'ジョギング', 'ランニング', '筋トレ', 'ストレッチ', '運動した'
+  ]) && !isConsultationIntent(text);
 }
 
-function isStrongExerciseConsultation(text = '') {
-  const t = normalizeLoose(text);
-  return (
-    looksLikeConsultation(t) &&
-    includesAny(t, [
-      /歩い/,
-      /走っ/,
-      /運動/,
-      /ジョギング/,
-      /膝/,
-      /腰/,
-      /痛い/,
-      /痛み/,
-    ])
-  );
+function isMealRecord(text = '') {
+  return hasAny(text, [
+    '食べた', '食事', '朝ごはん', '昼ごはん', '夜ごはん', '朝食', '昼食', '夕食', 'おやつ', '飲んだ'
+  ]) && !hasAny(text, ['食べたい', 'お腹いっぱい食べたい', '食欲']);
 }
 
-function scoreRoute(input = {}) {
-  const text = safeText(input.currentUserText);
-  const normalized = normalizeLoose(text);
-  const topicHints = input.topicHints || {};
-  const recordCandidates = extractRecordCandidatesFromText(text);
-
-  const scores = {
-    [ROUTES.SMALLTALK]: 0,
-    [ROUTES.CONSULTATION]: 0,
-    [ROUTES.RECORD_CANDIDATE]: 0,
-    [ROUTES.PROCEDURE]: 0,
-    [ROUTES.UNKNOWN]: 0,
-  };
-
-  if (detectSmalltalkIntent(normalized)) scores[ROUTES.SMALLTALK] += 2;
-  if (detectProcedureIntent(normalized)) scores[ROUTES.PROCEDURE] += 3;
-  if (detectStrongProcedureIntent(normalized)) scores[ROUTES.PROCEDURE] += 6;
-
-  if (looksLikeConsultation(normalized) || topicHints.hasConsultTopic) {
-    scores[ROUTES.CONSULTATION] += 3;
-  }
-
-  if (recordCandidates.length) {
-    scores[ROUTES.RECORD_CANDIDATE] += Math.max(2, Math.round((recordCandidates[0].confidence || 0) * 4));
-  }
-
-  if (isStrongWeightInput(text) || isStrongBodyFatInput(text)) {
-    scores[ROUTES.RECORD_CANDIDATE] += 6;
-  }
-
-  if (topicHints.hasProcedureTopic) scores[ROUTES.PROCEDURE] += 1;
-  if (topicHints.hasMealTopic || topicHints.hasExerciseTopic || topicHints.hasWeightTopic || topicHints.hasBloodTestTopic) {
-    scores[ROUTES.RECORD_CANDIDATE] += 1;
-  }
-
-  if (isStrongExerciseConsultation(normalized)) {
-    scores[ROUTES.CONSULTATION] += 5;
-    scores[ROUTES.RECORD_CANDIDATE] -= 3;
-  }
-
-  if (input.currentTextLooksAmbiguous) {
-    if (topicHints.hasConsultTopic) scores[ROUTES.CONSULTATION] += 1;
-    if (topicHints.hasMealTopic || topicHints.hasExerciseTopic || topicHints.hasWeightTopic) {
-      scores[ROUTES.RECORD_CANDIDATE] += 1;
-    }
-    if (!topicHints.hasProcedureTopic && !topicHints.hasMealTopic && !topicHints.hasExerciseTopic && !topicHints.hasConsultTopic) {
-      scores[ROUTES.SMALLTALK] += 1;
-    }
-  }
-
+function buildWeightCandidate(text = '') {
+  const value = parseNumber(text);
+  if (!Number.isFinite(value)) return null;
   return {
-    scores,
-    recordCandidates,
-    flags: {
-      strongProcedure: detectStrongProcedureIntent(normalized),
-      strongWeight: isStrongWeightInput(text),
-      strongBodyFat: isStrongBodyFatInput(text),
-      strongExerciseConsultation: isStrongExerciseConsultation(normalized),
-    },
+    type: 'weight',
+    parsed_payload: { weight_kg: value },
+    confidence: 0.96,
+    source_text: text,
   };
 }
 
-function pickPrimaryRoute(scores = {}, flags = {}) {
-  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const [topRoute, topScore] = entries[0] || [ROUTES.UNKNOWN, 0];
-  const secondScore = entries[1]?.[1] ?? 0;
-
-  let ambiguous = topScore <= 0 || Math.abs(topScore - secondScore) <= 1;
-
-  if (flags.strongProcedure && topRoute === ROUTES.PROCEDURE) ambiguous = false;
-  if ((flags.strongWeight || flags.strongBodyFat) && topRoute === ROUTES.RECORD_CANDIDATE) ambiguous = false;
-  if (flags.strongExerciseConsultation && topRoute === ROUTES.CONSULTATION) ambiguous = false;
-
+function buildBodyFatCandidate(text = '') {
+  const value = parseNumber(text);
+  if (!Number.isFinite(value)) return null;
   return {
-    primaryRoute: ambiguous ? ROUTES.UNKNOWN : topRoute,
-    ambiguous,
-    sortedEntries: entries,
+    type: 'body_fat',
+    parsed_payload: { body_fat_percent: value },
+    confidence: 0.95,
+    source_text: text,
   };
 }
 
-function buildRouteResult({
-  input = {},
-  primaryRoute = ROUTES.UNKNOWN,
-  ambiguous = false,
-  recordCandidates = [],
-  sortedEntries = [],
-} = {}) {
-  const lastAssistantText = input.lastAssistantMessage?.text || '';
-  const topicHints = input.topicHints || {};
-  const candidateRoutes = sortedEntries
-    .filter((item) => Number(item[1]) > 0)
-    .map((item) => item[0])
-    .slice(0, 3);
+function buildExerciseCandidate(text = '') {
+  return {
+    type: 'exercise',
+    parsed_payload: { raw_text: String(text || '').trim() },
+    confidence: 0.8,
+    source_text: text,
+  };
+}
 
-  if (ambiguous) {
+function buildMealCandidate(text = '') {
+  return {
+    type: 'meal',
+    parsed_payload: { raw_text: String(text || '').trim() },
+    confidence: 0.78,
+    source_text: text,
+  };
+}
+
+async function routeConversation({ currentUserText = '' } = {}) {
+  const text = String(currentUserText || '').trim();
+  const normalized = normalizeText(text);
+
+  if (!normalized) {
     return {
-      route: ROUTES.UNKNOWN,
+      route: 'smalltalk',
       is_ambiguous: true,
       needs_clarification: true,
-      reply_text: buildDisambiguationReply({
-        candidates: candidateRoutes,
-        topicHints,
-      }),
-      record_candidates: recordCandidates,
-      meta: {
-        candidate_routes: candidateRoutes,
-        topic_hints: topicHints,
-      },
+      reply_text: 'ありがとうございます。続けて教えてくださいね。',
+      meta: { topic_hints: {} },
     };
   }
 
-  if (primaryRoute === ROUTES.RECORD_CANDIDATE && !recordCandidates.length) {
+  if (isProcedureIntent(text)) {
     return {
-      route: ROUTES.UNKNOWN,
-      is_ambiguous: true,
-      needs_clarification: true,
-      reply_text: buildSoftFollowup({
-        route: primaryRoute,
-        userText: input.currentUserText,
-        lastAssistantText,
-        topicHints,
-      }),
-      record_candidates: [],
-      meta: {
-        topic_hints: topicHints,
-      },
+      route: 'procedure',
+      is_ambiguous: false,
+      needs_clarification: false,
+      meta: { topic_hints: { procedure: true } },
+    };
+  }
+
+  if (isWeightOnly(text)) {
+    return {
+      route: 'record_candidate',
+      is_ambiguous: false,
+      needs_clarification: false,
+      top_record_candidate: buildWeightCandidate(text),
+      meta: { topic_hints: { body_metrics: true, weight: true } },
+    };
+  }
+
+  if (isBodyFatOnly(text)) {
+    return {
+      route: 'record_candidate',
+      is_ambiguous: false,
+      needs_clarification: false,
+      top_record_candidate: buildBodyFatCandidate(text),
+      meta: { topic_hints: { body_metrics: true, body_fat: true } },
+    };
+  }
+
+  if (isConsultationIntent(text)) {
+    return {
+      route: 'consultation',
+      is_ambiguous: false,
+      needs_clarification: false,
+      meta: { topic_hints: { consultation: true } },
+    };
+  }
+
+  if (isExerciseRecord(text)) {
+    return {
+      route: 'record_candidate',
+      is_ambiguous: false,
+      needs_clarification: false,
+      top_record_candidate: buildExerciseCandidate(text),
+      meta: { topic_hints: { exercise: true } },
+    };
+  }
+
+  if (isMealRecord(text)) {
+    return {
+      route: 'record_candidate',
+      is_ambiguous: false,
+      needs_clarification: false,
+      top_record_candidate: buildMealCandidate(text),
+      meta: { topic_hints: { meal: true } },
     };
   }
 
   return {
-    route: primaryRoute,
+    route: 'smalltalk',
     is_ambiguous: false,
     needs_clarification: false,
-    reply_text: '',
-    record_candidates: recordCandidates,
-    top_record_candidate: recordCandidates[0] || null,
-    meta: {
-      topic_hints: topicHints,
-      candidate_routes: candidateRoutes,
-    },
+    meta: { topic_hints: { smalltalk: true } },
   };
-}
-
-async function routeConversation({
-  user,
-  currentUserText = '',
-  recentMessages = [],
-  profileSummary = '',
-} = {}) {
-  const input = buildInterpretationInput({
-    user,
-    recentMessages,
-    currentUserText,
-    profileSummary,
-  });
-
-  const scored = scoreRoute(input);
-  const picked = pickPrimaryRoute(scored.scores, scored.flags);
-
-  return buildRouteResult({
-    input,
-    primaryRoute: picked.primaryRoute,
-    ambiguous: picked.ambiguous,
-    recordCandidates: scored.recordCandidates,
-    sortedEntries: picked.sortedEntries,
-  });
 }
 
 module.exports = {
-  ROUTES,
-  normalizeLoose,
-  detectProcedureIntent,
-  detectStrongProcedureIntent,
-  detectSmalltalkIntent,
-  isStrongWeightInput,
-  isStrongBodyFatInput,
-  isStrongExerciseConsultation,
-  scoreRoute,
-  pickPrimaryRoute,
-  buildRouteResult,
   routeConversation,
 };
