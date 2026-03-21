@@ -3889,7 +3889,9 @@ if (text === 'プラン案内を見る') {
         return;
       }
     }
-    const guideIntent = detectGuideIntent(text);
+    const guideIntent = smartFlowResult?.next === 'consultation_chat'
+      ? null
+      : detectGuideIntent(text);
     if (guideIntent) {
       const guideText = buildGuideReplyByIntent(user, guideIntent);
       if (guideText) {
