@@ -3999,6 +3999,25 @@ async function tryHandleConversationRouterFallback(event, user, text) {
       return true;
     }
 
+    if (captureType === 'meal_record') {
+      const mealPayload = routing.top_record_candidate.parsed_payload || {};
+      const pendingMealDraft = buildMealDraftFromPayload(mealPayload, text);
+      setMealDraft(user.line_user_id, pendingMealDraft, {
+        awaitingAdditionalPhoto: false,
+        manualCorrectionExpected: false,
+      });
+      clearRecentCaptureConfirmation(user.line_user_id);
+
+      const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(pendingMealDraft));
+      await replyMessage(
+        event.replyToken,
+        textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      await rememberInteraction(user, text, replyText);
+      return true;
+    }
+
     const confirmation = buildConfirmationMessage(routing.top_record_candidate);
     setRecentCaptureConfirmation(user.line_user_id, {
       capture_type: captureType,
@@ -4259,7 +4278,7 @@ async function handleTextMessage(event, user) {
         }
 
         clearRecentCaptureConfirmation(user.line_user_id);
-        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。料理名だけでも大丈夫です。こちらで整えます。');
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。たとえば「豚骨ラーメン」「お茶です」「2個です」のように短くで大丈夫です。こちらで整えます。');
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
