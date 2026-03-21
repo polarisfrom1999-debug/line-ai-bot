@@ -3,18 +3,9 @@
 /**
  * services/gemini_meal_service.js
  *
- * 目的:
- * - Gemini 主導で食事テキスト / 食事画像 / 訂正文を解析する
- * - 栄養表示は PFC ではなく、日本語表記（たんぱく質・脂質・糖質）を優先
- * - 記録OSへ渡しやすい candidate 形式へ寄せる
- *
- * 使い方の想定:
- * - index.js から食事テキスト解析 / 訂正文解析 / 画像解析の入口として呼ぶ
- * - 返り値は meal_result と record candidate を持つ
- *
- * 注意:
- * - 既存の gemini_service.js がある前提でつなぎやすい構成
- * - 画像実接続がまだ別実装の場合でも、text fallback で壊れにくい
+ * 互換修正版:
+ * - analyzeMealPhotoWithGemini を残す
+ * - 食事テキスト / 訂正 / 画像の新APIも使える
  */
 
 const {
@@ -159,7 +150,6 @@ function buildFallbackMealLabel(items = []) {
 
 function buildMealCandidateFromResult(result = {}, source = 'text') {
   const meal = normalizeMealResult(result);
-
   if (!meal.is_meal_related) return null;
   if (meal.should_not_save_yet) return null;
 
@@ -187,113 +177,76 @@ function buildMealCandidateFromResult(result = {}, source = 'text') {
   });
 }
 
-function buildMealReplyPreview(candidate = null) {
-  if (!candidate) {
-    return {
-      text: '食事記録として急がず、まずは会話として受け取るほうが自然そうです。',
-      shouldSuggestSave: false,
-    };
-  }
-
-  const p = candidate.parsed_payload || {};
-  const lines = [];
-  lines.push('食事内容を整理しました。');
-
-  if (p.meal_label) lines.push(`料理: ${safeText(p.meal_label)}`);
-  if (toNumberOrNull(p.estimated_kcal) !== null) {
-    const kcal = toNumberOrNull(p.estimated_kcal);
-    const kcalMin = toNumberOrNull(p.kcal_min);
-    const kcalMax = toNumberOrNull(p.kcal_max);
-    if (kcalMin !== null && kcalMax !== null) {
-      lines.push(`推定カロリー: ${kcal} kcal（${kcalMin}〜${kcalMax} kcal）`);
-    } else {
-      lines.push(`推定カロリー: ${kcal} kcal`);
-    }
-  }
-
-  if (
-    toNumberOrNull(p.protein_g) !== null ||
-    toNumberOrNull(p.fat_g) !== null ||
-    toNumberOrNull(p.carbs_g) !== null
-  ) {
-    lines.push(
-      '栄養の目安: ' +
-      [
-        toNumberOrNull(p.protein_g) !== null ? `たんぱく質 ${toNumberOrNull(p.protein_g)}g` : null,
-        toNumberOrNull(p.fat_g) !== null ? `脂質 ${toNumberOrNull(p.fat_g)}g` : null,
-        toNumberOrNull(p.carbs_g) !== null ? `糖質 ${toNumberOrNull(p.carbs_g)}g` : null,
-      ].filter(Boolean).join(' / ')
-    );
-  }
-
-  lines.push('合っていれば保存、違うところがあればそのまま訂正してくださいね。');
-
-  return {
-    text: lines.join('\n'),
-    shouldSuggestSave: true,
-  };
-}
-
-async function analyzeMealText({
-  userText = '',
-  previousMealSummary = '',
-} = {}) {
-  const prompt = buildMealPrompt({
-    userText,
-    previousMealSummary,
-    mode: 'text',
-  });
-
+async function analyzeMealText({ userText = '', previousMealSummary = '' } = {}) {
+  const prompt = buildMealPrompt({ userText, previousMealSummary, mode: 'text' });
   const raw = await generateJsonOnly(prompt, buildMealAnalysisSchema());
-  const parsed = normalizeMealResult(
-    typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {})
-  );
-
+  const parsed = normalizeMealResult(typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {}));
   return {
     meal_result: parsed,
     candidate: buildMealCandidateFromResult(parsed, 'text'),
   };
 }
 
-async function analyzeMealCorrection({
-  correctionText = '',
-  previousMealSummary = '',
-} = {}) {
-  const prompt = buildMealPrompt({
-    userText: correctionText,
-    previousMealSummary,
-    mode: 'correction',
-  });
-
+async function analyzeMealCorrection({ correctionText = '', previousMealSummary = '' } = {}) {
+  const prompt = buildMealPrompt({ userText: correctionText, previousMealSummary, mode: 'correction' });
   const raw = await generateJsonOnly(prompt, buildMealAnalysisSchema());
-  const parsed = normalizeMealResult(
-    typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {})
-  );
-
+  const parsed = normalizeMealResult(typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {}));
   return {
     meal_result: parsed,
     candidate: buildMealCandidateFromResult(parsed, 'correction'),
   };
 }
 
-async function analyzeMealImage({
-  imageCaption = '',
-  previousMealSummary = '',
-} = {}) {
+async function analyzeMealImage({ imageCaption = '', previousMealSummary = '' } = {}) {
   const prompt = buildMealPrompt({
     userText: imageCaption || '食事画像の内容を解析してください',
     previousMealSummary,
     mode: 'image',
   });
-
   const raw = await generateJsonOnly(prompt, buildMealAnalysisSchema());
-  const parsed = normalizeMealResult(
-    typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {})
-  );
-
+  const parsed = normalizeMealResult(typeof raw === 'string' ? safeJsonParse(raw, {}) : (raw || {}));
   return {
     meal_result: parsed,
     candidate: buildMealCandidateFromResult(parsed, 'image'),
+  };
+}
+
+/**
+ * 既存互換:
+ * 元の index.js で analyzeMealPhotoWithGemini(...) が呼ばれても落ちないようにする
+ */
+async function analyzeMealPhotoWithGemini(input = {}) {
+  const result = await analyzeMealImage({
+    imageCaption: safeText(
+      input?.imageCaption ||
+      input?.caption ||
+      input?.text ||
+      input?.userText ||
+      '食事画像の内容を解析してください'
+    ),
+    previousMealSummary: safeText(
+      input?.previousMealSummary ||
+      input?.previousSummary ||
+      ''
+    ),
+  });
+
+  const candidate = result?.candidate || null;
+  const payload = candidate?.parsed_payload || {};
+
+  return {
+    success: true,
+    meal_result: result?.meal_result || null,
+    candidate,
+    meal_label: safeText(payload.meal_label || ''),
+    estimated_kcal: toNumberOrNull(payload.estimated_kcal),
+    kcal_min: toNumberOrNull(payload.kcal_min),
+    kcal_max: toNumberOrNull(payload.kcal_max),
+    protein_g: toNumberOrNull(payload.protein_g),
+    fat_g: toNumberOrNull(payload.fat_g),
+    carbs_g: toNumberOrNull(payload.carbs_g),
+    food_items: Array.isArray(payload.food_items) ? payload.food_items : [],
+    needs_confirmation: candidate?.needs_confirmation !== false,
   };
 }
 
@@ -304,8 +257,8 @@ module.exports = {
   normalizeMealResult,
   buildFallbackMealLabel,
   buildMealCandidateFromResult,
-  buildMealReplyPreview,
   analyzeMealText,
   analyzeMealCorrection,
   analyzeMealImage,
+  analyzeMealPhotoWithGemini,
 };
