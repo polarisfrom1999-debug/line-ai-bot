@@ -3379,7 +3379,7 @@ function shouldSkipConversationRouterFallback(user, text = '') {
     isDiagnosisActive(user) ||
     isGraphMenuIntent(text) ||
     isWeightGraphIntent(text) ||
-    isMealActivityGraphIntent(text) ||
+    ((typeof isMealActivityGraphIntent === 'function' && isMealActivityGraphIntent(text)) || (typeof isEnergyGraphIntent === 'function' && isEnergyGraphIntent(text))) ||
     isLabGraphIntent(text) ||
     isPredictionIntent(text) ||
     isWeeklyReportRequest(text) ||
