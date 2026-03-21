@@ -64,7 +64,6 @@ const {
   applyMealCorrection,
 } = require('./services/meal_correction_service');
 const {
-  CONSULT_MESSAGE,
   isPainLikeText,
   isStretchIntent,
   detectPainArea,
@@ -562,6 +561,39 @@ function hasPainOrMedicalContext(text) {
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
 }
 
+function hasConsultationLikeIntent(text) {
+  const t = normalizeTextLoose(text);
+  if (!t) return false;
+  if (hasQuestionIntent(text) || hasPainOrMedicalContext(text)) return true;
+
+  const patterns = [
+    '相談', '悩み', '不安', '心配', '困る', '困ってる', '困っています', 'どうしたら', 'どうすれば',
+    'ストレス', '仕事', '疲れた', '疲れる', '眠れない', '寝れない', '恋愛', '家族', '人間関係',
+  ];
+
+  return patterns.some((p) => t.includes(normalizeTextLoose(p)));
+}
+
+function buildNaturalClarificationReply(user, kind = 'general') {
+  const name = getUserDisplayName(user);
+
+  if (kind === 'activity') {
+    return prefixWithName(user, `${name ? `${name}さん、` : ''}ありがとうございます。内容は受け取れています。
+
+もう少しだけ分かると、きれいに記録できます。
+たとえば「ウォーキング20分」「ストレッチ5分」「少し歩いた」のように送ってくださいね。`);
+  }
+
+  if (kind === 'meal_edit') {
+    return prefixWithName(user, `ありがとうございます。違うところだけ、そのまま教えてくださいね。
+例: ジャスミンティーです / お酒ではないです / 大福は2個です`);
+  }
+
+  return prefixWithName(user, `${name ? `${name}さん、` : ''}ありがとうございます。内容は受け取れています。
+
+違うところや足したいことだけ、そのままの言い方で送ってもらえれば大丈夫です。`);
+}
+
 function isExerciseConsultationText(text) {
   const t = normalizeTextLoose(text);
   if (!t) return false;
@@ -627,6 +659,7 @@ function isActivityCommand(text) {
   if (shouldAvoidMealExerciseAutoCapture(text)) return false;
   if (isExerciseConsultationText(text)) return false;
   if (hasQuestionIntent(text)) return false;
+  if (hasConsultationLikeIntent(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
 }
 
@@ -1151,6 +1184,7 @@ function isExplicitMealLogText(text) {
   if (isMealDesireOrFeelingText(t)) return false;
   if (hasQuestionIntent(text)) return false;
   if (hasPainOrMedicalContext(text)) return false;
+  if (hasConsultationLikeIntent(text) && !/食べた|飲んだ|食べました|飲みました/.test(t)) return false;
 
   const directPatterns = [
     '食べた', '飲んだ', '食べました', '飲みました', '食べたよ', '飲んだよ', '食べたです',
@@ -3590,7 +3624,7 @@ async function handleTextMessage(event, user) {
         pain_area_last: area || null,
       });
 
-      const consultGuide = buildHealthConsultationGuide(text);
+      const consultGuide = shouldAppendConsultGuide(text) ? buildHealthConsultationGuide(text) : '';
       const replyText = prefixWithName(
         user,
         [chatCapture.reply_text || 'それは気になりますね。', consultGuide].filter(Boolean).join('\n\n')
@@ -3610,7 +3644,7 @@ async function handleTextMessage(event, user) {
       chatCapture.action === 'reply_only'
     ) {
       const baseReply = chatCapture.reply_text || await defaultChatReply(user, text);
-      const consultGuide = buildHealthConsultationGuide(text);
+      const consultGuide = shouldAppendConsultGuide(text) ? buildHealthConsultationGuide(text) : '';
       const replyText = prefixWithName(user, [baseReply, consultGuide].filter(Boolean).join('\n\n'));
 
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -3903,7 +3937,7 @@ if (text === 'プラン案内を見る') {
     }
 
     if (isContinueConsultText(text)) {
-      const replyText = prefixWithName(user, 'もちろんです。このまま続けましょう。気になっていることを、そのままの言い方で教えてくださいね。');
+      const replyText = buildConsultContinuationReply(user, text);
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -4140,7 +4174,7 @@ if (text === 'プラン案内を見る') {
     }
 
     if (text === '今はまだ再開しない') {
-      const replyText = prefixWithName(user, '大丈夫です。必要になった時に、またここから再開できます。');
+      const replyText = prefixWithName(user, '大丈夫です。今はまだ決めなくて大丈夫ですよ。必要になった時に、またここから自然に再開できます。');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -4310,16 +4344,16 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
     if (text === '牛込先生に相談したい') {
       clearMealDraft(user.line_user_id);
-      const replyText = prefixWithName(user, `ありがとうございます。\n${CONSULT_MESSAGE}`);
+      const replyText = prefixWithName(user, 'もちろんです。ここでは気になることをそのまま話してくださいね。まだ整理できていなくても大丈夫です。短くても、そのまま受け取ります。');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
     }
 
     if (smartFlowResult?.next === 'consultation_chat') {
-      const consultGuide = buildHealthConsultationGuide(text);
+      const consultGuide = shouldAppendConsultGuide(text) ? buildHealthConsultationGuide(text) : '';
       const naturalReply = await defaultChatReply(user, text);
-      const replyText = `${naturalReply}\n\n${consultGuide}`;
+      const replyText = [naturalReply, consultGuide].filter(Boolean).join('\n\n');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -4536,8 +4570,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
       const message = [
         `${text}の流れで大丈夫です。今日は無理なく、小さくで十分です。`,
         area !== '全身' ? `${area}まわりが少し整うと、動きやすさや代謝にもつながりやすいです。` : '軽く動かすだけでも、可動域や代謝の土台につながります。',
-        CONSULT_MESSAGE,
-      ].join('\n');
+            ].join('\n');
 
       const replyText = prefixWithName(user, message);
       await replyMessage(event.replyToken, textMessageWithQuickReplies(replyText, ['できた', 'まだ少しやる', '動画で見たい', '今日はここまで']), env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -4747,6 +4780,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     const detectedIntent = detectMessageIntent(text);
     const shouldOpenMealDraft =
       !shouldAvoidMealExerciseAutoCapture(text) &&
+      !hasConsultationLikeIntent(text) &&
       (
         detectedIntent.type === 'meal_log' ||
         isExplicitMealLogText(text) ||
@@ -4765,7 +4799,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     if (text === '飲み物を訂正' || text === '量を訂正') {
-      const replyText = prefixWithName(user, 'ありがとうございます。違うところだけ、そのまま文字で教えてくださいね。例: ジャスミンティーです / お酒ではないです / 大福は2個です');
+      const replyText = buildNaturalClarificationReply(user, 'meal_edit');
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -4779,7 +4813,9 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     if (isActivityCommand(lower)) {
       const activity = parseActivity(text, user.weight_kg || 60);
       if (!activity.steps && !activity.walking_minutes && !activity.estimated_activity_kcal && !activity.exercise_summary) {
-        await replyMessage(event.replyToken, '例: ジョギング 20分 / ストレッチ 5分 / スクワット 10回 / 少し歩いた', env.LINE_CHANNEL_ACCESS_TOKEN);
+        const replyText = buildNaturalClarificationReply(user, 'activity');
+        await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+        await rememberInteraction(user, text, replyText);
         return;
       }
 
