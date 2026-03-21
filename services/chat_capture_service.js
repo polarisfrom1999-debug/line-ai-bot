@@ -45,10 +45,10 @@ function buildBodyMetricReply(payload = {}) {
   }
 
   if (!parts.length) {
-    return "こちらで数値として受け取っています。今日の記録として残して大丈夫ですか？";
+    return "数値は受け取れています。今日の記録として残して大丈夫ですか？";
   }
 
-  return `${parts.join("、")}で受け取っています。今日の記録として残して大丈夫ですか？`;
+  return `${parts.join("、")}で受け取れています。このまま今日の記録として残して大丈夫ですか？`;
 }
 
 function parseBodyMetrics(raw = "") {
@@ -57,38 +57,40 @@ function parseBodyMetrics(raw = "") {
   if (!normalized) return null;
 
   const payload = {};
+  const rounded = (value) => Math.round(Number(value) * 10) / 10;
+  const takeWeight = (value) => {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 20 && n <= 300) payload.weight_kg = rounded(n);
+  };
+  const takeBodyFat = (value) => {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 1 && n <= 80) payload.body_fat_percent = rounded(n);
+  };
 
-  const weightMatch = text.match(/(?:体重|wt|weight)?\s*(-?\d{2,3}(?:\.\d+)?)\s*kg?/i);
-  if (weightMatch) {
-    const weight = Number(weightMatch[1]);
-    if (Number.isFinite(weight) && weight >= 20 && weight <= 300) {
-      payload.weight_kg = Math.round(weight * 10) / 10;
-    }
+  const weightMatch = text.match(/(?:体重|wt|weight)\s*[:：]?(?:は)?\s*(-?\d{2,3}(?:\.\d+)?)\s*(?:kg|キロ)?/i);
+  if (weightMatch) takeWeight(weightMatch[1]);
+
+  const bodyFatMatch = text.match(/(?:体脂肪(?:率)?|fat|bf)\s*[:：]?(?:は)?\s*(-?\d{1,2}(?:\.\d+)?)\s*(?:%|％|パーセント|ぱーせんと|パー|ぱー)?/i);
+  if (bodyFatMatch) takeBodyFat(bodyFatMatch[1]);
+
+  const compactCombined = text.match(/体重\s*(-?\d{2,3}(?:\.\d+)?)\s*(?:kg|キロ)?[^\d]+体脂肪(?:率)?\s*(-?\d{1,2}(?:\.\d+)?)\s*(?:%|％|パーセント|ぱーせんと|パー|ぱー)?/i);
+  if (compactCombined) {
+    takeWeight(compactCombined[1]);
+    takeBodyFat(compactCombined[2]);
   }
 
-  const bodyFatMatch = text.match(/(?:体脂肪(?:率)?|fat|bf)?\s*(-?\d{1,2}(?:\.\d+)?)\s*%/i);
-  if (bodyFatMatch) {
-    const bodyFat = Number(bodyFatMatch[1]);
-    if (Number.isFinite(bodyFat) && bodyFat >= 1 && bodyFat <= 80) {
-      payload.body_fat_percent = Math.round(bodyFat * 10) / 10;
-    }
+  const numbers = extractAllNumbers(text);
+  if ((!payload.weight_kg || !payload.body_fat_percent) && numbers.length >= 2 && normalized.includes("体脂肪")) {
+    if (!payload.weight_kg) takeWeight(numbers[0]);
+    if (!payload.body_fat_percent) takeBodyFat(numbers[1]);
   }
 
-  if (!payload.weight_kg && !payload.body_fat_percent) {
-    const numbers = extractAllNumbers(text);
-    if (numbers.length === 1) {
-      const value = numbers[0];
-      if (/%/.test(text) || normalized.includes("体脂肪")) {
-        if (value >= 1 && value <= 80) payload.body_fat_percent = Math.round(value * 10) / 10;
-      } else if (/kg/i.test(text) || normalized.includes("体重") || (value >= 20 && value <= 300)) {
-        if (value >= 20 && value <= 300) payload.weight_kg = Math.round(value * 10) / 10;
-      }
-    }
-
-    if (numbers.length >= 2 && (normalized.includes("体重") || normalized.includes("体脂肪") || /kg|%/i.test(text))) {
-      const [first, second] = numbers;
-      if (first >= 20 && first <= 300) payload.weight_kg = Math.round(first * 10) / 10;
-      if (second >= 1 && second <= 80) payload.body_fat_percent = Math.round(second * 10) / 10;
+  if (!payload.weight_kg && !payload.body_fat_percent && numbers.length === 1) {
+    const value = numbers[0];
+    if (/%|％/.test(text) || /(体脂肪|パーセント|ぱーせんと|パー|ぱー)/.test(text)) {
+      takeBodyFat(value);
+    } else if (/(kg|キロ)/i.test(text) || normalized.includes("体重") || (value >= 20 && value <= 300)) {
+      takeWeight(value);
     }
   }
 
