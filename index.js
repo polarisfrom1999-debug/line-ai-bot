@@ -658,13 +658,19 @@ function shouldAppendConsultGuide(text) {
 
   const urgentPatterns = [
     '強い痛み', 'かなり痛い', '激痛', '悪化', 'ひどくなった', '長引く', '続いている',
-    '歩けない', '眠れない', 'しびれが強い', '力が入らない', '腫れが強い', '熱を持つ',
-    '病院', '受診', '医療機関', '整形外科',
+    '歩けない', '歩行困難', '眠れない', 'しびれが強い', '力が入らない',
+    '腫れが強い', '熱を持つ', '夜も痛い', '夜間痛', '麻痺',
   ];
 
   if (urgentPatterns.some((p) => t.includes(normalizeTextLoose(p)))) return true;
 
-  if (hasPainOrMedicalContext(raw) && hasQuestionIntent(raw)) return true;
+  const severeCombo =
+    (t.includes(normalizeTextLoose('しびれ')) && t.includes(normalizeTextLoose('強い'))) ||
+    (t.includes(normalizeTextLoose('腫れ')) && t.includes(normalizeTextLoose('強い'))) ||
+    (t.includes(normalizeTextLoose('痛み')) && t.includes(normalizeTextLoose('悪化'))) ||
+    (t.includes(normalizeTextLoose('痛い')) && t.includes(normalizeTextLoose('歩けない')));
+
+  if (severeCombo) return true;
 
   return false;
 }
