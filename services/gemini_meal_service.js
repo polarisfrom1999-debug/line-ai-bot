@@ -7,6 +7,7 @@
  * - analyzeMealPhotoWithGemini を残す
  * - 食事テキスト / 訂正 / 画像の新APIも使える
  * - normalizeGeminiMealResult 互換名を追加
+ * - 既存 index.js 向けに analyzeMealTextWithGemini / applyMealCorrectionWithGemini 互換も追加
  */
 
 const {
@@ -139,10 +140,6 @@ function normalizeMealResult(raw = {}) {
   };
 }
 
-/**
- * 互換名
- * 既存 index.js / 他サービスが normalizeGeminiMealResult を呼んでも落ちないようにする
- */
 function normalizeGeminiMealResult(raw = {}) {
   return normalizeMealResult(raw);
 }
@@ -220,10 +217,6 @@ async function analyzeMealImage({ imageCaption = '', previousMealSummary = '' } 
   };
 }
 
-/**
- * 既存互換:
- * 元の index.js で analyzeMealPhotoWithGemini(...) が呼ばれても落ちないようにする
- */
 async function analyzeMealPhotoWithGemini(input = {}) {
   const result = await analyzeMealImage({
     imageCaption: safeText(
@@ -259,6 +252,78 @@ async function analyzeMealPhotoWithGemini(input = {}) {
   };
 }
 
+async function analyzeMealTextWithGemini(userText = '', previousMealSummary = '') {
+  const result = await analyzeMealText({ userText, previousMealSummary });
+  const payload = result?.candidate?.parsed_payload || result?.meal_result || {};
+
+  if (!result?.meal_result?.is_meal_related) {
+    return { is_meal: false, rejection_reason: result?.meal_result?.rejection_reason || '' };
+  }
+
+  return {
+    is_meal: true,
+    meal_label: safeText(payload.meal_label || result?.meal_result?.meal_label || ''),
+    estimated_kcal: toNumberOrNull(payload.estimated_kcal),
+    kcal_min: toNumberOrNull(payload.kcal_min),
+    kcal_max: toNumberOrNull(payload.kcal_max),
+    protein_g: toNumberOrNull(payload.protein_g),
+    fat_g: toNumberOrNull(payload.fat_g),
+    carbs_g: toNumberOrNull(payload.carbs_g),
+    food_items: Array.isArray(payload.food_items)
+      ? payload.food_items.map((item) => ({
+          name: safeText(item?.name || ''),
+          estimated_amount: safeText(item?.amount_text || item?.estimated_amount || ''),
+          estimated_kcal: toNumberOrNull(item?.estimated_kcal) || 0,
+          confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : 0.6,
+          needs_confirmation: result?.meal_result?.needs_confirmation !== false,
+        }))
+      : [],
+    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    needs_confirmation: result?.meal_result?.needs_confirmation !== false,
+    raw_model_json: result,
+  };
+}
+
+async function applyMealCorrectionWithGemini(currentMeal = {}, correctionText = '') {
+  const previousMealSummary = [
+    safeText(currentMeal?.meal_label || ''),
+    Array.isArray(currentMeal?.food_items)
+      ? currentMeal.food_items.map((item) => safeText(item?.name || '')).filter(Boolean).join('、')
+      : '',
+  ].filter(Boolean).join(' / ');
+
+  const result = await analyzeMealCorrection({ correctionText, previousMealSummary });
+  const payload = result?.candidate?.parsed_payload || result?.meal_result || {};
+
+  if (!result?.meal_result?.is_meal_related) {
+    return currentMeal;
+  }
+
+  return {
+    ...currentMeal,
+    is_meal: true,
+    meal_label: safeText(payload.meal_label || currentMeal?.meal_label || ''),
+    estimated_kcal: toNumberOrNull(payload.estimated_kcal),
+    kcal_min: toNumberOrNull(payload.kcal_min),
+    kcal_max: toNumberOrNull(payload.kcal_max),
+    protein_g: toNumberOrNull(payload.protein_g),
+    fat_g: toNumberOrNull(payload.fat_g),
+    carbs_g: toNumberOrNull(payload.carbs_g),
+    food_items: Array.isArray(payload.food_items)
+      ? payload.food_items.map((item) => ({
+          name: safeText(item?.name || ''),
+          estimated_amount: safeText(item?.amount_text || item?.estimated_amount || ''),
+          estimated_kcal: toNumberOrNull(item?.estimated_kcal) || 0,
+          confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : 0.6,
+          needs_confirmation: result?.meal_result?.needs_confirmation !== false,
+        }))
+      : (Array.isArray(currentMeal?.food_items) ? currentMeal.food_items : []),
+    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    needs_confirmation: result?.meal_result?.needs_confirmation !== false,
+    raw_model_json: result,
+  };
+}
+
 module.exports = {
   buildMealAnalysisSchema,
   buildMealPrompt,
@@ -271,4 +336,6 @@ module.exports = {
   analyzeMealCorrection,
   analyzeMealImage,
   analyzeMealPhotoWithGemini,
+  analyzeMealTextWithGemini,
+  applyMealCorrectionWithGemini,
 };
