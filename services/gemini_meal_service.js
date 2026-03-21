@@ -6,6 +6,7 @@
  * 互換修正版:
  * - analyzeMealPhotoWithGemini を残す
  * - 食事テキスト / 訂正 / 画像の新APIも使える
+ * - normalizeGeminiMealResult 互換名を追加
  */
 
 const {
@@ -138,6 +139,14 @@ function normalizeMealResult(raw = {}) {
   };
 }
 
+/**
+ * 互換名
+ * 既存 index.js / 他サービスが normalizeGeminiMealResult を呼んでも落ちないようにする
+ */
+function normalizeGeminiMealResult(raw = {}) {
+  return normalizeMealResult(raw);
+}
+
 function buildFallbackMealLabel(items = []) {
   const names = (Array.isArray(items) ? items : [])
     .map((item) => safeText(item?.name))
@@ -255,6 +264,7 @@ module.exports = {
   buildMealPrompt,
   normalizeFoodItems,
   normalizeMealResult,
+  normalizeGeminiMealResult,
   buildFallbackMealLabel,
   buildMealCandidateFromResult,
   analyzeMealText,
