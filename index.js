@@ -677,6 +677,14 @@ function normalizeTextLoose(text) {
     .replace(/\s+/g, '');
 }
 
+function normalizeJapaneseText(text = '') {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[　\s]+/g, '')
+    .replace(/[！!？?。.,，、】【\[\]（）()]/g, '');
+}
+
 function hasQuestionIntent(text) {
   const raw = String(text || '').trim();
   const t = normalizeTextLoose(text);
@@ -720,10 +728,9 @@ function hasConsultationLikeIntent(text) {
 
 function isLikelyResumeAfterGap(user, text = '') {
   const normalized = normalizeJapaneseText(text || '');
-  if (!normalized) return false;
 
   const patterns = [
-    '久しぶり', 'ひさしぶり', 'またここから', 'またお願いします', '戻ってきました', '再開', 'ただいま', 'また始めます'
+    '久しぶり', 'ひさしぶり', 'またここから', 'またお願いします', '戻ってきました', '再開', 'ただいま', 'また始めます', '出直します'
   ];
   const hasPattern = patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
   if (hasPattern) return true;
@@ -735,9 +742,48 @@ function isLikelyResumeAfterGap(user, text = '') {
   return (Date.now() - dt.getTime()) >= (1000 * 60 * 60 * 24 * 5);
 }
 
+function isMaintenanceLikeText(text = '') {
+  const normalized = normalizeJapaneseText(text || '');
+  if (!normalized) return false;
+
+  const patterns = [
+    '維持', 'このままでいい', '今のままで', '増やしたくない', '戻したくない', 'キープ', '保ちたい', '安定してる', '安定しています',
+    '現状維持', 'リバウンドしたくない', '体調を整えたい', '無理なく続けたい'
+  ];
+
+  return patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
+}
+
+function isSuccessLikeText(text = '') {
+  const normalized = normalizeJapaneseText(text || '');
+  if (!normalized) return false;
+
+  const patterns = [
+    '痩せた', 'やせた', '目標達成', '達成できた', '達成しました', '順調', 'うまくいってる', 'いい感じ', '調子いい', '安定してきた'
+  ];
+
+  return patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
+}
+
 function buildResumeFriendlyPrefix(user, text = '') {
   if (!isLikelyResumeAfterGap(user, text)) return '';
   return 'またここからで大丈夫です。';
+}
+
+function buildContextualCompanionPrefix(user, text = '') {
+  if (isLikelyResumeAfterGap(user, text)) {
+    return 'またここからで大丈夫です。空いてしまった分を責めずに、今日は今の様子から整えていきましょう。';
+  }
+
+  if (isMaintenanceLikeText(text)) {
+    return '今は無理に削るより、この流れを崩さず続けられるのがいちばん大事です。';
+  }
+
+  if (isSuccessLikeText(text)) {
+    return '順調な時ほど、頑張りすぎず整えるくらいで十分です。';
+  }
+
+  return '';
 }
 
 function shouldPrioritizeConsultation(text) {
@@ -1826,13 +1872,19 @@ function trimReplyLength(text, max = 420) {
   return cut.trim();
 }
 
-function postProcessAiReply(user, rawReply) {
+function postProcessAiReply(user, rawReply, userText = '') {
   let text = normalizeAiReplyText(rawReply);
   text = cleanupAiPhrases(text);
   text = limitReplyQuestions(text, 1);
   text = trimReplyLength(text, 420);
   text = safeText(text, 600);
   if (!text) text = '今日はそんな感じなんですね。ここからまた整えていきましょう。';
+
+  const contextualPrefix = buildContextualCompanionPrefix(user, userText);
+  if (contextualPrefix && !text.includes(contextualPrefix)) {
+    text = [contextualPrefix, text].filter(Boolean).join('\n\n');
+  }
+
   return prefixWithName(user, text);
 }
 
@@ -1847,14 +1899,20 @@ function normalizeMealLabelForDisplay(value = '') {
   if (!label) return '食事';
 
   label = label
-    .replace(/^(今日は?|さっき|今|夜|朝|昼)[、\s]*/g, '')
-    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|食べる|たべる|食べたよ|たべたよ|食べたよー|食べたよ〜|食べたよ〜|食べましたよ|食べましたよー)$/g, '')
-    .replace(/(?:飲んだ|のみました|飲みました|飲んだよ)$/g, '')
+    .replace(/^(今日は?|きょうは?|さっき|今|いま|夜|朝|昼|夕食|昼食|朝食)[、\s:]*/g, '')
+    .replace(/(?:でした|です)$/g, '')
+    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|食べる|たべる|食べたよ|たべたよ|食べたよー|食べたよ〜|食べましたよ|食べましたよー)$/g, '')
+    .replace(/(?:を)?(?:飲んだ|のんだ|飲みました|のみました|飲んだよ|のんだよ)$/g, '')
     .replace(/[。！!？?]+$/g, '')
     .trim();
 
+  label = label
+    .replace(/^らーめん$/g, 'ラーメン')
+    .replace(/^ぱん$/g, 'パン');
+
   if (/ラーメン食べた|らーめん食べた/.test(label)) return 'ラーメン';
-  if (/^らーめん$/.test(label)) return 'ラーメン';
+  if (/パン食べた|ぱん食べた/.test(label)) return 'パン';
+  if (/カレーでした|かれーでした/.test(label)) return 'カレー';
   if (!label) return '食事';
   return label;
 }
