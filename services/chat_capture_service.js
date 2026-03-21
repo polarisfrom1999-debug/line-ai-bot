@@ -228,7 +228,6 @@ function buildFallbackHeuristics(text) {
   if (base.category === 'body_metrics') return base;
 
   const raw = safeText(text, 300);
-  const lower = raw.toLowerCase();
 
   const hasPain =
     /(痛|しび|痺|張る|違和感|つらい|辛い|だる|重い|こわば|腫れ|炎症|膝|腰|肩|首|股関節|足底|ふくらはぎ)/i.test(raw);
