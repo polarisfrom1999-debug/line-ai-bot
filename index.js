@@ -770,7 +770,31 @@ function buildResumeFriendlyPrefix(user, text = '') {
   return 'またここからで大丈夫です。';
 }
 
+function shouldSuppressContextualPrefix(text = '') {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+
+  if (
+    isMealSaveCommand(raw) ||
+    isImmediateMealSaveCommand(raw) ||
+    isMealManualEditCommand(raw) ||
+    isMealAddPhotoCommand(raw) ||
+    isMealCancelCommand(raw) ||
+    isEditSaveText(raw) ||
+    isDeclineSaveText(raw) ||
+    seemsMealCorrectionText(raw) ||
+    seemsMealTextCandidate(raw) ||
+    isExplicitMealLogText(raw)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function buildContextualCompanionPrefix(user, text = '') {
+  if (shouldSuppressContextualPrefix(text)) return '';
+
   if (isLikelyResumeAfterGap(user, text)) {
     return 'またここからで大丈夫です。空いてしまった分を責めずに、今日は今の様子から整えていきましょう。';
   }
@@ -1956,6 +1980,7 @@ function normalizeMealCorrectionText(text) {
   if (/^水$/.test(t)) return '飲み物は水です';
   if (/^ノンアル$/.test(t)) return '飲み物はノンアルです';
   if (/^\d+個$/.test(t)) return `個数は${t}です`;
+  if (/^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|カレー|パン|トースト|おにぎり|そば|うどん|パスタ)$/.test(t)) return raw;
 
   return raw;
 }
@@ -2416,6 +2441,32 @@ async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
   const { error } = await supabase.from('activity_logs').insert(insertPayload);
   if (error) throw error;
   return insertPayload;
+}
+
+
+function buildMealDraftFromPayload(payload = {}, rawText = '') {
+  const mealLabel = normalizeMealLabelForDisplay(payload?.meal_label || rawText || '食事');
+  const foodItems = Array.isArray(payload?.food_items) ? payload.food_items : [];
+
+  return {
+    is_meal: true,
+    meal_label: mealLabel || '食事',
+    estimated_kcal: Number.isFinite(Number(payload?.estimated_kcal)) ? Number(payload.estimated_kcal) : null,
+    kcal_min: Number.isFinite(Number(payload?.kcal_min)) ? Number(payload.kcal_min) : null,
+    kcal_max: Number.isFinite(Number(payload?.kcal_max)) ? Number(payload.kcal_max) : null,
+    protein_g: Number.isFinite(Number(payload?.protein_g)) ? Number(payload.protein_g) : null,
+    fat_g: Number.isFinite(Number(payload?.fat_g)) ? Number(payload.fat_g) : null,
+    carbs_g: Number.isFinite(Number(payload?.carbs_g)) ? Number(payload.carbs_g) : null,
+    food_items: foodItems,
+    confidence: Number.isFinite(Number(payload?.confidence)) ? Number(payload.confidence) : 0.6,
+    needs_confirmation: payload?.needs_confirmation !== false,
+    ai_comment: '確認用の食事内容として整えています。',
+    raw_model_json: {
+      source: 'pending_meal_payload',
+      original_payload: payload || {},
+      source_text: rawText || '',
+    },
+  };
 }
 
 function buildFallbackMealFromText(rawText = '', payload = {}) {
@@ -4196,8 +4247,19 @@ async function handleTextMessage(event, user) {
       }
 
       if (isEditSaveText(text)) {
+        if (pendingConfirmation.capture_type === 'meal_record') {
+          const pendingMealDraft = buildMealDraftFromPayload(
+            pendingConfirmation.payload || {},
+            pendingConfirmation.source_text || ''
+          );
+          setMealDraft(user.line_user_id, pendingMealDraft, {
+            awaitingAdditionalPhoto: false,
+            manualCorrectionExpected: true,
+          });
+        }
+
         clearRecentCaptureConfirmation(user.line_user_id);
-        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。こちらで整えます。');
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。料理名だけでも大丈夫です。こちらで整えます。');
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
@@ -4311,11 +4373,16 @@ async function handleTextMessage(event, user) {
       }
 
       if (chatCapture.action === 'needs_confirmation') {
+        const pendingMealPayload = chatCapture.payload || {};
         setRecentCaptureConfirmation(user.line_user_id, {
           capture_type: 'meal_record',
-          payload: chatCapture.payload || {},
+          payload: pendingMealPayload,
           source_text: text,
           reply_text: chatCapture.reply_text || '',
+        });
+        setMealDraft(user.line_user_id, buildMealDraftFromPayload(pendingMealPayload, text), {
+          awaitingAdditionalPhoto: false,
+          manualCorrectionExpected: false,
         });
 
         const replyText = prefixWithName(
