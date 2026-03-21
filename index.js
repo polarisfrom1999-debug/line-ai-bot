@@ -1062,10 +1062,15 @@ function getMealDraft(lineUserId) {
 }
 
 function setMealDraft(lineUserId, mealResult, options = {}) {
-  const { awaitingAdditionalPhoto = false } = options;
+  const {
+    awaitingAdditionalPhoto = false,
+    manualCorrectionExpected = false,
+  } = options;
+
   recentMealDrafts.set(lineUserId, {
     meal: mealResult,
     awaitingAdditionalPhoto: Boolean(awaitingAdditionalPhoto),
+    manualCorrectionExpected: Boolean(manualCorrectionExpected),
     updatedAt: Date.now(),
   });
 }
@@ -1081,6 +1086,17 @@ function markMealDraftAwaitingAdditionalPhoto(lineUserId, awaiting = true) {
   recentMealDrafts.set(lineUserId, {
     ...draft,
     awaitingAdditionalPhoto: Boolean(awaiting),
+    updatedAt: Date.now(),
+  });
+}
+
+function markMealDraftManualCorrection(lineUserId, expecting = true) {
+  const draft = getMealDraft(lineUserId);
+  if (!draft) return;
+
+  recentMealDrafts.set(lineUserId, {
+    ...draft,
+    manualCorrectionExpected: Boolean(expecting),
     updatedAt: Date.now(),
   });
 }
@@ -3427,6 +3443,162 @@ function mapRecordCandidateTypeToCaptureType(type = '') {
   return '';
 }
 
+
+function isAnyGraphIntent(text = '') {
+  return isGraphMenuIntent(text)
+    || isWeightGraphIntent(text)
+    || isEnergyGraphIntent(text)
+    || isHbA1cGraphIntent(text)
+    || isLdlGraphIntent(text)
+    || isLabGraphIntent(text);
+}
+
+async function tryHandleGraphIntentMessage(event, user, text) {
+  if (!isAnyGraphIntent(text)) return false;
+
+  if (isGraphMenuIntent(text)) {
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(prefixWithName(user, '見たいグラフを選んでくださいね。'), buildGraphMenuQuickReplies()),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  if (isWeightGraphIntent(text)) {
+    const rows = await getRecentWeightRows(user.id, 30);
+    const graph = buildWeightGraphMessage(rows);
+    const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['食事活動グラフ', 'HbA1cグラフ', 'LDLグラフ', '予測'])];
+    if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  if (isEnergyGraphIntent(text)) {
+    const rows = await getSevenDayEnergyRows(user.id);
+    const graph = buildEnergyGraphMessage(rows);
+    const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['体重グラフ', 'HbA1cグラフ', 'LDLグラフ', '予測'])];
+    if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  if (isHbA1cGraphIntent(text)) {
+    const recentRows = await getRecentLabResults(supabase, user.id, 12);
+    const graph = buildLabGraphMessage(recentRows, 'hba1c');
+    const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['LDLグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
+    if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  if (isLdlGraphIntent(text)) {
+    const recentRows = await getRecentLabResults(supabase, user.id, 12);
+    const graph = buildLabGraphMessage(recentRows, 'ldl');
+    const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', '体重グラフ', '食事活動グラフ', '予測'])];
+    if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  if (isLabGraphIntent(text)) {
+    const recentRows = await getRecentLabResults(supabase, user.id, 12);
+    const graph = buildLabGraphMessage(recentRows, 'hba1c');
+    const messages = [textMessageWithQuickReplies(prefixWithName(user, graph.text), ['HbA1cグラフ', 'LDLグラフ', '体重グラフ', '食事活動グラフ'])];
+    if (Array.isArray(graph.messages) && graph.messages.length) messages.push(...graph.messages);
+    await replyMessage(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+    return true;
+  }
+
+  return false;
+}
+
+async function tryHandlePriorityMealDraftFlow(event, user, text) {
+  const currentMealDraft = getMealDraft(user.line_user_id);
+  if (!currentMealDraft) return false;
+
+  if (isMealManualEditCommand(text)) {
+    markMealDraftAwaitingAdditionalPhoto(user.line_user_id, false);
+    markMealDraftManualCorrection(user.line_user_id, true);
+    await replyMessage(
+      event.replyToken,
+      'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です',
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  if (isMealAddPhotoCommand(text)) {
+    markMealDraftAwaitingAdditionalPhoto(user.line_user_id, true);
+    markMealDraftManualCorrection(user.line_user_id, false);
+    await replyMessage(
+      event.replyToken,
+      '追加した写真をそのまま送ってください。次の写真を追加分として反映します。',
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  if (isImmediateMealSaveCommand(text)) {
+    const savedMeal = await saveMealToLog(user.id, currentMealDraft.meal);
+    clearMealDraft(user.line_user_id);
+
+    await saveUserState(user.id, {
+      last_any_log_at: new Date().toISOString(),
+      last_meal_logged_at: new Date().toISOString(),
+    });
+
+    const totals = await getTodayEnergyTotals(user.id);
+    const nutritionLines = buildMealNutritionLines(savedMeal);
+    const replyText = prefixWithName(
+      user,
+      [
+        '食事を保存しました。',
+        `料理: ${savedMeal.meal_label}`,
+        savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+        nutritionLines.length ? '' : null,
+        ...(nutritionLines.length ? nutritionLines : []),
+        `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+      ].filter(Boolean).join('\n')
+    );
+
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(replyText, ['次の食事を記録', '少し歩いた', '体重グラフ', '食事活動グラフ']),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  if (isMealCancelCommand(text)) {
+    clearMealDraft(user.line_user_id);
+    const replyText = '確認中の食事データを取り消しました。';
+    await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  if (currentMealDraft.manualCorrectionExpected || seemsMealCorrectionText(text)) {
+    const normalizedCorrectionText = normalizeMealCorrectionText(text);
+    const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, normalizedCorrectionText);
+    setMealDraft(user.line_user_id, correctedMeal, {
+      awaitingAdditionalPhoto: false,
+      manualCorrectionExpected: false,
+    });
+    const replyText = prefixWithName(user, buildMealReplyWithSaveGuide(correctedMeal));
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(replyText, buildMealFollowupQuickReplies()),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    await rememberInteraction(user, text, replyText);
+    return true;
+  }
+
+  return false;
+}
+
 async function tryHandleConversationRouterFallback(event, user, text) {
   if (!text || shouldSkipConversationRouterFallback(user, text)) return false;
 
@@ -3450,6 +3622,10 @@ async function tryHandleConversationRouterFallback(event, user, text) {
     await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
     await rememberInteraction(user, text, replyText);
     return true;
+  }
+
+  if (routing.route === 'graph') {
+    return tryHandleGraphIntentMessage(event, user, text);
   }
 
   if (routing.route === 'record_candidate' && routing.top_record_candidate) {
@@ -3550,7 +3726,13 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    // グラフ分岐は handleTextMessage の前半へ移動
+    if (await tryHandleGraphIntentMessage(event, user, text)) {
+      return;
+    }
+
+    if (await tryHandlePriorityMealDraftFlow(event, user, text)) {
+      return;
+    }
 
     const pendingConfirmation = getRecentCaptureConfirmation(user.line_user_id);
     if (pendingConfirmation) {
