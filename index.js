@@ -718,6 +718,28 @@ function hasConsultationLikeIntent(text) {
   return patterns.some((p) => t.includes(normalizeTextLoose(p)));
 }
 
+function isLikelyResumeAfterGap(user, text = '') {
+  const normalized = normalizeJapaneseText(text || '');
+  if (!normalized) return false;
+
+  const patterns = [
+    '久しぶり', 'ひさしぶり', 'またここから', 'またお願いします', '戻ってきました', '再開', 'ただいま', 'また始めます'
+  ];
+  const hasPattern = patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
+  if (hasPattern) return true;
+
+  const last = user?.last_checkin_at || user?.last_any_log_at;
+  if (!last) return false;
+  const dt = new Date(last);
+  if (Number.isNaN(dt.getTime())) return false;
+  return (Date.now() - dt.getTime()) >= (1000 * 60 * 60 * 24 * 5);
+}
+
+function buildResumeFriendlyPrefix(user, text = '') {
+  if (!isLikelyResumeAfterGap(user, text)) return '';
+  return 'またここからで大丈夫です。';
+}
+
 function shouldPrioritizeConsultation(text) {
   const raw = String(text || '').trim();
   const t = normalizeTextLoose(raw);
@@ -1295,8 +1317,9 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
     await saveWeightToLog(user.id, weightKg, rawText);
   }
 
+  let bodyFatSaveResult = null;
   if (Number.isFinite(bodyFatPercent) && bodyFatPercent >= 1 && bodyFatPercent <= 80) {
-    await saveBodyFatToLog(user.id, bodyFatPercent, rawText);
+    bodyFatSaveResult = await saveBodyFatToLog(user.id, bodyFatPercent, rawText);
   }
 
   const statePatch = {
@@ -1330,14 +1353,14 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
 
   const lines = [];
   if (Number.isFinite(weightKg) && Number.isFinite(bodyFatPercent)) {
-    lines.push('体重と体脂肪率を記録しておきました。');
+    lines.push(bodyFatSaveResult?.skipped ? '体重は記録し、体脂肪率も受け取れています。' : '体重と体脂肪率を記録しておきました。');
     lines.push(`体重: ${weightKg}kg`);
     lines.push(`体脂肪率: ${bodyFatPercent}%`);
   } else if (Number.isFinite(weightKg)) {
     lines.push('体重を記録しておきました。');
     lines.push(`今回: ${weightKg}kg`);
   } else if (Number.isFinite(bodyFatPercent)) {
-    lines.push('体脂肪率を記録しておきました。');
+    lines.push(bodyFatSaveResult?.skipped ? '体脂肪率は受け取れています。' : '体脂肪率を記録しておきました。');
     lines.push(`今回: ${bodyFatPercent}%`);
   }
 
@@ -1351,6 +1374,10 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
 
   if (Number.isFinite(bodyFatPercent) && !Number.isFinite(weightKg)) {
     lines.push('体重も分かれば、そのまま続けて送ってくださいね。');
+  }
+
+  if (bodyFatSaveResult?.skipped) {
+    lines.push('※ 体脂肪率の履歴保存は、body_fat_logs テーブルを作ると安定して残せます。');
   }
 
   return lines.join('\n');
@@ -1853,9 +1880,14 @@ function normalizeMealCorrectionText(text) {
 
 function buildMealReplyWithSaveGuide(meal, options = {}) {
   const { textOnly = false } = options;
+  const mealLabel = safeText(meal?.meal_label || '食事', 120);
+  const intro = mealLabel && mealLabel !== '食事'
+    ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
+    : '教えてもらえた内容を、いったん今の情報で整えてみました。';
+
   const lines = [
-    '食事内容を整理しました。',
-    `料理: ${safeText(meal?.meal_label || '食事', 120)}`,
+    intro,
+    `料理: ${mealLabel}`,
     meal?.estimated_kcal != null
       ? `推定カロリー: ${fmt(meal.estimated_kcal)} kcal${
           meal?.kcal_min != null && meal?.kcal_max != null
@@ -1874,8 +1906,8 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   lines.push('');
   lines.push(
     textOnly
-      ? '合っていれば保存、違うところがあればそのまま訂正してください。'
-      : '合っていれば保存、違うところがあればボタンか文字で訂正してください。'
+      ? 'この内容でよければ保存で大丈夫です。違うところがあれば、そのまま言い直してください。'
+      : 'この内容でよければ保存で大丈夫です。違うところがあれば、ボタンでも言い直しでも大丈夫です。'
   );
 
   return lines.join('\n');
@@ -2206,7 +2238,7 @@ async function saveMealToLog(userId, meal) {
     fat_g: meal.fat_g ?? null,
     carbs_g: meal.carbs_g ?? null,
     confidence: meal.confidence ?? null,
-    ai_comment: safeText(meal.ai_comment || '食事を保存しました。', 1000),
+    ai_comment: safeText(meal.ai_comment || 'この内容で食事記録にしておきました。', 1000),
     raw_model_json: meal,
   };
 
@@ -2241,13 +2273,13 @@ async function saveBodyFatToLog(userId, bodyFatPercent, rawText) {
   const { error } = await supabase.from('body_fat_logs').insert(insertPayload);
   if (error) {
     if (isMissingRelationError(error)) {
-      console.warn('⚠️ body_fat_logs table not found. Body fat save skipped.');
-      return null;
+      console.warn('ℹ️ body_fat_logs table is missing. Body fat history save is skipped until the table is created.');
+      return { ...insertPayload, skipped: true, reason: 'missing_body_fat_logs_table' };
     }
     throw error;
   }
 
-  return insertPayload;
+  return { ...insertPayload, skipped: false };
 }
 
 async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
@@ -2304,8 +2336,31 @@ async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
   return insertPayload;
 }
 
+function buildFallbackMealFromText(rawText = '', payload = {}) {
+  const sourceText = safeText(rawText || payload.raw_text || payload.source_text || payload.meal_label || '食事', 120);
+  const mealLabel = safeText(payload.meal_label || sourceText || '食事', 120);
+  return {
+    is_meal: true,
+    meal_label: mealLabel || '食事',
+    food_items: Array.isArray(payload.food_items) ? payload.food_items : [],
+    estimated_kcal: Number.isFinite(Number(payload.estimated_kcal)) ? Number(payload.estimated_kcal) : null,
+    kcal_min: Number.isFinite(Number(payload.kcal_min)) ? Number(payload.kcal_min) : null,
+    kcal_max: Number.isFinite(Number(payload.kcal_max)) ? Number(payload.kcal_max) : null,
+    protein_g: Number.isFinite(Number(payload.protein_g)) ? Number(payload.protein_g) : null,
+    fat_g: Number.isFinite(Number(payload.fat_g)) ? Number(payload.fat_g) : null,
+    carbs_g: Number.isFinite(Number(payload.carbs_g)) ? Number(payload.carbs_g) : null,
+    confidence: Number.isFinite(Number(payload.confidence)) ? Number(payload.confidence) : 0.45,
+    ai_comment: '教えてもらえた内容で食事記録としてまとめました。',
+    raw_model_json: { source: 'fallback_meal_text', raw_text: sourceText, original_payload: payload },
+  };
+}
+
 async function saveMealSmartPayload(user, payload = {}, rawText = '') {
-  const analyzedMeal = await analyzeMealTextPrimary(rawText || payload.raw_text || payload.source_text || '');
+  const sourceText = rawText || payload.raw_text || payload.source_text || payload.meal_label || '';
+  let analyzedMeal = await analyzeMealTextPrimary(sourceText);
+  if (!isMeaningfulMealDraft(analyzedMeal)) {
+    analyzedMeal = buildFallbackMealFromText(sourceText, payload);
+  }
   return saveMealToLog(user.id, analyzedMeal);
 }
 
@@ -3701,7 +3756,7 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
     const replyText = prefixWithName(
       user,
       [
-        '食事を保存しました。',
+        'この内容で食事記録にしておきました。',
         `料理: ${savedMeal.meal_label}`,
         savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
         nutritionLines.length ? '' : null,
@@ -3925,11 +3980,11 @@ async function handleTextMessage(event, user) {
               pendingConfirmation.source_text || text
             );
           } else {
-            clearRecentCaptureConfirmation(user.line_user_id);
-            const replyText = prefixWithName(user, '今の食事候補が少し途切れてしまったので、もう一度だけ写真か食事内容を送ってください。受け取れたらすぐ整えますね。');
-            await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-            await rememberInteraction(user, text, replyText);
-            return;
+            savedMeal = await saveMealSmartPayload(
+              user,
+              pendingPayload,
+              pendingConfirmation.source_text || text
+            );
           }
 
           clearRecentCaptureConfirmation(user.line_user_id);
@@ -3946,7 +4001,7 @@ async function handleTextMessage(event, user) {
           const replyText = prefixWithName(
             user,
             [
-              'ありがとうございます。食事記録として残しました。',
+              '受け取れているので、食事記録として残しておきました。',
               `料理: ${savedMeal.meal_label}`,
               savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
               nutritionLines.length ? '' : null,
@@ -4137,7 +4192,7 @@ async function handleTextMessage(event, user) {
         const replyText = prefixWithName(
           user,
           [
-            'ありがとうございます。食事記録として残しました。',
+            '受け取れているので、食事記録として残しておきました。',
             `料理: ${savedMeal.meal_label}`,
             savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
             nutritionLines.length ? '' : null,
@@ -4165,7 +4220,7 @@ async function handleTextMessage(event, user) {
 
         const replyText = prefixWithName(
           user,
-          chatCapture.reply_text || '食事のこととして受け取っています。合っていれば保存しておきますか？'
+          chatCapture.reply_text || '食べた内容、受け取れています。いったんこの内容で記録して大丈夫ですか？'
         );
 
         await replyMessage(
@@ -4224,7 +4279,7 @@ async function handleTextMessage(event, user) {
 
         const replyText = prefixWithName(
           user,
-          chatCapture.reply_text || '運動のこととして受け取っています。合っていれば保存しておきますか？'
+          chatCapture.reply_text || '動いた内容、受け取れています。いったんこの内容で記録して大丈夫ですか？'
         );
 
         await replyMessage(
@@ -4495,7 +4550,7 @@ if (text === 'プラン案内を見る') {
         const replyText = prefixWithName(
           user,
           [
-            'ありがとうございます。食事記録として残しました。',
+            '受け取れているので、食事記録として残しておきました。',
             `料理: ${savedMeal.meal_label}`,
             savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
             nutritionLines.length ? '' : null,
@@ -5369,7 +5424,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
 
       const nutritionLines = buildMealNutritionLines(savedMeal);
       const saveLines = [
-        '食事を保存しました。',
+        'この内容で食事記録にしておきました。',
         `料理: ${savedMeal.meal_label}`,
         savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
         nutritionLines.length ? '' : null,
