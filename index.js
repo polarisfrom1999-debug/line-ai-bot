@@ -626,7 +626,18 @@ async function updateUserAiPersona(userId, personaType) {
 function isActivityCommand(text) {
   if (shouldAvoidMealExerciseAutoCapture(text)) return false;
   if (isExerciseConsultationText(text)) return false;
+  if (hasQuestionIntent(text)) return false;
   return EXERCISE_WORD_HINTS.some((w) => text.includes(w)) || text.includes('歩数') || text.includes('消費');
+}
+
+function isContinueConsultText(text) {
+  const t = String(text || '').trim();
+  return [
+    'そのまま話を続ける',
+    '相談を続ける',
+    'このまま相談したい',
+    'このまま話したい',
+  ].includes(t);
 }
 
 function isMealSaveCommand(text) {
