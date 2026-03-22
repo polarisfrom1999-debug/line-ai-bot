@@ -1473,12 +1473,23 @@ function buildExerciseCaptureSavePayload(payload = {}, rawText = '') {
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
+
+  const normalized = t.replace(/\s+/g, '');
+
+  if (/^\d+$/.test(normalized)) return false;
+  if (/^\d+(kcal|キロカロリー)?(ですね|です)?$/.test(normalized)) return false;
+  if (/^(はい|いいえ|そうです|そうですね|了解|オッケー|ok)$/i.test(normalized)) return false;
+
   return [
-    'です', 'ではない', 'じゃない', '違います', 'ちがいます', '個です', '杯です', '本です',
-    'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
-    'ウーロン茶', '緑茶', '麦茶', '紅茶', '薄く', '少し', '多め', '少なめ',
-    '追加', '増やし', '減らし', '半分', 'ひとくち', '一口', '抜いて', 'なしで',
-  ].some((w) => t.includes(w));
+    'ではない', 'じゃない', '違います', 'ちがいます',
+    '個です', '杯です', '本です', '枚です', '袋です',
+    'お酒ではない', 'お茶です', '水です', 'ノンアルです',
+    'ジャスミンティーです', '烏龍茶です', 'ウーロン茶です', '緑茶です', '麦茶です', '紅茶です',
+    '薄く', '少し', '多め', '少なめ',
+    '追加', '増やし', '減らし', '半分', 'ひとくち', '一口',
+    '抜いて', 'なしで', '抜きで',
+    '2個', '3個', '4個', '5個',
+  ].some((w) => normalized.includes(w));
 }
 
 function normalizeMealIntentText(text) {
@@ -1919,6 +1930,10 @@ function normalizeMealCorrectionText(text) {
 
   const t = raw.replace(/\s+/g, '').replace(/[。．]/g, '');
 
+  if (/^\d+$/.test(t)) return '';
+  if (/^\d+(ですね|です)$/.test(t)) return '';
+  if (/^\d+(kcal|キロカロリー)(ですね|です)?$/.test(t)) return '';
+
   if (/^ご飯半分$/.test(t) || /^ごはん半分$/.test(t)) return 'ご飯は半分です';
   if (/^ご飯少なめ$/.test(t) || /^ごはん少なめ$/.test(t)) return 'ご飯は少なめです';
   if (/^ご飯多め$/.test(t) || /^ごはん多め$/.test(t)) return 'ご飯は多めです';
@@ -1939,19 +1954,24 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
     ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
     : '教えてもらえた内容を、いったん今の情報で整えてみました。';
 
+  const estimatedKcal = Number(meal?.estimated_kcal);
+  const kcalMin = Number(meal?.kcal_min);
+  const kcalMax = Number(meal?.kcal_max);
+  const hasMeaningfulKcal = Number.isFinite(estimatedKcal) && estimatedKcal > 0;
+  const hasMeaningfulRange = Number.isFinite(kcalMin) && Number.isFinite(kcalMax) && (kcalMin > 0 || kcalMax > 0);
+
   const lines = [
     intro,
     `料理: ${mealLabel}`,
-    meal?.estimated_kcal != null
-      ? `推定カロリー: ${fmt(meal.estimated_kcal)} kcal${
-          meal?.kcal_min != null && meal?.kcal_max != null
-            ? ` (${fmt(meal.kcal_min)}〜${fmt(meal.kcal_max)} kcal)`
-            : ''
-        }`
-      : null,
+    hasMeaningfulKcal
+      ? `推定カロリー: ${fmt(estimatedKcal)} kcal${hasMeaningfulRange ? ` (${fmt(kcalMin)}〜${fmt(kcalMax)} kcal)` : ''}`
+      : '推定カロリー: 画像と内容から確認中です',
   ].filter(Boolean);
 
-  const nutritionLines = buildMealNutritionLines(meal);
+  const nutritionLines = buildMealNutritionLines(meal).filter((line) => {
+    const text = String(line || '').trim();
+    return !(/0(\.0)?g/.test(text) && /たんぱく質|脂質|糖質/.test(text));
+  });
   if (nutritionLines.length) {
     lines.push('');
     lines.push(...nutritionLines);
@@ -3770,6 +3790,15 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
   const currentMealDraft = getMealDraft(user.line_user_id);
   if (!currentMealDraft) return false;
 
+  if (
+    isMealDesireOrFeelingText(text) ||
+    hasPainOrMedicalContext(text) ||
+    hasConsultationLikeIntent(text) ||
+    hasQuestionIntent(text)
+  ) {
+    return false;
+  }
+
   if (isMealDraftCalorieQuestion(text)) {
     const meal = currentMealDraft.meal || {};
     const nutritionLines = buildMealNutritionLines(meal);
@@ -3854,8 +3883,9 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
     return true;
   }
 
-  if (currentMealDraft.manualCorrectionExpected || seemsMealCorrectionText(text)) {
-    const normalizedCorrectionText = normalizeMealCorrectionText(text);
+  const normalizedCorrectionText = normalizeMealCorrectionText(text);
+
+  if ((currentMealDraft.manualCorrectionExpected || seemsMealCorrectionText(text)) && normalizedCorrectionText) {
     const correctedMeal = await applyMealCorrectionPrimary(currentMealDraft.meal, normalizedCorrectionText);
     setMealDraft(user.line_user_id, correctedMeal, {
       awaitingAdditionalPhoto: false,
