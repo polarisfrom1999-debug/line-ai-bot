@@ -1052,20 +1052,9 @@ function isInputHelpIntent(text) {
 }
 
 function isPastDateHelpIntent(text) {
-  const raw = String(text || '').trim();
   const t = normalizeTextLoose(text);
-  if (!t) return false;
-
-  const basePatterns = ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい'];
-  if (basePatterns.some((x) => t.includes(normalizeTextLoose(x)))) return true;
-
-  const hasPastWord = ['昨日', 'きのう', '一昨日', 'おととい', 'さっきの', '前の', '過去分'].some((x) => t.includes(normalizeTextLoose(x)));
-  const hasSendWord = ['送って', '送る', '記録', '登録', '保存', '今から', 'あとから', '後から'].some((x) => t.includes(normalizeTextLoose(x)));
-  if (!hasPastWord || !hasSendWord) return false;
-
-  if (hasQuestionIntent(raw)) return true;
-
-  return ['良い', 'いい', '大丈夫', '平気', 'できますか', '可能'].some((x) => t.includes(normalizeTextLoose(x)));
+  return ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい']
+    .some((x) => t.includes(normalizeTextLoose(x)));
 }
 
 function isPauseReasonOption(text) {
@@ -1484,71 +1473,6 @@ function isMealDesireOrFeelingText(text) {
 
   if (patterns.some((p) => t.includes(p))) return true;
   return (t.includes('食べ') || t.includes('飲み')) && t.includes('たい');
-}
-
-function isUsageGuideQuestion(text) {
-  const raw = String(text || '').trim();
-  const t = normalizeTextLoose(raw);
-  if (!t) return false;
-
-  if (['使い方', 'やり方', 'どう送ればいい', 'どう送れば良い', 'どう送る', '何を送ればいい', '何を送れば良い'].some((x) => t.includes(normalizeTextLoose(x)))) {
-    return true;
-  }
-
-  if (hasQuestionIntent(raw) && ['写真だけ', '写真のみ', '画像だけ', '文字だけ', '昨日の分', '食事の送り方', '報告のしかた', '報告の仕方'].some((x) => t.includes(normalizeTextLoose(x)))) {
-    return true;
-  }
-
-  return false;
-}
-
-function isStableWeightStatusText(text) {
-  const raw = String(text || '').trim();
-  const t = normalizeTextLoose(raw);
-  if (!t) return false;
-  if (!t.includes(normalizeTextLoose('体重'))) return false;
-  return ['安定', 'キープ', '維持', '現状維持', '保てている', '落ち着いている'].some((x) => t.includes(normalizeTextLoose(x)));
-}
-
-function buildPastDateFriendlyReply() {
-  return [
-    'もちろん大丈夫です。昨日の分でも、そのまま送ってくださいね。',
-    '写真だけでも大丈夫ですし、ひとこと添えてもらっても大丈夫です。',
-    'こちらで昨日の記録として整えます。',
-  ].join('\n');
-}
-
-function buildUsageGuideShortReply() {
-  return [
-    '写真だけでも大丈夫です。',
-    '食事なら写真だけ、または「ラーメン食べた」のような短文でも送れます。',
-    '昨日の分でも大丈夫なので、送りやすいやり方でそのまま送ってくださいね。',
-  ].join('\n');
-}
-
-function buildStableWeightReply() {
-  return [
-    '体重が安定しているのは、いい流れですね。',
-    '今は無理に動かしにいかず、このまま整っている感覚を大事にして大丈夫です。',
-    '数字も残したい時は、体重だけそのまま送ってくださいね。',
-  ].join('\n');
-}
-
-function buildCravingSupportReply(text = '') {
-  const t = normalizeTextLoose(text);
-  if (t.includes(normalizeTextLoose('甘い'))) {
-    return [
-      '甘いものが欲しくなる日、ありますよね。',
-      'まずは我慢しようとしすぎなくて大丈夫です。',
-      '今日は少しだけにするか、食べるなら満足できるものを選ぶ、くらいで十分ですよ。',
-    ].join('\n');
-  }
-
-  return [
-    'そういう気分の日、ありますよね。',
-    'まずは責めなくて大丈夫です。',
-    '今日はどうしたい気分か、そのまま教えてもらえれば一緒に整えます。',
-  ].join('\n');
 }
 
 function isExplicitMealLogText(text) {
@@ -4028,34 +3952,6 @@ async function handleTextMessage(event, user) {
       return;
     }
 
-    if (isPastDateHelpIntent(text)) {
-      const replyText = prefixWithName(user, buildPastDateFriendlyReply());
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (isUsageGuideQuestion(text)) {
-      const replyText = prefixWithName(user, buildUsageGuideShortReply());
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (isStableWeightStatusText(text) && !parseWeightInput(text) && !parseBodyFatInput(text)) {
-      const replyText = prefixWithName(user, buildStableWeightReply());
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
-    if (isMealDesireOrFeelingText(text) && !isExplicitMealLogText(text)) {
-      const replyText = prefixWithName(user, buildCravingSupportReply(text));
-      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, replyText);
-      return;
-    }
-
     if (isAiPersonaChangeCommand(text)) {
       const replyText = prefixWithName(user, getPersonaSelectionMessage());
       await replyMessage(
@@ -5603,7 +5499,7 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     if (isMealDesireOrFeelingText(text)) {
-      const reply = await defaultChatReply(user, text);
+      const reply = prefixWithName(user, buildCravingSupportReply(text));
       await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, reply);
       return;
