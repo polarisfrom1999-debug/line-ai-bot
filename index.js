@@ -284,17 +284,9 @@ const {
 const {
   buildTrialMessageExamples,
 } = require('./services/trial_message_examples_service');
-const chatCaptureService = require('./services/chat_capture_service');
-const analyzeChatCapture =
-  typeof chatCaptureService === 'function'
-    ? chatCaptureService
-    : typeof chatCaptureService?.analyzeChatCapture === 'function'
-      ? chatCaptureService.analyzeChatCapture
-      : typeof chatCaptureService?.default === 'function'
-        ? chatCaptureService.default
-        : typeof chatCaptureService?.default?.analyzeChatCapture === 'function'
-          ? chatCaptureService.default.analyzeChatCapture
-          : null;
+const {
+  analyzeChatCapture,
+} = require('./services/chat_capture_service');
 const {
   routeConversation,
 } = require('./services/chatgpt_conversation_router');
@@ -1474,16 +1466,28 @@ function isMealDesireOrFeelingText(text) {
   const patterns = [
     '食べたい', '飲みたい', '食べたくて', '飲みたくて',
     'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
-    'いっぱい食べたい', '甘いもの食べたい', '甘いものが食べたい', '甘いものが食べたくて',
-    '何か食べたい', '何か食べたくて', '甘い物が食べたい', '甘い物が食べたくて',
+    'いっぱい食べたい', '甘いもの食べたい', '甘いものが食べたい', '甘いものが食べたくて', '甘い物が食べたい', '甘い物が食べたくて',
+    '何か食べたい', '何か食べたくて', '何か飲みたい', '何か飲みたくて',
     '食欲がある', '食欲がない', '食欲あります', '食欲ない',
-    'お腹すいた', 'おなかすいた', '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
+    'お腹すいた', 'おなかすいた', '口さみしい', '口寂しい',
+    '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
     '食欲が止まらない', '食欲がすごい', '食べすぎそう', '食べ過ぎそう', '食べすぎたくなる',
-    '甘いものが止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
+    '甘いものが止まらない', '甘い物が止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
   ];
 
   if (patterns.some((p) => t.includes(p))) return true;
-  return (t.includes('食べ') || t.includes('飲み')) && t.includes('たい');
+
+  const hasDesireVerb = (t.includes('食べ') || t.includes('飲み')) && (
+    t.includes('たい') ||
+    t.includes('たくて') ||
+    t.includes('たくなる') ||
+    t.includes('てしまいそう') ||
+    t.includes('そう')
+  );
+
+  if (!hasDesireVerb) return false;
+  if (/食べた|飲んだ|食べました|飲みました/.test(t)) return false;
+  return true;
 }
 
 function isExplicitMealLogText(text) {
@@ -4157,13 +4161,10 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    const chatCapture =
-      typeof analyzeChatCapture === 'function'
-        ? await analyzeChatCapture({
-            userText: text,
-            user,
-          })
-        : null;
+    const chatCapture = await analyzeChatCapture({
+      userText: text,
+      user,
+    });
 
     if (chatCapture?.capture_type === 'body_metrics') {
       const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
