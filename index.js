@@ -1358,6 +1358,119 @@ function isEditSaveText(text) {
   return ['修正する', '訂正する', '違います', 'ちがいます'].includes(String(text || '').trim());
 }
 
+function hasStructuredMealPayload(payload = {}) {
+  return Boolean(
+    safeText(payload?.meal_label || '', 120) ||
+    Number.isFinite(Number(payload?.estimated_kcal)) ||
+    (Array.isArray(payload?.food_items) && payload.food_items.length) ||
+    safeText(payload?.meal_text || '', 300)
+  );
+}
+
+function shouldAutoSaveBodyMetricsCapture(chatCapture = {}, text = '') {
+  const payload = chatCapture?.payload || {};
+  const parsed = parseBodyMetricsInput(text);
+
+  const weightKg = Number.isFinite(Number(payload.weight_kg))
+    ? Number(payload.weight_kg)
+    : parsed.weightKg;
+
+  const bodyFatPercent = Number.isFinite(Number(payload.body_fat_percent))
+    ? Number(payload.body_fat_percent)
+    : parsed.bodyFatPercent;
+
+  const hasWeight = Number.isFinite(weightKg);
+  const hasBodyFat = Number.isFinite(bodyFatPercent);
+
+  if (!hasWeight && !hasBodyFat) return false;
+  if (chatCapture?.action === 'auto_save' || chatCapture?.auto_save) return true;
+
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  if (hasQuestionIntent(raw)) return false;
+  if (hasConsultationLikeIntent(raw)) return false;
+  if (shouldPrioritizeConsultation(raw)) return false;
+
+  return true;
+}
+
+function shouldAutoSaveMealCapture(chatCapture = {}, text = '') {
+  if (chatCapture?.action === 'auto_save' || chatCapture?.auto_save) return true;
+
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  if (hasQuestionIntent(raw)) return false;
+  if (hasConsultationLikeIntent(raw)) return false;
+  if (shouldPrioritizeConsultation(raw)) return false;
+  if (isMealDesireOrFeelingText(raw)) return false;
+  if (seemsMealCorrectionText(raw)) return false;
+
+  return hasStructuredMealPayload(chatCapture?.payload || {});
+}
+
+function buildMealSavedReply(savedMeal, totals = {}) {
+  const mealLabel = safeText(savedMeal?.meal_label || '', 120) || 'お食事';
+  const nutritionLines = buildMealNutritionLines(savedMeal);
+
+  return [
+    `${mealLabel}ですね。今日の食事として受け取りました。`,
+    savedMeal?.estimated_kcal != null ? `今回の目安: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
+    nutritionLines.length ? '' : null,
+    ...(nutritionLines.length ? nutritionLines : []),
+    `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
+    '違うところがあれば、そのまま足して教えてくださいね。',
+  ].filter(Boolean).join('\n');
+}
+
+function buildMealConfirmationReply(chatCapture = {}, text = '') {
+  const mealLabel = safeText(
+    chatCapture?.payload?.meal_label ||
+    chatCapture?.payload?.meal_text ||
+    text ||
+    '',
+    120
+  );
+
+  if (mealLabel) {
+    return `${mealLabel}で受け取っています。違うところがあればそのまま教えてください。大丈夫そうなら、この内容で記録しておきますか？`;
+  }
+
+  return '食事の内容は受け取れています。違うところがあればそのまま教えてください。大丈夫そうなら、この内容で記録しておきますか？';
+}
+
+function mergeBodyMetricsPayload(basePayload = {}, text = '') {
+  const parsed = parseBodyMetricsInput(text);
+
+  const merged = {
+    ...basePayload,
+  };
+
+  if (
+    !Number.isFinite(Number(merged.weight_kg)) &&
+    Number.isFinite(parsed.weightKg)
+  ) {
+    merged.weight_kg = parsed.weightKg;
+  }
+
+  if (
+    !Number.isFinite(Number(merged.body_fat_percent)) &&
+    Number.isFinite(parsed.bodyFatPercent)
+  ) {
+    merged.body_fat_percent = parsed.bodyFatPercent;
+  }
+
+  return merged;
+}
+
+function didBodyMetricsPayloadGrow(beforePayload = {}, afterPayload = {}) {
+  const beforeWeight = Number.isFinite(Number(beforePayload?.weight_kg));
+  const beforeBodyFat = Number.isFinite(Number(beforePayload?.body_fat_percent));
+  const afterWeight = Number.isFinite(Number(afterPayload?.weight_kg));
+  const afterBodyFat = Number.isFinite(Number(afterPayload?.body_fat_percent));
+
+  return (!beforeWeight && afterWeight) || (!beforeBodyFat && afterBodyFat);
+}
+
 async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
   const weightKg = Number(payload.weight_kg);
   const bodyFatPercent = Number(payload.body_fat_percent);
@@ -1371,16 +1484,18 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
     bodyFatSaveResult = await saveBodyFatToLog(user.id, bodyFatPercent, rawText);
   }
 
+  const nowIso = new Date().toISOString();
   const statePatch = {
-    last_any_log_at: new Date().toISOString(),
+    last_any_log_at: nowIso,
+    last_checkin_at: nowIso,
   };
 
   if (Number.isFinite(weightKg) && weightKg >= 20 && weightKg <= 300) {
-    statePatch.last_weight_logged_at = new Date().toISOString();
+    statePatch.last_weight_logged_at = nowIso;
   }
 
   if (Number.isFinite(bodyFatPercent) && bodyFatPercent >= 1 && bodyFatPercent <= 80) {
-    statePatch.last_body_fat_logged_at = new Date().toISOString();
+    statePatch.last_body_fat_logged_at = nowIso;
   }
 
   await saveUserState(user.id, statePatch);
@@ -1394,37 +1509,39 @@ async function saveBodyMetricsFromPayload(user, payload = {}, rawText = '') {
     diffText = (() => {
       if (!prev || prev.weight_kg == null) return '前回比較はまだありません。';
       const diff = Math.round((Number(latest.weight_kg) - Number(prev.weight_kg)) * 10) / 10;
-      if (diff === 0) return '前回から変化はありません。';
+      if (diff === 0) return '前回から大きな変化はありません。';
       if (diff > 0) return `前回より ${diff}kg 増えています。`;
       return `前回より ${Math.abs(diff)}kg 減っています。`;
     })();
   }
 
   const lines = [];
+
   if (Number.isFinite(weightKg) && Number.isFinite(bodyFatPercent)) {
-    lines.push(bodyFatSaveResult?.skipped ? '体重は記録し、体脂肪率も受け取れています。' : '体重と体脂肪率を記録しておきました。');
+    lines.push(
+      bodyFatSaveResult?.skipped
+        ? 'ありがとうございます。体重は記録し、体脂肪率も受け取れています。'
+        : 'ありがとうございます。今日は体重と体脂肪率を記録しておきました。'
+    );
     lines.push(`体重: ${weightKg}kg`);
     lines.push(`体脂肪率: ${bodyFatPercent}%`);
   } else if (Number.isFinite(weightKg)) {
-    lines.push('体重を記録しておきました。');
+    lines.push('ありがとうございます。体重を記録しておきました。');
     lines.push(`今回: ${weightKg}kg`);
+    lines.push('体脂肪率も測っていたら、そのまま続けて送ってくださいね。');
   } else if (Number.isFinite(bodyFatPercent)) {
-    lines.push(bodyFatSaveResult?.skipped ? '体脂肪率は受け取れています。' : '体脂肪率を記録しておきました。');
+    lines.push(
+      bodyFatSaveResult?.skipped
+        ? 'ありがとうございます。体脂肪率は受け取れています。'
+        : 'ありがとうございます。体脂肪率を記録しておきました。'
+    );
     lines.push(`今回: ${bodyFatPercent}%`);
+    lines.push('体重も測っていたら、そのまま続けて送ってくださいね。');
   }
 
   if (diffText) {
     lines.push(diffText);
   }
-
-  if (Number.isFinite(weightKg) && !Number.isFinite(bodyFatPercent)) {
-    lines.push('体脂肪率も分かれば、そのまま続けて送ってくださいね。');
-  }
-
-  if (Number.isFinite(bodyFatPercent) && !Number.isFinite(weightKg)) {
-    lines.push('体重も分かれば、そのまま続けて送ってくださいね。');
-  }
-
 
   return lines.join('\n');
 }
@@ -4065,6 +4182,47 @@ async function handleTextMessage(event, user) {
 
     const pendingConfirmation = getRecentCaptureConfirmation(user.line_user_id);
     if (pendingConfirmation) {
+      if (pendingConfirmation.capture_type === 'body_metrics') {
+        const mergedPayload = mergeBodyMetricsPayload(
+          pendingConfirmation.payload || {},
+          text
+        );
+
+        if (
+          didBodyMetricsPayloadGrow(pendingConfirmation.payload || {}, mergedPayload) &&
+          shouldAutoSaveBodyMetricsCapture({ payload: mergedPayload, action: 'auto_save' }, text)
+        ) {
+          const savedReply = await saveBodyMetricsFromPayload(
+            user,
+            mergedPayload,
+            `${pendingConfirmation.source_text || ''}\n${text}`.trim()
+          );
+
+          clearRecentCaptureConfirmation(user.line_user_id);
+
+          const replyText = prefixWithName(
+            user,
+            Number.isFinite(Number(pendingConfirmation?.payload?.weight_kg)) &&
+            Number.isFinite(Number(mergedPayload?.body_fat_percent)) &&
+            !Number.isFinite(Number(pendingConfirmation?.payload?.body_fat_percent))
+              ? `ありがとうございます。先ほどの記録に体脂肪率も追加しておきました。\n\n${savedReply}`
+              : !Number.isFinite(Number(pendingConfirmation?.payload?.weight_kg)) &&
+                Number.isFinite(Number(mergedPayload?.weight_kg)) &&
+                Number.isFinite(Number(pendingConfirmation?.payload?.body_fat_percent))
+                ? `ありがとうございます。先ほどの記録に体重も追加しておきました。\n\n${savedReply}`
+                : savedReply
+          );
+
+          await replyMessage(
+            event.replyToken,
+            textMessageWithQuickReplies(replyText, ['体重グラフ', '予測', '食事活動グラフ', 'グラフ']),
+            env.LINE_CHANNEL_ACCESS_TOKEN
+          );
+          await rememberInteraction(user, text, replyText);
+          return;
+        }
+      }
+
       if (isConfirmSaveText(text)) {
         if (pendingConfirmation.capture_type === 'body_metrics') {
           const savedReply = await saveBodyMetricsFromPayload(
@@ -4122,18 +4280,10 @@ async function handleTextMessage(event, user) {
           });
 
           const totals = await getTodayEnergyTotals(user.id);
-          const nutritionLines = buildMealNutritionLines(savedMeal);
 
           const replyText = prefixWithName(
             user,
-            [
-              '食事記録として残しておきました。',
-              `料理: ${savedMeal.meal_label}`,
-              savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
-              nutritionLines.length ? '' : null,
-              ...(nutritionLines.length ? nutritionLines : []),
-              `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
-            ].filter(Boolean).join('\n')
+            buildMealSavedReply(savedMeal, totals)
           );
 
           await replyMessage(
@@ -4244,12 +4394,13 @@ async function handleTextMessage(event, user) {
     });
 
     if (chatCapture?.capture_type === 'body_metrics') {
-      const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
-      const hasBodyFat = Number.isFinite(Number(chatCapture?.payload?.body_fat_percent));
+      const mergedPayload = mergeBodyMetricsPayload(chatCapture?.payload || {}, text);
+      const hasWeight = Number.isFinite(Number(mergedPayload?.weight_kg));
+      const hasBodyFat = Number.isFinite(Number(mergedPayload?.body_fat_percent));
 
       if (hasWeight || hasBodyFat) {
-        if (chatCapture.action === 'auto_save' || chatCapture.auto_save) {
-          const savedReply = await saveBodyMetricsFromPayload(user, chatCapture.payload, text);
+        if (shouldAutoSaveBodyMetricsCapture({ ...chatCapture, payload: mergedPayload }, text)) {
+          const savedReply = await saveBodyMetricsFromPayload(user, mergedPayload, text);
           const replyText = prefixWithName(user, savedReply);
 
           await replyMessage(
@@ -4264,13 +4415,13 @@ async function handleTextMessage(event, user) {
         if (chatCapture.action === 'needs_confirmation' || chatCapture.needs_confirmation) {
           setRecentCaptureConfirmation(user.line_user_id, {
             capture_type: 'body_metrics',
-            payload: chatCapture.payload,
+            payload: mergedPayload,
             source_text: text,
           });
 
           const replyText = prefixWithName(
             user,
-            chatCapture.reply_text || 'こちらでこう受け取っています。違っていなければ保存しておきますか？'
+            chatCapture.reply_text || 'こちらで受け取っています。違うところがあればそのまま教えてください。大丈夫そうなら、この内容で記録しておきますか？'
           );
 
           await replyMessage(
@@ -4311,7 +4462,7 @@ async function handleTextMessage(event, user) {
     }
 
     if (chatCapture?.category === 'meal_record') {
-      if (chatCapture.action === 'auto_save') {
+      if (shouldAutoSaveMealCapture(chatCapture, text)) {
         const savedMeal = await saveMealSmartPayload(user, chatCapture.payload || {}, text);
 
         await saveUserState(user.id, {
@@ -4321,18 +4472,9 @@ async function handleTextMessage(event, user) {
         });
 
         const totals = await getTodayEnergyTotals(user.id);
-        const nutritionLines = buildMealNutritionLines(savedMeal);
-
         const replyText = prefixWithName(
           user,
-          [
-            '食事記録として残しておきました。',
-            `料理: ${savedMeal.meal_label}`,
-            savedMeal.estimated_kcal != null ? `今回の推定摂取: ${fmt(savedMeal.estimated_kcal)} kcal` : null,
-            nutritionLines.length ? '' : null,
-            ...(nutritionLines.length ? nutritionLines : []),
-            `本日摂取合計: ${fmt(totals.intake_kcal || 0)} kcal`,
-          ].filter(Boolean).join('\n')
+          buildMealSavedReply(savedMeal, totals)
         );
 
         await replyMessage(
@@ -4344,7 +4486,7 @@ async function handleTextMessage(event, user) {
         return;
       }
 
-      if (chatCapture.action === 'needs_confirmation') {
+      if (chatCapture.action === 'needs_confirmation' || chatCapture.needs_confirmation) {
         setRecentCaptureConfirmation(user.line_user_id, {
           capture_type: 'meal_record',
           payload: chatCapture.payload || {},
@@ -4354,7 +4496,7 @@ async function handleTextMessage(event, user) {
 
         const replyText = prefixWithName(
           user,
-          chatCapture.reply_text || '食べた内容、受け取れています。いったんこの内容で記録して大丈夫ですか？'
+          chatCapture.reply_text || buildMealConfirmationReply(chatCapture, text)
         );
 
         await replyMessage(
