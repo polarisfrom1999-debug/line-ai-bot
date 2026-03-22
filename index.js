@@ -1083,8 +1083,27 @@ function isInputHelpIntent(text) {
 
 function isPastDateHelpIntent(text) {
   const t = normalizeTextLoose(text);
-  return ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい']
-    .some((x) => t.includes(normalizeTextLoose(x)));
+  return [
+    '昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい',
+    '昨日の夕食', '昨日の朝食', '昨日の昼食', '昨日のご飯', '昨日の食事',
+    '今から送っていい', '今から送って良い', '今からでもいい', '後から送っていい', '後から送って良い'
+  ].some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function isWeightReflectionText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  if (parseWeightInput(raw) != null) return false;
+
+  const t = normalizeTextLoose(raw);
+  if (!t.includes(normalizeTextLoose('体重'))) return false;
+
+  const reflectivePatterns = [
+    '安定', '増えた', '減った', '気になる', '不安', '落ちない', '変わらない', '停滞',
+    '最近', 'この頃', 'このごろ', 'なかなか', '少し', 'ちょっと'
+  ];
+
+  return reflectivePatterns.some((x) => t.includes(normalizeTextLoose(x)));
 }
 
 function isPauseReasonOption(text) {
@@ -1487,8 +1506,8 @@ function seemsMealCorrectionText(text) {
     'ジャスミンティーです', '烏龍茶です', 'ウーロン茶です', '緑茶です', '麦茶です', '紅茶です',
     '薄く', '少し', '多め', '少なめ',
     '追加', '増やし', '減らし', '半分', 'ひとくち', '一口',
-    '抜いて', 'なしで', '抜きで',
-    '2個', '3個', '4個', '5個',
+    '抜いて', 'なしで', '抜きで', 'やめて',
+    '2個', '3個', '4個', '5個'
   ].some((w) => normalized.includes(w));
 }
 
@@ -1954,24 +1973,19 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
     ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
     : '教えてもらえた内容を、いったん今の情報で整えてみました。';
 
-  const estimatedKcal = Number(meal?.estimated_kcal);
-  const kcalMin = Number(meal?.kcal_min);
-  const kcalMax = Number(meal?.kcal_max);
-  const hasMeaningfulKcal = Number.isFinite(estimatedKcal) && estimatedKcal > 0;
-  const hasMeaningfulRange = Number.isFinite(kcalMin) && Number.isFinite(kcalMax) && (kcalMin > 0 || kcalMax > 0);
-
   const lines = [
     intro,
     `料理: ${mealLabel}`,
-    hasMeaningfulKcal
-      ? `推定カロリー: ${fmt(estimatedKcal)} kcal${hasMeaningfulRange ? ` (${fmt(kcalMin)}〜${fmt(kcalMax)} kcal)` : ''}`
-      : '推定カロリー: 画像と内容から確認中です',
+    meal?.estimated_kcal != null
+      ? `推定カロリー: ${fmt(meal.estimated_kcal)} kcal${
+          meal?.kcal_min != null && meal?.kcal_max != null
+            ? ` (${fmt(meal.kcal_min)}〜${fmt(meal.kcal_max)} kcal)`
+            : ''
+        }`
+      : null,
   ].filter(Boolean);
 
-  const nutritionLines = buildMealNutritionLines(meal).filter((line) => {
-    const text = String(line || '').trim();
-    return !(/0(\.0)?g/.test(text) && /たんぱく質|脂質|糖質/.test(text));
-  });
+  const nutritionLines = buildMealNutritionLines(meal);
   if (nutritionLines.length) {
     lines.push('');
     lines.push(...nutritionLines);
@@ -2459,6 +2473,14 @@ async function saveMealSmartPayload(user, payload = {}, rawText = '') {
 async function handleSmartConversationFlow({ user, text }) {
   const analysis = analyzeNewCaptureCandidate(text);
   const intent = detectMessageIntent(text);
+
+  if (isMealDesireOrFeelingText(text)) {
+    return { handled: false, next: 'general_chat', payload: analysis.payload };
+  }
+
+  if (isWeightReflectionText(text)) {
+    return { handled: false, next: 'general_chat', payload: analysis.payload };
+  }
 
   if (analysis.route === 'onboarding_start') {
     return { handled: false, next: 'onboarding_start' };
@@ -3794,7 +3816,9 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
     isMealDesireOrFeelingText(text) ||
     hasPainOrMedicalContext(text) ||
     hasConsultationLikeIntent(text) ||
-    hasQuestionIntent(text)
+    hasQuestionIntent(text) ||
+    isPastDateHelpIntent(text) ||
+    isWeightReflectionText(text)
   ) {
     return false;
   }
