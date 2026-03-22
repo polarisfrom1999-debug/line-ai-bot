@@ -284,9 +284,11 @@ const {
 const {
   buildTrialMessageExamples,
 } = require('./services/trial_message_examples_service');
-const {
-  analyzeChatCapture,
-} = require('./services/chat_capture_service');
+const chatCaptureService = require('./services/chat_capture_service');
+const analyzeChatCapture =
+  typeof chatCaptureService === 'function'
+    ? chatCaptureService
+    : chatCaptureService?.analyzeChatCapture;
 const {
   routeConversation,
 } = require('./services/chatgpt_conversation_router');
@@ -1464,8 +1466,11 @@ function isMealDesireOrFeelingText(text) {
   if (!t) return false;
 
   const patterns = [
-    '食べたい', '飲みたい', 'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
-    'いっぱい食べたい', '甘いもの食べたい', '何か食べたい', '食欲がある', '食欲がない', '食欲あります', '食欲ない',
+    '食べたい', '飲みたい', '食べたくて', '飲みたくて',
+    'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
+    'いっぱい食べたい', '甘いもの食べたい', '甘いものが食べたい', '甘いものが食べたくて',
+    '何か食べたい', '何か食べたくて', '甘い物が食べたい', '甘い物が食べたくて',
+    '食欲がある', '食欲がない', '食欲あります', '食欲ない',
     'お腹すいた', 'おなかすいた', '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
     '食欲が止まらない', '食欲がすごい', '食べすぎそう', '食べ過ぎそう', '食べすぎたくなる',
     '甘いものが止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
