@@ -107,10 +107,20 @@ ${safeText(userText)}
 `.trim();
 }
 
-
 function normalizeMealLabelText(label = '') {
   let value = safeText(label || '', 120);
   if (!value) return '';
+
+  value = value
+    .replace(/[　]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 数字だけ・数値相づちは料理名にしない
+  if (/^\d+$/.test(value)) return '';
+  if (/^\d+(ですね|です)$/.test(value)) return '';
+  if (/^\d+(kcal|キロカロリー)(ですね|です)?$/i.test(value)) return '';
+  if (/^(はい|そうです|そうですね|了解|ok)$/i.test(value)) return '';
 
   value = value
     .replace(/^(今日は?|きょうは?|今朝|朝|昼|夜|夕食|昼食|朝食)\s*[:：]*/g, '')
@@ -128,6 +138,9 @@ function normalizeMealLabelText(label = '') {
   if (/ラーメン食べた|らーめん食べた/.test(value)) return 'ラーメン';
   if (/パン食べた|ぱん食べた/.test(value)) return 'パン';
   if (/カレーでした|かれーでした/.test(value)) return 'カレー';
+
+  // 補足語だけなら料理名にしない
+  if (/^(少し|多め|少なめ|半分|追加|なし|抜き)$/.test(value)) return '';
 
   return value;
 }
@@ -363,7 +376,13 @@ async function analyzeMealPhotoWithGemini(input = {}) {
 }
 
 async function analyzeMealTextWithGemini(userText = '', previousMealSummary = '') {
-  const directLabel = normalizeMealLabelText(userText || '');
+  const rawUserText = String(userText || '').trim();
+  const directLabel = normalizeMealLabelText(rawUserText);
+
+  if (!directLabel && /^\d+(ですね|です)?$/.test(rawUserText)) {
+    return { is_meal: false, rejection_reason: 'numeric_only_feedback' };
+  }
+
   if (isDirectMealCorrectionText(directLabel)) {
     const heuristic = buildSimpleMealHeuristic(directLabel, {});
     return {
@@ -422,7 +441,13 @@ async function analyzeMealTextWithGemini(userText = '', previousMealSummary = ''
 }
 
 async function applyMealCorrectionWithGemini(currentMeal = {}, correctionText = '') {
-  const explicitCorrectionLabel = normalizeMealLabelText(correctionText || '');
+  const rawCorrection = String(correctionText || '').trim();
+  const explicitCorrectionLabel = normalizeMealLabelText(rawCorrection);
+
+  if (!explicitCorrectionLabel && /^\d+(ですね|です)?$/.test(rawCorrection)) {
+    return currentMeal;
+  }
+
   if (isDirectMealCorrectionText(explicitCorrectionLabel)) {
     const heuristic = buildSimpleMealHeuristic(explicitCorrectionLabel || currentMeal?.meal_label || '', currentMeal || {});
     return {
