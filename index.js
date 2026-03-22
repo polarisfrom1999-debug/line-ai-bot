@@ -288,7 +288,13 @@ const chatCaptureService = require('./services/chat_capture_service');
 const analyzeChatCapture =
   typeof chatCaptureService === 'function'
     ? chatCaptureService
-    : chatCaptureService?.analyzeChatCapture;
+    : typeof chatCaptureService?.analyzeChatCapture === 'function'
+      ? chatCaptureService.analyzeChatCapture
+      : typeof chatCaptureService?.default === 'function'
+        ? chatCaptureService.default
+        : typeof chatCaptureService?.default?.analyzeChatCapture === 'function'
+          ? chatCaptureService.default.analyzeChatCapture
+          : null;
 const {
   routeConversation,
 } = require('./services/chatgpt_conversation_router');
@@ -4151,10 +4157,13 @@ async function handleTextMessage(event, user) {
       }
     }
 
-    const chatCapture = await analyzeChatCapture({
-      userText: text,
-      user,
-    });
+    const chatCapture =
+      typeof analyzeChatCapture === 'function'
+        ? await analyzeChatCapture({
+            userText: text,
+            user,
+          })
+        : null;
 
     if (chatCapture?.capture_type === 'body_metrics') {
       const hasWeight = Number.isFinite(Number(chatCapture?.payload?.weight_kg));
