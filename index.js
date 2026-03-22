@@ -284,9 +284,17 @@ const {
 const {
   buildTrialMessageExamples,
 } = require('./services/trial_message_examples_service');
-const {
-  analyzeChatCapture,
-} = require('./services/chat_capture_service');
+const chatCaptureService = require('./services/chat_capture_service');
+const analyzeChatCapture =
+  typeof chatCaptureService === 'function'
+    ? chatCaptureService
+    : typeof chatCaptureService?.analyzeChatCapture === 'function'
+      ? chatCaptureService.analyzeChatCapture
+      : typeof chatCaptureService?.default === 'function'
+        ? chatCaptureService.default
+        : typeof chatCaptureService?.default?.analyzeChatCapture === 'function'
+          ? chatCaptureService.default.analyzeChatCapture
+          : async () => null;
 const {
   routeConversation,
 } = require('./services/chatgpt_conversation_router');
@@ -738,6 +746,28 @@ function isLikelyResumeAfterGap(user, text = '') {
 function buildResumeFriendlyPrefix(user, text = '') {
   if (!isLikelyResumeAfterGap(user, text)) return '';
   return 'またここからで大丈夫です。';
+}
+
+function buildCravingSupportReply(text = '') {
+  const t = normalizeMealIntentText(text);
+
+  if (t.includes('甘いもの')) {
+    return 'そういう日ありますよね。無理に我慢しすぎなくて大丈夫ですよ。今日は特に甘いものが欲しくなる感じですか？';
+  }
+
+  if (t.includes('口さみしい') || t.includes('口寂しい')) {
+    return '口さみしい感じの日ってありますよね。無理に責めなくて大丈夫です。今日は少し疲れ気味ですか？';
+  }
+
+  if (t.includes('食欲がない')) {
+    return '食欲が落ちている感じなんですね。そういう時もありますし、無理に整えようとしすぎなくて大丈夫ですよ。';
+  }
+
+  if (t.includes('食欲')) {
+    return '食欲が動く日ってありますよね。まずはその感じを教えてもらえて大丈夫です。今日はいつもより強めですか？';
+  }
+
+  return 'そういう感じの日ってありますよね。無理に我慢しすぎなくて大丈夫です。今日はどんな感じか、そのまま話してもらえれば十分ですよ。';
 }
 
 function shouldPrioritizeConsultation(text) {
@@ -1464,30 +1494,15 @@ function isMealDesireOrFeelingText(text) {
   if (!t) return false;
 
   const patterns = [
-    '食べたい', '飲みたい', '食べたくて', '飲みたくて',
-    'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
-    'いっぱい食べたい', '甘いもの食べたい', '甘いものが食べたい', '甘いものが食べたくて', '甘い物が食べたい', '甘い物が食べたくて',
-    '何か食べたい', '何か食べたくて', '何か飲みたい', '何か飲みたくて',
-    '食欲がある', '食欲がない', '食欲あります', '食欲ない',
-    'お腹すいた', 'おなかすいた', '口さみしい', '口寂しい',
-    '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
+    '食べたい', '飲みたい', 'お腹いっぱい食べたい', 'おなかいっぱい食べたい', 'お腹一杯食べたい', 'おなか一杯食べたい',
+    'いっぱい食べたい', '甘いもの食べたい', '何か食べたい', '食欲がある', '食欲がない', '食欲あります', '食欲ない',
+    'お腹すいた', 'おなかすいた', '食べたくなる', '食べてしまいそう', '食べそう', '飲みたくなる',
     '食欲が止まらない', '食欲がすごい', '食べすぎそう', '食べ過ぎそう', '食べすぎたくなる',
-    '甘いものが止まらない', '甘い物が止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
+    '甘いものが止まらない', 'お腹いっぱい食べれる', 'おなかいっぱい食べれる',
   ];
 
   if (patterns.some((p) => t.includes(p))) return true;
-
-  const hasDesireVerb = (t.includes('食べ') || t.includes('飲み')) && (
-    t.includes('たい') ||
-    t.includes('たくて') ||
-    t.includes('たくなる') ||
-    t.includes('てしまいそう') ||
-    t.includes('そう')
-  );
-
-  if (!hasDesireVerb) return false;
-  if (/食べた|飲んだ|食べました|飲みました/.test(t)) return false;
-  return true;
+  return (t.includes('食べ') || t.includes('飲み')) && t.includes('たい');
 }
 
 function isExplicitMealLogText(text) {
@@ -4161,6 +4176,14 @@ async function handleTextMessage(event, user) {
       }
     }
 
+    if (isMealDesireOrFeelingText(text)) {
+      clearRecentCaptureConfirmation(user.line_user_id);
+      const replyText = prefixWithName(user, buildCravingSupportReply(text));
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
     const chatCapture = await analyzeChatCapture({
       userText: text,
       user,
@@ -5514,9 +5537,10 @@ if (text === 'このプランで進めたい' || text === '継続したい') {
     }
 
     if (isMealDesireOrFeelingText(text)) {
-      const reply = prefixWithName(user, buildCravingSupportReply(text));
-      await replyMessage(event.replyToken, reply, env.LINE_CHANNEL_ACCESS_TOKEN);
-      await rememberInteraction(user, text, reply);
+      clearRecentCaptureConfirmation(user.line_user_id);
+      const replyText = prefixWithName(user, buildCravingSupportReply(text));
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
       return;
     }
 
