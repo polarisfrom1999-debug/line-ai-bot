@@ -677,14 +677,6 @@ function normalizeTextLoose(text) {
     .replace(/\s+/g, '');
 }
 
-function normalizeJapaneseText(text = '') {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[　\s]+/g, '')
-    .replace(/[！!？?。.,，、】【\[\]（）()]/g, '');
-}
-
 function hasQuestionIntent(text) {
   const raw = String(text || '').trim();
   const t = normalizeTextLoose(text);
@@ -728,9 +720,10 @@ function hasConsultationLikeIntent(text) {
 
 function isLikelyResumeAfterGap(user, text = '') {
   const normalized = normalizeJapaneseText(text || '');
+  if (!normalized) return false;
 
   const patterns = [
-    '久しぶり', 'ひさしぶり', 'またここから', 'またお願いします', '戻ってきました', '再開', 'ただいま', 'また始めます', '出直します'
+    '久しぶり', 'ひさしぶり', 'またここから', 'またお願いします', '戻ってきました', '再開', 'ただいま', 'また始めます'
   ];
   const hasPattern = patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
   if (hasPattern) return true;
@@ -742,73 +735,9 @@ function isLikelyResumeAfterGap(user, text = '') {
   return (Date.now() - dt.getTime()) >= (1000 * 60 * 60 * 24 * 5);
 }
 
-function isMaintenanceLikeText(text = '') {
-  const normalized = normalizeJapaneseText(text || '');
-  if (!normalized) return false;
-
-  const patterns = [
-    '維持', 'このままでいい', '今のままで', '増やしたくない', '戻したくない', 'キープ', '保ちたい', '安定してる', '安定しています',
-    '現状維持', 'リバウンドしたくない', '体調を整えたい', '無理なく続けたい'
-  ];
-
-  return patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
-}
-
-function isSuccessLikeText(text = '') {
-  const normalized = normalizeJapaneseText(text || '');
-  if (!normalized) return false;
-
-  const patterns = [
-    '痩せた', 'やせた', '目標達成', '達成できた', '達成しました', '順調', 'うまくいってる', 'いい感じ', '調子いい', '安定してきた'
-  ];
-
-  return patterns.some((p) => normalized.includes(normalizeJapaneseText(p)));
-}
-
 function buildResumeFriendlyPrefix(user, text = '') {
   if (!isLikelyResumeAfterGap(user, text)) return '';
   return 'またここからで大丈夫です。';
-}
-
-function shouldSuppressContextualPrefix(text = '') {
-  const raw = String(text || '').trim();
-  if (!raw) return false;
-
-  if (
-    isMealSaveCommand(raw) ||
-    isImmediateMealSaveCommand(raw) ||
-    isMealManualEditCommand(raw) ||
-    isMealAddPhotoCommand(raw) ||
-    isMealCancelCommand(raw) ||
-    isEditSaveText(raw) ||
-    isDeclineSaveText(raw) ||
-    seemsMealCorrectionText(raw) ||
-    seemsMealTextCandidate(raw) ||
-    isExplicitMealLogText(raw) ||
-    /^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|パン|トースト|カレー|お茶|水)$/i.test(raw)
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function buildContextualCompanionPrefix(user, text = '') {
-  if (shouldSuppressContextualPrefix(text)) return '';
-
-  if (isLikelyResumeAfterGap(user, text)) {
-    return 'またここからで大丈夫です。空いてしまった分を責めずに、今日は今の様子から整えていきましょう。';
-  }
-
-  if (isMaintenanceLikeText(text)) {
-    return '今は無理に削るより、この流れを崩さず続けられるのがいちばん大事です。';
-  }
-
-  if (isSuccessLikeText(text)) {
-    return '順調な時ほど、頑張りすぎず整えるくらいで十分です。';
-  }
-
-  return '';
 }
 
 function shouldPrioritizeConsultation(text) {
@@ -990,8 +919,7 @@ function isMealCancelCommand(text) {
 }
 
 function isMealManualEditCommand(text) {
-  const t = String(text || '').trim();
-  return ['手書きで追加・修正', '修正する', '訂正する', '違います', 'ちがいます'].includes(t);
+  return String(text || '').trim() === '手書きで追加・修正';
 }
 
 function isMealAddPhotoCommand(text) {
@@ -1124,9 +1052,20 @@ function isInputHelpIntent(text) {
 }
 
 function isPastDateHelpIntent(text) {
+  const raw = String(text || '').trim();
   const t = normalizeTextLoose(text);
-  return ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい']
-    .some((x) => t.includes(normalizeTextLoose(x)));
+  if (!t) return false;
+
+  const basePatterns = ['昨日の分', '一昨日', '過去分', '日付をずらして', '後から登録', '昨日でもいい'];
+  if (basePatterns.some((x) => t.includes(normalizeTextLoose(x)))) return true;
+
+  const hasPastWord = ['昨日', 'きのう', '一昨日', 'おととい', 'さっきの', '前の', '過去分'].some((x) => t.includes(normalizeTextLoose(x)));
+  const hasSendWord = ['送って', '送る', '記録', '登録', '保存', '今から', 'あとから', '後から'].some((x) => t.includes(normalizeTextLoose(x)));
+  if (!hasPastWord || !hasSendWord) return false;
+
+  if (hasQuestionIntent(raw)) return true;
+
+  return ['良い', 'いい', '大丈夫', '平気', 'できますか', '可能'].some((x) => t.includes(normalizeTextLoose(x)));
 }
 
 function isPauseReasonOption(text) {
@@ -1515,11 +1454,6 @@ function buildExerciseCaptureSavePayload(payload = {}, rawText = '') {
 function seemsMealCorrectionText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-
-  if (/^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|パン|トースト|カレー|お茶|水|コーヒー|うどん|そば|パスタ|おにぎり)$/i.test(t)) {
-    return true;
-  }
-
   return [
     'です', 'ではない', 'じゃない', '違います', 'ちがいます', '個です', '杯です', '本です',
     'お酒ではない', 'お茶です', '水です', 'ノンアル', 'ジャスミンティー', '烏龍茶',
@@ -1550,6 +1484,71 @@ function isMealDesireOrFeelingText(text) {
 
   if (patterns.some((p) => t.includes(p))) return true;
   return (t.includes('食べ') || t.includes('飲み')) && t.includes('たい');
+}
+
+function isUsageGuideQuestion(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(raw);
+  if (!t) return false;
+
+  if (['使い方', 'やり方', 'どう送ればいい', 'どう送れば良い', 'どう送る', '何を送ればいい', '何を送れば良い'].some((x) => t.includes(normalizeTextLoose(x)))) {
+    return true;
+  }
+
+  if (hasQuestionIntent(raw) && ['写真だけ', '写真のみ', '画像だけ', '文字だけ', '昨日の分', '食事の送り方', '報告のしかた', '報告の仕方'].some((x) => t.includes(normalizeTextLoose(x)))) {
+    return true;
+  }
+
+  return false;
+}
+
+function isStableWeightStatusText(text) {
+  const raw = String(text || '').trim();
+  const t = normalizeTextLoose(raw);
+  if (!t) return false;
+  if (!t.includes(normalizeTextLoose('体重'))) return false;
+  return ['安定', 'キープ', '維持', '現状維持', '保てている', '落ち着いている'].some((x) => t.includes(normalizeTextLoose(x)));
+}
+
+function buildPastDateFriendlyReply() {
+  return [
+    'もちろん大丈夫です。昨日の分でも、そのまま送ってくださいね。',
+    '写真だけでも大丈夫ですし、ひとこと添えてもらっても大丈夫です。',
+    'こちらで昨日の記録として整えます。',
+  ].join('\n');
+}
+
+function buildUsageGuideShortReply() {
+  return [
+    '写真だけでも大丈夫です。',
+    '食事なら写真だけ、または「ラーメン食べた」のような短文でも送れます。',
+    '昨日の分でも大丈夫なので、送りやすいやり方でそのまま送ってくださいね。',
+  ].join('\n');
+}
+
+function buildStableWeightReply() {
+  return [
+    '体重が安定しているのは、いい流れですね。',
+    '今は無理に動かしにいかず、このまま整っている感覚を大事にして大丈夫です。',
+    '数字も残したい時は、体重だけそのまま送ってくださいね。',
+  ].join('\n');
+}
+
+function buildCravingSupportReply(text = '') {
+  const t = normalizeTextLoose(text);
+  if (t.includes(normalizeTextLoose('甘い'))) {
+    return [
+      '甘いものが欲しくなる日、ありますよね。',
+      'まずは我慢しようとしすぎなくて大丈夫です。',
+      '今日は少しだけにするか、食べるなら満足できるものを選ぶ、くらいで十分ですよ。',
+    ].join('\n');
+  }
+
+  return [
+    'そういう気分の日、ありますよね。',
+    'まずは責めなくて大丈夫です。',
+    '今日はどうしたい気分か、そのまま教えてもらえれば一緒に整えます。',
+  ].join('\n');
 }
 
 function isExplicitMealLogText(text) {
@@ -1903,19 +1902,13 @@ function trimReplyLength(text, max = 420) {
   return cut.trim();
 }
 
-function postProcessAiReply(user, rawReply, userText = '') {
+function postProcessAiReply(user, rawReply) {
   let text = normalizeAiReplyText(rawReply);
   text = cleanupAiPhrases(text);
   text = limitReplyQuestions(text, 1);
   text = trimReplyLength(text, 420);
   text = safeText(text, 600);
   if (!text) text = '今日はそんな感じなんですね。ここからまた整えていきましょう。';
-
-  const contextualPrefix = buildContextualCompanionPrefix(user, userText);
-  if (contextualPrefix && !text.includes(contextualPrefix)) {
-    text = [contextualPrefix, text].filter(Boolean).join('\n\n');
-  }
-
   return prefixWithName(user, text);
 }
 
@@ -1930,20 +1923,14 @@ function normalizeMealLabelForDisplay(value = '') {
   if (!label) return '食事';
 
   label = label
-    .replace(/^(今日は?|きょうは?|さっき|今|いま|夜|朝|昼|夕食|昼食|朝食)[、\s:]*/g, '')
-    .replace(/(?:でした|です)$/g, '')
-    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|食べる|たべる|食べたよ|たべたよ|食べたよー|食べたよ〜|食べましたよ|食べましたよー)$/g, '')
-    .replace(/(?:を)?(?:飲んだ|のんだ|飲みました|のみました|飲んだよ|のんだよ)$/g, '')
+    .replace(/^(今日は?|さっき|今|夜|朝|昼)[、\s]*/g, '')
+    .replace(/(?:を)?(?:食べた|たべた|食べました|たべました|食べる|たべる|食べたよ|たべたよ|食べたよー|食べたよ〜|食べたよ〜|食べましたよ|食べましたよー)$/g, '')
+    .replace(/(?:飲んだ|のみました|飲みました|飲んだよ)$/g, '')
     .replace(/[。！!？?]+$/g, '')
     .trim();
 
-  label = label
-    .replace(/^らーめん$/g, 'ラーメン')
-    .replace(/^ぱん$/g, 'パン');
-
   if (/ラーメン食べた|らーめん食べた/.test(label)) return 'ラーメン';
-  if (/パン食べた|ぱん食べた/.test(label)) return 'パン';
-  if (/カレーでした|かれーでした/.test(label)) return 'カレー';
+  if (/^らーめん$/.test(label)) return 'ラーメン';
   if (!label) return '食事';
   return label;
 }
@@ -1987,7 +1974,6 @@ function normalizeMealCorrectionText(text) {
   if (/^水$/.test(t)) return '飲み物は水です';
   if (/^ノンアル$/.test(t)) return '飲み物はノンアルです';
   if (/^\d+個$/.test(t)) return `個数は${t}です`;
-  if (/^(豚骨ラーメン|味噌ラーメン|醤油ラーメン|塩ラーメン|ラーメン|カレー|パン|トースト|おにぎり|そば|うどん|パスタ)$/.test(t)) return raw;
 
   return raw;
 }
@@ -1996,8 +1982,8 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   const { textOnly = false } = options;
   const mealLabel = normalizeMealLabelForDisplay(meal?.meal_label || '食事');
   const intro = mealLabel && mealLabel !== '食事'
-    ? `${mealLabel}で受け取っています。`
-    : '食事内容を受け取っています。';
+    ? `${mealLabel}ですね。いったん今の内容で整えてみました。`
+    : '教えてもらえた内容を、いったん今の情報で整えてみました。';
 
   const lines = [
     intro,
@@ -2020,8 +2006,8 @@ function buildMealReplyWithSaveGuide(meal, options = {}) {
   lines.push('');
   lines.push(
     textOnly
-      ? 'この内容でよければ保存してください。違うところがあれば、そのまま送り直して大丈夫です。'
-      : 'この内容でよければ保存してください。違うところがあれば、ボタンでも言い直しでも大丈夫です。'
+      ? 'この内容でよければ保存で大丈夫です。違うところがあれば、そのまま言い直してください。'
+      : 'この内容でよければ保存で大丈夫です。違うところがあれば、ボタンでも言い直しでも大丈夫です。'
   );
 
   return lines.join('\n');
@@ -2448,32 +2434,6 @@ async function saveExerciseSmartPayload(user, payload = {}, rawText = '') {
   const { error } = await supabase.from('activity_logs').insert(insertPayload);
   if (error) throw error;
   return insertPayload;
-}
-
-
-function buildMealDraftFromPayload(payload = {}, rawText = '') {
-  const mealLabel = normalizeMealLabelForDisplay(payload?.meal_label || rawText || '食事');
-  const foodItems = Array.isArray(payload?.food_items) ? payload.food_items : [];
-
-  return {
-    is_meal: true,
-    meal_label: mealLabel || '食事',
-    estimated_kcal: Number.isFinite(Number(payload?.estimated_kcal)) ? Number(payload.estimated_kcal) : null,
-    kcal_min: Number.isFinite(Number(payload?.kcal_min)) ? Number(payload.kcal_min) : null,
-    kcal_max: Number.isFinite(Number(payload?.kcal_max)) ? Number(payload.kcal_max) : null,
-    protein_g: Number.isFinite(Number(payload?.protein_g)) ? Number(payload.protein_g) : null,
-    fat_g: Number.isFinite(Number(payload?.fat_g)) ? Number(payload.fat_g) : null,
-    carbs_g: Number.isFinite(Number(payload?.carbs_g)) ? Number(payload.carbs_g) : null,
-    food_items: foodItems,
-    confidence: Number.isFinite(Number(payload?.confidence)) ? Number(payload.confidence) : 0.6,
-    needs_confirmation: payload?.needs_confirmation !== false,
-    ai_comment: '確認用の食事内容として整えています。',
-    raw_model_json: {
-      source: 'pending_meal_payload',
-      original_payload: payload || {},
-      source_text: rawText || '',
-    },
-  };
 }
 
 function buildFallbackMealFromText(rawText = '', payload = {}) {
@@ -3883,7 +3843,7 @@ async function tryHandlePriorityMealDraftFlow(event, user, text) {
     markMealDraftManualCorrection(user.line_user_id, true);
     await replyMessage(
       event.replyToken,
-      '違うところをそのまま送ってください。料理名だけでも大丈夫です。\n例: 豚骨ラーメン / 味噌汁追加 / ご飯半分 / お茶です',
+      'そのまま追加内容や修正内容を文字で送ってください。\n例: 味噌汁追加 / ご飯半分追加 / お茶です / 2個です',
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
     return true;
@@ -4063,6 +4023,34 @@ async function handleTextMessage(event, user) {
 
     if (isCurrentDateTimeQuestion(text)) {
       const replyText = buildCurrentDateTimeReply(TZ);
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isPastDateHelpIntent(text)) {
+      const replyText = prefixWithName(user, buildPastDateFriendlyReply());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isUsageGuideQuestion(text)) {
+      const replyText = prefixWithName(user, buildUsageGuideShortReply());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isStableWeightStatusText(text) && !parseWeightInput(text) && !parseBodyFatInput(text)) {
+      const replyText = prefixWithName(user, buildStableWeightReply());
+      await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
+      await rememberInteraction(user, text, replyText);
+      return;
+    }
+
+    if (isMealDesireOrFeelingText(text) && !isExplicitMealLogText(text)) {
+      const replyText = prefixWithName(user, buildCravingSupportReply(text));
       await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
       await rememberInteraction(user, text, replyText);
       return;
@@ -4254,19 +4242,8 @@ async function handleTextMessage(event, user) {
       }
 
       if (isEditSaveText(text)) {
-        if (pendingConfirmation.capture_type === 'meal_record') {
-          const pendingMealDraft = buildMealDraftFromPayload(
-            pendingConfirmation.payload || {},
-            pendingConfirmation.source_text || ''
-          );
-          setMealDraft(user.line_user_id, pendingMealDraft, {
-            awaitingAdditionalPhoto: false,
-            manualCorrectionExpected: true,
-          });
-        }
-
         clearRecentCaptureConfirmation(user.line_user_id);
-        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。料理名だけでも大丈夫です。こちらで整えます。');
+        const replyText = prefixWithName(user, 'ありがとうございます。では、違うところだけそのまま教えてくださいね。こちらで整えます。');
         await replyMessage(event.replyToken, replyText, env.LINE_CHANNEL_ACCESS_TOKEN);
         await rememberInteraction(user, text, replyText);
         return;
@@ -4380,16 +4357,11 @@ async function handleTextMessage(event, user) {
       }
 
       if (chatCapture.action === 'needs_confirmation') {
-        const pendingMealPayload = chatCapture.payload || {};
         setRecentCaptureConfirmation(user.line_user_id, {
           capture_type: 'meal_record',
-          payload: pendingMealPayload,
+          payload: chatCapture.payload || {},
           source_text: text,
           reply_text: chatCapture.reply_text || '',
-        });
-        setMealDraft(user.line_user_id, buildMealDraftFromPayload(pendingMealPayload, text), {
-          awaitingAdditionalPhoto: false,
-          manualCorrectionExpected: false,
         });
 
         const replyText = prefixWithName(
