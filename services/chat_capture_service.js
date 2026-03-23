@@ -3,11 +3,10 @@
 /**
  * services/chat_capture_service.js
  *
- * 最終微修正版:
- * - index.js 互換を優先
- * - 既存側が見ていそうなキー名を広めに返す
- * - body_metrics / meal_record / exercise_record / memory_note / pain_consult を返せる
- * - chatgpt_conversation_router が使える時は活かし、使えない時は安全にフォールバック
+ * body_metrics / pain相談を先回り優先する版
+ * - 体重 + 体脂肪率の同時入力を router より先に拾う
+ * - 痛み相談は短すぎる返答になりにくいように先回りする
+ * - index.js 互換キーを広めに返す
  */
 
 let routeConversation = null;
@@ -225,50 +224,69 @@ function buildBodyMetricReply(payload = {}) {
 
 function parseBodyMetrics(raw = '') {
   const text = String(raw || '').trim();
-  const normalized = normalizeText(text);
-  if (!normalized) return null;
+  if (!text) return null;
+
+  const normalized = text
+    .replace(/[　]/g, ' ')
+    .replace(/％/g, '%')
+    .replace(/ｋｇ/gi, 'kg');
 
   const payload = {};
   const rounded = (value) => Math.round(Number(value) * 10) / 10;
 
   const takeWeight = (value) => {
     const n = Number(value);
-    if (Number.isFinite(n) && n >= 20 && n <= 300) payload.weight_kg = rounded(n);
+    if (Number.isFinite(n) && n >= 20 && n <= 300) {
+      payload.weight_kg = rounded(n);
+    }
   };
 
   const takeBodyFat = (value) => {
     const n = Number(value);
-    if (Number.isFinite(n) && n >= 1 && n <= 80) payload.body_fat_percent = rounded(n);
+    if (Number.isFinite(n) && n >= 1 && n <= 80) {
+      payload.body_fat_percent = rounded(n);
+    }
   };
 
-  const weightMatch = text.match(/(?:体重|wt|weight)\s*[:：]?(?:は)?\s*(-?\d{2,3}(?:\.\d+)?)\s*(?:kg|キロ)?/i);
-  if (weightMatch) takeWeight(weightMatch[1]);
+  const weightPatterns = [
+    /(?:^|[\s、,，/])(?:体重|今朝の体重|本日の体重|今日の体重|wt|weight)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:kg|キロ))?/i,
+    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:kg|キロ)/i,
+  ];
 
-  const bodyFatMatch = text.match(/(?:体脂肪(?:率)?|fat|bf)\s*[:：]?(?:は)?\s*(-?\d{1,2}(?:\.\d+)?)\s*(?:%|％|パーセント|ぱーせんと|パー|ぱー)?/i);
-  if (bodyFatMatch) takeBodyFat(bodyFatMatch[1]);
+  const bodyFatPatterns = [
+    /(?:^|[\s、,，/])(?:体脂肪率|体脂肪|fat|bf)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:%|パーセント|パー))?/i,
+    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:%|パーセント|パー)/i,
+  ];
 
-  const compactCombined = text.match(/体重\s*(-?\d{2,3}(?:\.\d+)?)\s*(?:kg|キロ)?[^\d]+体脂肪(?:率)?\s*(-?\d{1,2}(?:\.\d+)?)\s*(?:%|％|パーセント|ぱーせんと|パー|ぱー)?/i);
-  if (compactCombined) {
-    takeWeight(compactCombined[1]);
-    takeBodyFat(compactCombined[2]);
-  }
-
-  const numbers = extractAllNumbers(text);
-  if ((!payload.weight_kg || !payload.body_fat_percent) && numbers.length >= 2 && normalized.includes('体脂肪')) {
-    if (!payload.weight_kg) takeWeight(numbers[0]);
-    if (!payload.body_fat_percent) takeBodyFat(numbers[1]);
-  }
-
-  if (!payload.weight_kg && !payload.body_fat_percent && numbers.length === 1) {
-    const value = numbers[0];
-    if (/%|％/.test(text) || /(体脂肪|パーセント|ぱーせんと|パー|ぱー)/.test(text)) {
-      takeBodyFat(value);
-    } else if (/(kg|キロ)/i.test(text) || normalized.includes('体重') || (value >= 20 && value <= 300)) {
-      takeWeight(value);
+  for (const re of weightPatterns) {
+    const m = normalized.match(re);
+    if (m && m[1] != null) {
+      takeWeight(m[1]);
+      if (payload.weight_kg != null) break;
     }
   }
 
-  if (!payload.weight_kg && !payload.body_fat_percent) return null;
+  for (const re of bodyFatPatterns) {
+    const m = normalized.match(re);
+    if (m && m[1] != null) {
+      takeBodyFat(m[1]);
+      if (payload.body_fat_percent != null) break;
+    }
+  }
+
+  const numberList = extractAllNumbers(normalized);
+  if (!Number.isFinite(Number(payload.weight_kg)) && !Number.isFinite(Number(payload.body_fat_percent)) && numberList.length >= 2) {
+    const first = Number(numberList[0]);
+    const second = Number(numberList[1]);
+
+    if (Number.isFinite(first) && first >= 20 && first <= 300) takeWeight(first);
+    if (Number.isFinite(second) && second >= 1 && second <= 80 && /体脂肪|%|％|パー/.test(normalized)) takeBodyFat(second);
+  }
+
+  if (!Number.isFinite(Number(payload.weight_kg)) && !Number.isFinite(Number(payload.body_fat_percent))) {
+    return null;
+  }
+
   return payload;
 }
 
@@ -315,6 +333,27 @@ function getTopRecordCandidate(text = '') {
   return null;
 }
 
+function withCompatAliases(result = {}) {
+  if (!result) return null;
+
+  const replyText = safeText(result.reply_text || result.replyText || result.text || '');
+  const recordCandidate = result.record_candidate || result.recordCandidate || null;
+
+  return {
+    ...result,
+    type: safeText(result.capture_type || result.type || result.category || ''),
+    reply_text: replyText,
+    replyText,
+    text: replyText,
+    record_candidate: recordCandidate,
+    recordCandidate,
+    needs_confirmation: result.needs_confirmation !== false,
+    needsConfirmation: result.needs_confirmation !== false,
+    auto_save: Boolean(result.auto_save),
+    autoSave: Boolean(result.auto_save),
+  };
+}
+
 function buildRecordCaptureResult(candidate = null) {
   if (!candidate || !candidate.type) return null;
 
@@ -357,9 +396,7 @@ function buildRecordCaptureResult(candidate = null) {
       needs_confirmation: true,
       payload: normalized.parsed_payload || {},
       record_candidate: normalized,
-      reply_text:
-        safeText(normalized.meta?.reply_text) ||
-        buildBodyMetricReply(normalized.parsed_payload || {}),
+      reply_text: buildBodyMetricReply(normalized.parsed_payload || {}),
     });
   }
 
@@ -371,9 +408,7 @@ function buildRecordCaptureResult(candidate = null) {
       needs_confirmation: true,
       payload: normalized.parsed_payload || {},
       record_candidate: normalized,
-      reply_text:
-        safeText(normalized.meta?.reply_text) ||
-        '血液検査の内容を受け取れています。このまま記録候補として進めて大丈夫ですか？',
+      reply_text: '血液検査の内容を受け取れています。このまま記録候補として進めて大丈夫ですか？',
     });
   }
 
@@ -389,7 +424,7 @@ function buildPainConsultReply(userText = '') {
       if (result && typeof result === 'object') {
         return safeText(result.reply_text || result.text || '');
       }
-      return safeText(result || '');
+      if (safeText(result)) return safeText(result);
     } catch (_err) {}
   }
 
@@ -397,41 +432,19 @@ function buildPainConsultReply(userText = '') {
     try {
       const result = painSupportService.buildPainSupportResponse(raw);
       if (result && typeof result === 'object') {
-        return safeText(result.text || result.reply_text || '');
+        const text = safeText(result.text || result.reply_text || '');
+        if (text) return text;
       }
-      return safeText(result || '');
+      if (safeText(result)) return safeText(result);
     } catch (_err) {}
   }
 
-  return (
-    'それは心配ですね。まずは記録より相談として受け取ります。' +
-    (raw ? ' 無理を広げず、いつもと違うつらさや強い痛みがある時は、牛込や医療機関にも相談してください。' : '')
-  );
+  return 'それは気になりますね。まずは記録より相談として受け取ります。無理を広げず、強い痛みや長引く症状がある時は牛込や医療機関にも相談してください。';
 }
 
-function withCompatAliases(result = {}) {
-  const replyText = safeText(result.reply_text || result.replyText || result.text || '');
-  const recordCandidate = result.record_candidate || result.recordCandidate || null;
-
-  return {
-    ...result,
-    type: safeText(result.capture_type || result.type || result.category || ''),
-    reply_text: replyText,
-    replyText,
-    text: replyText,
-    record_candidate: recordCandidate,
-    recordCandidate,
-    needs_confirmation: result.needs_confirmation !== false,
-    needsConfirmation: result.needs_confirmation !== false,
-    auto_save: Boolean(result.auto_save),
-    autoSave: Boolean(result.auto_save),
-  };
-}
-
-function buildRouterFallbackResult(userText = '') {
+function buildPriorityCaptureResult(userText = '') {
   const raw = safeText(userText);
   const normalized = normalizeText(raw);
-
   if (!raw) return null;
 
   if (looksLikePainConsultation(raw) || looksLikeConsultation(raw)) {
@@ -453,16 +466,11 @@ function buildRouterFallbackResult(userText = '') {
         capture_type: 'body_metrics',
         action: 'needs_confirmation',
         needs_confirmation: true,
+        auto_save: false,
         payload,
         reply_text: buildBodyMetricReply(payload),
       });
     }
-  }
-
-  const candidate = getTopRecordCandidate(raw);
-  if (candidate) {
-    const recordResult = buildRecordCaptureResult(candidate);
-    if (recordResult) return withCompatAliases(recordResult);
   }
 
   if (looksLikeMemoryNote(raw) && !includesAny(normalized, ['保存', '記録', '体重', '体脂肪'])) {
@@ -483,13 +491,12 @@ function buildRouterFallbackResult(userText = '') {
 
 function extractReplyTextFromRouterResult(routerResult = null) {
   if (!routerResult || typeof routerResult !== 'object') return '';
-
   return safeText(
     routerResult.reply_text ||
-    routerResult.replyText ||
-    routerResult.assistant_reply ||
-    routerResult.text ||
-    ''
+      routerResult.replyText ||
+      routerResult.assistant_reply ||
+      routerResult.text ||
+      ''
   );
 }
 
@@ -499,10 +506,10 @@ function normalizeRouterResult(routerResult = null, userText = '') {
   const route = safeText(routerResult.route || '');
   const category = safeText(
     routerResult.category ||
-    routerResult.intent ||
-    routerResult.route ||
-    routerResult.type ||
-    ''
+      routerResult.intent ||
+      routerResult.route ||
+      routerResult.type ||
+      ''
   );
 
   const replyText = extractReplyTextFromRouterResult(routerResult);
@@ -519,7 +526,7 @@ function normalizeRouterResult(routerResult = null, userText = '') {
       action: 'reply_only',
       needs_confirmation: false,
       payload: routerResult.payload || { raw_text: safeText(userText) },
-      reply_text: replyText || buildPainConsultReply(userText),
+      reply_text: buildPainConsultReply(userText),
       meta: routerResult.meta || {},
       raw: routerResult,
     });
@@ -571,14 +578,15 @@ function normalizeRouterResult(routerResult = null, userText = '') {
   }
 
   if (category === 'body_metrics') {
+    const payload = parseBodyMetrics(userText) || routerResult.payload || {};
     return withCompatAliases({
       category: 'body_metrics',
       capture_type: 'body_metrics',
-      action: safeText(routerResult.action || 'needs_confirmation'),
-      needs_confirmation: routerResult.needs_confirmation !== false,
-      auto_save: Boolean(routerResult.auto_save),
-      payload: routerResult.payload || {},
-      reply_text: replyText || buildBodyMetricReply(routerResult.payload || {}),
+      action: 'needs_confirmation',
+      needs_confirmation: true,
+      auto_save: false,
+      payload,
+      reply_text: buildBodyMetricReply(payload),
       meta: routerResult.meta || {},
       raw: routerResult,
     });
@@ -639,6 +647,9 @@ async function analyzeChatCapture({
   const raw = safeText(userText || currentUserText || text);
   if (!raw) return null;
 
+  const priorityResult = buildPriorityCaptureResult(raw);
+  if (priorityResult) return priorityResult;
+
   const routerResult = await analyzeWithRouter({
     userText: raw,
     user,
@@ -651,7 +662,13 @@ async function analyzeChatCapture({
   });
   if (routerResult) return withCompatAliases(routerResult);
 
-  return withCompatAliases(buildRouterFallbackResult(raw));
+  const candidate = getTopRecordCandidate(raw);
+  if (candidate) {
+    const recordResult = buildRecordCaptureResult(candidate);
+    if (recordResult) return withCompatAliases(recordResult);
+  }
+
+  return null;
 }
 
 module.exports = {
