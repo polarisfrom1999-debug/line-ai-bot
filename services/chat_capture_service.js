@@ -1,5 +1,5 @@
 **'use strict';
-*
+
  * services/chat_capture_service.js
  *
  * 互換修正版:
