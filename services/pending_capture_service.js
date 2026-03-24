@@ -2,12 +2,6 @@
 
 /**
  * services/pending_capture_service.js
- *
- * 役割:
- * - pending capture の開始
- * - pending capture への回答結合
- * - 保存可能か判定
- * - pending解除
  */
 
 const {
@@ -79,25 +73,11 @@ function mergeExerciseReply(payload = {}, replyText = '') {
   const normalized = normalizeLoose(text);
 
   if (!merged.activity) {
-    if (
-      normalized.includes('ジョギング') ||
-      normalized.includes('ランニング') ||
-      normalized.includes('走った') ||
-      normalized.includes('走る')
-    ) {
+    if (normalized.includes('ジョギング') || normalized.includes('ランニング') || normalized.includes('走った') || normalized.includes('走る')) {
       merged.activity = 'jogging';
-    } else if (
-      normalized.includes('ウォーキング') ||
-      normalized.includes('歩いた') ||
-      normalized.includes('歩く') ||
-      normalized.includes('散歩')
-    ) {
+    } else if (normalized.includes('ウォーキング') || normalized.includes('歩いた') || normalized.includes('歩く') || normalized.includes('散歩')) {
       merged.activity = 'walking';
-    } else if (
-      normalized.includes('筋トレ') ||
-      normalized.includes('トレーニング') ||
-      normalized.includes('スクワット')
-    ) {
+    } else if (normalized.includes('筋トレ') || normalized.includes('トレーニング') || normalized.includes('スクワット')) {
       merged.activity = 'strength_training';
     }
   }
@@ -120,142 +100,123 @@ function mergeMealReply(payload = {}, replyText = '') {
 
 function mergeWeightReply(payload = {}, replyText = '') {
   const merged = { ...payload };
-  const weightKg = extractWeightKg(replyText);
-  if (weightKg != null) merged.weight_kg = weightKg;
+  const text = safeText(replyText);
+
+  if (!merged.weight_kg) {
+    const weightKg = extractWeightKg(text);
+    if (weightKg != null) merged.weight_kg = weightKg;
+  }
+
+  if (!merged.body_fat_pct) {
+    const bodyFatPercent = extractBodyFatPercent(text);
+    if (bodyFatPercent != null) merged.body_fat_pct = bodyFatPercent;
+  }
+
   return merged;
 }
 
-function mergeBodyFatReply(payload = {}, replyText = '') {
+function mergeBloodTestReply(payload = {}, replyText = '') {
   const merged = { ...payload };
-  const bodyFat = extractBodyFatPercent(replyText);
-  if (bodyFat != null) merged.body_fat_percent = bodyFat;
+  const text = safeText(replyText);
+  if (!merged.raw_text) {
+    merged.raw_text = text;
+  } else {
+    merged.raw_text = `${safeText(merged.raw_text)} / ${text}`.trim();
+  }
   return merged;
 }
 
-function getMissingFields(captureType, payload = {}) {
+function resolveMissingFields(captureType = '', payload = {}) {
   if (captureType === 'exercise') {
     const missing = [];
-    if (!payload.activity) missing.push('activity');
-    if (!payload.duration_min) missing.push('duration_min');
+    if (!payload.duration_min && !payload.distance_km) missing.push('duration_or_distance');
     return missing;
   }
-
-  if (captureType === 'meal') {
-    const missing = [];
-    const raw = safeText(payload.raw_text);
-    if (!raw) missing.push('food_items');
-    return missing;
-  }
-
   if (captureType === 'weight') {
-    return payload.weight_kg == null ? ['weight_kg'] : [];
+    const missing = [];
+    if (!payload.weight_kg) missing.push('weight_kg');
+    return missing;
   }
-
-  if (captureType === 'body_fat') {
-    return payload.body_fat_percent == null ? ['body_fat_percent'] : [];
-  }
-
   return [];
 }
 
-function mergePendingCaptureReply(user = {}, replyText = '') {
-  const captureType = user.pending_capture_type;
-  const currentPayload = user.pending_capture_payload || {};
-  let mergedPayload = { ...currentPayload };
+function buildPendingReply(captureType = '', missingFields = []) {
+  if (!missingFields.length) {
+    if (captureType === 'exercise') {
+      return '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？';
+    }
+    if (captureType === 'meal') {
+      return '食事の内容は受け取れています。今日の記録としてまとめてよければ保存しますか？違うところだけ、そのまま教えても大丈夫です。';
+    }
+    if (captureType === 'weight') {
+      return '体重の内容は受け取れています。このまま記録して大丈夫ですか？';
+    }
+    return '内容は受け取れています。このまま進めて大丈夫ですか？';
+  }
 
   if (captureType === 'exercise') {
-    mergedPayload = mergeExerciseReply(currentPayload, replyText);
-  } else if (captureType === 'meal') {
-    mergedPayload = mergeMealReply(currentPayload, replyText);
-  } else if (captureType === 'weight') {
-    mergedPayload = mergeWeightReply(currentPayload, replyText);
-  } else if (captureType === 'body_fat') {
-    mergedPayload = mergeBodyFatReply(currentPayload, replyText);
+    return '運動の内容は受け取れています。時間か距離がわかれば、そのまま続けて教えてくださいね。';
   }
-
-  const missingFields = getMissingFields(captureType, mergedPayload);
-  const isReadyToSave = missingFields.length === 0;
-
-  return {
-    captureType,
-    payload: mergedPayload,
-    missingFields,
-    isReadyToSave,
-  };
-}
-
-function buildRetryPrompt(captureType, payload = {}, missingFields = []) {
-  if (captureType === 'exercise') {
-    if (missingFields.includes('activity')) {
-      return 'どんな運動だったか教えてください。ジョギング、ウォーキング、筋トレなど、ざっくりで大丈夫です。';
-    }
-    if (missingFields.includes('duration_min')) {
-      return '何分くらいだったか教えてください。ざっくりで大丈夫です。';
-    }
-  }
-
-  if (captureType === 'meal') {
-    return '何を食べたか1〜2品だけ教えてください。ざっくりで大丈夫です。';
-  }
-
   if (captureType === 'weight') {
-    return '何kgだったか教えてください。';
+    return '体重の数字がわかれば、そのまま送ってくださいね。';
   }
-
-  if (captureType === 'body_fat') {
-    return '何％だったか教えてください。';
-  }
-
-  return 'もう少しだけ教えてください。';
+  return '不足しているところだけ、そのまま教えてくださいね。';
 }
 
-function updateUserWithPendingResult(user = {}, pendingResult = {}, replyText = '') {
-  if (!pendingResult || !pendingResult.captureType) {
-    return clearPendingCapture(user);
-  }
-
-  if (pendingResult.isReadyToSave) {
+function mergePendingCaptureReply(user = {}, replyText = '') {
+  if (!hasPendingCapture(user)) {
     return {
-      ...user,
-      pending_capture_type: pendingResult.captureType,
-      pending_capture_status: 'ready_to_save',
-      pending_capture_payload: pendingResult.payload,
-      pending_capture_missing_fields: [],
-      pending_capture_prompt: null,
-      pending_capture_started_at: user.pending_capture_started_at || nowIso(),
-      pending_capture_source_text: user.pending_capture_source_text || safeText(replyText),
-      pending_capture_attempts: Number(user.pending_capture_attempts || 0),
+      readyToSave: false,
+      userPatch: user,
+      replyText: '',
+      captureType: null,
+      payload: null,
     };
   }
 
+  const captureType = safeText(user.pending_capture_type);
+  const payload = user.pending_capture_payload || {};
+
+  let mergedPayload = { ...payload };
+  if (captureType === 'exercise') mergedPayload = mergeExerciseReply(payload, replyText);
+  else if (captureType === 'meal') mergedPayload = mergeMealReply(payload, replyText);
+  else if (captureType === 'weight' || captureType === 'body_metrics') mergedPayload = mergeWeightReply(payload, replyText);
+  else if (captureType === 'blood_test') mergedPayload = mergeBloodTestReply(payload, replyText);
+
+  const missingFields = resolveMissingFields(captureType, mergedPayload);
+  const readyToSave = missingFields.length === 0;
+
+  const nextUser = readyToSave
+    ? clearPendingCapture(user)
+    : {
+        ...user,
+        pending_capture_payload: mergedPayload,
+        pending_capture_missing_fields: missingFields,
+        pending_capture_prompt: buildPendingReply(captureType, missingFields),
+        pending_capture_attempts: Number(user.pending_capture_attempts || 0) + 1,
+      };
+
   return {
-    ...user,
-    pending_capture_type: pendingResult.captureType,
-    pending_capture_status: 'awaiting_clarification',
-    pending_capture_payload: pendingResult.payload,
-    pending_capture_missing_fields: pendingResult.missingFields,
-    pending_capture_prompt: buildRetryPrompt(
-      pendingResult.captureType,
-      pendingResult.payload,
-      pendingResult.missingFields
-    ),
-    pending_capture_started_at: user.pending_capture_started_at || nowIso(),
-    pending_capture_source_text: user.pending_capture_source_text || safeText(replyText),
-    pending_capture_attempts: Number(user.pending_capture_attempts || 0) + 1,
+    readyToSave,
+    userPatch: nextUser,
+    replyText: buildPendingReply(captureType, missingFields),
+    captureType,
+    payload: mergedPayload,
+  };
+}
+
+function updateUserWithPendingResult(currentUser = {}, pendingResult = {}) {
+  if (!pendingResult || typeof pendingResult !== 'object') return currentUser;
+  return {
+    ...currentUser,
+    ...pendingResult.userPatch,
   };
 }
 
 module.exports = {
-  nowIso,
   createPendingCapture,
   clearPendingCapture,
   hasPendingCapture,
-  mergeExerciseReply,
-  mergeMealReply,
-  mergeWeightReply,
-  mergeBodyFatReply,
-  getMissingFields,
   mergePendingCaptureReply,
-  buildRetryPrompt,
   updateUserWithPendingResult,
 };
