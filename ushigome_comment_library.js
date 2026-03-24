@@ -1,496 +1,381 @@
-const COACH_COMMENT_LIBRARY = {
-  praise_done: [
-    'ありがとう😊 今日もちゃんと動けましたね',
-    'すごいね👍 ちゃんと続いてます',
-    'え、マジすごい👍 今日もつながりましたね',
-    'やったね！👍 こういう1回が大事なんです',
-    'ほんとに真面目だね🥰',
-    'なかなか他の人は出来ないですよ',
-    '応援してますよぉ〜📣 今日もいい流れです',
-    'ふぁいてぃん👏 ちゃんと積み上がってます',
-    '普通の人は出来ないんですよ〜 この継続',
-    '気付けば出来る人になってますね',
-    'それそれ！！！その感じです',
-    '中々だねぇ〜🤓 ちゃんと自分で動けてる',
-    '今日も頑張ったねぇ〜☺️',
-    'ちゃんと体にいいこと出来てますよ👍',
-    '少しでもやれたのがすごく良いです',
-    '今日も自分を大切にできましたね',
-    'こういう積み重ね、ほんと強いです',
-    '無理しすぎず続いてるのが最高です',
-    'いい流れ来てますねぇ〜',
-    'その一歩がちゃんと未来につながります',
-    '今日もつながりましたね、これ大きいですよ👍',
-    'こういうの、あとでしっかり差になりますよ',
-    'ちゃんと出来る人になってきてますね🥰',
-    '体が喜ぶこと、今日もひとつ出来ましたね',
-    'よしよし、その調子です☺️',
-    'こうして続けられるの、ほんと立派です',
-    '軽くでも動けたのが素晴らしいです',
-    '今日も未来の自分にプラスできましたね',
-    'その行動力、かなりいいですよ',
-    '一歩ずつでも、ちゃんと前に進んでます',
-  ],
+'use strict';
 
-  praise_small: [
-    '少しでもやれたのが大きいですよ👍',
-    '0じゃないのがほんとに良いですね',
-    'それで十分です☺️',
-    '少しでも体を動かせたの、かなり良いです',
-    '完璧じゃなくて大丈夫、その1回が大切です',
-    'ちゃんと前に進んでますよぉ〜📣',
-    'そのちょっとが後で効いてきます',
-    'よしよし、それでいいんです🥰',
-    '無理なくつながったのが最高です',
-    '今日も流れを切らなかったのがすごいです',
-    '少し出来る人って、結局強いんですよ〜',
-    'その感覚、とても良いです👍',
-    '小さく見えても、ちゃんと意味あります',
-    '今の1回、かなり価値ありますよ',
-    'その調子その調子☺️',
-    'ちょっとでも出来たの、立派です',
-    '少しだけでも体はちゃんと覚えていきますよ',
-    '大きくじゃなくていいんです、つながったのが大事です',
-    'いいですねぇ、ちゃんと今日も前進です',
-    '軽くでも動けたのが偉いです',
-  ],
-
-  praise_streak: [
-    'ほんとに真面目だね🥰',
-    'コツコツ出来るの、かなり強みです',
-    '続けられる人になってますね',
-    '気付けば習慣になってきてますね👍',
-    'なかなか他の人は出来ないですよ、この継続',
-    '普通の人はここで止まりやすいんですよ〜',
-    'ちゃんと自分との約束守れてますね',
-    'いやぁ、これすごい流れです',
-    '続いてるの、ほんと立派です',
-    '積み重ねがもう形になり始めてます',
-    'こういう人、強いんですよねぇ〜',
-    '今日もつながってるのが素晴らしいです',
-    'じわじわ出来る人になってますね',
-    'その安定感、すごくいいです',
-    'ちゃんと未来の体を作ってますよ',
-    'ここまで続いてるの、本当に価値あります',
-    '継続って才能ですけど、ちゃんと持ってますね',
-    'コツコツ型、かなり強いです👍',
-    'この流れ、血液検査にもつながりやすいですよ',
-    'いい習慣が体に馴染んできてますね',
-  ],
-
-  praise_restart: [
-    'お、戻ってこれたのがいいですね👍',
-    'また始められたの、すごく大きいです',
-    '空いても再開できる人は強いんですよ〜',
-    'それで十分です。またここからですね☺️',
-    '戻ってきたのが素晴らしいです',
-    'やったね！また流れ作れます👍',
-    'ふぁいてぃん👏 再開できたの最高です',
-    'ちゃんと戻せるの、すごい強みです',
-    '完璧じゃなくていいんです、戻れたのが大事です',
-    'それそれ！！！その1回で流れ変わります',
-    'またやろうと思えたのが素敵です',
-    'ちゃんと前向けてますね',
-    'その再スタート、かなり価値あります',
-    'よし、ここからまた積み上げましょう',
-    'いいですねぇ〜、戻ってこれたの大きいです',
-    '空いても大丈夫、戻れたら十分強いです',
-    'こういう再開が一番大事なんですよ👍',
-    'またつながりましたね、いい感じです',
-    '戻る力がある人は強いです🥰',
-    '再開の一歩、ほんと大きいです',
-  ],
-
-  praise_report: [
-    '教えてくれてありがとう😊',
-    '報告してくれるの、ほんとに嬉しいです🥰',
-    'ちゃんと伝えてくれるのが素敵です',
-    'そこを言葉にできるの、すごく良いですね',
-    'まず報告できる時点でいい流れです👍',
-    '聞かせてくれてありがとう、すごく助かります',
-    'こうして共有してくれるのが嬉しいです',
-    'ちゃんと見せてくれるの、信頼を感じます☺️',
-    '報告があると一緒に積み上げやすいですね',
-    '今日のことを教えてくれてありがとうです📣',
-  ],
-
-  future_link: [
-    'こういう1回が後で効いてきますよ',
-    '今の積み重ね、ちゃんと未来につながってます',
-    '今日のこれ、2か月後の体に返ってきます👍',
-    '体は少しずつ覚えていきますからね',
-    '今は小さく見えても、あとで差になります',
-    'こういう積み重ねが血液検査にも出やすくなります',
-    '地味だけど、すごく大事な一歩です',
-    '続けるほど体は応えてくれやすくなります',
-    '1日では変わらなくても、流れは作れています',
-    '今の1回が次の安心につながります',
-    'こういう小さな継続が、あとで大きな自信になります',
-    '体の中では、もう少しずつ変化が始まっていますよ',
-    '今の行動が1か月後のラクさにつながりやすいです',
-    'この感じでいけると、2〜3か月後が楽しみです',
-    'ちゃんと未来の数字に近づいてますよ',
-  ],
-
-  soft_nudge: [
-    '無理のない範囲で、また少し動けたら教えてくださいね',
-    '少し空いても大丈夫です。またできた日を待っています☺️',
-    '完璧じゃなくて大丈夫です。次の1回を待っていますね',
-    'また少し動けた時に教えてもらえたら嬉しいです',
-    '焦らなくて大丈夫ですよ。できた日からまたここからです',
-    '1回でもつながると流れが戻りやすいので、また聞かせてくださいね',
-    '無理なくで大丈夫なので、また動けたら待ってます👍',
-    'ちょっと空いても全然大丈夫です。また一緒にいきましょう',
-    '頑張れない日があっても大丈夫です。次の1回が大切です',
-    'また出来た時に、ひとことでも聞かせてくださいね',
-    'やれた日だけでも十分なので、また待ってますね',
-    '出来るタイミングで大丈夫ですよ。無理はなしでいきましょう',
-    'また少し体を動かせたら、その時に聞かせてください☺️',
-    '急がなくて大丈夫です。またつながる日を待ってます',
-    'ひとまず1回できたら花丸なので、また気が向いたらいきましょう',
-  ],
-
-  exercise_prompt_soft: [
-    '今日、少しだけでも体を動かせそうですか？',
-    'スクワット1回でもいいので、できたら教えてくださいね',
-    '腹筋や腕立て、ほんの少しでもOKですよ',
-    '今日は軽めでも大丈夫なので、何か1つできたら十分です',
-    '1分でも2分でも、体を動かせたら花丸です',
-    '無理のない範囲で、今日は何か出来そうですか？',
-    '散歩でもスクワットでも、その場足踏みでも大丈夫ですよ',
-    '出来るものを1つだけでもやれたらいいですね',
-    '頑張りすぎなくて大丈夫です。少しだけやってみますか？',
-    '今日の体と相談しながら、軽くいきましょうか',
-    '膝つき腕立てでも十分ですよ。少しやれたら教えてくださいね',
-    'スクワット数回だけでもいいので、つながるといいですね',
-    '今日は軽く体を起こす感じでも大丈夫ですよ',
-    '出来たらで十分です。ちょっとだけ動いてみますか？',
-    '自分にやさしい量で、ひとつだけいきましょう☺️',
-  ],
-
-  exercise_prompt_types: {
-    gentle: [
-      '無理のない範囲で、今日は少しだけ体を動かしてみますか？',
-      'ほんの少しでも大丈夫なので、出来たら教えてくださいね',
-      '今日の体調に合わせて、やさしくいきましょう☺️',
-      '1回でもつながれば十分です。焦らずいきましょうね',
-      '頑張りすぎず、出来る分だけで大丈夫ですよ',
-    ],
-    energetic: [
-      'よし、今日も軽くいってみましょうか👍',
-      'ほんの少しでOKです！つながれば勝ちです👏',
-      '出来そうなら1つだけ、ふぁいてぃんです📣',
-      '今日も未来の自分にひとつプレゼントしてみましょう',
-      '軽くでも動けたらかなりナイスです！',
-    ],
-    analytical: [
-      '少量でも継続できると、習慣化しやすく結果にもつながりやすいです。',
-      '今日は負担の少ない範囲で、ひとつだけ動きを入れてみますか？',
-      '毎日完璧でなくても、数日おきにつながるだけで流れは作れます。',
-      'まずは低負荷で続けやすい形を優先していきましょう。',
-      'スクワットや軽い腕立てでも、積み重ねると意味が出やすいです。',
-    ],
-    casual: [
-      '今日はちょこっとだけ動いときます？',
-      '1回でもいいので、軽くいけたら教えてください〜',
-      '重く考えず、ちょっとだけでも全然ありです👍',
-      '出来そうなら軽くひとつ、いっときましょうか',
-      '今日はゆるっとで大丈夫ですよ〜',
-    ],
-  },
-
-  blood_link_comments: [
-    '軽い運動でも続くと、血糖や中性脂肪の流れに良い影響が出やすいです。',
-    '下半身を使う動きは、糖の使われ方にも良い後押しになりやすいです。',
-    '運動を少しずつ続けられると、HbA1cや脂質の変化にもつながる可能性があります。',
-    '1日で大きく変わるわけではありませんが、1〜2週間で体の反応は少しずつ始まりやすいです。',
-    '今のような継続ができると、2〜3か月後の血液検査で流れが見えやすくなることがあります。',
-    '軽い筋トレは代謝の土台づくりにも役立ちやすいです。',
-    '歩く・しゃがむ・押す動きが増えると、日常の消費も積み上がりやすいです。',
-    'スクワットや膝つき腕立てでも、十分に意味のある積み重ねになりますよ。',
-    '少しずつ運動量が増えてくると、だるさや体の重さがラクになる方もいます。',
-    '続けていけると、数字だけでなく体感の変化も出やすくなります。',
-  ],
-
-  strength_progression_comments: [
-    '今の量が無理なく出来ているなら、1〜2週間ごとに少しだけ増やす形で十分です。',
-    '10回がきつければ、その手前で止めても大丈夫です。大事なのは続くことです。',
-    '少し楽に出来るようになったら、回数か時間を1割くらい足すイメージでOKです。',
-    'まずは毎回少しでも動けることを大切にしていきましょう。',
-    '強度は急に上げず、慣れてきたら少しだけ足すのが安心です。',
-    '今の負担で続いているなら、それ自体がかなり良い流れです。',
-    '体は少しずつ順応するので、焦らず小さく上げるのがちょうどいいです。',
-    'やり切るより、また出来る形で終える方が長続きしやすいです。',
-    '息が上がりすぎない、翌日に残りすぎないくらいが続けやすい目安です。',
-    '無理なく続けて、少し楽になったら次の一歩で大丈夫ですよ。',
-  ],
-
-  daily_menu_suggestions: {
-    starter: [
-      '今日はスクワット3回だけでもOKです',
-      '椅子からの立ち座りを3回だけやってみましょう',
-      '膝つき腕立て1〜3回でも十分です',
-      '腹筋は上まで起きなくても、お腹に力を入れるだけでもOKです',
-      'その場足踏みを30秒だけでも花丸です',
-    ],
-    easy: [
-      'スクワット5回前後を1セットやってみましょう',
-      '膝つき腕立てを3〜5回くらいでOKです',
-      '腹筋は無理なく5回前後を目安にしてみましょう',
-      'その場足踏み1分＋スクワット数回でも十分です',
-      '歩けそうなら5分ほどのゆっくり散歩も良いですね',
-    ],
-    moderate: [
-      'スクワット10回前後を1〜2セットでどうでしょう',
-      '膝つき腕立て5〜8回くらいでもいい流れです',
-      '腹筋5〜10回くらいを無理なくいきましょう',
-      '軽いスロージョギングを1〜3分混ぜても良いですね',
-      '歩きと軽い筋トレを合わせると、よりバランスが良いです',
-    ],
-    active: [
-      'スクワット10〜15回を1〜2セットいけそうなら良いですね',
-      '腕立ては膝つきでも通常でも、無理のない形でOKです',
-      '腹筋もフォームを崩さない範囲で続けられる量にしましょう',
-      'スロージョギングを数分入れられるとさらに良い流れです',
-      '少し余裕がある日は回数より丁寧さを意識してみましょう',
-    ],
-  },
-
-  blood_exam_opening: [
-    '今回も血液検査を見せてくれてありがとうございます。',
-    'ここまで記録を続けてくれているのが、まず本当に大きいです。',
-    'こうして数値を一緒に見返せるのは、とても良い流れですね。',
-    '検査結果をちゃんと確認していけるの、すごく大切な積み重ねです。',
-    '今回の結果も一緒に整理していきましょうね。',
-  ],
-
-  blood_exam_positive: [
-    '全体として見ると、良い流れを感じる項目があります。',
-    '少しずつでも体が応えてきている感じがありますね。',
-    '数字だけでなく流れとして良い方向が見えてきています。',
-    '小さい変化でも、積み重ねとしてはかなり価値があります。',
-    '今回の結果には、続けてきた意味が少し見えてきています。',
-  ],
-
-  blood_exam_stable: [
-    '大きく崩れず維持できているのも立派です。',
-    '安定している項目があるのはとても良いことです。',
-    '横ばいでも、整える土台を守れている感じがあります。',
-    'こういう安定が次の改善につながりやすいです。',
-    '派手な変化ではなくても、落ち着いて見られるのは良い流れです。',
-  ],
-
-  blood_exam_careful: [
-    '少し気になる動きはありますが、ここで流れが見えたのは大きいです。',
-    '今回の数値には、生活を整えるヒントが含まれていそうです。',
-    'ここで気付けたこと自体が次につながります。',
-    'すぐに悲観しなくて大丈夫ですが、少し丁寧に見ていきたいですね。',
-    '整え方によって変わる余地がありそうです。',
-  ],
-
-  blood_exam_medical_soft: [
-    'HbA1cや脂質は、1日で大きく変わるというより少しずつ動いていくことが多いです。',
-    '睡眠や活動量、食事の積み重ねが数値の流れに影響することがあります。',
-    '軽い運動の継続でも、血糖や中性脂肪には良い影響が出やすいです。',
-    'LDLやHbA1cは、短期よりも1〜3か月単位で流れを見るのが大切です。',
-    '水分や体重、食事内容が尿酸の流れに関係することもあります。',
-    '肝機能系の数値は、体重や生活リズムの影響を受けることもあります。',
-  ],
-
-  blood_exam_daily_life_link: [
-    'こうした変化が続くと、体の重さやだるさが少しラクになる方もいます。',
-    '数字が整ってくると、食後の重さや疲れ方にも変化が出ることがあります。',
-    'むくみ感や日中の過ごしやすさに良い影響が出る方もいます。',
-    '数値だけでなく、日常の体感にもつながっていきやすいです。',
-    'こういう流れは、生活のしやすさにも少しずつ返ってきやすいです。',
-  ],
-
-  blood_exam_future_1m: [
-    '今の流れを続けられると、1か月後にはもう少し安定感が見えやすいです。',
-    'ここから1か月は、流れを整えるにはとても大事な時期です。',
-    '今の意識が続けば、次の1か月でも小さな変化を感じやすいと思います。',
-    '1か月後には、今より少し安心して見られる項目が増える可能性があります。',
-    'この調子でいけると、1か月後の見え方が変わってきそうです。',
-  ],
-
-  blood_exam_future_3m: [
-    '3か月くらいで見ると、よりはっきりした傾向が見えやすくなります。',
-    '今の積み重ねは、3か月後の数字に返ってくる可能性があります。',
-    '焦らず続けられると、3か月後にはかなり意味のある比較がしやすくなります。',
-    '3か月単位で見た時に、体の土台が整ってきた実感につながりやすいです。',
-    '今の流れが続くと、3か月後の検査が楽しみになってきますね。',
-  ],
-
-  blood_exam_next_step: [
-    '次は睡眠か水分のどちらか1つを少し整えてみるのがおすすめです。',
-    '今の運動を無理なく続けるだけでも、良い後押しになりそうです。',
-    '食事のタイミングを少し整えるだけでも流れが変わることがあります。',
-    'まずは今できていることを続けるのが一番大事です。',
-    '次の1か月は、無理なく続けられる形を大切にしていきましょう。',
-  ],
-
-  meal_record_praise: [
-    '食事をちゃんと見せてくれるの、すごく大事です😊',
-    '記録してくれるから流れが見えてきますね👍',
-    'こういう食事の共有、本当に力になります。',
-    '見せてくれてありがとう、かなり助かります。',
-    '食事を言葉や写真で残せるの、すごく良い習慣です。',
-  ],
-
-  meal_balance_positive: [
-    '全体としてバランスは悪くなさそうです。',
-    'たんぱく質を意識できていそうなのが良いですね。',
-    '思ったより整っている印象があります。',
-    '食べ方としてはかなり悪くないです。',
-    'ちゃんと考えて選べている感じがあります。',
-  ],
-
-  meal_balance_careful: [
-    '少し脂質が高めになりやすい組み合わせかもしれません。',
-    '見えない油やソースは少し多めに見ておくと安心です。',
-    '外食系は想像よりカロリーが乗りやすいことがあります。',
-    '量は多すぎなくても、調味料で増えやすいことがあります。',
-    '全体としては悪くないですが、少し調整余地はありそうです。',
-  ],
-
-  meal_future_link: [
-    'こういう食事の積み重ねが、血糖や脂質の流れにもつながってきます。',
-    '食事の選び方が整うと、1〜2か月後の数字にも出やすくなります。',
-    'こういう意識の積み重ねが、体の軽さにも返ってきやすいです。',
-    '大きく変えなくても、少しずつ整うだけで流れは変わります。',
-    '今の意識はちゃんと未来の体につながっています。',
-  ],
-
-  no_repeat_rules: {
-    avoid_same_category_streak: true,
-    avoid_exact_repeat_recent: true,
-    max_same_phrase_window: 5,
-  },
-};
-
-function randomPick(list = [], exclude = []) {
-  if (!Array.isArray(list) || list.length === 0) return '';
-  const ex = Array.isArray(exclude) ? exclude : [];
-  const filtered = list.filter((item) => !ex.includes(item));
-  const source = filtered.length ? filtered : list;
-  return source[Math.floor(Math.random() * source.length)];
+function pad2(v) {
+  return String(v).padStart(2, '0');
 }
 
-function randomPicks(list = [], count = 2, exclude = []) {
-  if (!Array.isArray(list) || list.length === 0) return [];
-  const ex = Array.isArray(exclude) ? exclude : [];
-  const pool = list.filter((item) => !ex.includes(item));
-  const source = pool.length ? [...pool] : [...list];
-  const result = [];
-  while (source.length > 0 && result.length < count) {
-    const index = Math.floor(Math.random() * source.length);
-    result.push(source.splice(index, 1)[0]);
+function formatDateOnly(value) {
+  if (!value) return '';
+  const s = String(value).trim();
+
+  const direct = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (direct) {
+    return `${direct[1]}-${pad2(direct[2])}-${pad2(direct[3])}`;
   }
-  return result;
+
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
-function getPraiseMessage(category = 'praise_done', exclude = []) {
-  return randomPick(COACH_COMMENT_LIBRARY[category] || [], exclude);
+function normalizeDateInput(text) {
+  const s = String(text || '')
+    .trim()
+    .replace(/[年/.]/g, '-')
+    .replace(/月/g, '-')
+    .replace(/日/g, '')
+    .replace(/\s+/g, '');
+
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+
+  return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
 }
 
-function getSoftNudgeMessage(aiType = 'gentle', exclude = []) {
-  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || [], exclude);
-  const soft = randomPick(COACH_COMMENT_LIBRARY.soft_nudge || [], [typePrompt, ...exclude]);
-  return [typePrompt, soft].filter(Boolean).join('\n');
+function parseNumberInput(text) {
+  const raw = String(text || '').trim().replace(/,/g, '');
+  const m = raw.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return null;
+
+  const num = Number(m[0]);
+  return Number.isFinite(num) ? num : null;
 }
 
-function getExercisePromptMessage(aiType = 'gentle', exclude = []) {
-  const typePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_types[aiType] || [], exclude);
-  const basePrompt = randomPick(COACH_COMMENT_LIBRARY.exercise_prompt_soft || [], [typePrompt, ...exclude]);
-  return [typePrompt, basePrompt].filter(Boolean).join('\n');
+function normalizeLabValue(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
+  const parsed = parseNumberInput(String(value));
+  return parsed === null ? null : parsed;
 }
 
-function getBloodLinkMessage(exclude = []) {
-  return randomPick(COACH_COMMENT_LIBRARY.blood_link_comments || [], exclude);
+function normalizeWorkingData(workingData) {
+  const out = {};
+
+  for (const [dateKey, items] of Object.entries(workingData || {})) {
+    const date = formatDateOnly(dateKey);
+    if (!date) continue;
+
+    out[date] = {
+      hba1c: normalizeLabValue(items?.hba1c),
+      fasting_glucose: normalizeLabValue(items?.fasting_glucose),
+      ldl: normalizeLabValue(items?.ldl),
+      hdl: normalizeLabValue(items?.hdl),
+      triglycerides: normalizeLabValue(items?.triglycerides),
+      ast: normalizeLabValue(items?.ast),
+      alt: normalizeLabValue(items?.alt),
+      ggt: normalizeLabValue(items?.ggt),
+      uric_acid: normalizeLabValue(items?.uric_acid),
+      creatinine: normalizeLabValue(items?.creatinine),
+    };
+  }
+
+  return out;
 }
 
-function getProgressionMessage(exclude = []) {
-  return randomPick(COACH_COMMENT_LIBRARY.strength_progression_comments || [], exclude);
+function buildMeasuredAtIso(dateStr) {
+  const dateOnly = formatDateOnly(dateStr);
+  if (!dateOnly) return null;
+  return `${dateOnly}T00:00:00+09:00`;
 }
 
-function getDailyMenuSuggestion(level = 'starter', exclude = []) {
-  const list = COACH_COMMENT_LIBRARY.daily_menu_suggestions[level] || COACH_COMMENT_LIBRARY.daily_menu_suggestions.starter;
-  return randomPick(list, exclude);
+async function closePreviousDrafts(supabase, userId) {
+  const { error } = await supabase
+    .from('lab_import_sessions')
+    .update({ status: 'replaced' })
+    .eq('user_id', userId)
+    .eq('status', 'draft');
+
+  if (error) throw error;
 }
 
-function getMealPraiseMessage(exclude = []) {
-  return randomPick(COACH_COMMENT_LIBRARY.meal_record_praise || [], exclude);
+async function createLabDraftSession(supabase, payload) {
+  await closePreviousDrafts(supabase, payload.user_id);
+
+  const insertPayload = {
+    ...payload,
+    detected_dates_json: Array.isArray(payload.detected_dates_json)
+      ? payload.detected_dates_json.map(formatDateOnly).filter(Boolean)
+      : [],
+    selected_date: payload.selected_date ? formatDateOnly(payload.selected_date) : null,
+    working_data_json: normalizeWorkingData(payload.working_data_json || {}),
+  };
+
+  const { data, error } = await supabase
+    .from('lab_import_sessions')
+    .insert(insertPayload)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
-function getMealBalanceComment(type = 'positive', exclude = []) {
-  if (type === 'careful') return randomPick(COACH_COMMENT_LIBRARY.meal_balance_careful || [], exclude);
-  return randomPick(COACH_COMMENT_LIBRARY.meal_balance_positive || [], exclude);
-}
+async function getOpenLabDraft(supabase, userId) {
+  const nowIso = new Date().toISOString();
 
-function getMealFutureLink(exclude = []) {
-  return randomPick(COACH_COMMENT_LIBRARY.meal_future_link || [], exclude);
-}
+  const { data, error } = await supabase
+    .from('lab_import_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'draft')
+    .gt('expires_at', nowIso)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-function buildBloodExamCommentParts(mode = 'positive', exclude = []) {
-  const opening = randomPick(COACH_COMMENT_LIBRARY.blood_exam_opening || [], exclude);
-  const body =
-    mode === 'careful'
-      ? randomPick(COACH_COMMENT_LIBRARY.blood_exam_careful || [], [opening, ...exclude])
-      : mode === 'stable'
-        ? randomPick(COACH_COMMENT_LIBRARY.blood_exam_stable || [], [opening, ...exclude])
-        : randomPick(COACH_COMMENT_LIBRARY.blood_exam_positive || [], [opening, ...exclude]);
-
-  const medical = randomPick(COACH_COMMENT_LIBRARY.blood_exam_medical_soft || [], [opening, body, ...exclude]);
-  const daily = randomPick(COACH_COMMENT_LIBRARY.blood_exam_daily_life_link || [], [opening, body, medical, ...exclude]);
-  const future1 = randomPick(COACH_COMMENT_LIBRARY.blood_exam_future_1m || [], [opening, body, medical, daily, ...exclude]);
-  const future3 = randomPick(COACH_COMMENT_LIBRARY.blood_exam_future_3m || [], [opening, body, medical, daily, future1, ...exclude]);
-  const next = randomPick(COACH_COMMENT_LIBRARY.blood_exam_next_step || [], [opening, body, medical, daily, future1, future3, ...exclude]);
+  if (error) throw error;
+  if (!data) return null;
 
   return {
-    opening,
-    body,
-    medical,
-    daily,
-    future1,
-    future3,
-    next,
+    ...data,
+    working_data_json: normalizeWorkingData(data.working_data_json || {}),
   };
 }
 
-function buildExerciseReplySet(options = {}) {
-  const {
-    aiType = 'gentle',
-    category = 'praise_done',
-    level = 'starter',
-    exclude = [],
-  } = options;
+async function setActiveLabCorrection(supabase, sessionId, field, selectedDate) {
+  const { data, error } = await supabase
+    .from('lab_import_sessions')
+    .update({
+      active_item_name: field,
+      selected_date: selectedDate ? formatDateOnly(selectedDate) : null,
+    })
+    .eq('id', sessionId)
+    .select('*')
+    .single();
 
-  const praise = getPraiseMessage(category, exclude);
-  const blood = getBloodLinkMessage([praise, ...exclude]);
-  const progress = getProgressionMessage([praise, blood, ...exclude]);
-  const menu = getDailyMenuSuggestion(level, [praise, blood, progress, ...exclude]);
+  if (error) throw error;
+  return data;
+}
+
+async function applyLabCorrection(supabase, openLabDraft, inputText) {
+  const field = String(openLabDraft?.active_item_name || '').trim();
+  if (!field) {
+    throw new Error('NO_ACTIVE_FIELD');
+  }
+
+  const workingData = normalizeWorkingData(openLabDraft.working_data_json || {});
+  let selectedDate = formatDateOnly(openLabDraft.selected_date);
+
+  if (!selectedDate) {
+    selectedDate = String(Object.keys(workingData).sort().pop() || '');
+  }
+
+  if (!selectedDate) {
+    throw new Error('INVALID_DATE');
+  }
+
+  if (!workingData[selectedDate]) {
+    workingData[selectedDate] = {};
+  }
+
+  if (field === 'date') {
+    const nextDate = normalizeDateInput(inputText);
+    if (!nextDate) throw new Error('INVALID_DATE');
+
+    const existing = workingData[selectedDate] || {};
+    delete workingData[selectedDate];
+    workingData[nextDate] = existing;
+    selectedDate = nextDate;
+  } else {
+    const value = parseNumberInput(inputText);
+    if (value === null) throw new Error('INVALID_NUMBER');
+    workingData[selectedDate][field] = value;
+  }
+
+  const { data, error } = await supabase
+    .from('lab_import_sessions')
+    .update({
+      selected_date: selectedDate,
+      active_item_name: null,
+      working_data_json: workingData,
+    })
+    .eq('id', openLabDraft.id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
 
   return {
-    praise,
-    blood,
-    progress,
-    menu,
+    ...data,
+    working_data_json: normalizeWorkingData(data.working_data_json || {}),
   };
+}
+
+async function findExistingLabResultByDate(supabase, userId, dateStr) {
+  const measuredAt = buildMeasuredAtIso(dateStr);
+  if (!measuredAt) return null;
+
+  const { data, error } = await supabase
+    .from('lab_results')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('measured_at', measuredAt)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+function buildLabResultPayload(openLabDraft, dateStr) {
+  const dateOnly = formatDateOnly(dateStr);
+  const row = normalizeWorkingData(openLabDraft.working_data_json || {})[dateOnly] || {};
+
+  return {
+    user_id: openLabDraft.user_id,
+    measured_at: buildMeasuredAtIso(dateOnly),
+    hba1c: row.hba1c ?? null,
+    fasting_glucose: row.fasting_glucose ?? null,
+    ldl: row.ldl ?? null,
+    hdl: row.hdl ?? null,
+    triglycerides: row.triglycerides ?? null,
+    ast: row.ast ?? null,
+    alt: row.alt ?? null,
+    ggt: row.ggt ?? null,
+    uric_acid: row.uric_acid ?? null,
+    creatinine: row.creatinine ?? null,
+    source_image_url: openLabDraft.source_image_url || null,
+    import_session_id: openLabDraft.id,
+    is_user_confirmed: true,
+    ai_summary: null,
+  };
+}
+
+async function upsertLabResultForDate(supabase, openLabDraft, dateStr) {
+  const payload = buildLabResultPayload(openLabDraft, dateStr);
+  if (!payload.measured_at) throw new Error('INVALID_DATE');
+
+  const existing = await findExistingLabResultByDate(supabase, openLabDraft.user_id, dateStr);
+
+  if (existing?.id) {
+    const { data, error } = await supabase
+      .from('lab_results')
+      .update(payload)
+      .eq('id', existing.id)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from('lab_results')
+    .insert(payload)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function closeLabDraftSession(supabase, sessionId) {
+  const { error } = await supabase
+    .from('lab_import_sessions')
+    .update({
+      status: 'confirmed',
+      active_item_name: null,
+    })
+    .eq('id', sessionId);
+
+  if (error) throw error;
+}
+
+async function confirmLabDraftToResults(supabase, openLabDraft, selectedDate) {
+  const dateOnly = formatDateOnly(selectedDate);
+  if (!dateOnly) throw new Error('INVALID_DATE');
+
+  const saved = await upsertLabResultForDate(supabase, openLabDraft, dateOnly);
+  await closeLabDraftSession(supabase, openLabDraft.id);
+  return saved;
+}
+
+async function confirmAllLabDraftToResults(supabase, openLabDraft) {
+  const workingData = normalizeWorkingData(openLabDraft.working_data_json || {});
+  const dates = Object.keys(workingData).sort();
+
+  if (!dates.length) {
+    throw new Error('NO_DATES_TO_SAVE');
+  }
+
+  const savedRows = [];
+
+  for (const date of dates) {
+    const saved = await upsertLabResultForDate(supabase, openLabDraft, date);
+    savedRows.push(saved);
+  }
+
+  await closeLabDraftSession(supabase, openLabDraft.id);
+  return savedRows;
+}
+
+async function getRecentLabResults(supabase, userId, limit = 12) {
+  const { data, error } = await supabase
+    .from('lab_results')
+    .select('*')
+    .eq('user_id', userId)
+    .order('measured_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+function metricLine(label, current, previous) {
+  const cur = normalizeLabValue(current);
+  const prev = normalizeLabValue(previous);
+
+  if (cur === null) return null;
+  if (prev === null) return `${label}: ${cur}`;
+
+  const diff = Math.round((cur - prev) * 100) / 100;
+  const diffText = diff === 0 ? '変化なし' : diff > 0 ? `前回より +${diff}` : `前回より ${diff}`;
+  return `${label}: ${cur}（${diffText}）`;
+}
+
+function buildPostSaveComparisonMessage(savedRow, recentRows) {
+  const savedDate = formatDateOnly(savedRow?.measured_at);
+  const rows = Array.isArray(recentRows) ? recentRows : [];
+
+  const previous = rows
+    .filter((r) => formatDateOnly(r.measured_at) !== savedDate)
+    .sort((a, b) => {
+      const aTime = new Date(a.measured_at || 0).getTime();
+      const bTime = new Date(b.measured_at || 0).getTime();
+      return bTime - aTime;
+    })[0] || null;
+
+  const lines = [
+    savedDate ? `検査日: ${savedDate}` : null,
+    metricLine('HbA1c', savedRow?.hba1c, previous?.hba1c),
+    metricLine('空腹時血糖', savedRow?.fasting_glucose, previous?.fasting_glucose),
+    metricLine('LDL', savedRow?.ldl, previous?.ldl),
+    metricLine('HDL', savedRow?.hdl, previous?.hdl),
+    metricLine('中性脂肪', savedRow?.triglycerides, previous?.triglycerides),
+    metricLine('AST', savedRow?.ast, previous?.ast),
+    metricLine('ALT', savedRow?.alt, previous?.alt),
+    metricLine('γ-GTP', savedRow?.ggt, previous?.ggt),
+    metricLine('尿酸', savedRow?.uric_acid, previous?.uric_acid),
+    metricLine('クレアチニン', savedRow?.creatinine, previous?.creatinine),
+  ].filter(Boolean);
+
+  if (!lines.length) {
+    return '今回の血液検査データを保存しました。';
+  }
+
+  return lines.join('\n');
 }
 
 module.exports = {
-  COACH_COMMENT_LIBRARY,
-  randomPick,
-  randomPicks,
-  getPraiseMessage,
-  getSoftNudgeMessage,
-  getExercisePromptMessage,
-  getBloodLinkMessage,
-  getProgressionMessage,
-  getDailyMenuSuggestion,
-  getMealPraiseMessage,
-  getMealBalanceComment,
-  getMealFutureLink,
-  buildBloodExamCommentParts,
-  buildExerciseReplySet,
+  createLabDraftSession,
+  getOpenLabDraft,
+  setActiveLabCorrection,
+  applyLabCorrection,
+  confirmLabDraftToResults,
+  confirmAllLabDraftToResults,
+  getRecentLabResults,
+  buildPostSaveComparisonMessage,
+  formatDateOnly,
 };

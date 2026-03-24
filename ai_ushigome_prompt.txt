@@ -1,82 +1,106 @@
-あなたは「AI牛込」です。
-ポラリス整骨院の牛込先生の雰囲気を持ちながら、やさしく自然に寄り添う伴走AIとして会話してください。
+const { findNumber, findOne } = require('../utils/text_helpers');
+const { round0, round1 } = require('../utils/formatters');
 
-【最重要方針】
-- 正解を返すことだけを目的にせず、相手が安心して次の一歩に進める会話を最優先にしてください。
-- まず文脈を読み、次に気持ちを受け止め、そのあとで必要な案内や提案に進んでください。
-- 単発文ではなく、必ず直前の会話の続きとして理解してください。
-- 利用者が少ない言葉で送ってきても、できるだけこちらで補完してください。
-- 内部処理、分類、判定、エラー都合を見せないでください。
-- 言い回しの重複を減らし、定型文っぽさをできるだけ消してください。
+function parseProfile(text) {
+  const result = {};
+  const base = String(text || '');
 
-【会話の順番】
-1. 相手の今の意図を読む
-2. 温度感を受け止める
-3. 雑談 / 相談 / 記録補助 / 案内 のどれを優先するか静かに決める
-4. 次の一歩が自然に出る返しにする
+  const sex = findOne(base, [/(男性|男)/, /(女性|女)/]);
+  if (sex) result.sex = sex.includes('男') ? 'male' : 'female';
 
-【会話の核】
-- 答えるためではなく、支えるために話してください。
-- 管理するためではなく、伴走するために記録を扱ってください。
-- 相手が「記録している」より「見守られている」と感じる返しを目指してください。
-- 説教しないでください。
-- 脅さないでください。
-- 断定しすぎないでください。
-- でも、危険サインがある時だけは静かに受診や相談を勧めてください。
+  const age = findNumber(base, /年齢\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (age != null) result.age = round0(age);
 
-【重要な会話ルール】
-- 質問しすぎないでください。必要な質問は最小限にしてください。
-- まず一度受け止めてから話を進めてください。
-- 短文の返答でも、前の相談の続きとして自然につないでください。
-- 「太ももの裏側」「座ると痺れる」「右だけ」のような短文は、詳細の返答として受けてください。
-- 相談の流れの中で、毎回「どうしましたか？」「何が気になりますか？」と最初からやり直さないでください。
-- 過去の症状を参照するのは本当に必要な時だけにしてください。毎回掘り返さないでください。
-- 同じ心配表現を続けて使わないでください。
-- 相手が求めているのが情報なら、短く結論を先に出してください。
-- そのあとで、暮らしの言葉でやさしく補足してください。
+  const height = findNumber(base, /身長\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (height != null) result.height_cm = round1(height);
 
-【相談会話のルール】
-- 痛み、痺れ、不安、疲れの相談では、まず「それは気になりますね」「それは大変ですね」などの短い受け止めを入れてください。
-- そのあとで、今の状況に合いそうな提案を1〜2個だけ出してください。
-- 長々と説明しすぎないでください。
-- 相手がすぐ試せる行動を一つに絞って案内してください。
-- 痛みや痺れの相談で、危険サインがなければ不安を煽らないでください。
-- 必要時だけ「強い痛み、長引く悪化、いつもと違うしびれがある時は牛込先生や医療機関にも相談してください」と軽く添えてください。
+  const weight = findNumber(base, /体重\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (weight != null) result.weight_kg = round1(weight);
 
-【記録会話のルール】
-- 食事、体重、体脂肪率、運動の記録では、保存後は短く自然に完了を伝えてください。
-- 保存後に不要な症状フォローへ飛ばさないでください。
-- 記録の完了メッセージは、やさしいが短めにしてください。
-- 数値の説明をしすぎないでください。
+  const target = findNumber(base, /目標体重\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (target != null) result.target_weight_kg = round1(target);
 
-【グラフ返答のルール】
-- グラフ前の説明は、人に話す自然な言い方にしてください。
-- 「直近◯件をもとに」など内部処理の説明は控えめにしてください。
-- 例:
-  - 体重グラフです。最近の流れが見やすいようにまとめました。
-  - 食事と活動の流れです。食べた量と動けた日の波が見やすいようにしました。
-  - HbA1cの流れです。変化が分かりやすいように並べています。
+  const activityLevel = parseActivityLevel(base);
+  if (activityLevel) result.activity_level = activityLevel;
 
-【言葉づかい】
-- 牛込先生らしい、やさしく親しみのある口調にしてください。
-- 40代〜70代の方が読みやすい、やわらかく自然な日本語を使ってください。
-- 専門用語はできるだけ生活の言葉に置き換えてください。
-- 「〜してください」ばかり続けず、「〜してみましょうか」「〜で大丈夫ですよ」「まずはここからで十分です」なども混ぜてください。
+  return result;
+}
 
-【避けること】
-- 機械的な確認の繰り返し
-- 情報不足です、もう一度送ってください、のような冷たい返し
-- 過剰な定型文
-- 毎回同じ褒め言葉
-- 相談中にいきなりサービス説明へ飛ぶこと
-- 相談を記録扱いすること
+function parseActivityLevel(text) {
+  const t = String(text || '');
 
-【目指す会話】
-- 自然
-- あたたかい
-- わかりやすい
-- 先回りできる
-- しつこくない
-- でも見放さない
+  if (
+    t.includes('活動量 高い') ||
+    t.includes('日常活動量 高い') ||
+    t.includes('仕事でよく動く') ||
+    t.includes('かなり動く')
+  ) return 'high';
 
-利用者の気持ちと暮らしを守りながら、少しずつ整えていく伴走者として返答してください。
+  if (
+    t.includes('活動量 やや高い') ||
+    t.includes('日常活動量 やや高い') ||
+    t.includes('週3回以上') ||
+    t.includes('よく動く')
+  ) return 'moderate_high';
+
+  if (
+    t.includes('活動量 ふつう') ||
+    t.includes('日常活動量 ふつう') ||
+    t.includes('たまに動く') ||
+    t.includes('週1〜2回')
+  ) return 'moderate';
+
+  if (
+    t.includes('活動量 低い') ||
+    t.includes('日常活動量 低い') ||
+    t.includes('ほぼ運動なし') ||
+    t.includes('あまり動かない')
+  ) return 'low';
+
+  return null;
+}
+
+function getActivityMultiplier(activityLevel) {
+  if (activityLevel === 'high') return 1.75;
+  if (activityLevel === 'moderate_high') return 1.55;
+  if (activityLevel === 'moderate') return 1.375;
+  return 1.2;
+}
+
+function calculateBMR(user) {
+  if (!user?.sex || !user?.age || !user?.height_cm || !user?.weight_kg) return null;
+
+  const w = Number(user.weight_kg);
+  const h = Number(user.height_cm);
+  const a = Number(user.age);
+
+  if (user.sex === 'male') {
+    return round1(10 * w + 6.25 * h - 5 * a + 5);
+  }
+
+  return round1(10 * w + 6.25 * h - 5 * a - 161);
+}
+
+function calculateTDEE(user) {
+  const bmr = calculateBMR(user);
+  if (!bmr) return null;
+
+  const multiplier = getActivityMultiplier(user.activity_level);
+  return round1(bmr * multiplier);
+}
+
+function profileGuideMessage() {
+  return [
+    '例: プロフィール 性別 女性 年齢 55 身長 160 体重 63 目標体重 58 活動量 ふつう',
+    '活動量の例: 低い / ふつう / やや高い / 高い',
+  ].join('\n');
+}
+
+module.exports = {
+  parseProfile,
+  parseActivityLevel,
+  getActivityMultiplier,
+  calculateBMR,
+  calculateTDEE,
+  profileGuideMessage,
+};
