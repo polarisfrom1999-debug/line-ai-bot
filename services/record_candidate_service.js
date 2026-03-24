@@ -2,11 +2,6 @@
 
 /**
  * services/record_candidate_service.js
- *
- * 目的:
- * - テキスト入力から「記録候補かどうか」を軽量に抽出する
- * - 相談文を運動記録と誤判定しない防波堤を入れる
- * - 後で Gemini / OCR / 画像解析とも同じ candidate 形式でつなげる
  */
 
 const {
@@ -18,7 +13,8 @@ const {
 function normalizeLoose(text = '') {
   return safeText(text)
     .toLowerCase()
-    .replace(/[！!？?\s　]/g, ' ')
+    .replace(/[！!？?。.,，、]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -28,6 +24,8 @@ function includesAny(text = '', patterns = []) {
 
 function looksLikeConsultation(text = '') {
   const t = normalizeLoose(text);
+  if (!t) return false;
+  if (/[?？]/.test(String(text || ''))) return true;
   return includesAny(t, [
     /どう思う/,
     /大丈夫かな/,
@@ -40,7 +38,9 @@ function looksLikeConsultation(text = '') {
     /不安/,
     /悩/,
     /わからない/,
-    /まだちゃんとはわかってない/,
+    /違和感/,
+    /気になる/,
+    /平気/,
   ]);
 }
 
@@ -61,6 +61,7 @@ function extractMealCandidate(text = '') {
     /ご飯/,
     /パン/,
     /おにぎり/,
+    /外食/,
   ])) {
     return null;
   }
@@ -75,6 +76,7 @@ function extractMealCandidate(text = '') {
     source: 'text',
     parsed_payload: {
       meal_label: t,
+      raw_text: t,
       estimated_kcal: estimatedKcal,
     },
   });
@@ -84,7 +86,7 @@ function extractExerciseCandidate(text = '') {
   const t = safeText(text);
   const normalized = normalizeLoose(text);
 
-  if (looksLikeConsultation(normalized)) return null;
+  if (looksLikeConsultation(text)) return null;
 
   if (!includesAny(normalized, [
     /歩い/,
@@ -124,6 +126,7 @@ function extractWeightCandidate(text = '') {
 
   const match = t.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
   const weight = match ? toNumberOrNull(match[1]) : null;
+  if (weight === null) return null;
 
   return normalizeRecordCandidate({
     type: 'weight',
@@ -144,6 +147,7 @@ function extractBodyFatCandidate(text = '') {
 
   const match = t.match(/(\d+(?:\.\d+)?)\s*%/);
   const bodyFatPercent = match ? toNumberOrNull(match[1]) : null;
+  if (bodyFatPercent === null) return null;
 
   return normalizeRecordCandidate({
     type: 'body_fat',
@@ -169,6 +173,8 @@ function extractBloodTestCandidate(text = '') {
     /ast/,
     /alt/,
     /γ-?gtp/i,
+    /ldl/,
+    /hdl/,
   ])) {
     return null;
   }
