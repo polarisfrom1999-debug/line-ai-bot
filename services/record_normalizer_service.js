@@ -41,7 +41,7 @@ function buildUserFacingSummary(payload = {}) {
 
   if (type === 'exercise') {
     const name = safeText(payload.exercise_name || payload.label || '運動');
-    const minutes = toNumberOrNull(payload.duration_minutes);
+    const minutes = toNumberOrNull(payload.duration_minutes || payload.duration_min);
     return minutes !== null ? `${name} / ${minutes}分` : name;
   }
 
@@ -51,12 +51,12 @@ function buildUserFacingSummary(payload = {}) {
   }
 
   if (type === 'body_fat') {
-    const bodyFat = toNumberOrNull(payload.body_fat_percent);
+    const bodyFat = toNumberOrNull(payload.body_fat_percent || payload.body_fat_pct);
     return bodyFat !== null ? `体脂肪率 ${bodyFat}%` : '体脂肪率';
   }
 
   if (type === 'blood_test') {
-    const date = safeText(payload.exam_date || payload.measured_on || '');
+    const date = safeText(payload.exam_date || payload.measured_on || payload.measured_at || '');
     return date ? `血液検査 ${date}` : '血液検査';
   }
 
