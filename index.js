@@ -123,7 +123,10 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
   if (isOnboardingStart(rawText)) {
     await replyMessage(
       replyToken,
-      textMessageWithQuickReplies(buildFirstGuideMessage({ userName: user.display_name || '' }), ['食事の送り方', '運動の送り方', '体重の送り方', '相談の送り方']),
+      textMessageWithQuickReplies(
+        buildFirstGuideMessage({ userName: user.display_name || '' }),
+        ['食事の送り方', '運動の送り方', '体重の送り方', '相談の送り方']
+      ),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
     return;
@@ -131,27 +134,75 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
 
   if (hasPendingCapture(user)) {
     const pendingResult = mergePendingCaptureReply(user, rawText);
-    const nextUser = pendingResult.userPatch || user;
+
+    const looksOffTopic = pendingResult.captureType === 'weight'
+      && !/(\d+(?:\.\d+)?\s*(kg|ｋｇ|キロ|%|％)|体重|体脂肪)/i.test(rawText);
+
+    const nextUser = looksOffTopic
+      ? {
+          ...user,
+          pending_capture_type: null,
+          pending_capture_status: null,
+          pending_capture_payload: null,
+          pending_capture_missing_fields: null,
+          pending_capture_prompt: null,
+          pending_capture_started_at: null,
+          pending_capture_source_text: null,
+          pending_capture_attempts: 0,
+        }
+      : (pendingResult.userPatch || user);
+
     await updateUserState(user.id, nextUser);
 
-    if (pendingResult.readyToSave) {
-      await handleReadyPendingCapture(replyToken, nextUser, pendingResult);
+    if (!looksOffTopic) {
+      if (pendingResult.readyToSave) {
+        await handleReadyPendingCapture(replyToken, nextUser, pendingResult);
+        return;
+      }
+
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(
+          pendingResult.replyText || '不足しているところだけ、そのまま教えてくださいね。',
+          []
+        ),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
       return;
     }
-
-    await replyMessage(
-      replyToken,
-      textMessageWithQuickReplies(pendingResult.replyText || '不足しているところだけ、そのまま教えてくださいね。', []),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
-    return;
   }
 
   const routed = analyzeNewCaptureCandidate(rawText);
   if (routed?.route === 'consultation') {
+    let replyText = String(routed.replyText || '').trim();
+
+    if (typeof routeConversation === 'function') {
+      try {
+        const conversation = await routeConversation({
+          currentUserText: rawText,
+          text: rawText,
+          recentMessages: [],
+          context: {
+            display_name: user.display_name || '',
+            line_user_id: user.line_user_id || '',
+          },
+        });
+        const candidate = String(
+          conversation?.replyText || conversation?.reply_text || conversation?.text || ''
+        ).trim();
+        if (candidate) replyText = candidate;
+      } catch (error) {
+        console.warn('⚠️ routeConversation failed in consultation branch:', error?.message || error);
+      }
+    }
+
     const guide = buildHealthConsultationGuide(rawText);
-    const msg = [routed.replyText, guide].filter(Boolean).join('\n');
-    await replyMessage(replyToken, textMessageWithQuickReplies(msg, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+    const msg = [replyText, guide].filter(Boolean).join('\n');
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(msg || '大丈夫です。このまま話してくださいね。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
     return;
   }
 
@@ -170,7 +221,11 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
         sourceText: rawText,
       });
       await updateUserState(user.id, nextUser);
-      await replyMessage(replyToken, textMessageWithQuickReplies(routed.replyText, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(routed.replyText, []),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
       return;
     }
   }
@@ -182,30 +237,64 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
   }
 
   if (captureResult?.route === 'pain_consult' || captureResult?.route === 'consultation') {
+    let replyText = String(captureResult.replyText || '').trim();
+
+    if (typeof routeConversation === 'function') {
+      try {
+        const conversation = await routeConversation({
+          currentUserText: rawText,
+          text: rawText,
+          recentMessages: [],
+          context: {
+            display_name: user.display_name || '',
+            line_user_id: user.line_user_id || '',
+          },
+        });
+        const candidate = String(
+          conversation?.replyText || conversation?.reply_text || conversation?.text || ''
+        ).trim();
+        if (candidate) replyText = candidate;
+      } catch (error) {
+        console.warn('⚠️ routeConversation failed in capture consultation branch:', error?.message || error);
+      }
+    }
+
     const guide = buildHealthConsultationGuide(rawText);
-    const msg = [captureResult.replyText || '大丈夫です。このまま話してくださいね。', guide].filter(Boolean).join('\n');
+    const msg = [replyText || '大丈夫です。このまま話してくださいね。', guide].filter(Boolean).join('\n');
     await replyMessage(replyToken, textMessageWithQuickReplies(msg, []), env.LINE_CHANNEL_ACCESS_TOKEN);
     return;
   }
 
   if (captureResult?.route === 'record_candidate' && captureResult.candidate) {
     const confirm = buildConfirmationMessage(captureResult.candidate);
-    await replyMessage(replyToken, textMessageWithQuickReplies(confirm.text, ['はい', '違います']), env.LINE_CHANNEL_ACCESS_TOKEN);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(confirm.text, ['はい', '違います']),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
     return;
   }
 
   if (typeof routeConversation === 'function') {
     try {
       const conversation = await routeConversation({
+        currentUserText: rawText,
         text: rawText,
+        recentMessages: [],
         context: {
           display_name: user.display_name || '',
           line_user_id: user.line_user_id || '',
         },
       });
-      const replyText = String(conversation?.replyText || conversation?.text || '').trim();
+      const replyText = String(
+        conversation?.replyText || conversation?.reply_text || conversation?.text || ''
+      ).trim();
       if (replyText) {
-        await replyMessage(replyToken, textMessageWithQuickReplies(replyText, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+        await replyMessage(
+          replyToken,
+          textMessageWithQuickReplies(replyText, []),
+          env.LINE_CHANNEL_ACCESS_TOKEN
+        );
         return;
       }
     } catch (error) {
@@ -215,7 +304,10 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
 
   await replyMessage(
     replyToken,
-    textMessageWithQuickReplies('ありがとうございます。このまま続けて教えてくださいね。必要な形はこちらで整えます。', []),
+    textMessageWithQuickReplies(
+      'ありがとうございます。このまま続けて教えてくださいね。必要な形はこちらで整えます。',
+      []
+    ),
     env.LINE_CHANNEL_ACCESS_TOKEN
   );
 }
@@ -269,74 +361,95 @@ async function handleReadyPendingCapture(replyToken, user, pendingResult = {}) {
     return;
   }
 
-  await replyMessage(replyToken, textMessageWithQuickReplies('ありがとうございます。内容は受け取れています。', []), env.LINE_CHANNEL_ACCESS_TOKEN);
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies('ありがとうございます。内容は受け取れています。', []),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
 }
 
 async function saveBodyMetrics(replyToken, user, payload = {}) {
-  const weight_kg = Number(payload.weight_kg);
-  const body_fat_pct = payload.body_fat_pct == null ? null : Number(payload.body_fat_pct);
+  const weightKg = Number(payload.weight_kg);
+  const bodyFatPct = payload.body_fat_pct == null ? null : Number(payload.body_fat_pct);
 
-  if (!Number.isFinite(weight_kg)) {
-    await replyMessage(replyToken, textMessageWithQuickReplies('体重の数字が読み取れなかったので、たとえば「62.4kg」のように送ってくださいね。', []), env.LINE_CHANNEL_ACCESS_TOKEN);
+  if (!Number.isFinite(weightKg) && !Number.isFinite(bodyFatPct)) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('体重や体脂肪率の数字が読み取れなかったので、たとえば「62.4kg」や「体脂肪率 18%」のように送ってくださいね。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
     return;
   }
 
-  const measuredAt = new Date().toISOString();
-
   try {
-    await supabase.from('weight_logs').insert({
-      user_id: user.id,
-      logged_at: measuredAt,
-      weight_kg,
-      body_fat_pct: Number.isFinite(body_fat_pct) ? body_fat_pct : null,
-    });
-  } catch (error) {
-    console.warn('⚠️ weight_logs insert failed:', error?.message || error);
-  }
-
-  try {
-    await supabase.from('users').update({
-      weight_kg,
-      body_fat_pct: Number.isFinite(body_fat_pct) ? body_fat_pct : user.body_fat_pct || null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', user.id);
-  } catch (error) {
-    console.warn('⚠️ users weight update failed:', error?.message || error);
-  }
-
-  if (typeof weightService.buildWeightSaveMessage === 'function') {
-    try {
-      const msg = weightService.buildWeightSaveMessage({ weight_kg, body_fat_pct });
-      await replyMessage(replyToken, textMessageWithQuickReplies(msg.text || '体重を記録しました。', msg.quickReplies || []), env.LINE_CHANNEL_ACCESS_TOKEN);
-      return;
-    } catch (error) {
-      console.warn('⚠️ buildWeightSaveMessage failed:', error?.message || error);
+    if (Number.isFinite(weightKg)) {
+      const measuredAt = new Date().toISOString();
+      await supabase.from('weight_logs').insert({
+        user_id: user.id,
+        logged_at: measuredAt,
+        weight_kg: weightKg,
+        body_fat_pct: Number.isFinite(bodyFatPct) ? bodyFatPct : null,
+      });
     }
+
+    const userPatch = {};
+    if (Number.isFinite(weightKg)) userPatch.weight_kg = weightKg;
+    if (Number.isFinite(bodyFatPct)) userPatch.body_fat_pct = bodyFatPct;
+    if (Object.keys(userPatch).length) {
+      await updateUserState(user.id, { ...user, ...userPatch });
+    }
+
+    if (typeof weightService.buildWeightSaveMessage === 'function' && Number.isFinite(weightKg)) {
+      const msg = weightService.buildWeightSaveMessage({
+        weight_kg: weightKg,
+        body_fat_pct: Number.isFinite(bodyFatPct) ? bodyFatPct : null,
+      });
+      await replyMessage(
+        replyToken,
+        textMessageWithQuickReplies(msg.text || '体重を記録しました。', msg.quickReplies || []),
+        env.LINE_CHANNEL_ACCESS_TOKEN
+      );
+      return;
+    }
+
+    const lines = [];
+    if (Number.isFinite(weightKg)) lines.push(`体重 ${weightKg}kg を受け取りました。`);
+    if (Number.isFinite(bodyFatPct)) lines.push(`体脂肪率 ${bodyFatPct}% も一緒に記録しました。`);
+    lines.push('こういう積み重ねが流れを整えてくれます。');
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(lines.join('\n'), []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+  } catch (error) {
+    console.error('❌ saveBodyMetrics error:', error?.message || error);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('数字は受け取れました。今は保存で少しつまずいているので、あとで整えますね。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
   }
-
-  const lines = [
-    '体重を記録しました。',
-    `体重: ${weight_kg} kg`,
-    Number.isFinite(body_fat_pct) ? `体脂肪率: ${body_fat_pct} %` : null,
-    '小さく続けることが大事です。',
-  ].filter(Boolean);
-
-  await replyMessage(replyToken, textMessageWithQuickReplies(lines.join('\n'), ['体重グラフ', '予測', '食事を記録', '少し歩いた']), env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
-async function updateUserState(userId, patch = {}) {
-  const allowed = {
-    pending_capture_type: patch.pending_capture_type,
-    pending_capture_status: patch.pending_capture_status,
-    pending_capture_payload: patch.pending_capture_payload,
-    pending_capture_missing_fields: patch.pending_capture_missing_fields,
-    pending_capture_prompt: patch.pending_capture_prompt,
-    pending_capture_started_at: patch.pending_capture_started_at,
-    pending_capture_source_text: patch.pending_capture_source_text,
-    pending_capture_attempts: patch.pending_capture_attempts,
+async function updateUserState(userId, nextUser = {}) {
+  const patch = {
+    pending_capture_type: nextUser.pending_capture_type ?? null,
+    pending_capture_status: nextUser.pending_capture_status ?? null,
+    pending_capture_payload: nextUser.pending_capture_payload ?? null,
+    pending_capture_missing_fields: nextUser.pending_capture_missing_fields ?? null,
+    pending_capture_prompt: nextUser.pending_capture_prompt ?? null,
+    pending_capture_started_at: nextUser.pending_capture_started_at ?? null,
+    pending_capture_source_text: nextUser.pending_capture_source_text ?? null,
+    pending_capture_attempts: Number(nextUser.pending_capture_attempts || 0),
   };
 
-  return supabase.from('users').update(allowed).eq('id', userId);
+  if (Object.prototype.hasOwnProperty.call(nextUser, 'weight_kg')) patch.weight_kg = nextUser.weight_kg;
+  if (Object.prototype.hasOwnProperty.call(nextUser, 'body_fat_pct')) patch.body_fat_pct = nextUser.body_fat_pct;
+
+  const { error } = await supabase.from('users').update(patch).eq('id', userId);
+  if (error) {
+    console.warn('⚠️ updateUserState failed:', error.message);
+  }
 }
 
 app.listen(PORT, () => {
