@@ -246,10 +246,16 @@ function updateUserWithPendingResult(user = {}, pendingResult = {}, replyText = 
 }
 
 module.exports = {
+  nowIso,
   createPendingCapture,
   clearPendingCapture,
   hasPendingCapture,
+  mergeExerciseReply,
+  mergeMealReply,
+  mergeWeightReply,
+  mergeBodyFatReply,
+  getMissingFields,
   mergePendingCaptureReply,
-  updateUserWithPendingResult,
   buildRetryPrompt,
+  updateUserWithPendingResult,
 };
