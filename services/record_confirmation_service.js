@@ -20,7 +20,7 @@ function buildConfirmationMessage(candidate = {}) {
   }
 
   if (type === 'body_fat') {
-    const value = formatNumber(payload.body_fat_percent);
+    const value = formatNumber(payload.body_fat_percent || payload.body_fat_pct);
     return {
       text: value
         ? `体脂肪率${value}%で受け取れています。このまま記録して大丈夫ですか？`
@@ -37,6 +37,12 @@ function buildConfirmationMessage(candidate = {}) {
   if (type === 'exercise') {
     return {
       text: '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？',
+    };
+  }
+
+  if (type === 'blood_test') {
+    return {
+      text: '血液検査の内容は受け取れています。このまま整理を進めて大丈夫ですか？必要なら日付や数値だけ追加で教えてください。',
     };
   }
 
