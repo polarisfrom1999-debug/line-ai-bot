@@ -14,6 +14,8 @@ const ONBOARDING_KEYWORDS = [
   '診断したい',
 ];
 
+const FOOD_QUESTION_HINTS = ['お腹すいた', '空腹', '何食べ', 'なに食べ', '食べていい', 'ラーメン', '夜食', '間食'];
+
 const CONSULTATION_HINTS = [
   '痛い',
   '痛み',
@@ -98,6 +100,7 @@ function looksLikeConsultation(text) {
   const raw = safeText(text);
   const normalized = normalizeLoose(raw);
   if (!normalized) return false;
+  if (includesAny(normalized, FOOD_QUESTION_HINTS.map(normalizeLoose))) return true;
   if (/[?？]/.test(raw)) return true;
   return includesAny(normalized, CONSULTATION_HINTS.map(normalizeLoose));
 }
@@ -111,7 +114,7 @@ function analyzeNewCaptureCandidate(text = '') {
   if (looksLikeConsultation(raw)) {
     return {
       route: 'consultation',
-      replyText: '大丈夫です。このまま話していただいて大丈夫です。まとまっていなくても、そのままで大丈夫ですよ。',
+      replyText: '',
     };
   }
 
@@ -166,7 +169,7 @@ function analyzeNewCaptureCandidate(text = '') {
     };
   }
 
-  if (includesAny(normalized, ['食べ', '食事', '朝食', '昼食', '夕食', '間食', '飲んだ', '外食', 'ラーメン', 'ご飯', 'パン'])) {
+  if (includesAny(normalized, ['食べた', '食事', '朝ごはん', '昼ごはん', '夜ごはん', '朝食', '昼食', '夕食', '飲んだ', 'ラーメン', 'パン', 'おにぎり'])) {
     return {
       route: 'record_candidate',
       captureType: 'meal',
@@ -175,31 +178,17 @@ function analyzeNewCaptureCandidate(text = '') {
         source_text: raw,
       },
       missingFields: [],
-      replyText: '食事の内容は受け取れています。違うところだけ、そのまま教えてくださいね。',
+      replyText: '食事の内容は受け取れています。今日の記録としてまとめてよければ保存しますか？違うところだけ、そのまま教えても大丈夫です。',
     };
   }
 
-  if (includesAny(normalized, ['血液検査', 'hba1c', 'ldl', 'hdl', '中性脂肪', 'コレステロール'])) {
-    return {
-      route: 'record_candidate',
-      captureType: 'blood_test',
-      payload: { raw_text: raw, source_text: raw },
-      missingFields: [],
-      replyText: '血液検査の内容は受け取れています。このまま整理を進めますか？',
-    };
-  }
-
-  return { route: 'smalltalk' };
+  return {
+    route: 'conversation',
+    replyText: '',
+  };
 }
 
 module.exports = {
-  safeText,
-  normalizeLoose,
-  includesAny,
-  extractMinutes,
-  extractDistanceKm,
-  extractWeightKg,
-  extractBodyFatPercent,
   isOnboardingStart,
   looksLikeConsultation,
   analyzeNewCaptureCandidate,
