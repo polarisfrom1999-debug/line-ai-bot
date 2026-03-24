@@ -205,35 +205,21 @@ function buildMealPayload(text) {
 
 function getMissingFieldsForExercise(payload = {}) {
   const missing = [];
-
-  if (!payload.activity) {
-    missing.push('activity');
-  }
-
-  if (!payload.duration_min) {
-    missing.push('duration_min');
-  }
-
+  if (!payload.activity) missing.push('activity');
+  if (!payload.duration_min) missing.push('duration_min');
   return missing;
 }
 
 function getMissingFieldsForMeal(payload = {}) {
   const missing = [];
   const rawText = safeText(payload.raw_text);
-
-  const vagueOnly =
-    rawText &&
-    (
-      rawText.includes('お腹いっぱい') ||
-      rawText.includes('軽め') ||
-      rawText.includes('少しだけ') ||
-      rawText.includes('たくさん食べた')
-    );
-
-  if (vagueOnly) {
-    missing.push('food_items');
-  }
-
+  const vagueOnly = rawText && (
+    rawText.includes('お腹いっぱい') ||
+    rawText.includes('軽め') ||
+    rawText.includes('少しだけ') ||
+    rawText.includes('たくさん食べた')
+  );
+  if (vagueOnly) missing.push('food_items');
   return missing;
 }
 
@@ -253,19 +239,9 @@ function buildExerciseClarifyReply(payload = {}, missingFields = []) {
   if (missingFields.includes('activity')) {
     return '運動の記録として残せるように、どんな運動だったか教えてください。たとえばジョギング、ウォーキング、筋トレなどで大丈夫です。';
   }
-
-  if (payload.activity === 'jogging') {
-    return 'いいですね。記録を整えるために、何分くらい走ったか教えてください。ざっくりで大丈夫です。';
-  }
-
-  if (payload.activity === 'walking') {
-    return 'いいですね。記録に残すなら、何分くらい歩けたか教えてください。ざっくりで大丈夫です。';
-  }
-
-  if (payload.activity === 'strength_training') {
-    return 'いいですね。記録を整えるために、何分くらいやったか教えてください。ざっくりで大丈夫です。';
-  }
-
+  if (payload.activity === 'jogging') return 'いいですね。記録を整えるために、何分くらい走ったか教えてください。ざっくりで大丈夫です。';
+  if (payload.activity === 'walking') return 'いいですね。記録に残すなら、何分くらい歩けたか教えてください。ざっくりで大丈夫です。';
+  if (payload.activity === 'strength_training') return 'いいですね。記録を整えるために、何分くらいやったか教えてください。ざっくりで大丈夫です。';
   return '記録を整えるために、何分くらいだったか教えてください。ざっくりで大丈夫です。';
 }
 
@@ -447,7 +423,7 @@ function analyzeNewCaptureCandidate(text) {
   }
 
   return {
-    route: 'general_chat',
+    route: 'normal_chat',
     captureType: null,
     payload: { source_text: rawText },
     missingFields: [],
@@ -457,12 +433,32 @@ function analyzeNewCaptureCandidate(text) {
 }
 
 module.exports = {
+  ONBOARDING_KEYWORDS,
+  CONSULTATION_HINTS,
   safeText,
   normalizeLoose,
+  includesAny,
   extractMinutes,
   extractDistanceKm,
   extractWeightKg,
   extractBodyFatPercent,
   isOnboardingStart,
+  detectExerciseType,
+  detectMealCandidate,
+  detectWeightCandidate,
+  detectBodyFatCandidate,
+  detectConsultation,
+  buildExercisePayload,
+  buildWeightPayload,
+  buildBodyFatPayload,
+  buildMealPayload,
+  getMissingFieldsForExercise,
+  getMissingFieldsForMeal,
+  getMissingFieldsForWeight,
+  getMissingFieldsForBodyFat,
+  buildExerciseClarifyReply,
+  buildMealClarifyReply,
+  buildWeightClarifyReply,
+  buildBodyFatClarifyReply,
   analyzeNewCaptureCandidate,
 };
