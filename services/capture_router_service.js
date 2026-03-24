@@ -2,14 +2,6 @@
 
 /**
  * services/capture_router_service.js
- *
- * 役割:
- * - ユーザー発話をざっくり分類する
- * - 初期設定開始ワードか判定する
- * - 記録候補か判定する
- * - 相談優先か判定する
- * - 不足項目を洗い出す
- * - 次に聞く自然な質問文を作る
  */
 
 const ONBOARDING_KEYWORDS = [
@@ -102,339 +94,105 @@ function isOnboardingStart(text) {
   return ONBOARDING_KEYWORDS.some((keyword) => normalized.includes(normalizeLoose(keyword)));
 }
 
-function detectExerciseType(text) {
-  const normalized = normalizeLoose(text);
-
-  if (
-    normalized.includes('ジョギング') ||
-    normalized.includes('ランニング') ||
-    normalized.includes('走った') ||
-    normalized.includes('走れた')
-  ) {
-    return 'jogging';
-  }
-
-  if (
-    normalized.includes('ウォーキング') ||
-    normalized.includes('歩いた') ||
-    normalized.includes('歩けた') ||
-    normalized.includes('散歩')
-  ) {
-    return 'walking';
-  }
-
-  if (
-    normalized.includes('筋トレ') ||
-    normalized.includes('トレーニング') ||
-    normalized.includes('スクワット') ||
-    normalized.includes('腕立て')
-  ) {
-    return 'strength_training';
-  }
-
-  return null;
-}
-
-function detectMealCandidate(text) {
-  const normalized = normalizeLoose(text);
-
-  return (
-    normalized.includes('食べた') ||
-    normalized.includes('飲んだ') ||
-    normalized.includes('朝ごはん') ||
-    normalized.includes('昼ごはん') ||
-    normalized.includes('夜ごはん') ||
-    normalized.includes('夕飯') ||
-    normalized.includes('昼食') ||
-    normalized.includes('朝食') ||
-    normalized.includes('夕食') ||
-    normalized.includes('ラーメン') ||
-    normalized.includes('チャーハン') ||
-    normalized.includes('ご飯') ||
-    normalized.includes('お腹いっぱい') ||
-    normalized.includes('軽め')
-  );
-}
-
-function detectWeightCandidate(text) {
-  const normalized = normalizeLoose(text);
-  return normalized.includes('体重') || /(\d+(?:\.\d+)?)\s*kg/i.test(text);
-}
-
-function detectBodyFatCandidate(text) {
-  const normalized = normalizeLoose(text);
-  return normalized.includes('体脂肪') || normalized.includes('体脂肪率');
-}
-
-function detectConsultation(text) {
-  const normalized = normalizeLoose(text);
+function looksLikeConsultation(text) {
+  const raw = safeText(text);
+  const normalized = normalizeLoose(raw);
+  if (!normalized) return false;
+  if (/[?？]/.test(raw)) return true;
   return includesAny(normalized, CONSULTATION_HINTS.map(normalizeLoose));
 }
 
-function buildExercisePayload(text) {
-  return {
-    activity: detectExerciseType(text),
-    duration_min: extractMinutes(text),
-    distance_km: extractDistanceKm(text),
-    source_text: safeText(text),
-  };
-}
+function analyzeNewCaptureCandidate(text = '') {
+  const raw = safeText(text);
+  const normalized = normalizeLoose(raw);
 
-function buildWeightPayload(text) {
-  return {
-    weight_kg: extractWeightKg(text),
-    source_text: safeText(text),
-  };
-}
-
-function buildBodyFatPayload(text) {
-  return {
-    body_fat_percent: extractBodyFatPercent(text),
-    source_text: safeText(text),
-  };
-}
-
-function buildMealPayload(text) {
-  return {
-    raw_text: safeText(text),
-    meal_label: null,
-    food_items: [],
-    source_text: safeText(text),
-  };
-}
-
-function getMissingFieldsForExercise(payload = {}) {
-  const missing = [];
-  if (!payload.activity) missing.push('activity');
-  if (!payload.duration_min) missing.push('duration_min');
-  return missing;
-}
-
-function getMissingFieldsForMeal(payload = {}) {
-  const missing = [];
-  const rawText = safeText(payload.raw_text);
-  const vagueOnly = rawText && (
-    rawText.includes('お腹いっぱい') ||
-    rawText.includes('軽め') ||
-    rawText.includes('少しだけ') ||
-    rawText.includes('たくさん食べた')
-  );
-  if (vagueOnly) missing.push('food_items');
-  return missing;
-}
-
-function getMissingFieldsForWeight(payload = {}) {
-  const missing = [];
-  if (payload.weight_kg == null) missing.push('weight_kg');
-  return missing;
-}
-
-function getMissingFieldsForBodyFat(payload = {}) {
-  const missing = [];
-  if (payload.body_fat_percent == null) missing.push('body_fat_percent');
-  return missing;
-}
-
-function buildExerciseClarifyReply(payload = {}, missingFields = []) {
-  if (missingFields.includes('activity')) {
-    return '運動の記録として残せるように、どんな運動だったか教えてください。たとえばジョギング、ウォーキング、筋トレなどで大丈夫です。';
-  }
-  if (payload.activity === 'jogging') return 'いいですね。記録を整えるために、何分くらい走ったか教えてください。ざっくりで大丈夫です。';
-  if (payload.activity === 'walking') return 'いいですね。記録に残すなら、何分くらい歩けたか教えてください。ざっくりで大丈夫です。';
-  if (payload.activity === 'strength_training') return 'いいですね。記録を整えるために、何分くらいやったか教えてください。ざっくりで大丈夫です。';
-  return '記録を整えるために、何分くらいだったか教えてください。ざっくりで大丈夫です。';
-}
-
-function buildMealClarifyReply() {
-  return '食事記録として残せるように、何を食べたか1〜2品だけ教えてください。ざっくりで大丈夫です。';
-}
-
-function buildWeightClarifyReply() {
-  return '体重記録として残せるように、何kgだったか教えてください。';
-}
-
-function buildBodyFatClarifyReply() {
-  return '体脂肪率の記録として残せるように、何％だったか教えてください。';
-}
-
-function analyzeNewCaptureCandidate(text) {
-  const rawText = safeText(text);
-  const normalized = normalizeLoose(rawText);
-
-  if (!rawText) {
+  if (!raw) return { route: 'empty' };
+  if (isOnboardingStart(raw)) return { route: 'onboarding_start' };
+  if (looksLikeConsultation(raw)) {
     return {
-      route: 'ignore',
-      captureType: null,
-      payload: null,
-      missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
+      route: 'consultation',
+      replyText: '大丈夫です。このまま話していただいて大丈夫です。まとまっていなくても、そのままで大丈夫ですよ。',
     };
   }
 
-  if (isOnboardingStart(rawText)) {
+  const weightKg = extractWeightKg(raw);
+  const bodyFatPercent = extractBodyFatPercent(raw);
+  if (weightKg != null && bodyFatPercent != null) {
     return {
-      route: 'onboarding_start',
-      captureType: 'onboarding',
-      payload: { source_text: rawText },
-      missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
+      route: 'body_metrics',
+      type: 'body_metrics',
+      payload: {
+        weight_kg: weightKg,
+        body_fat_pct: bodyFatPercent,
+      },
     };
   }
 
-  const hasConsultation = detectConsultation(rawText);
-  const exerciseType = detectExerciseType(rawText);
-  const isMeal = detectMealCandidate(rawText);
-  const isWeight = detectWeightCandidate(rawText);
-  const isBodyFat = detectBodyFatCandidate(rawText);
+  if (weightKg != null) {
+    return {
+      route: 'weight_record',
+      type: 'weight',
+      payload: { weight_kg: weightKg },
+    };
+  }
 
-  if (exerciseType) {
-    const payload = buildExercisePayload(rawText);
-    const missingFields = getMissingFieldsForExercise(payload);
+  if (bodyFatPercent != null && normalized.includes('体脂肪')) {
+    return {
+      route: 'body_fat_record',
+      type: 'body_fat',
+      payload: { body_fat_percent: bodyFatPercent },
+    };
+  }
 
-    if (hasConsultation) {
-      return {
-        route: 'consultation_chat',
-        captureType: 'exercise',
-        payload,
-        missingFields,
-        replyText: '',
-        isConsultationPriority: true,
-      };
-    }
-
-    if (missingFields.length > 0) {
-      return {
-        route: 'pending_clarification',
-        captureType: 'exercise',
-        payload,
-        missingFields,
-        replyText: buildExerciseClarifyReply(payload, missingFields),
-        isConsultationPriority: false,
-      };
-    }
+  if (includesAny(normalized, ['歩いた', '歩く', '散歩', 'ウォーキング', 'ジョギング', 'ランニング', '筋トレ', 'ストレッチ', '運動'])) {
+    const duration = extractMinutes(raw);
+    const distanceKm = extractDistanceKm(raw);
+    const missingFields = [];
+    if (duration == null && distanceKm == null) missingFields.push('duration_or_distance');
 
     return {
-      route: 'save_exercise',
+      route: 'record_candidate',
       captureType: 'exercise',
-      payload,
-      missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
+      payload: {
+        activity: null,
+        duration_min: duration,
+        distance_km: distanceKm,
+        source_text: raw,
+      },
+      missingFields,
+      replyText: missingFields.length
+        ? '運動の内容は受け取れています。時間か距離がわかれば、そのまま続けて教えてくださいね。'
+        : '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？',
     };
   }
 
-  if (isBodyFat) {
-    const payload = buildBodyFatPayload(rawText);
-    const missingFields = getMissingFieldsForBodyFat(payload);
-
-    if (missingFields.length > 0) {
-      return {
-        route: 'pending_clarification',
-        captureType: 'body_fat',
-        payload,
-        missingFields,
-        replyText: buildBodyFatClarifyReply(),
-        isConsultationPriority: false,
-      };
-    }
-
+  if (includesAny(normalized, ['食べ', '食事', '朝食', '昼食', '夕食', '間食', '飲んだ', '外食', 'ラーメン', 'ご飯', 'パン'])) {
     return {
-      route: 'save_body_fat',
-      captureType: 'body_fat',
-      payload,
-      missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
-    };
-  }
-
-  if (isWeight && !normalized.includes('体脂肪')) {
-    const payload = buildWeightPayload(rawText);
-    const missingFields = getMissingFieldsForWeight(payload);
-
-    if (missingFields.length > 0) {
-      return {
-        route: 'pending_clarification',
-        captureType: 'weight',
-        payload,
-        missingFields,
-        replyText: buildWeightClarifyReply(),
-        isConsultationPriority: false,
-      };
-    }
-
-    return {
-      route: 'save_weight',
-      captureType: 'weight',
-      payload,
-      missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
-    };
-  }
-
-  if (isMeal) {
-    const payload = buildMealPayload(rawText);
-    const missingFields = getMissingFieldsForMeal(payload);
-
-    if (hasConsultation) {
-      return {
-        route: 'consultation_chat',
-        captureType: 'meal',
-        payload,
-        missingFields,
-        replyText: '',
-        isConsultationPriority: true,
-      };
-    }
-
-    if (missingFields.length > 0) {
-      return {
-        route: 'pending_clarification',
-        captureType: 'meal',
-        payload,
-        missingFields,
-        replyText: buildMealClarifyReply(),
-        isConsultationPriority: false,
-      };
-    }
-
-    return {
-      route: 'save_meal',
+      route: 'record_candidate',
       captureType: 'meal',
-      payload,
+      payload: {
+        raw_text: raw,
+        source_text: raw,
+      },
       missingFields: [],
-      replyText: '',
-      isConsultationPriority: false,
+      replyText: '食事の内容は受け取れています。違うところだけ、そのまま教えてくださいね。',
     };
   }
 
-  if (hasConsultation) {
+  if (includesAny(normalized, ['血液検査', 'hba1c', 'ldl', 'hdl', '中性脂肪', 'コレステロール'])) {
     return {
-      route: 'consultation_chat',
-      captureType: null,
-      payload: { source_text: rawText },
+      route: 'record_candidate',
+      captureType: 'blood_test',
+      payload: { raw_text: raw, source_text: raw },
       missingFields: [],
-      replyText: '',
-      isConsultationPriority: true,
+      replyText: '血液検査の内容は受け取れています。このまま整理を進めますか？',
     };
   }
 
-  return {
-    route: 'normal_chat',
-    captureType: null,
-    payload: { source_text: rawText },
-    missingFields: [],
-    replyText: '',
-    isConsultationPriority: false,
-  };
+  return { route: 'smalltalk' };
 }
 
 module.exports = {
-  ONBOARDING_KEYWORDS,
-  CONSULTATION_HINTS,
   safeText,
   normalizeLoose,
   includesAny,
@@ -443,22 +201,6 @@ module.exports = {
   extractWeightKg,
   extractBodyFatPercent,
   isOnboardingStart,
-  detectExerciseType,
-  detectMealCandidate,
-  detectWeightCandidate,
-  detectBodyFatCandidate,
-  detectConsultation,
-  buildExercisePayload,
-  buildWeightPayload,
-  buildBodyFatPayload,
-  buildMealPayload,
-  getMissingFieldsForExercise,
-  getMissingFieldsForMeal,
-  getMissingFieldsForWeight,
-  getMissingFieldsForBodyFat,
-  buildExerciseClarifyReply,
-  buildMealClarifyReply,
-  buildWeightClarifyReply,
-  buildBodyFatClarifyReply,
+  looksLikeConsultation,
   analyzeNewCaptureCandidate,
 };
