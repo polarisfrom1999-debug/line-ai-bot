@@ -1,729 +1,344 @@
 'use strict';
 
-/**
- * services/chat_capture_service.js
- *
- * 安定化版:
- * - index.js 互換を優先
- * - body_metrics / meal_record / exercise_record / memory_note / pain_consult を返せる
- * - 体重 + 体脂肪率の同時入力を router より先に拾う
- * - pain_support_service の返り値が object の時に [object Object] を出さない
- */
+require('dotenv').config();
+
+const express = require('express');
+
+const { getEnv } = require('./config/env');
+const { verifyLineSignature, replyMessage, textMessageWithQuickReplies } = require('./services/line_service');
+const { supabase } = require('./services/supabase_service');
+const { ensureUser } = require('./services/user_service');
+const { analyzeNewCaptureCandidate, isOnboardingStart } = require('./services/capture_router_service');
+const {
+  createPendingCapture,
+  hasPendingCapture,
+  mergePendingCaptureReply,
+} = require('./services/pending_capture_service');
+const { buildConfirmationMessage } = require('./services/record_confirmation_service');
+const { analyzeChatCapture } = require('./services/chat_capture_service');
+const { buildHealthConsultationGuide } = require('./services/health_consultation_service');
+const {
+  detectGuideIntent,
+  buildFirstGuideMessage,
+  buildFoodGuideMessage,
+  buildExerciseGuideMessage,
+  buildWeightGuideMessage,
+  buildConsultGuideMessage,
+  buildLabGuideMessage,
+  buildHelpMenuMessage,
+  buildFaqMessage,
+} = require('./services/user_guide_service');
+
+let weightService = {};
+try {
+  weightService = require('./services/weight_service');
+} catch (_err) {
+  weightService = {};
+}
 
 let routeConversation = null;
 try {
-  ({ routeConversation } = require('./chatgpt_conversation_router'));
+  ({ routeConversation } = require('./services/chatgpt_conversation_router'));
 } catch (_err) {
   routeConversation = null;
 }
 
-let recordCandidateService = {};
-try {
-  recordCandidateService = require('./record_candidate_service');
-} catch (_err) {
-  recordCandidateService = {};
-}
+const env = getEnv();
+const app = express();
+const PORT = env.PORT;
+const TZ = env.TZ;
 
-let recordNormalizerService = {};
-try {
-  recordNormalizerService = require('./record_normalizer_service');
-} catch (_err) {
-  recordNormalizerService = {};
-}
+app.get('/', (_req, res) => {
+  res.status(200).send('ok');
+});
 
-let painSupportService = {};
-try {
-  painSupportService = require('./pain_support_service');
-} catch (_err) {
-  painSupportService = {};
-}
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true, tz: TZ, now: new Date().toISOString() });
+});
 
-function safeText(value, fallback = '') {
-  if (typeof recordNormalizerService.safeText === 'function') {
-    try {
-      return recordNormalizerService.safeText(value, fallback);
-    } catch (_err) {
-      // noop
-    }
-  }
-  return String(value || fallback).trim();
-}
+app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  const signature = req.headers['x-line-signature'];
+  const rawBody = req.body;
 
-function normalizeRecordCandidate(raw = {}) {
-  if (typeof recordNormalizerService.normalizeRecordCandidate === 'function') {
-    try {
-      return recordNormalizerService.normalizeRecordCandidate(raw);
-    } catch (_err) {
-      // noop
-    }
+  if (!verifyLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET)) {
+    return res.status(401).send('invalid signature');
   }
 
-  return {
-    type: safeText(raw.type || raw.record_type || raw.kind || 'unknown'),
-    confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : 0.5,
-    needs_confirmation: raw.needs_confirmation !== false,
-    source: safeText(raw.source || 'text'),
-    parsed_payload: raw.parsed_payload || raw.payload || {},
-    user_facing_summary: safeText(raw.user_facing_summary || ''),
-    save_action: safeText(raw.save_action || ''),
-    meta: raw.meta || {},
-  };
+  let body;
+  try {
+    body = JSON.parse(Buffer.from(rawBody).toString('utf8'));
+  } catch (error) {
+    console.error('❌ invalid webhook json:', error?.message || error);
+    return res.status(400).send('invalid json');
+  }
+
+  const events = Array.isArray(body?.events) ? body.events : [];
+
+  for (const event of events) {
+    try {
+      await processEvent(event);
+    } catch (error) {
+      console.error('❌ processEvent error:', error?.stack || error?.message || error);
+    }
+  }
+
+  return res.status(200).send('ok');
+});
+
+async function processEvent(event = {}) {
+  if (event.type !== 'message') return;
+  if (!event.replyToken) return;
+  const lineUserId = event?.source?.userId;
+  if (!lineUserId) return;
+
+  const user = await ensureUser(supabase, lineUserId, TZ);
+
+  if (event.message?.type === 'text') {
+    await handleTextMessage(event.replyToken, event.message.text, user, event);
+    return;
+  }
+
+  if (event.message?.type === 'image') {
+    await replyMessage(
+      event.replyToken,
+      textMessageWithQuickReplies(
+        '画像は受け取りました。食事写真や血液検査であればこのまま整理していきます。補足があれば一言だけ続けて送ってくださいね。',
+        ['食事の写真です', '血液検査です', '相談したい']
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+  }
 }
 
-function normalizeText(text = '') {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[　\s]+/g, '')
-    .replace(/[!！?？。、,.]/g, '');
-}
+async function handleTextMessage(replyToken, text, user, event = {}) {
+  const rawText = String(text || '').trim();
+  if (!rawText) return;
 
-function extractAllNumbers(text = '') {
-  return (
-    String(text || '')
-      .match(/-?\d+(?:\.\d+)?/g)
-      ?.map((v) => Number(v))
-      .filter((v) => Number.isFinite(v)) || []
+  const guideIntent = detectGuideIntent(rawText);
+  if (guideIntent) {
+    await replyGuideIntent(replyToken, guideIntent);
+    return;
+  }
+
+  if (isOnboardingStart(rawText)) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(buildFirstGuideMessage({ userName: user.display_name || '' }), ['食事の送り方', '運動の送り方', '体重の送り方', '相談の送り方']),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  if (hasPendingCapture(user)) {
+    const pendingResult = mergePendingCaptureReply(user, rawText);
+    const nextUser = pendingResult.userPatch || user;
+    await updateUserState(user.id, nextUser);
+
+    if (pendingResult.readyToSave) {
+      await handleReadyPendingCapture(replyToken, nextUser, pendingResult);
+      return;
+    }
+
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(pendingResult.replyText || '不足しているところだけ、そのまま教えてくださいね。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const routed = analyzeNewCaptureCandidate(rawText);
+  if (routed?.route === 'consultation') {
+    const guide = buildHealthConsultationGuide(rawText);
+    const msg = [routed.replyText, guide].filter(Boolean).join('\n');
+    await replyMessage(replyToken, textMessageWithQuickReplies(msg, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return;
+  }
+
+  if (routed?.route === 'body_metrics') {
+    await saveBodyMetrics(replyToken, user, routed.payload);
+    return;
+  }
+
+  if (routed?.route === 'record_candidate') {
+    if (Array.isArray(routed.missingFields) && routed.missingFields.length > 0) {
+      const nextUser = createPendingCapture(user, {
+        captureType: routed.captureType,
+        payload: routed.payload,
+        missingFields: routed.missingFields,
+        replyText: routed.replyText,
+        sourceText: rawText,
+      });
+      await updateUserState(user.id, nextUser);
+      await replyMessage(replyToken, textMessageWithQuickReplies(routed.replyText, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    }
+  }
+
+  const captureResult = await analyzeChatCapture({ text: rawText, context: { user_id: user.id } });
+  if (captureResult?.route === 'body_metrics') {
+    await saveBodyMetrics(replyToken, user, captureResult.payload || {});
+    return;
+  }
+
+  if (captureResult?.route === 'pain_consult' || captureResult?.route === 'consultation') {
+    const guide = buildHealthConsultationGuide(rawText);
+    const msg = [captureResult.replyText || '大丈夫です。このまま話してくださいね。', guide].filter(Boolean).join('\n');
+    await replyMessage(replyToken, textMessageWithQuickReplies(msg, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return;
+  }
+
+  if (captureResult?.route === 'record_candidate' && captureResult.candidate) {
+    const confirm = buildConfirmationMessage(captureResult.candidate);
+    await replyMessage(replyToken, textMessageWithQuickReplies(confirm.text, ['はい', '違います']), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return;
+  }
+
+  if (typeof routeConversation === 'function') {
+    try {
+      const conversation = await routeConversation({
+        text: rawText,
+        context: {
+          display_name: user.display_name || '',
+          line_user_id: user.line_user_id || '',
+        },
+      });
+      const replyText = String(conversation?.replyText || conversation?.text || '').trim();
+      if (replyText) {
+        await replyMessage(replyToken, textMessageWithQuickReplies(replyText, []), env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+    } catch (error) {
+      console.warn('⚠️ routeConversation failed:', error?.message || error);
+    }
+  }
+
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies('ありがとうございます。このまま続けて教えてくださいね。必要な形はこちらで整えます。', []),
+    env.LINE_CHANNEL_ACCESS_TOKEN
   );
 }
 
-function includesAny(text = '', patterns = []) {
-  return patterns.some((pattern) => {
-    if (!pattern) return false;
-    if (pattern instanceof RegExp) return pattern.test(text);
-    return text.includes(String(pattern));
-  });
+async function replyGuideIntent(replyToken, guideIntent = '') {
+  let text = buildHelpMenuMessage();
+  if (guideIntent === 'food') text = buildFoodGuideMessage();
+  else if (guideIntent === 'exercise') text = buildExerciseGuideMessage();
+  else if (guideIntent === 'weight') text = buildWeightGuideMessage();
+  else if (guideIntent === 'consult') text = buildConsultGuideMessage();
+  else if (guideIntent === 'lab') text = buildLabGuideMessage();
+  else if (guideIntent === 'faq') text = buildFaqMessage();
+  else if (guideIntent === 'help') text = buildHelpMenuMessage();
+
+  await replyMessage(replyToken, textMessageWithQuickReplies(text, []), env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
-function looksLikeConsultation(text = '') {
-  const raw = String(text || '').trim();
-  const normalized = normalizeText(raw);
-  if (!normalized) return false;
+async function handleReadyPendingCapture(replyToken, user, pendingResult = {}) {
+  const type = String(pendingResult.captureType || '').trim();
+  const payload = pendingResult.payload || {};
 
-  if (/[?？]/.test(raw)) return true;
-
-  const patterns = [
-    'どうしたら',
-    'どうすれば',
-    'いいですか',
-    'でしょうか',
-    'かな',
-    '相談',
-    '不安',
-    '心配',
-    '痛い',
-    'しびれ',
-    'つらい',
-    '困る',
-    '困ってる',
-    '眠れない',
-    'だめかな',
-    '大丈夫かな',
-    'してもいい',
-    'したらだめ',
-    'どう思う',
-    '悩',
-    'わからない',
-  ];
-
-  return patterns.some((p) => normalized.includes(normalizeText(p)));
-}
-
-function looksLikePainConsultation(text = '') {
-  if (typeof painSupportService.looksLikePainConsultation === 'function') {
-    try {
-      return Boolean(painSupportService.looksLikePainConsultation(text));
-    } catch (_err) {
-      // noop
-    }
-  }
-
-  const normalized = normalizeText(text);
-  if (!normalized) return false;
-
-  return includesAny(normalized, [
-    '膝',
-    '腰',
-    '肩',
-    '首',
-    '足首',
-    '股関節',
-    '背中',
-    'しびれ',
-    '痛い',
-    '痛み',
-    '違和感',
-    'だるい',
-    'つらい',
-    '張る',
-    'こわばる',
-    '炎症',
-    '坐骨',
-    '足底',
-    '腱膜炎',
-  ]);
-}
-
-function looksLikeMemoryNote(text = '') {
-  const normalized = normalizeText(text);
-  if (!normalized) return false;
-
-  return includesAny(normalized, [
-    '覚えて',
-    '記憶して',
-    'メモして',
-    'ちなみに',
-    '実は',
-    '私は',
-    'ぼくは',
-    '俺は',
-    '好き',
-    '苦手',
-    '嫌い',
-    'よく食べる',
-    '食べがち',
-    '外食が多い',
-    'コンビニが多い',
-    '夜に食べやすい',
-    '朝は食べない',
-    '朝食べない',
-    '甘いものが好き',
-  ]);
-}
-
-function looksLikeBodyMetrics(text = '') {
-  const raw = String(text || '').trim();
-  const normalized = normalizeText(raw);
-  if (!normalized) return false;
-
-  if (/(?:体重|wt|weight)\s*[:：]?(?:は)?\s*-?\d{2,3}(?:\.\d+)?\s*(?:kg|ｋｇ|キロ)?/i.test(raw)) return true;
-  if (/(?:体脂肪(?:率)?|fat|bf)\s*[:：]?(?:は)?\s*-?\d{1,2}(?:\.\d+)?\s*(?:%|％|パーセント|ぱーせんと|パー|ぱー)?/i.test(raw)) return true;
-  if (/体重\s*-?\d{2,3}(?:\.\d+)?\s*(?:kg|キロ)?[^\d]+体脂肪(?:率)?\s*-?\d{1,2}(?:\.\d+)?/i.test(raw)) return true;
-  if (/^(体重)?\d{2,3}(?:\.\d+)?kg?$/i.test(normalized)) return true;
-  if (normalized.includes('体脂肪')) return true;
-
-  return false;
-}
-
-function buildBodyMetricReply(payload = {}) {
-  const parts = [];
-
-  if (Number.isFinite(Number(payload.weight_kg))) {
-    parts.push(`体重${Number(payload.weight_kg)}kg`);
-  }
-  if (Number.isFinite(Number(payload.body_fat_percent))) {
-    parts.push(`体脂肪率${Number(payload.body_fat_percent)}%`);
-  }
-
-  if (!parts.length) {
-    return '数値は受け取れています。今日の記録として残して大丈夫ですか？';
-  }
-
-  return `${parts.join('、')}で受け取れています。このまま今日の記録として残して大丈夫ですか？`;
-}
-
-function parseBodyMetrics(raw = '') {
-  const text = String(raw || '').trim();
-  if (!text) return null;
-
-  const normalized = text
-    .replace(/[　]/g, ' ')
-    .replace(/％/g, '%')
-    .replace(/ｋｇ/gi, 'kg');
-
-  const payload = {};
-  const rounded = (value) => Math.round(Number(value) * 10) / 10;
-
-  const takeWeight = (value) => {
-    const n = Number(value);
-    if (Number.isFinite(n) && n >= 20 && n <= 300) {
-      payload.weight_kg = rounded(n);
-    }
-  };
-
-  const takeBodyFat = (value) => {
-    const n = Number(value);
-    if (Number.isFinite(n) && n >= 1 && n <= 80) {
-      payload.body_fat_percent = rounded(n);
-    }
-  };
-
-  const weightPatterns = [
-    /(?:^|[\s、,，/])(?:体重|今朝の体重|本日の体重|今日の体重|wt|weight)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:kg|キロ))?/i,
-    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:kg|キロ)/i,
-  ];
-
-  const bodyFatPatterns = [
-    /(?:^|[\s、,，/])(?:体脂肪率|体脂肪|fat|bf)\s*[:：]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:%|パーセント|パー))?/i,
-    /(?:^|[\s、,，/])(-?\d+(?:\.\d+)?)\s*(?:%|パーセント|パー)/i,
-  ];
-
-  for (const re of weightPatterns) {
-    const m = normalized.match(re);
-    if (m && m[1] != null) {
-      takeWeight(m[1]);
-      if (payload.weight_kg != null) break;
-    }
-  }
-
-  for (const re of bodyFatPatterns) {
-    const m = normalized.match(re);
-    if (m && m[1] != null) {
-      takeBodyFat(m[1]);
-      if (payload.body_fat_percent != null) break;
-    }
-  }
-
-  const numberList = extractAllNumbers(normalized);
-  if (!Number.isFinite(Number(payload.weight_kg)) && !Number.isFinite(Number(payload.body_fat_percent)) && numberList.length >= 2) {
-    const first = Number(numberList[0]);
-    const second = Number(numberList[1]);
-
-    if (Number.isFinite(first) && first >= 20 && first <= 300) takeWeight(first);
-    if (Number.isFinite(second) && second >= 1 && second <= 80 && /体脂肪|%|％|パー/.test(normalized)) takeBodyFat(second);
-  }
-
-  if (!Number.isFinite(Number(payload.weight_kg)) && !Number.isFinite(Number(payload.body_fat_percent))) {
-    return null;
-  }
-
-  return payload;
-}
-
-function buildMemoryPayload(text = '') {
-  const raw = safeText(text);
-  const normalized = normalizeText(raw);
-
-  let memoryType = 'general';
-  if (includesAny(normalized, ['甘いもの', '甘い物', 'お菓子', 'スイーツ'])) memoryType = 'sweet_preference';
-  else if (includesAny(normalized, ['外食', 'コンビニ'])) memoryType = 'food_pattern';
-  else if (includesAny(normalized, ['苦手', '嫌い'])) memoryType = 'dislike';
-  else if (includesAny(normalized, ['好き', '好物'])) memoryType = 'preference';
-  else if (includesAny(normalized, ['朝食べない', '朝は食べない', '朝食'])) memoryType = 'breakfast_habit';
-
-  return {
-    memory_candidates: [
-      {
-        memory_type: memoryType,
-        content: raw,
-        detail_json: {},
-      },
-    ],
-    payload: {
-      note_text: raw,
-      memory_type: memoryType,
-    },
-  };
-}
-
-function buildMemoryReply(text = '') {
-  const raw = safeText(text);
-  if (!raw) return '内容は受け取れています。メモとして残して大丈夫ですか？';
-  return 'ありがとうございます。今後の伴走に活かせる内容として受け取っています。メモとして残して大丈夫ですか？';
-}
-
-function getTopRecordCandidate(text = '') {
-  if (typeof recordCandidateService.getTopRecordCandidate === 'function') {
-    try {
-      return recordCandidateService.getTopRecordCandidate(text);
-    } catch (_err) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function withCompatAliases(result = {}) {
-  if (!result) return null;
-
-  const replyText = safeText(result.reply_text || result.replyText || result.text || '');
-  const recordCandidate = result.record_candidate || result.recordCandidate || null;
-
-  return {
-    ...result,
-    type: safeText(result.capture_type || result.type || result.category || ''),
-    reply_text: replyText,
-    replyText,
-    text: replyText,
-    record_candidate: recordCandidate,
-    recordCandidate,
-    needs_confirmation: result.needs_confirmation !== false,
-    needsConfirmation: result.needs_confirmation !== false,
-    auto_save: Boolean(result.auto_save),
-    autoSave: Boolean(result.auto_save),
-  };
-}
-
-function buildRecordCaptureResult(candidate = null) {
-  if (!candidate || !candidate.type) return null;
-
-  const normalized = normalizeRecordCandidate(candidate);
-  const type = safeText(normalized.type);
-
-  if (type === 'meal') {
-    return withCompatAliases({
-      category: 'meal_record',
-      capture_type: 'meal_record',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: normalized.parsed_payload || {},
-      record_candidate: normalized,
-      reply_text:
-        safeText(normalized.meta?.reply_text) ||
-        '食事の内容は受け取れています。今日の記録としてまとめてよければ保存しますか？違うところだけ、そのまま教えても大丈夫です。',
-    });
+  if (type === 'weight' || type === 'body_metrics') {
+    await saveBodyMetrics(replyToken, user, payload);
+    return;
   }
 
   if (type === 'exercise') {
-    return withCompatAliases({
-      category: 'exercise_record',
-      capture_type: 'exercise_record',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: normalized.parsed_payload || {},
-      record_candidate: normalized,
-      reply_text:
-        safeText(normalized.meta?.reply_text) ||
-        '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？',
-    });
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('運動の内容は受け取れています。このまま今日の記録として残せる形になりました。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
   }
 
-  if (type === 'weight' || type === 'body_fat') {
-    return withCompatAliases({
-      category: 'body_metrics',
-      capture_type: 'body_metrics',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: normalized.parsed_payload || {},
-      record_candidate: normalized,
-      reply_text: buildBodyMetricReply(normalized.parsed_payload || {}),
-    });
+  if (type === 'meal') {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('食事の内容は受け取れています。ここから整理して扱える形になりました。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
   }
 
   if (type === 'blood_test') {
-    return withCompatAliases({
-      category: 'blood_test',
-      capture_type: 'blood_test',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: normalized.parsed_payload || {},
-      record_candidate: normalized,
-      reply_text: '血液検査の内容を受け取れています。このまま記録候補として進めて大丈夫ですか？',
-    });
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('血液検査の内容は受け取れています。整理を進めやすい形になりました。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
   }
 
-  return null;
+  await replyMessage(replyToken, textMessageWithQuickReplies('ありがとうございます。内容は受け取れています。', []), env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
-function pickPainTextFromResult(result) {
-  if (!result) return '';
+async function saveBodyMetrics(replyToken, user, payload = {}) {
+  const weight_kg = Number(payload.weight_kg);
+  const body_fat_pct = payload.body_fat_pct == null ? null : Number(payload.body_fat_pct);
 
-  if (typeof result === 'string') {
-    return safeText(result);
+  if (!Number.isFinite(weight_kg)) {
+    await replyMessage(replyToken, textMessageWithQuickReplies('体重の数字が読み取れなかったので、たとえば「62.4kg」のように送ってくださいね。', []), env.LINE_CHANNEL_ACCESS_TOKEN);
+    return;
   }
 
-  if (typeof result !== 'object') {
-    return '';
-  }
-
-  return safeText(
-    result.reply_text ||
-      result.text ||
-      result.message ||
-      result.reply ||
-      result.message_text ||
-      ''
-  );
-}
-
-function buildPainConsultReply(userText = '') {
-  const raw = safeText(userText);
-
-  if (typeof painSupportService.generatePainResponse === 'function') {
-    try {
-      const result = painSupportService.generatePainResponse(raw);
-      const text = pickPainTextFromResult(result);
-      if (text) return text;
-    } catch (_err) {
-      // noop
-    }
-  }
-
-  if (typeof painSupportService.buildPainSupportResponse === 'function') {
-    try {
-      const result = painSupportService.buildPainSupportResponse(raw);
-      const text = pickPainTextFromResult(result);
-      if (text) return text;
-    } catch (_err) {
-      // noop
-    }
-  }
-
-  if (typeof painSupportService.buildPainReply === 'function') {
-    try {
-      const result = painSupportService.buildPainReply({ userText: raw });
-      const text = pickPainTextFromResult(result);
-      if (text) return text;
-    } catch (_err) {
-      // noop
-    }
-  }
-
-  if (typeof painSupportService.analyzePainText === 'function') {
-    try {
-      const result = painSupportService.analyzePainText(raw);
-      const text = pickPainTextFromResult(result);
-      if (text) return text;
-    } catch (_err) {
-      // noop
-    }
-  }
-
-  return 'それは気になりますね。まずは記録より相談として受け取ります。無理を広げず、強い痛みや長引く症状がある時は牛込や医療機関にも相談してください。';
-}
-
-function buildPriorityCaptureResult(userText = '') {
-  const raw = safeText(userText);
-  const normalized = normalizeText(raw);
-  if (!raw) return null;
-
-  if (looksLikeBodyMetrics(raw)) {
-    const payload = parseBodyMetrics(raw);
-    if (payload) {
-      return withCompatAliases({
-        category: 'body_metrics',
-        capture_type: 'body_metrics',
-        action: 'needs_confirmation',
-        needs_confirmation: true,
-        auto_save: false,
-        payload,
-        reply_text: buildBodyMetricReply(payload),
-      });
-    }
-  }
-
-  if (looksLikePainConsultation(raw) || looksLikeConsultation(raw)) {
-    return withCompatAliases({
-      category: 'pain_consult',
-      capture_type: 'pain_consult',
-      action: 'reply_only',
-      needs_confirmation: false,
-      payload: { raw_text: raw },
-      reply_text: buildPainConsultReply(raw),
-    });
-  }
-
-  if (looksLikeMemoryNote(raw) && !includesAny(normalized, ['保存', '記録', '体重', '体脂肪'])) {
-    const memory = buildMemoryPayload(raw);
-    return withCompatAliases({
-      category: 'memory_note',
-      capture_type: 'memory_note',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: memory.payload,
-      memory_candidates: memory.memory_candidates,
-      reply_text: buildMemoryReply(raw),
-    });
-  }
-
-  return null;
-}
-
-function extractReplyTextFromRouterResult(routerResult = null) {
-  if (!routerResult || typeof routerResult !== 'object') return '';
-  return safeText(
-    routerResult.reply_text ||
-      routerResult.replyText ||
-      routerResult.assistant_reply ||
-      routerResult.text ||
-      ''
-  );
-}
-
-function normalizeRouterResult(routerResult = null, userText = '') {
-  if (!routerResult || typeof routerResult !== 'object') return null;
-
-  const route = safeText(routerResult.route || '');
-  const category = safeText(
-    routerResult.category ||
-      routerResult.intent ||
-      routerResult.route ||
-      routerResult.type ||
-      ''
-  );
-
-  const replyText = extractReplyTextFromRouterResult(routerResult);
-  const topRecordCandidate =
-    routerResult.top_record_candidate ||
-    routerResult.record_candidate ||
-    routerResult.recordCandidate ||
-    null;
-
-  if (category === 'pain_consult' || category === 'consultation') {
-    return withCompatAliases({
-      category: 'pain_consult',
-      capture_type: 'pain_consult',
-      action: 'reply_only',
-      needs_confirmation: false,
-      payload: routerResult.payload || { raw_text: safeText(userText) },
-      reply_text: buildPainConsultReply(userText),
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  if (category === 'smalltalk') {
-    return withCompatAliases({
-      category: 'general_consult',
-      capture_type: 'general_consult',
-      action: 'reply_only',
-      needs_confirmation: false,
-      payload: routerResult.payload || { raw_text: safeText(userText) },
-      reply_text: replyText,
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  if (category === 'memory_note') {
-    const memory = buildMemoryPayload(userText);
-    return withCompatAliases({
-      category: 'memory_note',
-      capture_type: 'memory_note',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      payload: routerResult.payload || memory.payload,
-      memory_candidates: Array.isArray(routerResult.memory_candidates) && routerResult.memory_candidates.length
-        ? routerResult.memory_candidates
-        : memory.memory_candidates,
-      reply_text: replyText || buildMemoryReply(userText),
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  if (category === 'meal_record' || category === 'exercise_record') {
-    return withCompatAliases({
-      category,
-      capture_type: category,
-      action: safeText(routerResult.action || 'needs_confirmation'),
-      needs_confirmation: routerResult.needs_confirmation !== false,
-      auto_save: Boolean(routerResult.auto_save),
-      payload: routerResult.payload || {},
-      record_candidate: routerResult.record_candidate || topRecordCandidate || null,
-      reply_text: replyText,
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  if (category === 'body_metrics') {
-    const payload = parseBodyMetrics(userText) || routerResult.payload || {};
-    return withCompatAliases({
-      category: 'body_metrics',
-      capture_type: 'body_metrics',
-      action: 'needs_confirmation',
-      needs_confirmation: true,
-      auto_save: false,
-      payload,
-      reply_text: buildBodyMetricReply(payload),
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  if (topRecordCandidate) {
-    const built = buildRecordCaptureResult(topRecordCandidate);
-    if (built) {
-      if (!built.reply_text && replyText) built.reply_text = replyText;
-      built.raw = routerResult;
-      return withCompatAliases(built);
-    }
-  }
-
-  if (route === 'consultation') {
-    return withCompatAliases({
-      category: 'general_consult',
-      capture_type: 'general_consult',
-      action: 'reply_only',
-      needs_confirmation: false,
-      payload: { raw_text: safeText(userText) },
-      reply_text: replyText,
-      meta: routerResult.meta || {},
-      raw: routerResult,
-    });
-  }
-
-  return null;
-}
-
-async function analyzeWithRouter(args = {}) {
-  if (typeof routeConversation !== 'function') return null;
+  const measuredAt = new Date().toISOString();
 
   try {
-    const result = await routeConversation({
-      user: args.user || null,
-      currentUserText: safeText(args.userText || args.currentUserText || args.text || ''),
-      recentMessages: Array.isArray(args.recentMessages) ? args.recentMessages : [],
-      profileSummary: safeText(args.profileSummary || ''),
+    await supabase.from('weight_logs').insert({
+      user_id: user.id,
+      logged_at: measuredAt,
+      weight_kg,
+      body_fat_pct: Number.isFinite(body_fat_pct) ? body_fat_pct : null,
     });
-
-    return normalizeRouterResult(result, args.userText || args.currentUserText || args.text || '');
-  } catch (_err) {
-    return null;
-  }
-}
-
-async function analyzeChatCapture({
-  userText = '',
-  user = null,
-  text = '',
-  currentUserText = '',
-  recentMessages = [],
-  profileSummary = '',
-  companionMemory = [],
-  pendingCapture = null,
-} = {}) {
-  const raw = safeText(userText || currentUserText || text);
-  if (!raw) return null;
-
-  const priorityResult = buildPriorityCaptureResult(raw);
-  if (priorityResult) return priorityResult;
-
-  const routerResult = await analyzeWithRouter({
-    userText: raw,
-    user,
-    text,
-    currentUserText,
-    recentMessages,
-    profileSummary,
-    companionMemory,
-    pendingCapture,
-  });
-  if (routerResult) return withCompatAliases(routerResult);
-
-  const candidate = getTopRecordCandidate(raw);
-  if (candidate) {
-    const recordResult = buildRecordCaptureResult(candidate);
-    if (recordResult) return withCompatAliases(recordResult);
+  } catch (error) {
+    console.warn('⚠️ weight_logs insert failed:', error?.message || error);
   }
 
-  return null;
+  try {
+    await supabase.from('users').update({
+      weight_kg,
+      body_fat_pct: Number.isFinite(body_fat_pct) ? body_fat_pct : user.body_fat_pct || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', user.id);
+  } catch (error) {
+    console.warn('⚠️ users weight update failed:', error?.message || error);
+  }
+
+  if (typeof weightService.buildWeightSaveMessage === 'function') {
+    try {
+      const msg = weightService.buildWeightSaveMessage({ weight_kg, body_fat_pct });
+      await replyMessage(replyToken, textMessageWithQuickReplies(msg.text || '体重を記録しました。', msg.quickReplies || []), env.LINE_CHANNEL_ACCESS_TOKEN);
+      return;
+    } catch (error) {
+      console.warn('⚠️ buildWeightSaveMessage failed:', error?.message || error);
+    }
+  }
+
+  const lines = [
+    '体重を記録しました。',
+    `体重: ${weight_kg} kg`,
+    Number.isFinite(body_fat_pct) ? `体脂肪率: ${body_fat_pct} %` : null,
+    '小さく続けることが大事です。',
+  ].filter(Boolean);
+
+  await replyMessage(replyToken, textMessageWithQuickReplies(lines.join('\n'), ['体重グラフ', '予測', '食事を記録', '少し歩いた']), env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
-module.exports = {
-  analyzeChatCapture,
-  normalizeText,
-  extractAllNumbers,
-  parseBodyMetrics,
-  buildBodyMetricReply,
-  looksLikeConsultation,
-  looksLikePainConsultation,
-  looksLikeMemoryNote,
-  looksLikeBodyMetrics,
-  buildMemoryPayload,
-  buildMemoryReply,
-  buildRecordCaptureResult,
-  buildPainConsultReply,
-  withCompatAliases,
-};
+async function updateUserState(userId, patch = {}) {
+  const allowed = {
+    pending_capture_type: patch.pending_capture_type,
+    pending_capture_status: patch.pending_capture_status,
+    pending_capture_payload: patch.pending_capture_payload,
+    pending_capture_missing_fields: patch.pending_capture_missing_fields,
+    pending_capture_prompt: patch.pending_capture_prompt,
+    pending_capture_started_at: patch.pending_capture_started_at,
+    pending_capture_source_text: patch.pending_capture_source_text,
+    pending_capture_attempts: patch.pending_capture_attempts,
+  };
+
+  return supabase.from('users').update(allowed).eq('id', userId);
+}
+
+app.listen(PORT, () => {
+  console.log(`✅ LINE bot server listening on ${PORT}`);
+});
