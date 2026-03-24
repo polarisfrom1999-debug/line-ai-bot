@@ -2,12 +2,6 @@
 
 /**
  * services/chat_capture_service.js
- *
- * 安定化版:
- * - index.js 互換を優先
- * - body_metrics / meal_record / exercise_record / memory_note / pain_consult を返せる
- * - 体重 + 体脂肪率の同時入力を router より先に拾う
- * - pain_support_service の返り値が object の時に [object Object] を出さない
  */
 
 let routeConversation = null;
@@ -42,9 +36,7 @@ function safeText(value, fallback = '') {
   if (typeof recordNormalizerService.safeText === 'function') {
     try {
       return recordNormalizerService.safeText(value, fallback);
-    } catch (_err) {
-      // noop
-    }
+    } catch (_err) {}
   }
   return String(value || fallback).trim();
 }
@@ -53,9 +45,7 @@ function normalizeRecordCandidate(raw = {}) {
   if (typeof recordNormalizerService.normalizeRecordCandidate === 'function') {
     try {
       return recordNormalizerService.normalizeRecordCandidate(raw);
-    } catch (_err) {
-      // noop
-    }
+    } catch (_err) {}
   }
 
   return {
@@ -99,7 +89,6 @@ function looksLikeConsultation(text = '') {
   const raw = String(text || '').trim();
   const normalized = normalizeText(raw);
   if (!normalized) return false;
-
   if (/[?？]/.test(raw)) return true;
 
   const patterns = [
@@ -118,6 +107,10 @@ function looksLikeConsultation(text = '') {
     'しんどい',
     '走っていい',
     '歩いていい',
+    'お腹すいた',
+    '何食べ',
+    'なに食べ',
+    'ラーメン',
   ];
   return includesAny(normalized, patterns);
 }
@@ -190,12 +183,13 @@ async function buildConversationRoute(text = '', context = {}) {
   }
 
   try {
-    const result = await routeConversation({ text, context });
+    const result = await routeConversation({ currentUserText: text, text, context, recentMessages: [] });
     return {
-      route: 'conversation',
-      replyText: safeText(result?.replyText || result?.text || ''),
+      route: result?.route || 'conversation',
+      replyText: safeText(result?.replyText || result?.reply_text || result?.text || ''),
       source_text: safeText(text),
       meta: result?.meta || {},
+      top_record_candidate: result?.top_record_candidate || null,
     };
   } catch (_err) {
     return {
@@ -217,27 +211,30 @@ async function analyzeChatCapture(input = {}) {
   if (metrics) return metrics;
 
   const painRoute = buildPainRoute(text);
-  if (painRoute && looksLikeConsultation(text)) return painRoute;
+  if (painRoute && looksLikeConsultation(text)) {
+    if (painRoute.replyText) return painRoute;
+    return await buildConversationRoute(text, context);
+  }
 
   if (typeof recordCandidateService.getTopRecordCandidate === 'function') {
     try {
       const candidate = recordCandidateService.getTopRecordCandidate(text);
-      if (candidate) {
+      if (candidate && !looksLikeConsultation(text)) {
         return {
           route: 'record_candidate',
           candidate: normalizeRecordCandidate(candidate),
           source_text: text,
         };
       }
-    } catch (_err) {
-      // noop
-    }
+    } catch (_err) {}
   }
 
   if (looksLikeConsultation(text)) {
+    const conversation = await buildConversationRoute(text, context);
+    if (conversation?.replyText || conversation?.route === 'consultation') return conversation;
     return {
       route: 'consultation',
-      replyText: '大丈夫です。このまま話していただいて大丈夫です。まとまっていなくても、そのままで大丈夫ですよ。',
+      replyText: '気になっていること、そのまま話してくださいね。状況を見ながら一緒に整理します。',
       source_text: text,
     };
   }
