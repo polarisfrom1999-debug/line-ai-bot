@@ -1,5 +1,3 @@
-'use strict';
-
 const {
   parseProfile,
   calculateBMR,
@@ -22,82 +20,35 @@ function sexLabel(sex) {
   return null;
 }
 
-function safeText(value, fallback = '') {
-  return String(value || fallback).trim();
+function normalizeLoose(text = '') {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[　\s]+/g, '')
+    .replace(/[!！?？。、,.]/g, '');
 }
 
-function round1(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 10) / 10;
+function isProfileEditIntent(text = '') {
+  const n = normalizeLoose(text);
+  if (!n) return false;
+  return [
+    'プロフィール変更',
+    'プロフィール修正',
+    'プロフィール更新',
+    'プロフィール',
+    '設定変更',
+    '設定更新',
+  ].some((word) => n.includes(normalizeLoose(word)));
 }
 
-function round0(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n);
-}
-
-function parseLooseProfile(text = '', currentUser = {}) {
-  const raw = safeText(text);
-  if (!raw) return {};
-
-  const updates = { ...parseProfile(raw) };
-  const t = raw.replace(/\s+/g, '');
-
-  if (!updates.age) {
-    const m = raw.match(/(\d{1,3})\s*(歳|才)/);
-    const age = m ? Number(m[1]) : null;
-    if (Number.isFinite(age) && age >= 1 && age <= 120) updates.age = round0(age);
-  }
-
-  if (!updates.height_cm) {
-    let m = raw.match(/身長\s*([0-9]+(?:\.[0-9]+)?)/i);
-    if (!m) m = raw.match(/([0-9]+(?:\.[0-9]+)?)\s*(cm|センチ)/i);
-    const height = m ? Number(m[1]) : null;
-    if (Number.isFinite(height) && height >= 100 && height <= 250) updates.height_cm = round1(height);
-  }
-
-  if (!updates.weight_kg) {
-    let m = raw.match(/体重\s*([0-9]+(?:\.[0-9]+)?)/i);
-    if (!m) m = raw.match(/([0-9]+(?:\.[0-9]+)?)\s*(kg|ｋｇ|キロ)/i);
-    const weight = m ? Number(m[1]) : null;
-    if (Number.isFinite(weight) && weight >= 20 && weight <= 300) updates.weight_kg = round1(weight);
-  }
-
-  if (!updates.target_weight_kg) {
-    const m = raw.match(/目標体重\s*([0-9]+(?:\.[0-9]+)?)/i);
-    const target = m ? Number(m[1]) : null;
-    if (Number.isFinite(target) && target >= 20 && target <= 300) updates.target_weight_kg = round1(target);
-  }
-
-  if (!updates.sex) {
-    if (/女性|女/.test(raw)) updates.sex = 'female';
-    else if (/男性|男/.test(raw)) updates.sex = 'male';
-  }
-
-  if (!updates.activity_level) {
-    if (/活動量.*高い|かなり動く|よく動く/.test(raw)) updates.activity_level = 'high';
-    else if (/活動量.*やや高い|週3回以上/.test(raw)) updates.activity_level = 'moderate_high';
-    else if (/活動量.*ふつう|週1.?2回|たまに動く/.test(raw)) updates.activity_level = 'moderate';
-    else if (/活動量.*低い|ほぼ運動なし|あまり動かない/.test(raw)) updates.activity_level = 'low';
-  }
-
-  if (!Object.keys(updates).length) {
-    const numberOnly = t.match(/^([0-9]+(?:\.[0-9]+)?)$/);
-    if (numberOnly) {
-      const n = Number(numberOnly[1]);
-      if (!currentUser.age && n >= 1 && n <= 120) updates.age = round0(n);
-      else if (!currentUser.height_cm && n >= 100 && n <= 250) updates.height_cm = round1(n);
-      else if (n >= 20 && n <= 300) updates.weight_kg = round1(n);
-    }
-  }
-
-  return updates;
+function isProfileEditDoneIntent(text = '') {
+  const n = normalizeLoose(text);
+  if (!n) return false;
+  return ['完了', 'おわり', '終わり', '以上', 'これでok', 'これで大丈夫'].some((word) => n.includes(normalizeLoose(word)));
 }
 
 function buildProfileUpdatePayload(currentUser, text) {
-  const updates = parseLooseProfile(text, currentUser);
+  const updates = parseProfile(text);
   if (!Object.keys(updates).length) return null;
 
   const previewUser = { ...currentUser, ...updates };
@@ -105,9 +56,17 @@ function buildProfileUpdatePayload(currentUser, text) {
   const estimated_tdee = calculateTDEE(previewUser);
 
   return {
-    ...updates,
-    estimated_bmr,
-    estimated_tdee,
+    updates,
+    userPatch: {
+      ...updates,
+      estimated_bmr,
+      estimated_tdee,
+    },
+    previewUser: {
+      ...previewUser,
+      estimated_bmr,
+      estimated_tdee,
+    },
   };
 }
 
@@ -127,11 +86,80 @@ function buildProfileReply(user) {
   return lines.join('\n');
 }
 
+function buildProfileEditStartMessage() {
+  return [
+    'プロフィール変更ですね。',
+    '変えたい項目だけ、そのまま送って大丈夫です。',
+    '例: 体重 62 / 身長 160 / 年齢 55 / 目標体重 58 / 活動量 ふつう',
+    '1つずつでも大丈夫です。終わったら「完了」で閉じます。',
+  ].join('\n');
+}
+
+function buildChangedFieldLines(updates = {}, previewUser = {}) {
+  const lines = [];
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'sex')) {
+    lines.push(`性別を${sexLabel(previewUser.sex) || previewUser.sex}に更新しました。`);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'age')) {
+    lines.push(`年齢を${fmt(previewUser.age)}に更新しました。`);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'height_cm')) {
+    lines.push(`身長を${fmt(previewUser.height_cm)}cmに更新しました。`);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'weight_kg')) {
+    lines.push(`体重を${fmt(previewUser.weight_kg)}kgに更新しました。`);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'target_weight_kg')) {
+    lines.push(`目標体重を${fmt(previewUser.target_weight_kg)}kgに更新しました。`);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'activity_level')) {
+    lines.push(`活動量を${activityLevelLabel(previewUser.activity_level) || previewUser.activity_level}に更新しました。`);
+  }
+
+  return lines;
+}
+
+function shouldShowMetabolismLines(updates = {}) {
+  return (
+    Object.prototype.hasOwnProperty.call(updates, 'sex') ||
+    Object.prototype.hasOwnProperty.call(updates, 'age') ||
+    Object.prototype.hasOwnProperty.call(updates, 'height_cm') ||
+    Object.prototype.hasOwnProperty.call(updates, 'weight_kg') ||
+    Object.prototype.hasOwnProperty.call(updates, 'activity_level')
+  );
+}
+
+function buildProfilePartialReply(payload = {}) {
+  const updates = payload?.updates || {};
+  const previewUser = payload?.previewUser || {};
+  const changedLines = buildChangedFieldLines(updates, previewUser);
+
+  if (!changedLines.length) {
+    return '変えたい項目だけ送ってください。例: 体重 62 / 身長 160 / 年齢 55。終わりなら「完了」で大丈夫です。';
+  }
+
+  const lines = [...changedLines];
+
+  if (shouldShowMetabolismLines(updates) && previewUser.estimated_bmr) {
+    lines.push(`推定基礎代謝: ${fmt(previewUser.estimated_bmr)} kcal/日`);
+  }
+  if (shouldShowMetabolismLines(updates) && previewUser.estimated_tdee) {
+    lines.push(`推定総消費目安: ${fmt(previewUser.estimated_tdee)} kcal/日`);
+  }
+
+  lines.push('他に変える項目があれば、そのまま続けて送ってください。終わりなら「完了」で大丈夫です。');
+  return lines.join('\n');
+}
+
 module.exports = {
   profileGuideMessage,
   activityLevelLabel,
   sexLabel,
+  isProfileEditIntent,
+  isProfileEditDoneIntent,
+  buildProfileEditStartMessage,
   buildProfileUpdatePayload,
   buildProfileReply,
-  parseLooseProfile,
+  buildProfilePartialReply,
 };
