@@ -2,45 +2,43 @@
 
 const { round0, round1 } = require('../utils/formatters');
 
-function parseActivityLevel(text) {
+function parseActivityLevel(text = '') {
   const t = String(text || '');
-  if (/活動量\s*[:：]?\s*(高い|多い|激しい)/.test(t) || /かなり動く|激しい/.test(t)) return 'high';
-  if (/活動量\s*[:：]?\s*(やや高い|多め)/.test(t) || /よく動く/.test(t)) return 'moderate_high';
-  if (/活動量\s*[:：]?\s*(ふつう|普通)/.test(t) || /たまに動く|週1|週2/.test(t)) return 'moderate';
-  if (/活動量\s*[:：]?\s*(低い|少ない)/.test(t) || /あまり動かない|ほぼ運動なし/.test(t)) return 'low';
+  if (/激しい|高い|かなり動く|仕事でよく動く/.test(t)) return 'high';
+  if (/やや高い|よく動く|週3/.test(t)) return 'moderate_high';
+  if (/ふつう|普通|週1|週2/.test(t)) return 'moderate';
+  if (/低い|あまり動かない|ほぼ運動なし/.test(t)) return 'low';
   return null;
 }
 
-function pickValue(text, labels) {
-  for (const label of labels) {
-    const m = String(text || '').match(new RegExp(`${label}\\s*[:：]?\\s*(\\d{1,3}(?:\\.\\d+)?)`, 'i'));
+function captureNumber(text, patterns = []) {
+  for (const pattern of patterns) {
+    const m = String(text || '').match(pattern);
     if (m) return Number(m[1]);
   }
   return null;
 }
 
-function parseProfile(text) {
-  const base = String(text || '').trim();
+function parseProfile(text = '') {
   const result = {};
+  const raw = String(text || '').trim();
 
-  if (!base) return result;
+  if (/(男性|男)/.test(raw)) result.sex = 'male';
+  else if (/(女性|女)/.test(raw)) result.sex = 'female';
 
-  if (/(男性|男)/.test(base)) result.sex = 'male';
-  if (/(女性|女)/.test(base)) result.sex = 'female';
-
-  const age = pickValue(base, ['年齢']);
+  const age = captureNumber(raw, [/年齢\s*[:：]?\s*(\d+(?:\.\d+)?)/, /^(\d{1,3})歳$/, /(\d{1,3})歳/]);
   if (age != null) result.age = round0(age);
 
-  const height = pickValue(base, ['身長']);
+  const height = captureNumber(raw, [/身長\s*[:：]?\s*(\d+(?:\.\d+)?)/, /(\d+(?:\.\d+)?)\s*cm/i]);
   if (height != null) result.height_cm = round1(height);
 
-  const weight = pickValue(base, ['体重']);
+  const weight = captureNumber(raw, [/体重\s*[:：]?\s*(\d+(?:\.\d+)?)/, /^(\d{2,3}(?:\.\d+)?)\s*(?:kg|ｋｇ|キロ)$/i]);
   if (weight != null) result.weight_kg = round1(weight);
 
-  const target = pickValue(base, ['目標体重', '目標']);
+  const target = captureNumber(raw, [/目標体重\s*[:：]?\s*(\d+(?:\.\d+)?)/, /目標\s*[:：]?\s*(\d+(?:\.\d+)?)/, /目標\s*(\d+(?:\.\d+)?)\s*(?:kg|ｋｇ|キロ)?/i]);
   if (target != null) result.target_weight_kg = round1(target);
 
-  const activity = parseActivityLevel(base);
+  const activity = parseActivityLevel(raw);
   if (activity) result.activity_level = activity;
 
   return result;
@@ -70,6 +68,7 @@ function calculateTDEE(user) {
 
 function profileGuideMessage() {
   return [
+    'プロフィール変更ですね。',
     '変えたい項目だけ、そのまま送って大丈夫です。',
     '例: 体重 62 / 身長 160 / 年齢 55 / 目標 58 / 活動量 ふつう',
     '終わったら「完了」で閉じます。',
