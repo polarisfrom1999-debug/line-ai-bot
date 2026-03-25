@@ -14,7 +14,12 @@ function isWeightIntent(text) {
     /体重/.test(t) ||
     /kg/i.test(t) ||
     /キロ/.test(t) ||
-    /^(\d{2,3})(\.\d+)?$/.test(t)
+    /今朝/.test(t) ||
+    /今夜/.test(t) ||
+    /昨日/.test(t) ||
+    /今日/.test(t) ||
+    /朝/.test(t) ||
+    /^\d{2,3}(?:\.\d+)?$/.test(t)
   );
 }
 
@@ -22,7 +27,7 @@ function parseWeightLog(text) {
   const t = String(text || '').trim();
 
   const weight = extractNumber(t);
-  const bodyFat = extractBodyFat(t);
+  const bodyFat = /体脂肪|%|％/.test(t) ? extractBodyFat(t) : null;
 
   if (weight == null) return null;
   if (weight < 20 || weight > 300) return null;
@@ -34,10 +39,11 @@ function parseWeightLog(text) {
 }
 
 function buildWeightSaveMessage(log) {
+  const bodyFat = Number.isFinite(Number(log?.body_fat_pct)) ? Number(log.body_fat_pct) : null;
   const lines = [
     '体重を記録しました。',
     `体重: ${log.weight_kg} kg`,
-    log.body_fat_pct != null ? `体脂肪率: ${log.body_fat_pct} %` : null,
+    bodyFat != null ? `体脂肪率: ${bodyFat} %` : null,
     '小さく続けることが大事です。',
   ].filter(Boolean);
 
