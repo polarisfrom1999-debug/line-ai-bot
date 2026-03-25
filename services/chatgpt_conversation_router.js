@@ -1,88 +1,26 @@
 'use strict';
 
-function normalizeText(text = '') {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[　\s]+/g, '')
-    .replace(/[!！?？。、,.]/g, '');
+function normalize(text = '') {
+  return String(text || '').trim();
 }
 
-function hasAny(text = '', patterns = []) {
-  return patterns.some((pattern) => text.includes(normalizeText(pattern)));
+function routeConversation({ currentUserText = '', context = {} } = {}) {
+  const raw = normalize(currentUserText);
+  const t = raw.replace(/[　\s]+/g, '');
+
+  if (!raw) return { route: 'smalltalk', replyText: 'ありがとうございます。続けて教えてくださいね。' };
+  if (/今何時/.test(raw)) return { route: 'time' };
+  if (/あなたの名前|君の名前|AIの名前/.test(raw)) return { route: 'assistant_name', replyText: '私はAI牛込として寄り添います。' };
+  if (/私の名前|名前覚えて/.test(raw)) return { route: 'user_name' };
+  if (/私の体重|今の体重/.test(raw)) return { route: 'user_weight' };
+  if (/毎日毎日心が苦しい|心が苦しい|つらい|しんどい/.test(raw)) return { route: 'support', replyText: 'それはかなりしんどいですね。今は一人で抱え込みすぎず、今日いちばん苦しい時間帯や、少しでも楽になる瞬間があるかを一緒に見たいです。強い不安や眠れない感じが続くなら、身近な人や医療機関にも早めに頼ってくださいね。' };
+  if (/どうやったら緩む|どうすれば緩む/.test(raw)) return { route: 'support', replyText: '腰や肩の硬さなら、今日は強く伸ばすより、温めてから小さく動かす方が無難です。痛みに変わるなら止めて、呼吸をゆっくりにして力が抜けるかを見たいです。' };
+  if (/腰が硬い/.test(raw)) return { route: 'support', replyText: '腰が硬い感じなんですね。今日は反動をつけず、温めてから骨盤を小さく前後に動かすくらいからが無難です。痛みに変わるなら無理せず止めましょう。' };
+  if (/右脚が痺れて|しびれて/.test(raw)) return { route: 'support', replyText: 'しびれは気になりますね。今日は無理に頑張るより、どこまで広がるか、力が入りにくい感じがあるかをまず見たいです。強くなるなら無理せず早めに相談しましょう。' };
+  if (/肩が痛い.*腕立て/.test(raw)) return { route: 'support', replyText: '肩が痛いなら、今日は腕立て伏せは広げない方が安全です。腕を上げる時や後ろに回す時に強くなるかを見ながら、まずは休ませたいです。' };
+  if (/足.*スクワット/.test(raw) || /膝.*スクワット/.test(raw)) return { route: 'support', replyText: '足や膝が痛い時のスクワットは、今日は無理に増やさない方がよさそうです。しゃがむ途中で痛むのか、立つ時に痛むのかを先に見たいです。' };
+  if (/腰が痛い/.test(raw)) return { route: 'support', replyText: '腰、気になりますね。まずは無理に走ったりひねったりせず、じっとしていても痛いのか、動くと強くなるのかを見たいです。' };
+  return { route: 'consultation', replyText: '' };
 }
 
-function buildConsultationReply(text = '', context = {}) {
-  const raw = String(text || '').trim();
-  const t = normalizeText(raw);
-  const latestWeight = context?.weight_kg;
-  const latestBodyFat = context?.body_fat_pct;
-
-  if (hasAny(t, ['私の名前覚えてる', '名前覚えてる'])) {
-    const name = String(context?.display_name || '').trim();
-    return name
-      ? `${name}さんとして見ています。呼び方を変えたい時は、そのまま教えてくださいね。`
-      : 'お名前はまだはっきり残せていないので、呼んでほしい呼び方があればそのまま教えてくださいね。';
-  }
-
-  if (hasAny(t, ['私の体重覚えてる', '体重覚えてる'])) {
-    if (latestWeight != null && latestBodyFat != null) {
-      return `今の記録では ${latestWeight}kg、体脂肪率は ${latestBodyFat}% として見ています。流れを見るなら「体重グラフ」でも大丈夫です。`;
-    }
-    if (latestWeight != null) {
-      return `今の記録では ${latestWeight}kg として見ています。流れを見るなら「体重グラフ」でも大丈夫です。`;
-    }
-    return 'まだ体重の記録は少ないので、数字を送ってもらえればここから積み上げて見ていけます。';
-  }
-
-  if (hasAny(t, ['右脚が痺れている', '脚が痺れてる', '足が痺れてる', 'しびれ'])) {
-    return 'しびれは気になりますね。今日は無理に頑張るより、どこまで広がるか、力が入りにくい感じがあるかをまず見たいです。強くなるなら無理せず早めに相談しましょう。';
-  }
-
-  if (hasAny(t, ['肩が痛い']) && hasAny(t, ['腕立て', '伏せ'])) {
-    return '肩が痛いなら、今日は腕立て伏せは広げない方が安全です。腕を上げる時や後ろに回す時に強くなるかを見ながら、まずは休ませたいです。';
-  }
-
-  if ((hasAny(t, ['足が痛い', '膝が痛い']) || hasAny(t, ['腰が痛い'])) && hasAny(t, ['スクワット'])) {
-    return '足や膝、腰が痛い時のスクワットは、今日は無理に増やさない方がよさそうです。しゃがむ途中で痛むのか、立つ時に痛むのかを先に見たいです。';
-  }
-
-  if (hasAny(t, ['腰が痛い', '腰痛'])) {
-    return '腰、気になりますね。まずは無理に走ったりひねったりせず、じっとしていても痛いのか、動くと強くなるのかを見たいです。';
-  }
-
-  if (hasAny(t, ['腰が硬い', '腰がかたい'])) {
-    return '腰が硬い感じなんですね。痛みに変わりそうなら無理に強く動かさず、今日は温めたり軽くゆるめるくらいからにしたいです。';
-  }
-
-  if (hasAny(t, ['頭痛'])) {
-    return '頭痛はつらいですね。今日は無理に頑張るより、水分が取れているか、光や音でつらくないか、いつもより強くないかをまず見たいです。';
-  }
-
-  if (hasAny(t, ['お腹すいた', '何食べ', 'なに食べ'])) {
-    return 'かなりお腹が空いていそうですね。まずはたんぱく質が入るものを先にすると落ち着きやすいです。ゆで卵、豆腐、納豆、サラダチキンみたいな軽めのものから入るのが無難ですよ。';
-  }
-
-  if (hasAny(t, ['ldlは', 'ldl'])) {
-    return 'LDLの流れを見ますね。記録があればそのまま数値やグラフで返します。';
-  }
-
-  if (hasAny(t, ['hba1cは', 'hba1c'])) {
-    return 'HbA1cの流れを見ますね。記録があればそのまま数値やグラフで返します。';
-  }
-
-  return '気になっていること、そのまま一つだけでも大丈夫です。いっしょに見ていきましょう。';
-}
-
-async function routeConversation({ currentUserText = '', text = '', context = {} } = {}) {
-  const reply = buildConsultationReply(currentUserText || text, context);
-  return {
-    route: 'consultation',
-    replyText: reply,
-    reply_text: reply,
-    text: reply,
-    meta: {},
-  };
-}
-
-module.exports = { routeConversation, buildConsultationReply };
+module.exports = { routeConversation };
