@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   parseProfile,
   calculateBMR,
@@ -24,38 +26,78 @@ function safeText(value, fallback = '') {
   return String(value || fallback).trim();
 }
 
-function parseLooseProfileText(text = '') {
+function round1(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 10) / 10;
+}
+
+function round0(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
+}
+
+function parseLooseProfile(text = '', currentUser = {}) {
   const raw = safeText(text);
-  if (!raw) return null;
+  if (!raw) return {};
 
-  const direct = parseProfile(raw);
-  if (Object.keys(direct).length) return direct;
+  const updates = { ...parseProfile(raw) };
+  const t = raw.replace(/\s+/g, '');
 
-  const result = {};
-  const ageOnly = raw.match(/^(年齢)?\s*(\d{1,3})\s*歳?$/);
-  if (ageOnly) result.age = Number(ageOnly[2]);
-
-  const heightOnly = raw.match(/^(身長)?\s*(\d{2,3}(?:\.\d+)?)\s*(cm|ｃｍ)?$/i);
-  if (heightOnly) result.height_cm = Number(heightOnly[2]);
-
-  const targetOnly = raw.match(/^(目標体重)?\s*(\d{2,3}(?:\.\d+)?)\s*(kg|ｋｇ|キロ)?$/i);
-  if (targetOnly && /目標/.test(raw)) result.target_weight_kg = Number(targetOnly[2]);
-
-  if (/^(男性|男)$/.test(raw)) result.sex = 'male';
-  if (/^(女性|女)$/.test(raw)) result.sex = 'female';
-
-  if (/^(低い|ふつう|やや高い|高い)$/.test(raw)) {
-    if (raw === '低い') result.activity_level = 'low';
-    if (raw === 'ふつう') result.activity_level = 'moderate';
-    if (raw === 'やや高い') result.activity_level = 'moderate_high';
-    if (raw === '高い') result.activity_level = 'high';
+  if (!updates.age) {
+    const m = raw.match(/(\d{1,3})\s*(歳|才)/);
+    const age = m ? Number(m[1]) : null;
+    if (Number.isFinite(age) && age >= 1 && age <= 120) updates.age = round0(age);
   }
 
-  return Object.keys(result).length ? result : null;
+  if (!updates.height_cm) {
+    let m = raw.match(/身長\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (!m) m = raw.match(/([0-9]+(?:\.[0-9]+)?)\s*(cm|センチ)/i);
+    const height = m ? Number(m[1]) : null;
+    if (Number.isFinite(height) && height >= 100 && height <= 250) updates.height_cm = round1(height);
+  }
+
+  if (!updates.weight_kg) {
+    let m = raw.match(/体重\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (!m) m = raw.match(/([0-9]+(?:\.[0-9]+)?)\s*(kg|ｋｇ|キロ)/i);
+    const weight = m ? Number(m[1]) : null;
+    if (Number.isFinite(weight) && weight >= 20 && weight <= 300) updates.weight_kg = round1(weight);
+  }
+
+  if (!updates.target_weight_kg) {
+    const m = raw.match(/目標体重\s*([0-9]+(?:\.[0-9]+)?)/i);
+    const target = m ? Number(m[1]) : null;
+    if (Number.isFinite(target) && target >= 20 && target <= 300) updates.target_weight_kg = round1(target);
+  }
+
+  if (!updates.sex) {
+    if (/女性|女/.test(raw)) updates.sex = 'female';
+    else if (/男性|男/.test(raw)) updates.sex = 'male';
+  }
+
+  if (!updates.activity_level) {
+    if (/活動量.*高い|かなり動く|よく動く/.test(raw)) updates.activity_level = 'high';
+    else if (/活動量.*やや高い|週3回以上/.test(raw)) updates.activity_level = 'moderate_high';
+    else if (/活動量.*ふつう|週1.?2回|たまに動く/.test(raw)) updates.activity_level = 'moderate';
+    else if (/活動量.*低い|ほぼ運動なし|あまり動かない/.test(raw)) updates.activity_level = 'low';
+  }
+
+  if (!Object.keys(updates).length) {
+    const numberOnly = t.match(/^([0-9]+(?:\.[0-9]+)?)$/);
+    if (numberOnly) {
+      const n = Number(numberOnly[1]);
+      if (!currentUser.age && n >= 1 && n <= 120) updates.age = round0(n);
+      else if (!currentUser.height_cm && n >= 100 && n <= 250) updates.height_cm = round1(n);
+      else if (n >= 20 && n <= 300) updates.weight_kg = round1(n);
+    }
+  }
+
+  return updates;
 }
 
 function buildProfileUpdatePayload(currentUser, text) {
-  const updates = parseLooseProfileText(text) || {};
+  const updates = parseLooseProfile(text, currentUser);
   if (!Object.keys(updates).length) return null;
 
   const previewUser = { ...currentUser, ...updates };
@@ -69,27 +111,27 @@ function buildProfileUpdatePayload(currentUser, text) {
   };
 }
 
-function buildProfileReply(user, updatedKeys = []) {
-  const keySet = new Set(updatedKeys || []);
-  const lines = ['プロフィールを更新しました。'];
+function buildProfileReply(user) {
+  const lines = [
+    'プロフィールを更新しました。',
+    user.sex ? `性別: ${sexLabel(user.sex)}` : null,
+    user.age ? `年齢: ${fmt(user.age)}` : null,
+    user.height_cm ? `身長: ${fmt(user.height_cm)} cm` : null,
+    user.weight_kg ? `体重: ${fmt(user.weight_kg)} kg` : null,
+    user.target_weight_kg ? `目標体重: ${fmt(user.target_weight_kg)} kg` : null,
+    user.activity_level ? `活動量: ${activityLevelLabel(user.activity_level) || user.activity_level}` : null,
+    user.estimated_bmr ? `推定基礎代謝: ${fmt(user.estimated_bmr)} kcal/日` : null,
+    user.estimated_tdee ? `推定総消費目安: ${fmt(user.estimated_tdee)} kcal/日` : null,
+  ].filter(Boolean);
 
-  if (!updatedKeys.length || keySet.has('sex')) lines.push(user.sex ? `性別: ${sexLabel(user.sex)}` : null);
-  if (!updatedKeys.length || keySet.has('age')) lines.push(user.age ? `年齢: ${fmt(user.age)}` : null);
-  if (!updatedKeys.length || keySet.has('height_cm')) lines.push(user.height_cm ? `身長: ${fmt(user.height_cm)} cm` : null);
-  if (!updatedKeys.length || keySet.has('weight_kg')) lines.push(user.weight_kg ? `体重: ${fmt(user.weight_kg)} kg` : null);
-  if (!updatedKeys.length || keySet.has('target_weight_kg')) lines.push(user.target_weight_kg ? `目標体重: ${fmt(user.target_weight_kg)} kg` : null);
-  if (!updatedKeys.length || keySet.has('activity_level')) lines.push(user.activity_level ? `活動量: ${activityLevelLabel(user.activity_level) || user.activity_level}` : null);
-  if (user.estimated_bmr) lines.push(`推定基礎代謝: ${fmt(user.estimated_bmr)} kcal/日`);
-  if (user.estimated_tdee) lines.push(`推定総消費目安: ${fmt(user.estimated_tdee)} kcal/日`);
-
-  return lines.filter(Boolean).join('\n');
+  return lines.join('\n');
 }
 
 module.exports = {
   profileGuideMessage,
   activityLevelLabel,
   sexLabel,
-  parseLooseProfileText,
   buildProfileUpdatePayload,
   buildProfileReply,
+  parseLooseProfile,
 };
