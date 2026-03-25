@@ -1,9 +1,5 @@
 'use strict';
 
-/**
- * services/chat_capture_service.js
- */
-
 let routeConversation = null;
 try {
   ({ routeConversation } = require('./chatgpt_conversation_router'));
@@ -47,7 +43,6 @@ function normalizeRecordCandidate(raw = {}) {
       return recordNormalizerService.normalizeRecordCandidate(raw);
     } catch (_err) {}
   }
-
   return {
     type: safeText(raw.type || raw.record_type || raw.kind || 'unknown'),
     confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : 0.5,
@@ -90,33 +85,10 @@ function looksLikeConsultation(text = '') {
   const normalized = normalizeText(raw);
   if (!normalized) return false;
   if (/[?？]/.test(raw)) return true;
-
   const patterns = [
-    'どうしたら',
-    'どうすれば',
-    'いいですか',
-    'でしょうか',
-    'かな',
-    '相談',
-    '不安',
-    '痛い',
-    '頭痛',
-    '違和感',
-    '大丈夫',
-    '平気',
-    'つらい',
-    'しんどい',
-    '走っていい',
-    '歩いていい',
-    'お腹すいた',
-    '何食べ',
-    'なに食べ',
-    'ラーメン',
-    '名前覚えてる',
-    'プロフィール変更',
-    '相談したい',
-    '食事の写真です',
-    '血液検査です',
+    'どうしたら', 'どうすれば', 'いいですか', 'でしょうか', 'かな', '相談', '不安', '痛い', '違和感', '大丈夫', '平気',
+    'つらい', 'しんどい', '走っていい', '歩いていい', 'お腹すいた', '何食べ', 'なに食べ', 'ラーメン', 'しびれ', '痺れ',
+    '痺れてる', '痺れている', '肩', '腰', '膝', '足', '右脚', '左脚', '腕立て', 'スクワット', '伏せ', '走る', '歩く',
   ];
   return includesAny(normalized, patterns);
 }
@@ -130,11 +102,11 @@ function tryBodyMetrics(text = '') {
   const numbers = extractAllNumbers(raw);
   if (!numbers.length) return null;
 
-  const weightMatch = raw.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i) || raw.match(/体重\s*([0-9]+(?:\.[0-9]+)?)/i);
-  const bodyFatMatch = raw.match(/(\d+(?:\.\d+)?)\s*[%％]/) || raw.match(/体脂肪(?:率)?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const weightMatch = raw.match(/体重\s*[:：]?\s*(\d+(?:\.\d+)?)/) || raw.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
+  const bodyFatMatch = raw.match(/体脂肪(?:率)?\s*[:：]?\s*(\d+(?:\.\d+)?)/) || (raw.match(/(\d+(?:\.\d+)?)\s*(%|％)/) && /体脂肪/.test(raw) ? raw.match(/(\d+(?:\.\d+)?)\s*(%|％)/) : null);
 
-  const weightKg = weightMatch ? Number(weightMatch[1]) : (numbers[0] >= 20 && numbers[0] <= 300 ? numbers[0] : null);
-  const bodyFatPct = bodyFatMatch ? Number(bodyFatMatch[1]) : (numbers.find((n) => n >= 1 && n <= 80) || null);
+  const weightKg = weightMatch ? Number(weightMatch[1]) : null;
+  const bodyFatPct = bodyFatMatch ? Number(bodyFatMatch[1]) : null;
 
   if (weightKg == null && bodyFatPct == null) return null;
 
@@ -155,7 +127,7 @@ function buildPainRoute(text = '') {
 
   const looksLikePain = typeof painSupportService.looksLikePainConsultation === 'function'
     ? painSupportService.looksLikePainConsultation(raw)
-    : includesAny(normalizeText(raw), ['痛い', '痛み', 'しびれ', '違和感', '腫れ', '張る', '頭痛']);
+    : includesAny(normalizeText(raw), ['痛い', '痛み', 'しびれ', '痺れ', '違和感', '腫れ', '張る']);
 
   if (!looksLikePain) return null;
 
@@ -171,23 +143,13 @@ function buildPainRoute(text = '') {
     }
   }
 
-  return {
-    route: 'pain_consult',
-    replyText: guidance,
-    source_text: raw,
-  };
+  return { route: 'pain_consult', replyText: guidance, source_text: raw };
 }
 
 async function buildConversationRoute(text = '', context = {}) {
   if (typeof routeConversation !== 'function') {
-    return {
-      route: 'conversation',
-      replyText: '',
-      source_text: safeText(text),
-      meta: context,
-    };
+    return { route: 'conversation', replyText: '', source_text: safeText(text), meta: context };
   }
-
   try {
     const result = await routeConversation({ currentUserText: text, text, context, recentMessages: [] });
     return {
@@ -198,23 +160,17 @@ async function buildConversationRoute(text = '', context = {}) {
       top_record_candidate: result?.top_record_candidate || null,
     };
   } catch (_err) {
-    return {
-      route: 'conversation',
-      replyText: '',
-      source_text: safeText(text),
-      meta: context,
-    };
+    return { route: 'conversation', replyText: '', source_text: safeText(text), meta: context };
   }
 }
 
 async function analyzeChatCapture(input = {}) {
   const text = safeText(input.text || input.userText || '');
   const context = input.context || {};
-
   if (!text) return null;
 
   const metrics = tryBodyMetrics(text);
-  if (metrics && !looksLikeConsultation(text)) return metrics;
+  if (metrics) return metrics;
 
   const painRoute = buildPainRoute(text);
   if (painRoute && looksLikeConsultation(text)) {
@@ -226,11 +182,7 @@ async function analyzeChatCapture(input = {}) {
     try {
       const candidate = recordCandidateService.getTopRecordCandidate(text);
       if (candidate && !looksLikeConsultation(text)) {
-        return {
-          route: 'record_candidate',
-          candidate: normalizeRecordCandidate(candidate),
-          source_text: text,
-        };
+        return { route: 'record_candidate', candidate: normalizeRecordCandidate(candidate), source_text: text };
       }
     } catch (_err) {}
   }
@@ -245,10 +197,7 @@ async function analyzeChatCapture(input = {}) {
     };
   }
 
-  if (metrics) return metrics;
   return buildConversationRoute(text, context);
 }
 
-module.exports = {
-  analyzeChatCapture,
-};
+module.exports = { analyzeChatCapture };
