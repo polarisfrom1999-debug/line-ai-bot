@@ -1,28 +1,32 @@
 'use strict';
 
-const { fmt, round1 } = require('../utils/formatters');
-
-function buildEnergySummaryText({ intakeKcal = 0, activityKcal = 0 } = {}) {
-  return [
-    `今日の食事: ${fmt(intakeKcal)} kcal`,
-    `今日の運動消費: ${fmt(activityKcal)} kcal`,
-  ].join('\n');
+function normalizeNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
-function buildExerciseAnswer({ summary = '', minutes = null, kcal = null } = {}) {
-  const lines = ['運動を記録しました。'];
-  if (summary) lines.push(`内容: ${summary}`);
-  if (minutes != null) lines.push(`時間: ${fmt(minutes)}分`);
-  if (kcal != null) lines.push(`推定活動消費: ${fmt(kcal)} kcal`);
+function round1(value) {
+  return Math.round(normalizeNumber(value) * 10) / 10;
+}
+
+function calculateDailyEnergyBalance({ estimatedBmr = 0, estimatedTdee = 0, intakeKcal = 0, activityKcal = 0 }) {
+  const tdee = normalizeNumber(estimatedTdee);
+  const bmr = normalizeNumber(estimatedBmr);
+  const intake = normalizeNumber(intakeKcal);
+  const activity = normalizeNumber(activityKcal);
+  const totalBurn = round1((tdee || bmr) + activity);
+  const balance = round1(intake - totalBurn);
+  return { estimated_bmr: round1(bmr), estimated_tdee: round1(tdee), intake_kcal: round1(intake), activity_kcal: round1(activity), total_burn_kcal: totalBurn, balance_kcal: balance };
+}
+
+function buildDailyMealSummaryText({ intakeKcal = 0, mealCount = 0, latestMeal = '' } = {}) {
+  const lines = [`今日の食事合計は ${Math.round(normalizeNumber(intakeKcal))} kcal 前後です。`];
+  if (mealCount) lines.push(`記録数: ${mealCount}件`);
+  if (latestMeal) lines.push(`直近の食事: ${latestMeal}`);
   return lines.join('\n');
 }
 
-function buildMealTotalAnswer(totalKcal = 0) {
-  return `今日の食事の合計は、今の記録では ${fmt(round1(totalKcal))} kcal 前後です。`;
-}
-
 module.exports = {
-  buildEnergySummaryText,
-  buildExerciseAnswer,
-  buildMealTotalAnswer,
+  calculateDailyEnergyBalance,
+  buildDailyMealSummaryText,
 };
