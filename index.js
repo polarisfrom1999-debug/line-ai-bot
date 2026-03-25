@@ -13,7 +13,6 @@ const {
   createPendingCapture,
   hasPendingCapture,
   mergePendingCaptureReply,
-  clearPendingCapture,
 } = require('./services/pending_capture_service');
 const { buildConfirmationMessage } = require('./services/record_confirmation_service');
 const { analyzeChatCapture } = require('./services/chat_capture_service');
@@ -30,9 +29,11 @@ const {
   buildFaqMessage,
 } = require('./services/user_guide_service');
 const {
+  isProfileEditIntent,
+  isProfileEditDoneIntent,
+  buildProfileEditStartMessage,
   buildProfileUpdatePayload,
-  buildProfileReply,
-  profileGuideMessage,
+  buildProfilePartialReply,
 } = require('./services/profile_service');
 
 let weightService = {};
@@ -53,13 +54,6 @@ const env = getEnv();
 const app = express();
 const PORT = env.PORT;
 const TZ = env.TZ;
-
-const PROFILE_CHANGE_KEYWORDS = [
-  'プロフィール変更',
-  'プロフィール修正',
-  'プロフィール更新',
-  '設定変更',
-];
 
 app.get('/', (_req, res) => {
   res.status(200).send('ok');
@@ -98,30 +92,6 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
   return res.status(200).send('ok');
 });
 
-function safeText(value, fallback = '') {
-  return String(value || fallback).trim();
-}
-
-function normalizeLoose(text) {
-  return safeText(text)
-    .toLowerCase()
-    .replace(/[！!？?。.,，、]/g, '')
-    .replace(/\s+/g, '');
-}
-
-function isProfileChangeIntent(text = '') {
-  const n = normalizeLoose(text);
-  return PROFILE_CHANGE_KEYWORDS.some((keyword) => n.includes(normalizeLoose(keyword)));
-}
-
-function isImageMealFollowup(text = '') {
-  return ['食事の写真です', 'ごはんの写真です', '料理の写真です', 'この写真です'].some((v) => safeText(text).includes(v));
-}
-
-function isImageLabFollowup(text = '') {
-  return ['血液検査です', '検査結果です', '採血結果です'].some((v) => safeText(text).includes(v));
-}
-
 async function processEvent(event = {}) {
   if (event.type !== 'message') return;
   if (!event.replyToken) return;
@@ -139,8 +109,8 @@ async function processEvent(event = {}) {
     await replyMessage(
       event.replyToken,
       textMessageWithQuickReplies(
-        '写真を受け取りました。食事の写真ならこのまま見ていきますし、血液検査なら整理していきます。気になる部位の写真なら、どこが気になるか一言だけ続けてくださいね。',
-        ['食事の写真です', '血液検査です', '相談したい']
+        '写真を受け取りました。食事ならこのまま食事として見ていきます。血液検査なら整理に進めます。体の写真なら、気になる場所を一言だけ続けてください。',
+        ['食事の写真です', '血液検査です', '相談の写真です']
       ),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
@@ -151,47 +121,8 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
   const rawText = String(text || '').trim();
   if (!rawText) return;
 
-  if (isProfileChangeIntent(rawText)) {
-    const nextUser = createPendingCapture(user, {
-      captureType: 'profile_edit',
-      payload: {},
-      missingFields: ['profile_fields'],
-      replyText: `プロフィール変更ですね。\n${profileGuideMessage()}`,
-      sourceText: rawText,
-    });
-    await updateUserState(user.id, nextUser);
-    await replyMessage(
-      replyToken,
-      textMessageWithQuickReplies(
-        `プロフィール変更ですね。\n${profileGuideMessage()}`,
-        ['身長160', '55歳', '体重62']
-      ),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
-    return;
-  }
-
-  if (hasPendingCapture(user) && safeText(user.pending_capture_type) === 'profile_edit') {
-    const profilePatch = buildProfileUpdatePayload(user, rawText);
-    if (!profilePatch) {
-      await replyMessage(
-        replyToken,
-        textMessageWithQuickReplies(
-          `プロフィール変更の途中です。\n${profileGuideMessage()}`,
-          ['身長160', '55歳', '体重62']
-        ),
-        env.LINE_CHANNEL_ACCESS_TOKEN
-      );
-      return;
-    }
-
-    const nextUser = clearPendingCapture({ ...user, ...profilePatch });
-    await updateUserState(user.id, nextUser);
-    await replyMessage(
-      replyToken,
-      textMessageWithQuickReplies(buildProfileReply(nextUser), []),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+  if (isProfileEditIntent(rawText)) {
+    await handleProfileEditStart(replyToken, rawText, user);
     return;
   }
 
@@ -213,38 +144,19 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
     return;
   }
 
-  if (isImageMealFollowup(rawText)) {
-    await replyMessage(
-      replyToken,
-      textMessageWithQuickReplies(
-        'ありがとうございます。食事の写真として見ていきます。写真だけでも大丈夫ですし、補足があれば一言だけ続けてください。',
-        []
-      ),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
-    return;
-  }
-
-  if (isImageLabFollowup(rawText)) {
-    await replyMessage(
-      replyToken,
-      textMessageWithQuickReplies(
-        'ありがとうございます。血液検査として整理していきます。見づらい所があれば、必要な所だけあとで確認しますね。',
-        []
-      ),
-      env.LINE_CHANNEL_ACCESS_TOKEN
-    );
+  if (hasPendingCapture(user) && user.pending_capture_type === 'profile_update') {
+    await handleProfileEditStep(replyToken, rawText, user);
     return;
   }
 
   if (hasPendingCapture(user)) {
     const pendingResult = mergePendingCaptureReply(user, rawText);
 
-    const looksOffTopic = ['weight', 'body_metrics'].includes(pendingResult.captureType)
+    const looksOffTopic = pendingResult.captureType === 'weight'
       && !/(\d+(?:\.\d+)?\s*(kg|ｋｇ|キロ|%|％)|体重|体脂肪)/i.test(rawText);
 
     const nextUser = looksOffTopic
-      ? clearPendingCapture(user)
+      ? clearPendingPatch(user)
       : (pendingResult.userPatch || user);
 
     await updateUserState(user.id, nextUser);
@@ -325,7 +237,7 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
     }
   }
 
-  const captureResult = await analyzeChatCapture({ text: rawText, context: { user_id: user.id, display_name: user.display_name || '' } });
+  const captureResult = await analyzeChatCapture({ text: rawText, context: { user_id: user.id } });
   if (captureResult?.route === 'body_metrics') {
     await saveBodyMetrics(replyToken, user, captureResult.payload || {});
     return;
@@ -405,6 +317,108 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
     ),
     env.LINE_CHANNEL_ACCESS_TOKEN
   );
+}
+
+async function handleProfileEditStart(replyToken, rawText, user) {
+  const payload = buildProfileUpdatePayload(user, rawText);
+  const nextUser = {
+    ...user,
+    pending_capture_type: 'profile_update',
+    pending_capture_status: 'awaiting_clarification',
+    pending_capture_payload: { mode: 'profile_update' },
+    pending_capture_missing_fields: [],
+    pending_capture_prompt: buildProfileEditStartMessage(),
+    pending_capture_started_at: new Date().toISOString(),
+    pending_capture_source_text: rawText,
+    pending_capture_attempts: Number(user.pending_capture_attempts || 0) + 1,
+  };
+
+  if (payload?.userPatch) {
+    const mergedUser = { ...nextUser, ...payload.userPatch };
+    await updateUserState(user.id, mergedUser);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        buildProfilePartialReply({ updates: payload.updates, previewUser: mergedUser }),
+        ['身長 160', '年齢 55', '目標体重 58', '完了']
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  await updateUserState(user.id, nextUser);
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies(
+      buildProfileEditStartMessage(),
+      ['体重 62', '身長 160', '年齢 55', '完了']
+    ),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+}
+
+async function handleProfileEditStep(replyToken, rawText, user) {
+  if (isProfileEditDoneIntent(rawText)) {
+    const nextUser = clearPendingPatch(user);
+    await updateUserState(user.id, nextUser);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('プロフィール変更はここで大丈夫です。また変えたい項目があれば、その時に送ってくださいね。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const payload = buildProfileUpdatePayload(user, rawText);
+  if (!payload?.userPatch) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        '変えたい項目だけ送ってください。1つずつでも大丈夫です。例: 体重 62 / 身長 160 / 年齢 55 / 目標体重 58。終わりなら「完了」で大丈夫です。',
+        ['身長 160', '年齢 55', '目標体重 58', '完了']
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const nextUser = {
+    ...user,
+    ...payload.userPatch,
+    pending_capture_type: 'profile_update',
+    pending_capture_status: 'awaiting_clarification',
+    pending_capture_payload: { mode: 'profile_update' },
+    pending_capture_missing_fields: [],
+    pending_capture_prompt: buildProfileEditStartMessage(),
+    pending_capture_started_at: user.pending_capture_started_at || new Date().toISOString(),
+    pending_capture_source_text: rawText,
+    pending_capture_attempts: Number(user.pending_capture_attempts || 0) + 1,
+  };
+
+  await updateUserState(user.id, nextUser);
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies(
+      buildProfilePartialReply({ updates: payload.updates, previewUser: nextUser }),
+      ['体重 62', '身長 160', '年齢 55', '完了']
+    ),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
+}
+
+function clearPendingPatch(user = {}) {
+  return {
+    ...user,
+    pending_capture_type: null,
+    pending_capture_status: null,
+    pending_capture_payload: null,
+    pending_capture_missing_fields: null,
+    pending_capture_prompt: null,
+    pending_capture_started_at: null,
+    pending_capture_source_text: null,
+    pending_capture_attempts: 0,
+  };
 }
 
 async function replyGuideIntent(replyToken, guideIntent = '') {
@@ -508,8 +522,8 @@ async function saveBodyMetrics(replyToken, user, payload = {}) {
     }
 
     const lines = [];
-    if (Number.isFinite(weightKg)) lines.push(`体重 ${weightKg}kg を記録しました。`);
-    if (Number.isFinite(bodyFatPct)) lines.push(`体脂肪率 ${bodyFatPct}% も受け取れています。`);
+    if (Number.isFinite(weightKg)) lines.push(`体重 ${weightKg}kg を受け取りました。`);
+    if (Number.isFinite(bodyFatPct)) lines.push(`体脂肪率 ${bodyFatPct}% も一緒に記録しました。`);
     lines.push('こういう積み重ねが流れを整えてくれます。');
     await replyMessage(
       replyToken,
@@ -547,7 +561,6 @@ async function updateUserState(userId, nextUser = {}) {
   if (Object.prototype.hasOwnProperty.call(nextUser, 'activity_level')) patch.activity_level = nextUser.activity_level;
   if (Object.prototype.hasOwnProperty.call(nextUser, 'estimated_bmr')) patch.estimated_bmr = nextUser.estimated_bmr;
   if (Object.prototype.hasOwnProperty.call(nextUser, 'estimated_tdee')) patch.estimated_tdee = nextUser.estimated_tdee;
-  if (Object.prototype.hasOwnProperty.call(nextUser, 'display_name')) patch.display_name = nextUser.display_name;
 
   const { error } = await supabase.from('users').update(patch).eq('id', userId);
   if (error) {
