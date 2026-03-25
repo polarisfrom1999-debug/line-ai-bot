@@ -36,6 +36,13 @@ const {
   buildProfilePartialReply,
 } = require('./services/profile_service');
 
+let graphService = {};
+try {
+  graphService = require('./services/graph_service');
+} catch (_err) {
+  graphService = {};
+}
+
 let weightService = {};
 try {
   weightService = require('./services/weight_service');
@@ -106,11 +113,24 @@ async function processEvent(event = {}) {
   }
 
   if (event.message?.type === 'image') {
+    const nextUser = {
+      ...user,
+      pending_capture_type: 'image_context',
+      pending_capture_status: 'awaiting_clarification',
+      pending_capture_payload: { mode: 'image_context' },
+      pending_capture_missing_fields: [],
+      pending_capture_prompt: '写真の種類をひとことだけ教えてください。',
+      pending_capture_started_at: new Date().toISOString(),
+      pending_capture_source_text: '[image]',
+      pending_capture_attempts: Number(user.pending_capture_attempts || 0) + 1,
+    };
+    await updateUserState(user.id, nextUser);
+
     await replyMessage(
       event.replyToken,
       textMessageWithQuickReplies(
-        '写真を受け取りました。食事ならこのまま食事として見ていきます。血液検査なら整理に進めます。体の写真なら、気になる場所を一言だけ続けてください。',
-        ['食事の写真です', '血液検査です', '相談の写真です']
+        '写真を受け取りました。食事なら「食事の写真です」、血液検査なら「血液検査です」、体の相談なら「相談したい」と一言だけ返してくださいね。',
+        ['食事の写真です', '血液検査です', '相談したい']
       ),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
@@ -123,6 +143,53 @@ async function handleTextMessage(replyToken, text, user, event = {}) {
 
   if (isProfileEditIntent(rawText)) {
     await handleProfileEditStart(replyToken, rawText, user);
+    return;
+  }
+
+  if (hasPendingCapture(user) && user.pending_capture_type === 'image_context') {
+    const handled = await handleImageContextStep(replyToken, rawText, user);
+    if (handled) return;
+  }
+
+  if (isMealImageContextText(rawText)) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。食事の写真として見ていきます。写真だけでも大丈夫です。量や食べた時間で補足があれば、一言だけ続けてください。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  if (isLabImageContextText(rawText)) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。血液検査として整理します。見づらい所があれば、必要な項目だけあとで確認しますね。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  if (isConsultImageContextText(rawText)) {
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。相談の写真として見ます。気になる場所や、いつからかを一言だけ続けてください。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  const graphIntent = detectGraphIntent(rawText);
+  if (graphIntent) {
+    await handleGraphIntent(replyToken, graphIntent, user);
     return;
   }
 
@@ -340,7 +407,7 @@ async function handleProfileEditStart(replyToken, rawText, user) {
       replyToken,
       textMessageWithQuickReplies(
         buildProfilePartialReply({ updates: payload.updates, previewUser: mergedUser }),
-        ['身長 160', '年齢 55', '目標体重 58', '完了']
+        ['年齢 55', '身長 160', '目標 58', '完了']
       ),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
@@ -352,7 +419,7 @@ async function handleProfileEditStart(replyToken, rawText, user) {
     replyToken,
     textMessageWithQuickReplies(
       buildProfileEditStartMessage(),
-      ['体重 62', '身長 160', '年齢 55', '完了']
+      ['体重 62', '身長 160', '目標 58', '完了']
     ),
     env.LINE_CHANNEL_ACCESS_TOKEN
   );
@@ -375,8 +442,8 @@ async function handleProfileEditStep(replyToken, rawText, user) {
     await replyMessage(
       replyToken,
       textMessageWithQuickReplies(
-        '変えたい項目だけ送ってください。1つずつでも大丈夫です。例: 体重 62 / 身長 160 / 年齢 55 / 目標体重 58。終わりなら「完了」で大丈夫です。',
-        ['身長 160', '年齢 55', '目標体重 58', '完了']
+        '変えたい項目だけ送ってください。例: 体重 62 / 身長 160 / 年齢 55 / 目標 58 / 活動量 ふつう。終わりなら「完了」で大丈夫です。',
+        ['体重 62', '身長 160', '目標 58', '完了']
       ),
       env.LINE_CHANNEL_ACCESS_TOKEN
     );
@@ -401,7 +468,7 @@ async function handleProfileEditStep(replyToken, rawText, user) {
     replyToken,
     textMessageWithQuickReplies(
       buildProfilePartialReply({ updates: payload.updates, previewUser: nextUser }),
-      ['体重 62', '身長 160', '年齢 55', '完了']
+      ['体重 62', '身長 160', '目標 58', '完了']
     ),
     env.LINE_CHANNEL_ACCESS_TOKEN
   );
@@ -419,6 +486,131 @@ function clearPendingPatch(user = {}) {
     pending_capture_source_text: null,
     pending_capture_attempts: 0,
   };
+}
+
+
+function normalizeLoose(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[　\s]+/g, '')
+    .replace(/[!！?？。、,.，]/g, '');
+}
+
+function isMealImageContextText(text = '') {
+  const n = normalizeLoose(text);
+  return ['食事の写真です', '食事写真です', 'ご飯の写真です', '料理の写真です', '食事です', 'ご飯です'].some((v) => n.includes(normalizeLoose(v)));
+}
+
+function isLabImageContextText(text = '') {
+  const n = normalizeLoose(text);
+  return ['血液検査です', '血液検査の写真です', '検査結果です', '採血結果です', '血液です'].some((v) => n.includes(normalizeLoose(v)));
+}
+
+function isConsultImageContextText(text = '') {
+  const n = normalizeLoose(text);
+  return ['相談したい', '体の写真です', '痛みの相談です', '相談です'].some((v) => n.includes(normalizeLoose(v)));
+}
+
+function detectGraphIntent(text = '') {
+  const n = normalizeLoose(text);
+  if (!n) return '';
+  if (n.includes(normalizeLoose('体重グラフ'))) return 'weight';
+  if (n.includes(normalizeLoose('食事活動グラフ')) || n.includes(normalizeLoose('食事グラフ')) || n.includes(normalizeLoose('活動グラフ'))) return 'energy';
+  if (n.includes('hba1cグラフ') || n.includes('hba1c')) return 'hba1c';
+  if (n.includes('ldlグラフ') || n == 'ldl') return 'ldl';
+  return '';
+}
+
+async function handleImageContextStep(replyToken, rawText, user) {
+  if (isMealImageContextText(rawText)) {
+    const nextUser = clearPendingPatch(user);
+    await updateUserState(user.id, nextUser);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。食事の写真として見ていきます。写真だけでも大丈夫です。量や食べた時間で補足があれば、一言だけ続けてください。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  if (isLabImageContextText(rawText)) {
+    const nextUser = clearPendingPatch(user);
+    await updateUserState(user.id, nextUser);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。血液検査として整理します。見づらい所があれば、必要な項目だけあとで確認しますね。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  if (isConsultImageContextText(rawText)) {
+    const nextUser = clearPendingPatch(user);
+    await updateUserState(user.id, nextUser);
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies(
+        'ありがとうございます。相談の写真として見ます。気になる場所や、いつからかを一言だけ続けてください。',
+        []
+      ),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return true;
+  }
+
+  return false;
+}
+
+async function handleGraphIntent(replyToken, graphIntent, user) {
+  if (graphIntent === 'weight') {
+    try {
+      const { data, error } = await supabase
+        .from('weight_logs')
+        .select('logged_at, weight_kg, body_fat_pct')
+        .eq('user_id', user.id)
+        .order('logged_at', { ascending: false })
+        .limit(30);
+
+      if (error) throw error;
+
+      if (typeof graphService.buildWeightGraphMessage === 'function') {
+        const graph = graphService.buildWeightGraphMessage(data || []);
+        const messages = [
+          textMessageWithQuickReplies(
+            graph?.text || '体重グラフです。',
+            typeof graphService.buildGraphMenuQuickReplies === 'function'
+              ? graphService.buildGraphMenuQuickReplies()
+              : []
+          ),
+          ...((Array.isArray(graph?.messages) ? graph.messages : []).slice(0, 4)),
+        ];
+        await replyMessage(replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+        return;
+      }
+    } catch (error) {
+      console.warn('⚠️ handleGraphIntent weight failed:', error?.message || error);
+    }
+
+    await replyMessage(
+      replyToken,
+      textMessageWithQuickReplies('体重グラフを出そうとしましたが、今は画像の準備で少しつまずいています。記録自体はたまっています。', []),
+      env.LINE_CHANNEL_ACCESS_TOKEN
+    );
+    return;
+  }
+
+  await replyMessage(
+    replyToken,
+    textMessageWithQuickReplies('このグラフはまだ整え中です。まずは体重グラフから見やすくしていきますね。', []),
+    env.LINE_CHANNEL_ACCESS_TOKEN
+  );
 }
 
 async function replyGuideIntent(replyToken, guideIntent = '') {
@@ -479,7 +671,10 @@ async function handleReadyPendingCapture(replyToken, user, pendingResult = {}) {
 
 async function saveBodyMetrics(replyToken, user, payload = {}) {
   const weightKg = Number(payload.weight_kg);
-  const bodyFatPct = payload.body_fat_pct == null ? null : Number(payload.body_fat_pct);
+  const rawBodyFat = payload.body_fat_pct == null ? null : Number(payload.body_fat_pct);
+  const sourceText = String(payload.source_text || '');
+  const hasExplicitBodyFat = /体脂肪|%|％/.test(sourceText);
+  const bodyFatPct = hasExplicitBodyFat && Number.isFinite(rawBodyFat) ? rawBodyFat : null;
 
   if (!Number.isFinite(weightKg) && !Number.isFinite(bodyFatPct)) {
     await replyMessage(
