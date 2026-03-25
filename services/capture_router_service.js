@@ -12,10 +12,11 @@ const ONBOARDING_KEYWORDS = [
 ];
 
 const FOOD_QUESTION_HINTS = ['お腹すいた', '空腹', '何食べ', 'なに食べ', '食べていい', 'ラーメン', '夜食', '間食'];
+
 const CONSULTATION_HINTS = [
-  '痛い', '痛み', '大丈夫', 'どう思う', 'ダメかな', '不安', '相談', 'つらい', 'しんどい', '違和感',
-  '平気', 'いいですか', 'していい', 'やっていい', '走っていい', '歩いていい', '痺れ', 'しびれ', 'むくみ',
-  '肩', '腰', '膝', '足', '脚', '腕', '首', '頭痛', '痺れてる', '伏せ', 'スクワット',
+  '痛い', '痛み', '大丈夫', 'どう思う', 'ダメかな', '不安', '相談', 'つらい', 'しんどい', '違和感', '平気',
+  'いいですか', 'していい', 'やっていい', '走っていい', '歩いていい', 'しびれ', '痺れ', '痺れてる', '腫れ',
+  '肩が痛い', '腰が痛い', '膝が痛い', '足が痛い', '肩', '腰', '膝', '足', '腕立て', 'スクワット'
 ];
 
 function safeText(value, fallback = '') {
@@ -59,19 +60,15 @@ function extractWeightKg(text) {
   if (m) return Number(m[1]);
   m = t.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
   if (m) return Number(m[1]);
-  if (/^\d{2,3}(?:\.\d+)?$/.test(t)) {
-    const n = Number(t);
-    if (n >= 20 && n <= 300) return n;
-  }
   return null;
 }
 
 function extractBodyFatPercent(text) {
   const t = safeText(text);
-  let m = t.match(/体脂肪(?:率)?\s*[:：]?\s*(\d+(?:\.\d+)?)/);
+  let m = t.match(/体脂肪(?:率)?\s*[:：]?\s*(\d+(?:\.\d+)?)/i);
   if (m) return Number(m[1]);
   m = t.match(/(\d+(?:\.\d+)?)\s*(%|％)/);
-  if (m) return Number(m[1]);
+  if (m && /体脂肪/.test(t)) return Number(m[1]);
   return null;
 }
 
@@ -89,102 +86,58 @@ function looksLikeConsultation(text) {
   return includesAny(normalized, CONSULTATION_HINTS.map(normalizeLoose));
 }
 
-function parseBodyMetrics(text = '') {
-  const raw = safeText(text);
-  if (!raw) return null;
-  const normalized = normalizeLoose(raw);
-  const hasWeightHint = /体重|kg|ｋｇ|キロ/i.test(raw) || /^\d{2,3}(?:\.\d+)?$/.test(raw);
-  const hasBodyFatHint = /体脂肪|%|％/.test(raw);
-  if (!hasWeightHint && !hasBodyFatHint) return null;
-
-  const weightKg = hasWeightHint ? extractWeightKg(raw) : null;
-  const bodyFatPct = hasBodyFatHint ? extractBodyFatPercent(raw) : null;
-
-  if (!Number.isFinite(weightKg) && !Number.isFinite(bodyFatPct)) return null;
-
-  if (Number.isFinite(bodyFatPct) && !Number.isFinite(weightKg) && !normalized.includes('体脂肪') && !/[％%]/.test(raw)) {
-    return null;
-  }
-
-  return {
-    weight_kg: Number.isFinite(weightKg) ? Math.round(weightKg * 10) / 10 : null,
-    body_fat_pct: Number.isFinite(bodyFatPct) ? Math.round(bodyFatPct * 10) / 10 : null,
-    source_text: raw,
-  };
-}
-
 function analyzeNewCaptureCandidate(text = '') {
   const raw = safeText(text);
   const normalized = normalizeLoose(raw);
 
   if (!raw) return { route: 'empty' };
   if (isOnboardingStart(raw)) return { route: 'onboarding_start' };
+  if (looksLikeConsultation(raw)) {
+    return { route: 'consultation', replyText: '' };
+  }
 
-  const metrics = parseBodyMetrics(raw);
-  if (metrics) {
+  const weightKg = extractWeightKg(raw);
+  const bodyFatPercent = extractBodyFatPercent(raw);
+  if (weightKg != null || bodyFatPercent != null) {
     return {
       route: 'body_metrics',
       type: 'body_metrics',
-      payload: metrics,
-    };
-  }
-
-  if (looksLikeConsultation(raw)) {
-    return {
-      route: 'consultation',
-      replyText: '',
+      payload: {
+        weight_kg: weightKg != null ? weightKg : null,
+        body_fat_pct: bodyFatPercent != null ? bodyFatPercent : null,
+      },
     };
   }
 
   if (includesAny(normalized, ['歩いた', '歩く', '散歩', 'ウォーキング', 'ジョギング', 'ランニング', '筋トレ', 'ストレッチ', '運動'])) {
     const duration = extractMinutes(raw);
     const distanceKm = extractDistanceKm(raw);
-    const missingFields = [];
-    if (duration == null && distanceKm == null) missingFields.push('duration_or_distance');
-
     return {
       route: 'record_candidate',
       captureType: 'exercise',
       payload: {
-        activity: null,
+        raw_text: raw,
         duration_min: duration,
         distance_km: distanceKm,
-        source_text: raw,
       },
-      missingFields,
-      replyText: missingFields.length
+      missingFields: duration == null && distanceKm == null ? ['duration_or_distance'] : [],
+      replyText: duration == null && distanceKm == null
         ? '運動の内容は受け取れています。時間か距離がわかれば、そのまま続けて教えてくださいね。'
-        : '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？',
+        : '運動の内容は受け取れています。',
     };
   }
 
-  if (includesAny(normalized, ['食べた', '食事', '朝ごはん', '昼ごはん', '夜ごはん', '朝食', '昼食', '夕食', '飲んだ', 'ラーメン', 'パン', 'おにぎり'])) {
-    return {
-      route: 'record_candidate',
-      captureType: 'meal',
-      payload: {
-        raw_text: raw,
-        source_text: raw,
-      },
-      missingFields: [],
-      replyText: '食事の内容は受け取れています。今日の記録としてまとめてよければ保存しますか？違うところだけ、そのまま教えても大丈夫です。',
-    };
-  }
-
-  return {
-    route: 'conversation',
-    replyText: '',
-  };
+  return { route: 'conversation' };
 }
 
 module.exports = {
   safeText,
   normalizeLoose,
+  includesAny,
   extractMinutes,
   extractDistanceKm,
   extractWeightKg,
   extractBodyFatPercent,
-  parseBodyMetrics,
   isOnboardingStart,
   looksLikeConsultation,
   analyzeNewCaptureCandidate,
