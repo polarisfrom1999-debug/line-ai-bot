@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   parseProfile,
   calculateBMR,
@@ -31,15 +33,7 @@ function normalizeLoose(text = '') {
 function isProfileEditIntent(text = '') {
   const n = normalizeLoose(text);
   if (!n) return false;
-  return [
-    'プロフィール変更',
-    'プロフィール修正',
-    'プロフィール更新',
-    'プロフィール見直し',
-    'プロフィール入力',
-    '設定変更',
-    '設定更新',
-  ].some((word) => n.includes(normalizeLoose(word)));
+  return ['プロフィール変更', 'プロフィール修正', 'プロフィール更新', 'プロフィール見直し', 'プロフィール入力', '設定変更', '設定更新'].some((word) => n.includes(normalizeLoose(word)));
 }
 
 function isProfileEditDoneIntent(text = '') {
@@ -51,7 +45,6 @@ function isProfileEditDoneIntent(text = '') {
 function buildProfileUpdatePayload(currentUser, text) {
   const updates = parseProfile(text);
   if (!Object.keys(updates).length) return null;
-
   const previewUser = { ...currentUser, ...updates };
   const estimated_bmr = calculateBMR(previewUser);
   const estimated_tdee = calculateTDEE(previewUser);
@@ -82,26 +75,12 @@ function buildProfileEditStartMessage() {
 
 function buildChangedFieldLines(updates = {}, previewUser = {}) {
   const lines = [];
-
-  if (Object.prototype.hasOwnProperty.call(updates, 'sex')) {
-    lines.push(`性別を${sexLabel(previewUser.sex) || previewUser.sex}に更新しました。`);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, 'age')) {
-    lines.push(`年齢を${fmt(previewUser.age)}歳に更新しました。`);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, 'height_cm')) {
-    lines.push(`身長を${fmt(previewUser.height_cm)}cmに更新しました。`);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, 'weight_kg')) {
-    lines.push(`体重を${fmt(previewUser.weight_kg)}kgに更新しました。`);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, 'target_weight_kg')) {
-    lines.push(`目標体重を${fmt(previewUser.target_weight_kg)}kgに更新しました。`);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, 'activity_level')) {
-    lines.push(`活動量を${activityLevelLabel(previewUser.activity_level) || previewUser.activity_level}に更新しました。`);
-  }
-
+  if (Object.prototype.hasOwnProperty.call(updates, 'sex')) lines.push(`性別を${sexLabel(previewUser.sex) || previewUser.sex}に更新しました。`);
+  if (Object.prototype.hasOwnProperty.call(updates, 'age')) lines.push(`年齢を${fmt(previewUser.age)}歳に更新しました。`);
+  if (Object.prototype.hasOwnProperty.call(updates, 'height_cm')) lines.push(`身長を${fmt(previewUser.height_cm)}cmに更新しました。`);
+  if (Object.prototype.hasOwnProperty.call(updates, 'weight_kg')) lines.push(`体重を${fmt(previewUser.weight_kg)}kgに更新しました。`);
+  if (Object.prototype.hasOwnProperty.call(updates, 'target_weight_kg')) lines.push(`目標体重を${fmt(previewUser.target_weight_kg)}kgに更新しました。`);
+  if (Object.prototype.hasOwnProperty.call(updates, 'activity_level')) lines.push(`活動量を${activityLevelLabel(previewUser.activity_level) || previewUser.activity_level}に更新しました。`);
   return lines;
 }
 
@@ -109,14 +88,8 @@ function buildProfilePartialReply(payload = {}) {
   const updates = payload?.updates || {};
   const previewUser = payload?.previewUser || {};
   const changedLines = buildChangedFieldLines(updates, previewUser);
-
-  if (!changedLines.length) {
-    return buildProfileEditStartMessage();
-  }
-
-  const lines = [...changedLines];
-  lines.push('ほかにあれば、そのまま続けて送ってください。終わりなら「完了」で大丈夫です。');
-  return lines.join('\n');
+  if (!changedLines.length) return buildProfileEditStartMessage();
+  return [...changedLines, 'ほかにあれば、そのまま続けて送ってください。終わりなら「完了」で大丈夫です。'].join('\n');
 }
 
 function buildProfileReply(user) {
@@ -131,7 +104,6 @@ function buildProfileReply(user) {
     user.estimated_bmr ? `推定基礎代謝: ${fmt(user.estimated_bmr)} kcal/日` : null,
     user.estimated_tdee ? `推定総消費目安: ${fmt(user.estimated_tdee)} kcal/日` : null,
   ].filter(Boolean);
-
   return lines.join('\n');
 }
 
