@@ -47,6 +47,7 @@ function normalizeRecordCandidate(raw = {}) {
       return recordNormalizerService.normalizeRecordCandidate(raw);
     } catch (_err) {}
   }
+
   return {
     type: safeText(raw.type || raw.record_type || raw.kind || 'unknown'),
     confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : 0.5,
@@ -67,14 +68,6 @@ function normalizeText(text = '') {
     .replace(/[!！?？。、,.]/g, '');
 }
 
-function includesAny(text = '', patterns = []) {
-  return patterns.some((pattern) => {
-    if (!pattern) return false;
-    if (pattern instanceof RegExp) return pattern.test(text);
-    return text.includes(String(pattern));
-  });
-}
-
 function extractAllNumbers(text = '') {
   return (
     String(text || '')
@@ -84,22 +77,46 @@ function extractAllNumbers(text = '') {
   );
 }
 
-function isProfileEditText(text = '') {
-  const normalized = normalizeText(text);
-  return includesAny(normalized, ['プロフィール変更', 'プロフィール修正', 'プロフィール更新', '身長', '年齢', '目標体重', '活動量']);
+function includesAny(text = '', patterns = []) {
+  return patterns.some((pattern) => {
+    if (!pattern) return false;
+    if (pattern instanceof RegExp) return pattern.test(text);
+    return text.includes(String(pattern));
+  });
 }
 
 function looksLikeConsultation(text = '') {
   const raw = String(text || '').trim();
   const normalized = normalizeText(raw);
   if (!normalized) return false;
-  if (isProfileEditText(raw)) return false;
   if (/[?？]/.test(raw)) return true;
 
   const patterns = [
-    'どうしたら', 'どうすれば', 'いいですか', 'でしょうか', 'かな', '相談', '不安',
-    '痛い', '頭痛', '腰痛', '膝痛', '違和感', '大丈夫', '平気', 'つらい', 'しんどい',
-    '走っていい', '歩いていい', 'お腹すいた', '何食べ', 'なに食べ', 'ラーメン', '覚えてる'
+    'どうしたら',
+    'どうすれば',
+    'いいですか',
+    'でしょうか',
+    'かな',
+    '相談',
+    '不安',
+    '痛い',
+    '頭痛',
+    '違和感',
+    '大丈夫',
+    '平気',
+    'つらい',
+    'しんどい',
+    '走っていい',
+    '歩いていい',
+    'お腹すいた',
+    '何食べ',
+    'なに食べ',
+    'ラーメン',
+    '名前覚えてる',
+    'プロフィール変更',
+    '相談したい',
+    '食事の写真です',
+    '血液検査です',
   ];
   return includesAny(normalized, patterns);
 }
@@ -108,18 +125,16 @@ function tryBodyMetrics(text = '') {
   const raw = safeText(text);
   const normalized = normalizeText(raw);
   if (!raw) return null;
-  if (looksLikeConsultation(raw)) return null;
-  if (isProfileEditText(raw)) return null;
   if (!includesAny(normalized, ['体重', '体脂肪', 'kg', 'キロ', '%', '％'])) return null;
 
   const numbers = extractAllNumbers(raw);
   if (!numbers.length) return null;
 
-  const weightMatch = raw.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
-  const bodyFatMatch = raw.match(/(\d+(?:\.\d+)?)\s*(%|％)/);
+  const weightMatch = raw.match(/(\d+(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i) || raw.match(/体重\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const bodyFatMatch = raw.match(/(\d+(?:\.\d+)?)\s*[%％]/) || raw.match(/体脂肪(?:率)?\s*([0-9]+(?:\.[0-9]+)?)/i);
 
   const weightKg = weightMatch ? Number(weightMatch[1]) : (numbers[0] >= 20 && numbers[0] <= 300 ? numbers[0] : null);
-  const bodyFatPct = bodyFatMatch ? Number(bodyFatMatch[1]) : (numbers[1] >= 1 && numbers[1] <= 80 ? numbers[1] : null);
+  const bodyFatPct = bodyFatMatch ? Number(bodyFatMatch[1]) : (numbers.find((n) => n >= 1 && n <= 80) || null);
 
   if (weightKg == null && bodyFatPct == null) return null;
 
@@ -140,7 +155,7 @@ function buildPainRoute(text = '') {
 
   const looksLikePain = typeof painSupportService.looksLikePainConsultation === 'function'
     ? painSupportService.looksLikePainConsultation(raw)
-    : includesAny(normalizeText(raw), ['痛い', '痛み', 'しびれ', '違和感', '腫れ', '張る', '頭痛', '腰痛', '膝痛']);
+    : includesAny(normalizeText(raw), ['痛い', '痛み', 'しびれ', '違和感', '腫れ', '張る', '頭痛']);
 
   if (!looksLikePain) return null;
 
@@ -165,8 +180,14 @@ function buildPainRoute(text = '') {
 
 async function buildConversationRoute(text = '', context = {}) {
   if (typeof routeConversation !== 'function') {
-    return { route: 'conversation', replyText: '', source_text: safeText(text), meta: context };
+    return {
+      route: 'conversation',
+      replyText: '',
+      source_text: safeText(text),
+      meta: context,
+    };
   }
+
   try {
     const result = await routeConversation({ currentUserText: text, text, context, recentMessages: [] });
     return {
@@ -177,34 +198,34 @@ async function buildConversationRoute(text = '', context = {}) {
       top_record_candidate: result?.top_record_candidate || null,
     };
   } catch (_err) {
-    return { route: 'conversation', replyText: '', source_text: safeText(text), meta: context };
+    return {
+      route: 'conversation',
+      replyText: '',
+      source_text: safeText(text),
+      meta: context,
+    };
   }
 }
 
 async function analyzeChatCapture(input = {}) {
   const text = safeText(input.text || input.userText || '');
   const context = input.context || {};
+
   if (!text) return null;
 
-  if (looksLikeConsultation(text)) {
-    const painRoute = buildPainRoute(text);
-    if (painRoute && painRoute.replyText) return painRoute;
-    const conversation = await buildConversationRoute(text, context);
-    if (conversation?.replyText || conversation?.route === 'consultation') return conversation;
-    return {
-      route: 'consultation',
-      replyText: '気になっていること、そのまま話してくださいね。状況を見ながら一緒に整理します。',
-      source_text: text,
-    };
-  }
-
   const metrics = tryBodyMetrics(text);
-  if (metrics) return metrics;
+  if (metrics && !looksLikeConsultation(text)) return metrics;
+
+  const painRoute = buildPainRoute(text);
+  if (painRoute && looksLikeConsultation(text)) {
+    if (painRoute.replyText) return painRoute;
+    return await buildConversationRoute(text, context);
+  }
 
   if (typeof recordCandidateService.getTopRecordCandidate === 'function') {
     try {
       const candidate = recordCandidateService.getTopRecordCandidate(text);
-      if (candidate) {
+      if (candidate && !looksLikeConsultation(text)) {
         return {
           route: 'record_candidate',
           candidate: normalizeRecordCandidate(candidate),
@@ -214,6 +235,17 @@ async function analyzeChatCapture(input = {}) {
     } catch (_err) {}
   }
 
+  if (looksLikeConsultation(text)) {
+    const conversation = await buildConversationRoute(text, context);
+    if (conversation?.replyText || conversation?.route === 'consultation') return conversation;
+    return {
+      route: 'consultation',
+      replyText: '気になっていること、そのまま話してくださいね。状況を見ながら一緒に整理します。',
+      source_text: text,
+    };
+  }
+
+  if (metrics) return metrics;
   return buildConversationRoute(text, context);
 }
 
