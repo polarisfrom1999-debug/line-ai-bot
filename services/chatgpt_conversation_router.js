@@ -13,17 +13,6 @@ function hasAny(text = '', patterns = []) {
   return patterns.some((pattern) => t.includes(normalizeText(pattern)));
 }
 
-function parseNumber(text = '') {
-  const m = String(text || '').match(/(-?\d+(?:\.\d+)?)/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
-function isQuestionLike(text = '') {
-  return /[?？]|ですか|ますか|かな|どう|何|なに|教えて/.test(String(text || ''));
-}
-
 function isProcedureIntent(text = '') {
   return hasAny(text, [
     'プラン教えて', '料金教えて', '料金', 'プラン', '無料体験', '体験', '入会', '会員', '契約',
@@ -32,127 +21,82 @@ function isProcedureIntent(text = '') {
 }
 
 function isGraphIntent(text = '') {
-  return hasAny(text, ['グラフ', '体重グラフ', '食事活動グラフ', 'hba1cグラフ', 'ldlグラフ', '血液検査グラフ']);
+  return hasAny(text, [
+    'グラフ', '体重グラフ', '体重推移', '体重の流れ', '食事活動グラフ', 'hba1cグラフ', 'ldlグラフ', '血液検査グラフ',
+    'hba1cを見たい', 'ldlを見たい', 'hba1c見たい', 'ldl見たい', '血液検査を見たい', 'hba1c', 'ldl'
+  ]);
 }
 
-function isWeightOnly(text = '') {
-  const t = normalizeText(text);
-  if (!t) return false;
-  return /^\d{2,3}(?:\.\d+)?(?:kg|キロ)?$/.test(t) || /体重\d/.test(t);
-}
-
-function isBodyFatOnly(text = '') {
-  const t = normalizeText(text);
-  if (!t) return false;
-  return t.includes('体脂肪') || /^\d{1,2}(?:\.\d+)?(?:%|％)$/.test(t);
-}
-
-function isExerciseRecord(text = '') {
-  return hasAny(text, ['歩いた', 'ウォーキング', '散歩', '走った', 'ジョギング', 'ランニング', '筋トレ', 'ストレッチ']) && !isQuestionLike(text);
-}
-
-function isMealRecord(text = '') {
-  return hasAny(text, ['食べた', '食事', '朝ごはん', '昼ごはん', '夜ごはん', '朝食', '昼食', '夕食', 'おやつ', '飲んだ']) && !isQuestionLike(text);
-}
-
-function buildWeightCandidate(text = '') {
-  const n = parseNumber(text);
-  if (!Number.isFinite(n)) return null;
-  return { type: 'weight', parsed_payload: { weight_kg: n }, confidence: 0.96, source_text: text };
-}
-
-function buildBodyFatCandidate(text = '') {
-  const n = parseNumber(text);
-  if (!Number.isFinite(n)) return null;
-  return { type: 'body_fat', parsed_payload: { body_fat_percent: n }, confidence: 0.95, source_text: text };
-}
-
-function buildExerciseCandidate(text = '') {
-  return { type: 'exercise', parsed_payload: { raw_text: String(text || '').trim() }, confidence: 0.8, source_text: text };
-}
-
-function buildMealCandidate(text = '') {
-  return { type: 'meal', parsed_payload: { raw_text: String(text || '').trim() }, confidence: 0.78, source_text: text };
-}
-
-function isProfileEditIntent(text = '') {
-  return hasAny(text, ['プロフィール変更', 'プロフィール修正', 'プロフィール更新', '設定変更']);
-}
-
-function isMemoryQuestion(text = '') {
-  return hasAny(text, ['名前覚えてる', '私の名前覚えてる', '前に何て言った', '前に何言った', '覚えてる?', '覚えてる？']);
-}
-
-function isImageFollowupMeal(text = '') {
-  return hasAny(text, ['食事の写真です', 'ごはんの写真です', '料理の写真です', 'この写真です']);
-}
-
-function isImageFollowupLab(text = '') {
-  return hasAny(text, ['血液検査です', '検査結果です', '採血結果です']);
-}
-
-function isConsultStarter(text = '') {
-  return hasAny(text, ['相談したい', '少し相談', '聞いてほしい']);
-}
-
-function buildMemoryReply(text = '', context = {}) {
-  const name = String(context?.display_name || '').trim();
-  if (hasAny(text, ['名前覚えてる', '私の名前覚えてる'])) {
-    if (name) {
-      return `${name}さんとして見ています。呼び方を変えたい時は、そのまま教えてくださいね。`;
-    }
-    return 'まだ呼び方ははっきり受け取れていません。呼んでほしい名前があれば、そのまま送ってくださいね。';
-  }
-  return '前のお話は全部をそのまま返す形ではないですが、今後の伴走に必要そうなことは少しずつ踏まえて見ています。気になる点があれば、そのまま言ってくださいね。';
+function isQuestionLike(text = '') {
+  return /[?？]|ですか|ますか|かな|どう|何|なに|教えて|見たい/.test(String(text || ''));
 }
 
 function buildConsultationReply(text = '', context = {}) {
   const raw = String(text || '').trim();
   const t = normalizeText(raw);
+  const displayName = String(context?.display_name || '').trim();
+  const currentWeight = Number(context?.weight_kg);
 
-  if (isImageFollowupMeal(raw)) {
-    return 'ありがとうございます。食事の写真として見ていきます。写真だけでも大丈夫ですし、補足があれば一言だけ続けてください。';
+  if (hasAny(t, ['私の名前覚えてる', '名前覚えてる', '名前わかる'])) {
+    return displayName
+      ? `${displayName}さんとして見ています。呼び方を変えたい時は、そのまま教えてくださいね。`
+      : 'お名前はまだこちらでうまく拾えていないので、呼び方があればそのまま教えてくださいね。';
   }
-  if (isImageFollowupLab(raw)) {
-    return 'ありがとうございます。血液検査として整理していきます。数値が見づらい所があれば、あとで必要な所だけ確認しますね。';
+
+  if (hasAny(t, ['私の体重覚えてる', '体重覚えてる'])) {
+    return Number.isFinite(currentWeight)
+      ? `今こちらで見えている体重は ${currentWeight}kg です。違っていたら、そのまま新しい数字を送ってくださいね。`
+      : '体重はまだこちらで確定できていないので、今の数字をそのまま送ってもらえれば大丈夫です。';
   }
-  if (isConsultStarter(raw)) {
-    return 'もちろん大丈夫です。今いちばん気になっていることから、そのまま話してくださいね。';
+
+  if (hasAny(t, ['お腹すいた', '空いてる', '何食べ', 'なに食べ'])) {
+    return 'かなりお腹が空いていそうですね。まずはたんぱく質が入るものを先にすると落ち着きやすいです。ゆで卵、豆腐、サラダチキンみたいな軽めのものから入るのが無難ですよ。';
   }
-  if (isMemoryQuestion(raw)) {
-    return buildMemoryReply(raw, context);
-  }
-  if (isProfileEditIntent(raw)) {
-    return 'プロフィール変更ですね。変えたい項目をそのまま送ってください。';
-  }
-  if (hasAny(t, ['頭痛', '頭が痛い', '頭いたい'])) {
-    return '頭痛つらいですね。今は無理に動かず、水分が取れそうなら少しだけでも大丈夫です。いつからか、ズキズキか重い感じかだけでも分かると見やすいです。';
-  }
-  if (hasAny(t, ['お腹すいた', 'お腹空いた', '空腹'])) {
-    return 'お腹すいたんですね。まずはたんぱく質が入る軽めのものを先に入れると落ち着きやすいです。ゆで卵、豆腐、味噌汁あたりからでも十分です。';
-  }
-  if (hasAny(t, ['何食べ', 'なに食べ', '夜ご飯', '夜ごはん'])) {
-    return '今の時間なら、重すぎないものが安心です。たんぱく質と温かいものを先にすると整えやすいので、魚、豆腐、卵、汁物あたりが無難ですよ。';
-  }
+
   if (hasAny(t, ['ラーメン'])) {
-    return 'ラーメンでも大丈夫です。食べるなら、今日は汁を飲み切らないことと、卵や肉が入るものを選べると重くなりにくいです。';
+    return 'ラーメンでも大丈夫ですが、今日はできれば汁を飲み切らないことと、卵や肉が入るものを選べると重くなりにくいです。食べるならその後の間食は少し控えめで十分です。';
   }
-  if (hasAny(t, ['膝が痛い', '膝痛', '膝いたい'])) {
-    return '膝、気になりますね。歩くこと自体は様子を見ながらでもいいことがありますが、歩くたびに強くなるなら今日は広げすぎない方が安心です。平地で少し試して響くかを見たいです。';
+
+  if (hasAny(t, ['痺れ', 'しびれ', '痺れてる'])) {
+    return 'しびれは少し丁寧に見たいです。今日は無理に広げず、じっとしていてもあるのか、動いた時に強くなるのかをまず見たいです。力が入りにくい・範囲が広がる感じがあれば早めに相談してくださいね。';
   }
-  if (hasAny(t, ['腰が痛い', '腰痛', '腰がずっと痛い'])) {
+
+  if (hasAny(t, ['肩']) && hasAny(t, ['腕立て', '伏せ'])) {
+    return '肩が痛い中で腕立て伏せは、今日は無理に広げない方が安全です。上げる動きで痛むのか、前から痛いのかを見ながら、まずは負荷の低い動きにしておきましょう。';
+  }
+
+  if ((hasAny(t, ['足', '脚', '膝']) || hasAny(t, ['スクワット'])) && hasAny(t, ['スクワット'])) {
+    return '足が痛い状態なら、今日はスクワットは無理に広げない方がよさそうです。しゃがむ途中で強くなるのか、立ち上がりで響くのかをまず見たいです。';
+  }
+
+  if (hasAny(t, ['膝']) && hasAny(t, ['歩いていい', '歩いて良い', '歩いて'])) {
+    return '膝ですね。平らな所を少し歩く程度で痛みが増えないなら様子見はできますが、今日は距離を伸ばしすぎない方が安全です。歩いて強くなるなら早めに止めましょう。';
+  }
+
+  if (hasAny(t, ['腰が痛い', '腰痛', '腰'])) {
+    if (hasAny(t, ['ジョギング', '走'])) {
+      return '腰が痛い中で走るのは、今日は無理に広げない方が安全です。歩いて響くか、前かがみや反る動きで増えるかをまず見たいです。';
+    }
     return '腰、気になりますね。今日は無理にひねったり走ったりは広げず、じっとしていても痛いのか、動くと強くなるのかをまず見たいです。';
   }
-  if (hasAny(t, ['痛い', '痛み', 'しびれ', '違和感'])) {
+
+  if (hasAny(t, ['頭痛', '頭痛い'])) {
+    return '頭痛はつらいですね。まずは水分や休みやすさを見ながら、いつもより強いか、長引いているかを見たいです。強い痛みやいつもと違う感じがあれば無理せず相談してくださいね。';
+  }
+
+  if (hasAny(t, ['痛い', '痛み', '違和感'])) {
     return 'その痛み、気になりますね。無理に広げず、いつからか・どこで強くなるかを少しずつ見ていきましょう。';
   }
-  if (hasAny(t, ['不安', 'しんどい', 'つらい', '落ちる'])) {
-    return 'その感じ、ひとりで抱えるとしんどいですよね。今いちばん引っかかっていることからで大丈夫なので、そのまま話してください。';
+
+  if (hasAny(t, ['不安', 'つらい', 'しんどい'])) {
+    return 'それはしんどいですね。今は全部まとめなくて大丈夫なので、いちばん気になることから一つずつ見ていきましょう。';
   }
+
   if (hasAny(t, ['食べていい', '大丈夫かな'])) {
-    return '大丈夫です。量と選び方を少し整えれば戻しやすいので、何を食べようか一緒に考えましょう。';
+    return '食べても大丈夫です。量と選び方を少し整えれば十分戻せるので、何を食べようか一緒に考えましょう。';
   }
-  return '今気になっていることを、そのまま一つだけでも大丈夫です。いっしょに見ていきましょう。';
+
+  return '話してくれてありがとうございます。今いちばん気になるところから、一緒に見ていきましょう。';
 }
 
 async function routeConversation({ currentUserText = '', text = '', recentMessages = [], context = {} } = {}) {
@@ -170,33 +114,11 @@ async function routeConversation({ currentUserText = '', text = '', recentMessag
     };
   }
 
-  if (isMemoryQuestion(raw)) {
-    const reply = buildMemoryReply(raw, context);
-    return { route: 'consultation', is_ambiguous: false, needs_clarification: false, replyText: reply, reply_text: reply, meta: { topic_hints: { memory: true } } };
-  }
-
-  if (isProfileEditIntent(raw)) {
-    const reply = 'プロフィール変更ですね。変えたい項目をそのまま送ってください。';
-    return { route: 'consultation', is_ambiguous: false, needs_clarification: false, replyText: reply, reply_text: reply, meta: { topic_hints: { profile_edit: true } } };
-  }
-
   if (isProcedureIntent(raw)) {
     return { route: 'procedure', is_ambiguous: false, needs_clarification: false, meta: { topic_hints: { procedure: true } } };
   }
   if (isGraphIntent(raw)) {
     return { route: 'graph', is_ambiguous: false, needs_clarification: false, meta: { topic_hints: { graph: true } } };
-  }
-  if (isWeightOnly(raw)) {
-    return { route: 'record_candidate', is_ambiguous: false, needs_clarification: false, top_record_candidate: buildWeightCandidate(raw), meta: { topic_hints: { weight: true } } };
-  }
-  if (isBodyFatOnly(raw)) {
-    return { route: 'record_candidate', is_ambiguous: false, needs_clarification: false, top_record_candidate: buildBodyFatCandidate(raw), meta: { topic_hints: { body_fat: true } } };
-  }
-  if (isExerciseRecord(raw)) {
-    return { route: 'record_candidate', is_ambiguous: false, needs_clarification: false, top_record_candidate: buildExerciseCandidate(raw), meta: { topic_hints: { exercise: true } } };
-  }
-  if (isMealRecord(raw)) {
-    return { route: 'record_candidate', is_ambiguous: false, needs_clarification: false, top_record_candidate: buildMealCandidate(raw), meta: { topic_hints: { meal: true } } };
   }
 
   const reply = buildConsultationReply(raw, context);
