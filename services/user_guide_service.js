@@ -2,13 +2,6 @@
 
 /**
  * services/user_guide_service.js
- *
- * 目的:
- * - 初回ガイド
- * - ヘルプ
- * - 何を送ればよいか
- * - FAQ
- * を共通文面としてまとめる
  */
 
 const { buildTypeSelectionGuide } = require('./type_recommendation_service');
@@ -22,6 +15,18 @@ function normalizeLoose(text) {
     .toLowerCase()
     .replace(/[！!？?。.,，、]/g, '')
     .replace(/\s+/g, '');
+}
+
+function hasDigits(text) {
+  return /\d/.test(String(text || ''));
+}
+
+function looksLikeHowToRequest(text = '') {
+  const n = normalizeLoose(text);
+  if (!n) return false;
+  if (n === 'ヘルプ' || n === 'help' || n === 'メニュー' || n === '使い方') return true;
+  if (n.includes('送り方') || n.includes('使い方') || n.includes('教えて') || n.includes('知りたい')) return true;
+  return false;
 }
 
 function buildFirstGuideMessage(opts = {}) {
@@ -170,19 +175,28 @@ function buildFullUserGuideMessage(opts = {}) {
 }
 
 function detectGuideIntent(text) {
-  const n = normalizeLoose(text);
-
+  const raw = safeText(text);
+  const n = normalizeLoose(raw);
   if (!n) return '';
-  if (n.includes('ヘルプ') || n.includes('使い方')) return 'help';
-  if (n.includes('食事')) return 'food';
-  if (n.includes('運動') || n.includes('ストレッチ')) return 'exercise';
-  if (n.includes('体重') || n.includes('体脂肪')) return 'weight';
-  if (n.includes('相談')) return 'consult';
-  if (n.includes('血液検査')) return 'lab';
-  if (n.includes('タイプ')) return 'type';
-  if (n.includes('無料体験')) return 'trial';
-  if (n.includes('プラン')) return 'plan';
+
+  const howTo = looksLikeHowToRequest(raw);
+  const exactShort = n.length <= 8;
+
+  if (n === 'ヘルプ' || n === 'help' || n === 'メニュー' || n === '使い方') return 'help';
   if (n.includes('faq') || n.includes('よくある')) return 'faq';
+
+  if (hasDigits(raw) && !howTo) return '';
+
+  if (howTo || exactShort) {
+    if (n.includes('食事の送り方') || n === '食事') return 'food';
+    if (n.includes('運動の送り方') || n.includes('ストレッチの送り方') || n === '運動') return 'exercise';
+    if (n.includes('体重の送り方') || n.includes('体脂肪率の送り方') || n === '体重') return 'weight';
+    if (n.includes('相談の送り方')) return 'consult';
+    if (n.includes('血液検査の送り方') || n === '血液検査') return 'lab';
+    if (n.includes('タイプ')) return 'type';
+    if (n.includes('無料体験')) return 'trial';
+    if (n.includes('プラン')) return 'plan';
+  }
 
   return '';
 }
