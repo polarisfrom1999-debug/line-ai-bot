@@ -1,3 +1,5 @@
+'use strict';
+
 const { round0, round1 } = require('../utils/formatters');
 
 function safeText(value) {
@@ -32,84 +34,34 @@ function findLabeledNumber(text, patterns = []) {
 function parseSex(text) {
   const raw = safeText(text);
   if (!raw) return null;
-
   if (/(性別\s*[:：は=]?\s*男性|性別\s*[:：は=]?\s*男|\b男性\b|\b男\b)/.test(raw)) return 'male';
   if (/(性別\s*[:：は=]?\s*女性|性別\s*[:：は=]?\s*女|\b女性\b|\b女\b)/.test(raw)) return 'female';
   return null;
 }
 
 function parseAge(text) {
-  const raw = safeText(text);
-  return findLabeledNumber(raw, [
-    /年齢\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i,
-    /(-?\d+(?:\.\d+)?)\s*(?:歳|才)/i,
-  ]);
+  return findLabeledNumber(text, [/年齢\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i, /(-?\d+(?:\.\d+)?)\s*(?:歳|才)/i]);
 }
 
 function parseHeight(text) {
-  const raw = safeText(text);
-  return findLabeledNumber(raw, [
-    /身長\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i,
-    /身長\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)\s*(?:cm|ｃｍ)/i,
-  ]);
+  return findLabeledNumber(text, [/身長\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i, /身長\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)\s*(?:cm|ｃｍ)/i]);
 }
 
 function parseWeight(text) {
-  const raw = safeText(text);
-  return findLabeledNumber(raw, [
-    /(?:現在)?体重\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i,
-  ]);
+  return findLabeledNumber(text, [/(?:現在)?体重\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i]);
 }
 
 function parseTargetWeight(text) {
-  const raw = safeText(text);
-  return findLabeledNumber(raw, [
-    /目標体重\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i,
-    /目標\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:kg|ｋｇ|キロ))?/i,
-  ]);
+  return findLabeledNumber(text, [/目標体重\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)/i, /目標\s*[:：は=]?\s*(-?\d+(?:\.\d+)?)(?:\s*(?:kg|ｋｇ|キロ))?/i]);
 }
 
 function parseActivityLevel(text) {
   const t = normalizeLoose(text);
   if (!t) return null;
-
-  if (
-    t.includes('活動量高い') ||
-    t.includes('活動量激しい') ||
-    t.includes('活動量多い') ||
-    t.includes('日常活動量高い') ||
-    t.includes('仕事でよく動く') ||
-    t.includes('かなり動く') ||
-    t.includes('激しい')
-  ) return 'high';
-
-  if (
-    t.includes('活動量やや高い') ||
-    t.includes('日常活動量やや高い') ||
-    t.includes('週3回以上') ||
-    t.includes('よく動く')
-  ) return 'moderate_high';
-
-  if (
-    t.includes('活動量ふつう') ||
-    t.includes('活動量普通') ||
-    t.includes('日常活動量ふつう') ||
-    t.includes('日常活動量普通') ||
-    t.includes('たまに動く') ||
-    t.includes('週1〜2回') ||
-    t.includes('週1-2回') ||
-    t.includes('普通') ||
-    t.includes('ふつう')
-  ) return 'moderate';
-
-  if (
-    t.includes('活動量低い') ||
-    t.includes('日常活動量低い') ||
-    t.includes('ほぼ運動なし') ||
-    t.includes('あまり動かない') ||
-    t.includes('低い')
-  ) return 'low';
-
+  if (t.includes('活動量高い') || t.includes('活動量激しい') || t.includes('活動量多い') || t.includes('日常活動量高い') || t.includes('仕事でよく動く') || t.includes('かなり動く') || t.includes('激しい')) return 'high';
+  if (t.includes('活動量やや高い') || t.includes('日常活動量やや高い') || t.includes('週3回以上') || t.includes('よく動く')) return 'moderate_high';
+  if (t.includes('活動量ふつう') || t.includes('活動量普通') || t.includes('日常活動量ふつう') || t.includes('日常活動量普通') || t.includes('たまに動く') || t.includes('週1〜2回') || t.includes('週1-2回') || t.includes('普通') || t.includes('ふつう')) return 'moderate';
+  if (t.includes('活動量低い') || t.includes('日常活動量低い') || t.includes('ほぼ運動なし') || t.includes('あまり動かない') || t.includes('低い')) return 'low';
   return null;
 }
 
@@ -148,26 +100,17 @@ function getActivityMultiplier(activityLevel) {
 
 function calculateBMR(user) {
   if (!user?.sex || !user?.age || !user?.height_cm || !user?.weight_kg) return null;
-
   const w = Number(user.weight_kg);
   const h = Number(user.height_cm);
   const a = Number(user.age);
-
   if (!Number.isFinite(w) || !Number.isFinite(h) || !Number.isFinite(a)) return null;
-
-  if (user.sex === 'male') {
-    return round1(10 * w + 6.25 * h - 5 * a + 5);
-  }
-
-  return round1(10 * w + 6.25 * h - 5 * a - 161);
+  return user.sex === 'male' ? round1(10 * w + 6.25 * h - 5 * a + 5) : round1(10 * w + 6.25 * h - 5 * a - 161);
 }
 
 function calculateTDEE(user) {
   const bmr = calculateBMR(user);
   if (!bmr) return null;
-
-  const multiplier = getActivityMultiplier(user.activity_level);
-  return round1(bmr * multiplier);
+  return round1(bmr * getActivityMultiplier(user.activity_level));
 }
 
 function profileGuideMessage() {
