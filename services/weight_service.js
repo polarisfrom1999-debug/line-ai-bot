@@ -1,29 +1,36 @@
 'use strict';
 
+function extractNumber(text) {
+  const m = String(text || '').match(/(\d{1,3}(?:\.\d+)?)/);
+  return m ? Number(m[1]) : null;
+}
+
 function extractWeight(text = '') {
-  const raw = String(text || '').trim();
-  let m = raw.match(/体重\s*[:：]?\s*(\d{2,3}(?:\.\d+)?)/i);
-  if (m) return Number(m[1]);
-  m = raw.match(/(\d{2,3}(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
-  if (m) return Number(m[1]);
-  if (/^\d{2,3}(?:\.\d+)?$/.test(raw)) return Number(raw);
+  const raw = String(text || '');
+  const explicit = raw.match(/体重\s*[:：]?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (explicit) return Number(explicit[1]);
+  const kg = raw.match(/(\d{1,3}(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
+  if (kg) return Number(kg[1]);
   return null;
 }
 
 function extractBodyFat(text = '') {
-  const raw = String(text || '').trim();
-  let m = raw.match(/体脂肪(?:率)?\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)/);
-  if (m) return Number(m[1]);
-  if (/体脂肪|%|％/.test(raw)) {
-    m = raw.match(/(\d{1,2}(?:\.\d+)?)\s*(%|％)/);
-    if (m) return Number(m[1]);
-  }
+  const raw = String(text || '');
+  const explicit = raw.match(/体脂肪(?:率)?\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)/);
+  if (explicit) return Number(explicit[1]);
+  const pct = raw.match(/(\d{1,2}(?:\.\d+)?)\s*(%|％)/);
+  if (pct && /体脂肪/.test(raw)) return Number(pct[1]);
   return null;
 }
 
 function isWeightIntent(text = '') {
   const t = String(text || '').trim();
-  return /体重|体脂肪|kg|ｋｇ|キロ|%|％/.test(t) || /^\d{2,3}(?:\.\d+)?$/.test(t);
+  return /体重/.test(t) || /(kg|ｋｇ|キロ)/i.test(t) || /^\d{2,3}(?:\.\d+)?$/.test(t);
+}
+
+function isBodyFatIntent(text = '') {
+  const t = String(text || '').trim();
+  return /体脂肪/.test(t) || /^\d{1,2}(?:\.\d+)?\s*(%|％)$/.test(t);
 }
 
 function parseWeightLog(text = '') {
@@ -31,7 +38,7 @@ function parseWeightLog(text = '') {
   const weight = extractWeight(t);
   const bodyFat = extractBodyFat(t);
 
-  if (!Number.isFinite(weight) && !Number.isFinite(bodyFat)) return null;
+  if (weight == null && bodyFat == null) return null;
 
   return {
     weight_kg: Number.isFinite(weight) && weight >= 20 && weight <= 300 ? weight : null,
@@ -40,20 +47,39 @@ function parseWeightLog(text = '') {
 }
 
 function buildWeightSaveMessage(log = {}) {
-  const lines = [];
-  if (Number.isFinite(Number(log.weight_kg))) lines.push(`体重: ${Number(log.weight_kg)} kg`);
-  if (Number.isFinite(Number(log.body_fat_pct))) lines.push(`体脂肪率: ${Number(log.body_fat_pct)} %`);
-
-  const title = lines.length > 1 ? '体重と体脂肪率を記録しました。' : (lines[0]?.startsWith('体脂肪率') ? '体脂肪率を記録しました。' : '体重を記録しました。');
+  const lines = [
+    '体重を記録しました。',
+    log.weight_kg != null ? `体重: ${log.weight_kg} kg` : null,
+    log.body_fat_pct != null ? `体脂肪率: ${log.body_fat_pct} %` : null,
+    '小さく続けることが大事です。',
+  ].filter(Boolean);
 
   return {
-    text: [title, ...lines, '小さく続けることが大事です。'].filter(Boolean).join('\n'),
-    quickReplies: ['体重グラフ', '予測', '食事を記録', '少し歩いた'],
+    text: lines.join('\n'),
+    quickReplies: ['体重グラフ', '予測', '食事の写真です', '相談したい'],
+  };
+}
+
+function buildBodyFatSaveMessage(log = {}) {
+  const lines = [
+    '体脂肪率を受け取りました。',
+    log.body_fat_pct != null ? `体脂肪率: ${log.body_fat_pct} %` : null,
+    '体重も一緒にあると流れが見やすくなります。',
+  ].filter(Boolean);
+
+  return {
+    text: lines.join('\n'),
+    quickReplies: ['体重 62.4kg', '体重グラフ', '予測'],
   };
 }
 
 module.exports = {
+  extractNumber,
+  extractWeight,
+  extractBodyFat,
   isWeightIntent,
+  isBodyFatIntent,
   parseWeightLog,
   buildWeightSaveMessage,
+  buildBodyFatSaveMessage,
 };
