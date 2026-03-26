@@ -1,51 +1,45 @@
 'use strict';
 
-const { fmt } = require('../utils/formatters');
+/**
+ * services/weight_service.js
+ *
+ * 役割:
+ * - 体重/体脂肪率の自然文を扱いやすくする
+ */
 
-function extractBodyFat(text) {
-  const direct = String(text || '').match(/体脂肪(?:率)?\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)/);
-  if (direct) return Number(direct[1]);
-  const percentOnly = String(text || '').match(/^(\d{1,2}(?:\.\d+)?)\s*[%％]$/);
-  return percentOnly ? Number(percentOnly[1]) : null;
-}
-
-function isWeightIntent(text) {
-  const t = String(text || '').trim();
-  return /体重|kg|キロ/i.test(t) || /^\d{2,3}(?:\.\d+)?$/.test(t);
-}
-
-function parseWeightLog(text) {
-  const t = String(text || '').trim();
-  const weightDirect = t.match(/体重\s*[:：]?\s*(\d{2,3}(?:\.\d+)?)/i);
-  const weightWithUnit = t.match(/(\d{2,3}(?:\.\d+)?)\s*(kg|ｋｇ|キロ)/i);
-  const bodyFat = extractBodyFat(t);
-
-  let weight = null;
-  if (weightDirect) weight = Number(weightDirect[1]);
-  else if (weightWithUnit) weight = Number(weightWithUnit[1]);
-  else if (/^\d{2,3}(?:\.\d+)?$/.test(t)) weight = Number(t);
-
+function parseWeightText(text) {
+  const safe = String(text || '').trim();
+  const weightMatch = safe.match(/(\d{2,3}(?:\.\d+)?)\s*kg/i);
+  const bodyFatMatch = safe.match(/体脂肪(?:率)?\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)\s*%?/);
   return {
-    weight_kg: Number.isFinite(weight) && weight >= 20 && weight <= 300 ? weight : null,
-    body_fat_pct: Number.isFinite(bodyFat) && bodyFat >= 1 && bodyFat <= 80 ? bodyFat : null,
+    weightKg: weightMatch ? Number(weightMatch[1]) : null,
+    bodyFatPercent: bodyFatMatch ? Number(bodyFatMatch[1]) : null,
+    isMorning: /今朝/.test(safe),
+    isToday: /今日|今朝/.test(safe),
+    rawText: safe
   };
 }
 
-function buildWeightSaveMessage(log) {
-  const lines = [
-    log.weight_kg != null ? `体重 ${fmt(log.weight_kg)}kg を記録しました。` : null,
-    log.body_fat_pct != null ? `体脂肪率 ${fmt(log.body_fat_pct)}% も受け取りました。` : null,
-    'また変化があればそのまま送ってくださいね。',
-  ].filter(Boolean);
+function detectWeightTrendHint(weightKg, recentWeights) {
+  const rows = Array.isArray(recentWeights) ? recentWeights : [];
+  if (!rows.length || weightKg == null) return null;
+  const last = rows[rows.length - 1];
+  if (typeof last?.weightKg !== 'number') return null;
+  const diff = weightKg - last.weightKg;
+  if (Math.abs(diff) < 0.3) return 'plateau_possible';
+  if (diff > 0.5) return 'temporary_increase';
+  if (diff < -0.5) return 'moving_down';
+  return null;
+}
 
-  return {
-    text: lines.join('\n'),
-    quickReplies: ['今日のまとめ', '体重グラフ', '予測', '食事を記録'],
-  };
+function detectEmotionalRiskHint(text) {
+  const safe = String(text || '');
+  if (/減らない|増えた|停滞|最悪|やばい/.test(safe)) return 'may_feel_discouraged';
+  return null;
 }
 
 module.exports = {
-  isWeightIntent,
-  parseWeightLog,
-  buildWeightSaveMessage,
+  parseWeightText,
+  detectWeightTrendHint,
+  detectEmotionalRiskHint
 };
