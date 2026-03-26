@@ -1,73 +1,53 @@
 'use strict';
 
-const { round1, fmt } = require('../utils/formatters');
+/**
+ * services/energy_service.js
+ *
+ * 役割:
+ * - 運動文から時間や距離をざっくり抽出
+ * - follow-up の kcal 質問にもつなぎやすくする
+ */
 
-function normalizeNumber(value) {
-  if (value == null || value === '') return 0;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
+function parseExerciseText(text) {
+  const safe = String(text || '').trim();
+  const minutesMatch = safe.match(/(\d+)\s*分/);
+  const kmMatch = safe.match(/(\d+(?:\.\d+)?)\s*(km|キロ)/i);
 
-function calculateDailyEnergyBalance({
-  estimatedBmr = 0,
-  estimatedTdee = 0,
-  intakeKcal = 0,
-  activityKcal = 0,
-}) {
-  const bmr = normalizeNumber(estimatedBmr);
-  const tdee = normalizeNumber(estimatedTdee);
-  const intake = normalizeNumber(intakeKcal);
-  const activity = normalizeNumber(activityKcal);
-
-  const baseBurn = tdee > 0 ? tdee : bmr;
-  const totalBurn = round1(baseBurn + activity);
-  const balance = round1(intake - totalBurn);
+  let activityType = 'exercise';
+  if (/歩い|散歩/.test(safe)) activityType = 'walk';
+  else if (/ジョギング|走/.test(safe)) activityType = 'jogging';
+  else if (/筋トレ/.test(safe)) activityType = 'strength';
+  else if (/ストレッチ/.test(safe)) activityType = 'stretch';
 
   return {
-    estimated_bmr: round1(bmr),
-    estimated_tdee: round1(tdee),
-    intake_kcal: round1(intake),
-    activity_kcal: round1(activity),
-    total_burn_kcal: round1(totalBurn),
-    balance_kcal: round1(balance),
+    activityType,
+    durationMinutes: minutesMatch ? Number(minutesMatch[1]) : null,
+    distanceKm: kmMatch ? Number(kmMatch[1]) : null,
+    rawText: safe
   };
 }
 
-function getBalanceComment(balanceKcal) {
-  const balance = normalizeNumber(balanceKcal);
-  if (balance <= -500) return 'かなりマイナス寄りです。食べなさすぎにならないかも見ながらいきましょう。';
-  if (balance < -150) return 'ややマイナス寄りで、体重管理には良い流れです。';
-  if (balance <= 150) return '収支は大きくは崩れていません。落ち着いた1日です。';
-  if (balance <= 400) return '少しプラス寄りです。次の食事か活動でやさしく戻せます。';
-  return 'しっかりプラス寄りです。責めずに、次を少し整えれば大丈夫です。';
+function estimateCalories(parsed) {
+  if (!parsed) return null;
+  const minutes = parsed.durationMinutes || 0;
+  switch (parsed.activityType) {
+    case 'walk': return minutes ? Math.round(minutes * 3.5) : null;
+    case 'jogging': return minutes ? Math.round(minutes * 7.5) : null;
+    case 'strength': return minutes ? Math.round(minutes * 5.0) : null;
+    case 'stretch': return minutes ? Math.round(minutes * 2.5) : null;
+    default: return minutes ? Math.round(minutes * 4.0) : null;
+  }
 }
 
-function buildEnergySummaryText({
-  estimatedBmr = 0,
-  estimatedTdee = 0,
-  intakeKcal = 0,
-  activityKcal = 0,
-}) {
-  const result = calculateDailyEnergyBalance({
-    estimatedBmr,
-    estimatedTdee,
-    intakeKcal,
-    activityKcal,
-  });
-
-  return [
-    result.estimated_bmr ? `推定基礎代謝: ${fmt(result.estimated_bmr)} kcal` : null,
-    result.estimated_tdee ? `推定総消費目安: ${fmt(result.estimated_tdee)} kcal` : null,
-    `食事摂取: ${fmt(result.intake_kcal)} kcal`,
-    `活動消費: ${fmt(result.activity_kcal)} kcal`,
-    `ざっくり収支: ${fmt(result.balance_kcal)} kcal`,
-    getBalanceComment(result.balance_kcal),
-  ].filter(Boolean).join('\n');
+function detectExerciseCautionHint(text) {
+  const safe = String(text || '');
+  if (/痛い|痛み|首|腰|膝|骨折/.test(safe)) return 'pain_related_limit';
+  if (/疲れた|しんどい|眠い/.test(safe)) return 'fatigue_related_limit';
+  return null;
 }
 
 module.exports = {
-  normalizeNumber,
-  calculateDailyEnergyBalance,
-  getBalanceComment,
-  buildEnergySummaryText,
+  parseExerciseText,
+  estimateCalories,
+  detectExerciseCautionHint
 };
