@@ -1,4 +1,4 @@
-services/gemini_image_analysis_service.js
+
 'use strict';
 
 /**
