@@ -3,104 +3,123 @@
 /**
  * services/record_normalizer_service.js
  *
- * 目的:
- * - 食事 / 運動 / 体重 / 体脂肪 / 血液検査 を共通形式へ寄せる
- * - 後段の保存確認UIや週報作成で扱いやすくする
+ * 役割:
+ * - 候補を保存向けの正規形へ整える
  */
 
-function safeText(value, fallback = '') {
-  return String(value || fallback).trim();
+function normalizeText(value) {
+  return String(value || '').trim();
 }
 
-function toNumberOrNull(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(String(value).replace(/[^\d.\-]/g, ''));
-  return Number.isFinite(n) ? n : null;
+function normalizeDate(value) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  return new Date(value).toISOString().slice(0, 10);
 }
 
-function normalizeRecordType(type = '') {
-  const v = safeText(type).toLowerCase();
-
-  if (['meal', 'food', 'dish'].includes(v)) return 'meal';
-  if (['exercise', 'workout', 'activity', 'stretch'].includes(v)) return 'exercise';
-  if (['weight', 'body_weight'].includes(v)) return 'weight';
-  if (['body_fat', 'bodyfat', 'fat'].includes(v)) return 'body_fat';
-  if (['blood_test', 'lab', 'blood'].includes(v)) return 'blood_test';
-
-  return 'unknown';
+function extractFirstNumber(text) {
+  const match = normalizeText(text).match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
 }
 
-function buildUserFacingSummary(payload = {}) {
-  const type = normalizeRecordType(payload.type);
-
-  if (type === 'meal') {
-    const label = safeText(payload.meal_label || payload.label || '食事');
-    const kcal = toNumberOrNull(payload.estimated_kcal);
-    return kcal !== null ? `${label} / ${kcal} kcal` : label;
-  }
-
-  if (type === 'exercise') {
-    const name = safeText(payload.exercise_name || payload.label || '運動');
-    const minutes = toNumberOrNull(payload.duration_minutes || payload.duration_min);
-    return minutes !== null ? `${name} / ${minutes}分` : name;
-  }
-
-  if (type === 'weight') {
-    const weight = toNumberOrNull(payload.weight_kg);
-    return weight !== null ? `体重 ${weight}kg` : '体重';
-  }
-
-  if (type === 'body_fat') {
-    const bodyFat = toNumberOrNull(payload.body_fat_percent || payload.body_fat_pct);
-    return bodyFat !== null ? `体脂肪率 ${bodyFat}%` : '体脂肪率';
-  }
-
-  if (type === 'blood_test') {
-    const date = safeText(payload.exam_date || payload.measured_on || payload.measured_at || '');
-    return date ? `血液検査 ${date}` : '血液検査';
-  }
-
-  return safeText(payload.label || payload.summary || '記録');
-}
-
-function normalizeRecordCandidate(raw = {}) {
-  const type = normalizeRecordType(raw.type || raw.record_type || raw.kind);
-  const confidence = Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : 0.5;
-  const needsConfirmation = raw.needs_confirmation !== false;
-  const source = safeText(raw.source || 'text');
-  const parsedPayload = raw.parsed_payload || raw.payload || {};
-  const userFacingSummary = safeText(
-    raw.user_facing_summary || buildUserFacingSummary({ ...parsedPayload, type }),
-    ''
-  );
-
+function normalizeMeal(candidate) {
+  const extracted = candidate.extracted || {};
+  const mealType = extracted.mealType || (/朝/.test(candidate.rawText) ? 'breakfast' : /昼/.test(candidate.rawText) ? 'lunch' : /夜|夕/.test(candidate.rawText) ? 'dinner' : 'unknown');
   return {
-    type,
-    confidence,
-    needs_confirmation: needsConfirmation,
-    source,
-    parsed_payload: {
-      ...parsedPayload,
-      type,
-    },
-    user_facing_summary: userFacingSummary,
-    save_action: safeText(raw.save_action || `save_${type}`),
-    meta: raw.meta || {},
+    recordType: 'meal',
+    eventDate: normalizeDate(candidate.eventDate),
+    mealType,
+    itemsText: normalizeText(extracted.itemsText || candidate.rawText),
+    amountNote: extracted.amountNote || null,
+    source: candidate.source || 'text'
   };
 }
 
-function normalizeRecordCandidates(list = []) {
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((item) => normalizeRecordCandidate(item))
-    .filter((item) => item.type !== 'unknown');
+function normalizeWeight(candidate) {
+  const text = normalizeText(candidate.extracted?.valueText || candidate.rawText);
+  return {
+    recordType: 'weight',
+    eventDate: normalizeDate(candidate.eventDate),
+    weightKg: extractFirstNumber(text),
+    rawValueText: text,
+    source: candidate.source || 'text'
+  };
+}
+
+function normalizeExercise(candidate) {
+  const text = normalizeText(candidate.extracted?.valueText || candidate.rawText);
+  const minutesMatch = text.match(/(\d+)\s*分/);
+  const kmMatch = text.match(/(\d+(?:\.\d+)?)\s*(km|キロ)/i);
+  return {
+    recordType: 'exercise',
+    eventDate: normalizeDate(candidate.eventDate),
+    activityText: text,
+    durationMinutes: minutesMatch ? Number(minutesMatch[1]) : null,
+    distanceKm: kmMatch ? Number(kmMatch[1]) : null,
+    source: candidate.source || 'text'
+  };
+}
+
+function normalizeLab(candidate) {
+  const text = normalizeText(candidate.extracted?.valueText || candidate.rawText);
+  const items = [];
+  const patterns = [
+    { name: 'LDL', regex: /LDL\s*[:：]?\s*(\d+(?:\.\d+)?)/i },
+    { name: 'HDL', regex: /HDL\s*[:：]?\s*(\d+(?:\.\d+)?)/i },
+    { name: '中性脂肪', regex: /中性脂肪\s*[:：]?\s*(\d+(?:\.\d+)?)/i },
+    { name: 'AST', regex: /AST\s*[:：]?\s*(\d+(?:\.\d+)?)/i },
+    { name: 'ALT', regex: /ALT\s*[:：]?\s*(\d+(?:\.\d+)?)/i },
+    { name: 'HbA1c', regex: /HbA1c\s*[:：]?\s*(\d+(?:\.\d+)?)/i }
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern.regex);
+    if (match) {
+      items.push({ itemName: pattern.name, value: Number(match[1]) });
+    }
+  }
+
+  return {
+    recordType: 'lab',
+    eventDate: normalizeDate(candidate.eventDate),
+    rawValueText: text,
+    items,
+    source: candidate.source || 'text'
+  };
+}
+
+function normalizeProfile(candidate) {
+  return {
+    recordType: 'profile',
+    eventDate: normalizeDate(candidate.eventDate),
+    profileText: normalizeText(candidate.extracted?.valueText || candidate.rawText),
+    source: candidate.source || 'text'
+  };
+}
+
+function normalizeCandidate(candidate) {
+  if (!candidate || !candidate.recordType) return null;
+  switch (candidate.recordType) {
+    case 'meal': return normalizeMeal(candidate);
+    case 'weight': return normalizeWeight(candidate);
+    case 'exercise': return normalizeExercise(candidate);
+    case 'lab': return normalizeLab(candidate);
+    case 'profile': return normalizeProfile(candidate);
+    default:
+      return {
+        recordType: candidate.recordType,
+        eventDate: normalizeDate(candidate.eventDate),
+        rawValueText: normalizeText(candidate.rawText),
+        source: candidate.source || 'text'
+      };
+  }
 }
 
 module.exports = {
-  safeText,
-  toNumberOrNull,
-  normalizeRecordType,
-  buildUserFacingSummary,
-  normalizeRecordCandidate,
-  normalizeRecordCandidates,
+  normalizeCandidate,
+  normalizeMeal,
+  normalizeWeight,
+  normalizeExercise,
+  normalizeLab,
+  normalizeProfile
 };
