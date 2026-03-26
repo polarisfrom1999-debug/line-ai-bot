@@ -1,4 +1,3 @@
-services/conversation_orchestrator_service.js
 'use strict';
 
 /**
