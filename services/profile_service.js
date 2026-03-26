@@ -1,60 +1,28 @@
 'use strict';
 
-const {
-  parseProfile,
-  calculateBMR,
-  calculateTDEE,
-  profileGuideMessage,
-} = require('../parsers/profile_parser');
-const { fmt } = require('../utils/formatters');
+/**
+ * services/profile_service.js
+ *
+ * 役割:
+ * - 会話から人物理解に使う情報を整える
+ */
 
-function activityLevelLabel(activityLevel) {
-  if (activityLevel === 'high') return '高い';
-  if (activityLevel === 'moderate_high') return 'やや高い';
-  if (activityLevel === 'moderate') return 'ふつう';
-  if (activityLevel === 'low') return '低い';
-  return null;
-}
+function extractProfileCandidates(text) {
+  const safe = String(text || '').trim();
+  const candidates = [];
 
-function sexLabel(sex) {
-  if (sex === 'male') return '男性';
-  if (sex === 'female') return '女性';
-  return null;
-}
+  if (/うっし|呼んで|名前/.test(safe)) candidates.push('呼び方の希望がある');
+  if (/無理なく|痩せたい|体重を落としたい/.test(safe)) candidates.push('無理なく体重を落としたい');
+  if (/優しく|やわらかく/.test(safe)) candidates.push('優しく整理されると受け取りやすい');
+  if (/理屈で|理由が知りたい/.test(safe)) candidates.push('理屈で整理されると受け取りやすい');
+  if (/頑張りすぎ|無理しがち/.test(safe)) candidates.push('頑張りすぎやすい');
+  if (/隠しがち|言いにくい/.test(safe)) candidates.push('隠しやすさがある');
+  if (/家族|育児/.test(safe)) candidates.push('家族都合で生活リズムが揺れやすい');
+  if (/仕事|残業|夜勤/.test(safe)) candidates.push('仕事都合で生活リズムが揺れやすい');
 
-function buildProfileUpdatePayload(currentUser, text) {
-  const updates = parseProfile(text);
-  if (!Object.keys(updates).length) return null;
-
-  const previewUser = { ...currentUser, ...updates };
-  const estimated_bmr = calculateBMR(previewUser);
-  const estimated_tdee = calculateTDEE(previewUser);
-
-  return {
-    ...updates,
-    estimated_bmr,
-    estimated_tdee,
-  };
-}
-
-function buildProfilePartialReply(patch = {}) {
-  const lines = ['プロフィールを更新しました。'];
-  if (patch.sex) lines.push(`性別: ${sexLabel(patch.sex)}`);
-  if (patch.age) lines.push(`年齢: ${fmt(patch.age)}`);
-  if (patch.height_cm) lines.push(`身長: ${fmt(patch.height_cm)} cm`);
-  if (patch.weight_kg) lines.push(`体重: ${fmt(patch.weight_kg)} kg`);
-  if (patch.target_weight_kg) lines.push(`目標体重: ${fmt(patch.target_weight_kg)} kg`);
-  if (patch.activity_level) lines.push(`活動量: ${activityLevelLabel(patch.activity_level) || patch.activity_level}`);
-  if (patch.estimated_bmr) lines.push(`推定基礎代謝: ${fmt(patch.estimated_bmr)} kcal/日`);
-  if (patch.estimated_tdee) lines.push(`推定総消費目安: ${fmt(patch.estimated_tdee)} kcal/日`);
-  lines.push('他に変える項目があれば、そのまま続けて送ってください。');
-  return lines.join('\n');
+  return [...new Set(candidates)];
 }
 
 module.exports = {
-  profileGuideMessage,
-  activityLevelLabel,
-  sexLabel,
-  buildProfileUpdatePayload,
-  buildProfilePartialReply,
+  extractProfileCandidates
 };
