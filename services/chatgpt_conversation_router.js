@@ -1,4 +1,3 @@
-services/chatgpt_conversation_router.js
 'use strict';
 
 /**
