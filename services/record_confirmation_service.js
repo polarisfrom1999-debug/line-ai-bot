@@ -1,56 +1,92 @@
 'use strict';
 
-function formatNumber(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '';
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+/**
+ * services/record_confirmation_service.js
+ *
+ * 役割:
+ * - 実績として保存してよい候補か判定する
+ * - 曖昧なら最小確認へ回す
+ */
+
+function normalizeText(value) {
+  return String(value || '').trim();
 }
 
-function buildConfirmationMessage(candidate = {}) {
-  const type = String(candidate?.type || '').trim();
-  const payload = candidate?.parsed_payload || {};
+function isPlanText(text) {
+  return /予定|つもり|しようと思う|食べよう|控えるつもり|やるつもり|したい/.test(text);
+}
 
-  if (type === 'weight') {
-    const value = formatNumber(payload.weight_kg);
+function isWishText(text) {
+  return /できたら|できれば|目指す|頑張れたら/.test(text);
+}
+
+function isConsultationText(text) {
+  return /どうしたら|悩|困って|できない|つらい|不安|相談/.test(text);
+}
+
+function buildClarificationQuestion(candidate) {
+  if (!candidate) return '今日の実績として見てよさそうですか？';
+  switch (candidate.recordType) {
+    case 'meal':
+      return 'これは今日食べた分として見てよさそうですか？';
+    case 'weight':
+      return 'この体重は今朝の数値で見てよさそうですか？';
+    case 'exercise':
+      return 'これは実際にやった運動として見てよさそうですか？';
+    case 'lab':
+      return 'この検査値は今回の結果として保存してよさそうですか？';
+    default:
+      return 'この内容は実績として見てよさそうですか？';
+  }
+}
+
+function confirmCandidate(candidate, context) {
+  const rawText = normalizeText(candidate?.rawText || context?.input?.rawText);
+  if (!candidate) {
     return {
-      text: value
-        ? `体重${value}kgで受け取っています。今日の記録としてこのまま残して大丈夫ですか？`
-        : '体重の内容は受け取れています。このまま記録して大丈夫ですか？',
+      shouldPersist: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+      reason: 'no_candidate'
     };
   }
 
-  if (type === 'body_fat') {
-    const value = formatNumber(payload.body_fat_percent || payload.body_fat_pct);
+  if (!rawText) {
     return {
-      text: value
-        ? `体脂肪率${value}%で受け取れています。このまま記録して大丈夫ですか？`
-        : '体脂肪率の内容は受け取れています。このまま記録して大丈夫ですか？',
+      shouldPersist: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+      reason: 'empty_text'
     };
   }
 
-  if (type === 'meal') {
+  if (isPlanText(rawText) || isWishText(rawText) || isConsultationText(rawText)) {
     return {
-      text: '食事の内容は受け取れています。今日の記録としてまとめてよければ保存しますか？違うところだけ、そのまま教えても大丈夫です。',
+      shouldPersist: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+      reason: 'not_actual_record'
     };
   }
 
-  if (type === 'exercise') {
+  if (candidate.needsConfirmation || /昨日|たぶん|くらい|半分|少し|軽め/.test(rawText)) {
     return {
-      text: '運動の内容は受け取れています。このまま今日の記録として残して大丈夫ですか？',
-    };
-  }
-
-  if (type === 'blood_test') {
-    return {
-      text: '血液検査の内容は受け取れています。このまま整理を進めて大丈夫ですか？必要なら日付や数値だけ追加で教えてください。',
+      shouldPersist: false,
+      needsClarification: true,
+      clarificationQuestion: buildClarificationQuestion(candidate),
+      reason: 'needs_clarification'
     };
   }
 
   return {
-    text: '内容は受け取れています。このまま記録して大丈夫ですか？',
+    shouldPersist: true,
+    needsClarification: false,
+    clarificationQuestion: null,
+    reason: 'confirmed'
   };
 }
 
 module.exports = {
-  buildConfirmationMessage,
+  confirmCandidate,
+  buildClarificationQuestion
 };
