@@ -1,4 +1,4 @@
-services/lab_image_analysis_service.js
+
 'use strict';
 
 /**
