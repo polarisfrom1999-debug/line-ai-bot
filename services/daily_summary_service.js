@@ -1,87 +1,97 @@
 'use strict';
 
-const { supabase } = require('./supabase_service');
-const { fmt } = require('../utils/formatters');
-const { buildEnergySummaryText } = require('./energy_service');
+/**
+ * services/daily_summary_service.js
+ *
+ * 役割:
+ * - 今日の記録や会話を「意味づけ」として返す
+ * - 数字の羅列ではなく、全体像 / 意味 / 明日の一手 を短く返す
+ */
 
-const TZ = 'Asia/Tokyo';
-
-function currentDateYmdInTZ() {
-  const now = new Date();
-  const jp = new Date(now.toLocaleString('en-US', { timeZone: TZ }));
-  const y = jp.getFullYear();
-  const m = String(jp.getMonth() + 1).padStart(2, '0');
-  const d = String(jp.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-async function getTodayRows(userId) {
-  const ymd = currentDateYmdInTZ();
-  const start = `${ymd}T00:00:00+09:00`;
-  const end = `${ymd}T23:59:59+09:00`;
-
-  const [mealsRes, activitiesRes, weightsRes] = await Promise.all([
-    supabase.from('meal_logs').select('meal_label, estimated_kcal, eaten_at, protein_g, fat_g, carbs_g').eq('user_id', userId).gte('eaten_at', start).lte('eaten_at', end).order('eaten_at', { ascending: true }),
-    supabase.from('activity_logs').select('exercise_summary, estimated_activity_kcal, logged_at').eq('user_id', userId).gte('logged_at', start).lte('logged_at', end).order('logged_at', { ascending: true }),
-    supabase.from('weight_logs').select('weight_kg, body_fat_pct, logged_at').eq('user_id', userId).gte('logged_at', start).lte('logged_at', end).order('logged_at', { ascending: false }).limit(1),
-  ]);
-
-  if (mealsRes.error) throw mealsRes.error;
-  if (activitiesRes.error) throw activitiesRes.error;
-  if (weightsRes.error) throw weightsRes.error;
+function collectDayData(params) {
+  const recentMessages = Array.isArray(params.recentMessages) ? params.recentMessages : [];
+  const userTexts = recentMessages
+    .filter((row) => row.role === 'user')
+    .map((row) => String(row.content || ''));
 
   return {
-    meals: mealsRes.data || [],
-    activities: activitiesRes.data || [],
-    latestWeight: (weightsRes.data || [])[0] || null,
+    mealsMentioned: userTexts.filter((t) => /朝|昼|夜|ごはん|食べ|鍋|パン|卵|サラダ/.test(t)),
+    exerciseMentioned: userTexts.filter((t) => /歩い|ジョギング|走|運動|筋トレ/.test(t)),
+    weightMentioned: userTexts.filter((t) => /kg|体重|体脂肪/.test(t)),
+    fatigueSignals: userTexts.filter((t) => /疲|眠|しんど|だる|余裕ない/.test(t)),
+    recoverySignals: userTexts.filter((t) => /休め|眠れ|回復|少し楽|安心/.test(t)),
+    emotionalSignals: userTexts.filter((t) => /不安|焦|つら|苦し|落ち込/.test(t))
   };
 }
 
-function sum(list, key) {
-  return (list || []).reduce((acc, row) => acc + (Number(row?.[key]) || 0), 0);
+function inferDailyTone(dayData, userState) {
+  if ((dayData.fatigueSignals || []).length >= 2 && (dayData.mealsMentioned || []).length >= 1) {
+    return 'tired_but_holding';
+  }
+  if ((dayData.emotionalSignals || []).length >= 2 || (userState && userState.nagiScore <= 3)) {
+    return 'overstrained';
+  }
+  if ((dayData.recoverySignals || []).length >= 1) {
+    return 'gentle_recovery';
+  }
+  if ((dayData.mealsMentioned || []).length === 0 && (dayData.exerciseMentioned || []).length === 0) {
+    return 'rhythm_disturbed';
+  }
+  return 'stable';
 }
 
-function buildDailySummaryText({ user = {}, rows = {} }) {
-  const meals = rows.meals || [];
-  const activities = rows.activities || [];
-  const latestWeight = rows.latestWeight || null;
-
-  const intakeKcal = Math.round(sum(meals, 'estimated_kcal'));
-  const activityKcal = Math.round(sum(activities, 'estimated_activity_kcal'));
-  const protein = Math.round(sum(meals, 'protein_g'));
-  const fat = Math.round(sum(meals, 'fat_g'));
-  const carbs = Math.round(sum(meals, 'carbs_g'));
-
-  const mealPreview = meals.slice(-3).map((row) => row.meal_label).filter(Boolean).join(' / ');
-  const activityPreview = activities.slice(-3).map((row) => row.exercise_summary).filter(Boolean).join(' / ');
-
-  const lines = [
-    '今日のまとめです。',
-    meals.length ? `食事: ${meals.length}回` : '食事: まだ記録なし',
-    meals.length && mealPreview ? `内容: ${mealPreview}` : null,
-    meals.length ? `摂取合計: ${fmt(intakeKcal)} kcal` : null,
-    meals.length ? `栄養の目安: たんぱく質 ${fmt(protein)}g / 脂質 ${fmt(fat)}g / 糖質 ${fmt(carbs)}g` : null,
-    activities.length ? `活動: ${activityPreview || `${activities.length}件`}` : '活動: まだ記録なし',
-    activities.length ? `活動消費合計: ${fmt(activityKcal)} kcal` : null,
-    latestWeight?.weight_kg != null ? `今日の体重: ${fmt(latestWeight.weight_kg)}kg` : null,
-    '',
-    buildEnergySummaryText({
-      estimatedBmr: user.estimated_bmr || 0,
-      estimatedTdee: user.estimated_tdee || 0,
-      intakeKcal,
-      activityKcal,
-    }),
-  ].filter(Boolean);
-
-  if (!meals.length && !activities.length) {
-    return '今日はまだ記録が少なめです。食事でも体重でも、ひとつ送ってもらえたら流れを一緒に見ていけます。';
+function inferDailyMeaning(dayData, userState, longMemory) {
+  void longMemory;
+  if ((dayData.fatigueSignals || []).length >= 2) {
+    return '今日は整えるより、消耗を増やさなかったこと自体が大きい日でした。';
   }
+  if ((dayData.mealsMentioned || []).length >= 2 && (dayData.exerciseMentioned || []).length >= 1) {
+    return '派手ではなくても、生活の土台はちゃんとつながっていました。';
+  }
+  if ((dayData.weightMentioned || []).length >= 1 && userState && userState.nagiScore <= 4) {
+    return '数字に気持ちが引っ張られやすい日でも、戻ってきて見直せている流れはあります。';
+  }
+  return '今日は大きく崩したというより、今の生活の中で持ちこたえた日として見て大丈夫です。';
+}
 
-  return lines.join('\n');
+function buildTomorrowHint(dayData, userState, longMemory) {
+  if ((dayData.fatigueSignals || []).length >= 2 || (userState && userState.gasolineScore <= 3)) {
+    return '明日はまず、休める所を少し増やすだけで十分です。';
+  }
+  if (longMemory && Array.isArray(longMemory.bodySignals) && longMemory.bodySignals.some((x) => /むくみ|水分/.test(x))) {
+    return '明日は水分を少し意識するだけでも、感覚が変わりやすいです。';
+  }
+  if ((dayData.mealsMentioned || []).length === 0) {
+    return '明日はまず1食だけでも、落ち着いて食べられるとかなり違います。';
+  }
+  return '明日は一つだけ、食事のリズムを崩しすぎない所を意識できれば十分です。';
+}
+
+function composeDailySummaryText({ wholeTone, meaning, tomorrowHint }) {
+  const opener = {
+    stable: '今日は全体として、土台を大きく崩さずに進められていましたね。',
+    tired_but_holding: '今日は疲れがありながらも、流れを切らさずに持ちこたえていましたね。',
+    rhythm_disturbed: '今日は量よりも、リズムが少し乱れやすい日だった感じですね。',
+    gentle_recovery: '今日は無理に詰め直すより、少し戻していく流れが見えていましたね。',
+    overstrained: '今日は気持ちや体の負担が少し強めに出ていた日でしたね。'
+  }[wholeTone] || '今日は全体として、今の流れをちゃんと見直せていましたね。';
+
+  return [opener, meaning, tomorrowHint].filter(Boolean).join('\n');
+}
+
+async function buildDailySummary(params) {
+  const dayData = collectDayData(params || {});
+  const wholeTone = inferDailyTone(dayData, (params || {}).userState || {});
+  const meaning = inferDailyMeaning(dayData, (params || {}).userState || {}, (params || {}).longMemory || {});
+  const tomorrowHint = buildTomorrowHint(dayData, (params || {}).userState || {}, (params || {}).longMemory || {});
+  return composeDailySummaryText({ wholeTone, meaning, tomorrowHint });
 }
 
 module.exports = {
-  getTodayRows,
-  buildDailySummaryText,
-  currentDateYmdInTZ,
+  buildDailySummary,
+  collectDayData,
+  inferDailyTone,
+  inferDailyMeaning,
+  buildTomorrowHint,
+  composeDailySummaryText
 };
