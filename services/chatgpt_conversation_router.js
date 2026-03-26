@@ -1,19 +1,16 @@
+services/chatgpt_conversation_router.js
 'use strict';
 
 /**
  * services/chatgpt_conversation_router.js
- *
- * 役割:
- * - LINE/会話入力を標準形へそろえる入口整流
- * - 重い判断は持たず、routerHints を付けて orchestrator へ渡す
- * - 未対応イベントでも落ちにくいようにする
  */
 
 const conversationOrchestratorService = require('./conversation_orchestrator_service');
 
 const SHORT_FOLLOW_UP_PATTERNS = [
-  '半分', '半分だけ', '朝のです', '昨日の', 'これ今日', '今日の', '朝の', '昼の', '夜の',
-  'ldlは', 'hdlは', '何kcal', '何キロ', 'グラフ', 'これです', 'これ昨日', '昨日です'
+  '半分', '半分だけ', '朝のです', '昨日の', 'これ今日', '今日の',
+  '朝の', '昼の', '夜の', 'ldlは', 'hdlは', '何kcal', '何キロ', 'グラフ',
+  'これです', 'これ昨日', '昨日です'
 ];
 
 const MEMORY_QUESTION_PATTERNS = [
@@ -103,10 +100,7 @@ function buildUnsupportedResult(messageType) {
   return {
     ok: true,
     replyMessages: [{ type: 'text', text }],
-    internal: {
-      intentType: 'unsupported',
-      responseMode: 'empathy_only'
-    }
+    internal: { intentType: 'unsupported', responseMode: 'empathy_only' }
   };
 }
 
@@ -117,10 +111,7 @@ async function routeConversation(input) {
     return {
       ok: true,
       replyMessages: [{ type: 'text', text: '今うまく相手を特定できなかったので、もう一度だけ送ってもらえたら大丈夫です。' }],
-      internal: {
-        intentType: 'invalid',
-        responseMode: 'empathy_only'
-      }
+      internal: { intentType: 'invalid', responseMode: 'empathy_only' }
     };
   }
 
@@ -139,6 +130,7 @@ async function routeConversation(input) {
     messageType: normalized.messageType,
     rawText: normalized.rawText,
     imageMeta: normalized.imageMeta,
+    messageId: normalized.messageId,
     timestamp: normalized.timestamp,
     routerHints,
     originalEvent: normalized.originalEvent
