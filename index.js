@@ -12,10 +12,10 @@ try {
   line = null;
 }
 
-const conversationRouter = require('./services/chatgpt_conversation_router');
-
 const app = express();
-app.use(bodyParser.json({ limit: '20mb' }));
+app.use(bodyParser.json({ limit: '10mb' }));
+
+const conversationRouter = require('./services/chatgpt_conversation_router');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -34,6 +34,7 @@ async function replyLineMessages(replyToken, messages) {
     console.log('[reply fallback]', { replyToken, messages });
     return;
   }
+
   try {
     await client.replyMessage({ replyToken, messages });
   } catch (error) {
@@ -53,10 +54,6 @@ function normalizeEventInput(event) {
     messageId: event?.message?.id || null,
     timestamp: event?.timestamp || Date.now(),
     sourceType: event?.source?.type || 'unknown',
-    imageMeta: messageType === 'image' ? {
-      messageId: event?.message?.id || null,
-      contentProvider: event?.message?.contentProvider || null
-    } : null,
     originalEvent: event
   };
 }
@@ -71,16 +68,25 @@ async function handleEvent(event) {
     }
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);
-    await replyLineMessages(event?.replyToken, [{ type: 'text', text: '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。' }]);
+    if (event?.replyToken) {
+      await replyLineMessages(event.replyToken, [
+        { type: 'text', text: '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。' }
+      ]);
+    }
   }
 }
 
-app.get('/', (_req, res) => res.status(200).send('ok'));
+app.get('/', (_req, res) => {
+  res.status(200).send('ok');
+});
+
 app.post('/webhook', async (req, res) => {
   try {
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
     res.status(200).send('ok');
-    for (const event of events) await handleEvent(event);
+    for (const event of events) {
+      await handleEvent(event);
+    }
   } catch (error) {
     console.error('[index] webhook error:', error?.message || error);
     if (!res.headersSent) res.status(200).send('ok');
@@ -88,4 +94,6 @@ app.post('/webhook', async (req, res) => {
 });
 
 const port = Number(process.env.PORT || 10000);
-app.listen(port, () => console.log(`server listening on ${port}`));
+app.listen(port, () => {
+  console.log(`server listening on ${port}`);
+});
