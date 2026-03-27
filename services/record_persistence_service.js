@@ -1,9 +1,4 @@
-
 'use strict';
-
-/**
- * services/record_persistence_service.js
- */
 
 async function persistRecords({ userId, recordPayloads }) {
   const payloads = Array.isArray(recordPayloads) ? recordPayloads : [];
