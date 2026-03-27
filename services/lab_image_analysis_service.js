@@ -11,7 +11,6 @@ function extractJsonObject(text) {
   const start = safe.indexOf('{');
   const end = safe.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) return null;
-
   try {
     return JSON.parse(safe.slice(start, end + 1));
   } catch (_) {
@@ -21,13 +20,7 @@ function extractJsonObject(text) {
 
 function normalizeItems(items) {
   if (!Array.isArray(items)) return [];
-  return items
-    .map((item) => ({
-      itemName: String(item?.itemName || '').trim(),
-      value: String(item?.value || '').trim(),
-      unit: String(item?.unit || '').trim()
-    }))
-    .filter((item) => item.itemName && item.value);
+  return items.map((item) => ({ itemName: String(item?.itemName || '').trim(), value: String(item?.value || '').trim(), unit: String(item?.unit || '').trim() })).filter((item) => item.itemName && item.value);
 }
 
 async function analyzeLabImage(imagePayload) {
@@ -44,32 +37,10 @@ async function analyzeLabImage(imagePayload) {
     '}'
   ].join('\n');
 
-  const result = await geminiImageAnalysisService.analyzeImage({
-    imagePayload,
-    prompt
-  });
-
-  if (!result.ok) {
-    return {
-      source: 'image',
-      isLabImage: false,
-      examDate: '',
-      items: [],
-      confidence: 0
-    };
-  }
-
+  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  if (!result.ok) return { source: 'image', isLabImage: false, examDate: '', items: [], confidence: 0 };
   const parsed = extractJsonObject(result.text);
-  if (!parsed) {
-    return {
-      source: 'image',
-      isLabImage: false,
-      examDate: '',
-      items: [],
-      confidence: 0
-    };
-  }
-
+  if (!parsed) return { source: 'image', isLabImage: false, examDate: '', items: [], confidence: 0 };
   return {
     source: 'image',
     isLabImage: Boolean(parsed.isLabImage),
@@ -79,6 +50,4 @@ async function analyzeLabImage(imagePayload) {
   };
 }
 
-module.exports = {
-  analyzeLabImage
-};
+module.exports = { analyzeLabImage };
