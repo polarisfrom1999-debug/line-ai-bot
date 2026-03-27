@@ -1,9 +1,4 @@
-
 'use strict';
-
-/**
- * services/line_media_service.js
- */
 
 let line = null;
 try {
@@ -50,10 +45,7 @@ async function getMessageContentBuffer(messageId) {
     if (!response) return null;
 
     if (Buffer.isBuffer(response)) return response;
-
-    if (response?.data && Buffer.isBuffer(response.data)) {
-      return response.data;
-    }
+    if (response?.data && Buffer.isBuffer(response.data)) return response.data;
 
     if (typeof response?.arrayBuffer === 'function') {
       const arrayBuffer = await response.arrayBuffer();
@@ -75,10 +67,6 @@ async function getMessageContentBuffer(messageId) {
   }
 }
 
-function guessMimeType() {
-  return 'image/jpeg';
-}
-
 async function getImagePayload(input) {
   const messageId =
     input?.imageMeta?.messageId ||
@@ -94,7 +82,7 @@ async function getImagePayload(input) {
   return {
     messageId,
     buffer,
-    mimeType: guessMimeType(),
+    mimeType: 'image/jpeg',
     size: buffer.length
   };
 }
