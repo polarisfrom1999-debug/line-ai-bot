@@ -3,19 +3,19 @@
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 
 const FOOD_LIBRARY = [
-  { keywords: ['ごはん', '白米'], kcal: 234, protein: 3.8, fat: 0.5, carbs: 55.2 },
-  { keywords: ['食パン', 'パン'], kcal: 156, protein: 5.3, fat: 2.6, carbs: 28.0 },
-  { keywords: ['卵', 'たまご'], kcal: 76, protein: 6.2, fat: 5.2, carbs: 0.2 },
-  { keywords: ['味噌汁', 'みそ汁'], kcal: 45, protein: 3.0, fat: 1.5, carbs: 4.0 },
-  { keywords: ['ラーメン'], kcal: 480, protein: 18.0, fat: 14.0, carbs: 68.0 },
-  { keywords: ['カレー'], kcal: 520, protein: 14.0, fat: 16.0, carbs: 76.0 },
-  { keywords: ['鍋'], kcal: 320, protein: 24.0, fat: 12.0, carbs: 18.0 },
-  { keywords: ['サラダ'], kcal: 80, protein: 2.5, fat: 4.0, carbs: 7.0 },
-  { keywords: ['鶏むね', '鶏胸', 'サラダチキン', '鶏肉'], kcal: 160, protein: 28.0, fat: 3.5, carbs: 0.0 },
-  { keywords: ['魚', '鮭', 'さけ', 'サーモン'], kcal: 180, protein: 20.0, fat: 10.0, carbs: 0.0 },
-  { keywords: ['ヨーグルト'], kcal: 90, protein: 4.0, fat: 3.0, carbs: 12.0 },
-  { keywords: ['プロテイン'], kcal: 120, protein: 20.0, fat: 2.0, carbs: 6.0 },
-  { keywords: ['寿司', 'すし'], kcal: 220, protein: 12.0, fat: 3.0, carbs: 34.0 }
+  { name: '白米', patterns: [/白米/, /ご飯/, /ライス/, /お米/], kcal: 234, protein: 3.8, fat: 0.5, carbs: 55.2 },
+  { name: '食パン', patterns: [/食パン/, /トースト/, /パン/], kcal: 156, protein: 5.3, fat: 2.6, carbs: 28.0 },
+  { name: '卵', patterns: [/卵/, /たまご/], kcal: 76, protein: 6.2, fat: 5.2, carbs: 0.2 },
+  { name: '味噌汁', patterns: [/味噌汁/, /みそ汁/], kcal: 45, protein: 3.0, fat: 1.5, carbs: 4.0 },
+  { name: 'ラーメン', patterns: [/ラーメン/], kcal: 480, protein: 18.0, fat: 14.0, carbs: 68.0 },
+  { name: 'カレー', patterns: [/カレー/], kcal: 520, protein: 14.0, fat: 16.0, carbs: 76.0 },
+  { name: '鍋', patterns: [/鍋/], kcal: 320, protein: 24.0, fat: 12.0, carbs: 18.0 },
+  { name: 'サラダ', patterns: [/サラダ/], kcal: 80, protein: 2.5, fat: 4.0, carbs: 7.0 },
+  { name: '鶏肉', patterns: [/鶏むね/, /鶏胸/, /サラダチキン/, /鶏肉/], kcal: 160, protein: 28.0, fat: 3.5, carbs: 0.0 },
+  { name: '魚', patterns: [/魚/, /鮭/, /さけ/, /サーモン/], kcal: 180, protein: 20.0, fat: 10.0, carbs: 0.0 },
+  { name: 'ヨーグルト', patterns: [/ヨーグルト/], kcal: 90, protein: 4.0, fat: 3.0, carbs: 12.0 },
+  { name: 'プロテイン', patterns: [/プロテイン/], kcal: 120, protein: 20.0, fat: 2.0, carbs: 6.0 },
+  { name: '寿司', patterns: [/寿司/, /すし/], kcal: 220, protein: 12.0, fat: 3.0, carbs: 34.0 }
 ];
 
 const FRACTION_MAP = {
@@ -25,9 +25,7 @@ const FRACTION_MAP = {
   '軽め': 0.8,
   '多め': 1.3,
   '大盛り': 1.5,
-  '一杯': 1.0,
-  '一杯食べた': 1.0,
-  '一杯食べたよ': 1.0
+  '全部': 1.0
 };
 
 function normalizeText(value) {
@@ -68,11 +66,10 @@ function sumNutrition(items, fraction = 1) {
 function findFoodsFromText(text) {
   const safeText = normalizeText(text);
   const found = [];
-
   for (const food of FOOD_LIBRARY) {
-    if (food.keywords.some((kw) => safeText.includes(kw))) {
+    if (food.patterns.some((pattern) => pattern.test(safeText))) {
       found.push({
-        name: food.keywords[0],
+        name: food.name,
         kcal: food.kcal,
         protein: food.protein,
         fat: food.fat,
@@ -80,7 +77,6 @@ function findFoodsFromText(text) {
       });
     }
   }
-
   return found;
 }
 
@@ -114,7 +110,6 @@ function extractJsonObject(text) {
   const start = safe.indexOf('{');
   const end = safe.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) return null;
-
   try {
     return JSON.parse(safe.slice(start, end + 1));
   } catch (_) {
@@ -142,30 +137,14 @@ async function analyzeMealImage(imagePayload) {
     '}'
   ].join('\n');
 
-  const result = await geminiImageAnalysisService.analyzeImage({
-    imagePayload,
-    prompt
-  });
-
+  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
   if (!result.ok) {
-    return {
-      source: 'image',
-      isMealImage: false,
-      items: [],
-      estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
-      confidence: 0
-    };
+    return { source: 'image', isMealImage: false, items: [], estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, confidence: 0 };
   }
 
   const parsed = extractJsonObject(result.text);
   if (!parsed) {
-    return {
-      source: 'image',
-      isMealImage: false,
-      items: [],
-      estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
-      confidence: 0
-    };
+    return { source: 'image', isMealImage: false, items: [], estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, confidence: 0 };
   }
 
   return {
