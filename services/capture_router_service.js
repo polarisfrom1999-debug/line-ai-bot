@@ -1,9 +1,4 @@
-
 'use strict';
-
-/**
- * services/capture_router_service.js
- */
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -19,9 +14,9 @@ function detectCaptureTypeFromText(text) {
 
   if (!safeText) return 'none';
   if (/体脂肪|kg|キロ|体重/.test(safeText)) return 'weight_record';
-  if (/歩いた|ジョギング|ランニング|筋トレ|運動|kcal/.test(safeText)) return 'exercise_record';
+  if (/歩いた|ジョギング|ランニング|筋トレ|運動|kcal|スクワット/.test(safeText)) return 'exercise_record';
   if (/LDL|HDL|中性脂肪|HbA1c|AST|ALT|血液検査|採血/.test(safeText)) return 'lab_record';
-  if (/朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|卵|味噌汁|ごはん|パン/.test(safeText)) return 'meal_record';
+  if (/朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|卵|味噌汁|ごはん|パン|寿司/.test(safeText)) return 'meal_record';
 
   return 'none';
 }
