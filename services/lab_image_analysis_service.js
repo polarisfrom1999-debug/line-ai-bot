@@ -1,17 +1,9 @@
-
 'use strict';
-
-/**
- * services/lab_image_analysis_service.js
- */
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 
 function sanitizeGeminiText(text) {
-  return String(text || '')
-    .replace(/```json/gi, '')
-    .replace(/```/g, '')
-    .trim();
+  return String(text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
 }
 
 function extractJsonObject(text) {
