@@ -1,9 +1,5 @@
 'use strict';
 
-/**
- * services/chatgpt_conversation_router.js
- */
-
 const conversationOrchestratorService = require('./conversation_orchestrator_service');
 
 const SHORT_FOLLOW_UP_PATTERNS = [
