@@ -1,9 +1,5 @@
 'use strict';
 
-/**
- * services/conversation_orchestrator_service.js
- */
-
 const contextMemoryService = require('./context_memory_service');
 const aiChatService = require('./ai_chat_service');
 const chatCaptureService = require('./chat_capture_service');
@@ -54,6 +50,10 @@ function clampScore(value) {
   return Math.min(10, Math.max(1, Number(value || 5)));
 }
 
+function round1(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
+}
+
 async function loadConversationContext(input) {
   const userId = input?.userId;
   const [
@@ -93,9 +93,9 @@ function inferIntent(context) {
 
   if (/しんど|つらい|苦しい|限界|痛い|不安/.test(text)) return INTENT_TYPES.EMOTIONAL_SHARE;
   if (/体重|kg|キロ|体脂肪/.test(text)) return INTENT_TYPES.WEIGHT_RECORD;
-  if (/歩いた|ジョギング|ランニング|筋トレ|運動/.test(text)) return INTENT_TYPES.EXERCISE_RECORD;
+  if (/歩いた|ジョギング|ランニング|筋トレ|運動|スクワット/.test(text)) return INTENT_TYPES.EXERCISE_RECORD;
   if (/血液検査|LDL|HDL|中性脂肪|HbA1c|AST|ALT/.test(text)) return INTENT_TYPES.LAB_RECORD;
-  if (/朝ごはん|昼ごはん|夜ごはん|食べた|飲んだ|ラーメン|カレー|卵|味噌汁/.test(text)) return INTENT_TYPES.MEAL_RECORD;
+  if (/朝ごはん|昼ごはん|夜ごはん|食べた|飲んだ|ラーメン|カレー|卵|味噌汁|寿司/.test(text)) return INTENT_TYPES.MEAL_RECORD;
   if (/どうしたら|相談|悩んでる|困ってる|不安/.test(text)) return INTENT_TYPES.CONSULTATION;
   if (!text) return INTENT_TYPES.MIXED;
   return INTENT_TYPES.SMALL_TALK;
@@ -201,6 +201,76 @@ async function analyzeImageIfNeeded(context) {
   };
 }
 
+function formatNutritionBlock(nutrition, ratioText) {
+  if (!nutrition) return '';
+  return [
+    ratioText ? `量の反映: ${ratioText}` : null,
+    `推定: 約${round1(nutrition.kcal)}kcal`,
+    `たんぱく質 ${round1(nutrition.protein)}g / 脂質 ${round1(nutrition.fat)}g / 糖質 ${round1(nutrition.carbs)}g`
+  ].filter(Boolean).join('\n');
+}
+
+function buildMealReply(parsedMeal) {
+  const items = Array.isArray(parsedMeal?.items) && parsedMeal.items.length
+    ? parsedMeal.items.join('、')
+    : '食事';
+  const amountText = parsedMeal?.amountNote || (parsedMeal?.amountRatio && parsedMeal.amountRatio !== 1 ? `量補正 ${parsedMeal.amountRatio}倍` : '');
+
+  return [
+    `受け取りました。今回は ${items} として見ています。`,
+    formatNutritionBlock(parsedMeal?.estimatedNutrition, amountText),
+    '必要なら、このまま今日の合計にもつなげていきます。'
+  ].filter(Boolean).join('\n');
+}
+
+function buildLabReply(lab) {
+  const items = Array.isArray(lab?.items) ? lab.items : [];
+  const top = items.slice(0, 5).map((item) => `${item.itemName} ${item.value}${item.unit ? ` ${item.unit}` : ''}`);
+  if (!top.length) {
+    return '血液検査画像は受け取りました。読み取りは試みましたが、今回は項目を十分に確定できませんでした。';
+  }
+
+  return [
+    '血液検査画像を受け取りました。',
+    `読み取れた主な項目: ${top.join(' / ')}`,
+    '気になる項目があれば、そのまま聞いてください。'
+  ].join('\n');
+}
+
+function buildLdlReply(context) {
+  const lab = context?.imageAnalysis?.lab || null;
+  const items = Array.isArray(lab?.items) ? lab.items : [];
+  const ldl = items.find((item) => /LDL/i.test(String(item?.itemName || '')));
+  if (!ldl) return null;
+  return `今回の画像では LDL は ${ldl.value}${ldl.unit ? ` ${ldl.unit}` : ''} と読めました。`;
+}
+
+function applyMealFollowUpToPending(text, pending) {
+  const base = pending || {};
+  const meal = base.extracted || base;
+  if (!meal?.estimatedNutrition) return base;
+
+  const safeText = normalizeText(text);
+  let ratio = 1;
+  if (safeText.includes('半分')) ratio = 0.5;
+  else if (safeText.includes('少し')) ratio = 0.7;
+  else if (safeText.includes('全部')) ratio = 1.0;
+
+  return {
+    ...base,
+    extracted: {
+      ...meal,
+      amountNote: safeText,
+      estimatedNutrition: {
+        kcal: round1((meal.estimatedNutrition.kcal || 0) * ratio),
+        protein: round1((meal.estimatedNutrition.protein || 0) * ratio),
+        fat: round1((meal.estimatedNutrition.fat || 0) * ratio),
+        carbs: round1((meal.estimatedNutrition.carbs || 0) * ratio)
+      }
+    }
+  };
+}
+
 async function collectCaptureCandidates(context) {
   const chatCapture = await safeExtractFromConversation(context);
   const captureRoute = await captureRouterService.routeCapture(context);
@@ -216,7 +286,7 @@ async function collectCaptureCandidates(context) {
 
   if (
     context.input?.messageType === 'text' &&
-    /食べ|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|卵|味噌汁/.test(normalizeText(context.input.rawText))
+    /食べ|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|卵|味噌汁|寿司/.test(normalizeText(context.input.rawText))
   ) {
     const mealParsed = mealAnalysisService.parseMealText(context.input.rawText);
     if (mealParsed.confidence >= 0.4) {
@@ -272,13 +342,6 @@ function buildHiddenContext(context) {
   lines.push('- 提案は多くて1つ');
   lines.push('- 質問で負担を増やしすぎない');
   lines.push('- 管理者のような言い方は禁止');
-
-  if (context.imageAnalysis?.meal?.isMealImage) {
-    lines.push('- 今回は食事写真の推定結果も踏まえる');
-  }
-  if (context.imageAnalysis?.lab?.isLabImage) {
-    lines.push('- 今回は血液検査画像の推定結果も踏まえる');
-  }
 
   return lines.join('\n');
 }
@@ -351,15 +414,34 @@ function inferLastTopic(context) {
   return context.intentType || 'conversation';
 }
 
-async function finalizeMemories(context, params) {
+async function finalizeMemories(context) {
   const shortMemoryUpdates = {
     lastTopic: inferLastTopic(context),
     lastImageType: context.imageAnalysis?.meal?.isMealImage ? 'meal' : context.imageAnalysis?.lab?.isLabImage ? 'lab' : null,
     lastEmotionTone: context.userState?.lastEmotionTone || 'neutral'
   };
 
-  if (context.captureAnalysis?.captureRoute?.candidatePayload) {
-    shortMemoryUpdates.pendingRecordCandidate = context.captureAnalysis.captureRoute.candidatePayload;
+  const currentMealCandidate = (context.captureAnalysis?.unifiedRecordCandidates || []).find((c) => c.recordType === 'meal_record');
+  const currentLabCandidate = (context.captureAnalysis?.unifiedRecordCandidates || []).find((c) => c.recordType === 'lab_record');
+
+  if (currentMealCandidate) {
+    shortMemoryUpdates.pendingRecordCandidate = {
+      recordType: 'meal_record',
+      extracted: currentMealCandidate.extracted
+    };
+  } else if (currentLabCandidate) {
+    shortMemoryUpdates.pendingRecordCandidate = {
+      recordType: 'lab_record',
+      extracted: currentLabCandidate.extracted
+    };
+  }
+
+  if (context.imageAnalysis?.lab?.isLabImage) {
+    shortMemoryUpdates.followUpContext = {
+      source: 'image',
+      imageType: 'lab',
+      extractedItems: (context.imageAnalysis.lab.items || []).map((item) => item.itemName)
+    };
   }
 
   await Promise.all([
@@ -394,6 +476,60 @@ function buildSuccessResult({ context, replyText, persistResult, memoryResult })
   };
 }
 
+function buildDirectReplyIfPossible(context) {
+  const text = normalizeText(context?.input?.rawText || '');
+  const pending = context?.shortMemory?.pendingRecordCandidate || null;
+
+  if (context.imageAnalysis?.meal?.isMealImage) {
+    return buildMealReply(context.imageAnalysis.meal);
+  }
+
+  if (context.imageAnalysis?.lab?.isLabImage) {
+    return buildLabReply(context.imageAnalysis.lab);
+  }
+
+  if (/^ldlは[？?]?$/i.test(text) || /^LDL[？?]?$/i.test(text)) {
+    const ldlReply = buildLdlReply(context);
+    if (ldlReply) return ldlReply;
+    if (pending?.recordType === 'lab_record') {
+      const items = Array.isArray(pending?.extracted?.items) ? pending.extracted.items : [];
+      const ldl = items.find((item) => /LDL/i.test(String(item?.itemName || '')));
+      if (ldl) {
+        return `直前の検査データでは LDL は ${ldl.value}${ldl.unit ? ` ${ldl.unit}` : ''} と見ています。`;
+      }
+    }
+  }
+
+  if (
+    context.intentType === INTENT_TYPES.MEAL_RECORD &&
+    /食べ|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|卵|味噌汁|寿司/.test(text)
+  ) {
+    const parsed = mealAnalysisService.parseMealText(text);
+    if (parsed.confidence >= 0.4) {
+      return buildMealReply(parsed);
+    }
+  }
+
+  if (
+    context.routerHints?.looksLikeShortFollowUp &&
+    pending?.recordType === 'meal_record' &&
+    /半分|少し|全部/.test(text)
+  ) {
+    const updated = applyMealFollowUpToPending(text, pending);
+    context.captureAnalysis = context.captureAnalysis || {};
+    context.captureAnalysis.unifiedRecordCandidates = [
+      { recordType: 'meal_record', certainty: 0.8, extracted: updated.extracted }
+    ];
+    return [
+      '了解です。量を反映しました。',
+      formatNutritionBlock(updated.extracted.estimatedNutrition, text),
+      'この内容で今日の記録に続けられます。'
+    ].join('\n');
+  }
+
+  return null;
+}
+
 async function orchestrateConversation(input) {
   try {
     const loaded = await loadConversationContext(input);
@@ -413,7 +549,7 @@ async function orchestrateConversation(input) {
 
     if (context.intentType === INTENT_TYPES.QUESTION_ABOUT_MEMORY) {
       const replyText = simpleMemoryAnswer(context);
-      const memoryResult = await finalizeMemories(context, { replyText });
+      const memoryResult = await finalizeMemories(context);
       return buildSuccessResult({
         context,
         replyText,
@@ -424,7 +560,7 @@ async function orchestrateConversation(input) {
 
     if (context.intentType === INTENT_TYPES.TIME_QUESTION) {
       const replyText = simpleTimeAnswer();
-      const memoryResult = await finalizeMemories(context, { replyText });
+      const memoryResult = await finalizeMemories(context);
       return buildSuccessResult({
         context,
         replyText,
@@ -440,7 +576,7 @@ async function orchestrateConversation(input) {
         longMemory: context.longMemory,
         recentMessages: context.recentMessages
       });
-      const memoryResult = await finalizeMemories(context, { replyText });
+      const memoryResult = await finalizeMemories(context);
       return buildSuccessResult({
         context,
         replyText,
@@ -453,7 +589,9 @@ async function orchestrateConversation(input) {
     context.captureAnalysis = await collectCaptureCandidates(context);
     context.hiddenContext = buildHiddenContext(context);
 
-    const replyText = await aiChatService.generateReply({
+    const directReply = buildDirectReplyIfPossible(context);
+
+    const replyText = directReply || await aiChatService.generateReply({
       userId: input.userId,
       userMessage: input.rawText || (input.messageType === 'image' ? '画像を受け取りました。' : ''),
       recentMessages: context.recentMessages,
@@ -463,7 +601,7 @@ async function orchestrateConversation(input) {
     });
 
     const persistResult = await maybePersistRecords(context);
-    const memoryResult = await finalizeMemories(context, { replyText, persistResult });
+    const memoryResult = await finalizeMemories(context);
 
     return buildSuccessResult({
       context,
