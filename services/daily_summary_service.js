@@ -1,4 +1,31 @@
 'use strict';
-function buildDailySummary({ records=[], userState={} }){ const meal=records.filter(r=>r.recordType==='meal').length; const weight=records.filter(r=>r.recordType==='weight').length; const exercise=records.filter(r=>r.recordType==='exercise').length; const lab=records.filter(r=>r.recordType==='lab').length; let meaning='今日は大きく崩したというより、今の生活の中で持ちこたえた日として見て大丈夫です。'; if(meal>0&&exercise>0) meaning='今日は食事も動きも少しずつ積み上げられていて、流れはちゃんと作れています。'; else if((userState.gasolineScore||5)<=4) meaning='今日は整えるより、消耗を増やしすぎなかったこと自体に意味がある日でした。'; else if(meal>0) meaning='今日は食事の流れを大きく崩さずに過ごせていて、土台は守れていました。'; return [meaning, `今日の記録: 食事${meal}件 / 体重${weight}件 / 運動${exercise}件 / 検査${lab}件`, '明日は一つだけ、戻しやすい所からで大丈夫です。'].join('
-'); }
+
+function sumNutrition(records) {
+  return records.reduce((acc, record) => {
+    const n = record?.estimatedNutrition || {};
+    acc.kcal += Number(n.kcal || 0);
+    acc.protein += Number(n.protein || 0);
+    acc.fat += Number(n.fat || 0);
+    acc.carbs += Number(n.carbs || 0);
+    return acc;
+  }, { kcal: 0, protein: 0, fat: 0, carbs: 0 });
+}
+
+function round1(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
+}
+
+async function buildDailySummary({ todayRecords, points }) {
+  const mealRecords = (todayRecords || []).filter((r) => r.recordType === 'meal');
+  const exerciseRecords = (todayRecords || []).filter((r) => r.recordType === 'exercise');
+  const weightRecords = (todayRecords || []).filter((r) => r.recordType === 'weight');
+  const nutrition = sumNutrition(mealRecords);
+  return [
+    `今日は食事 ${mealRecords.length}件、運動 ${exerciseRecords.length}件、体重 ${weightRecords.length}件 でした。`,
+    mealRecords.length ? `食事合計は 約${round1(nutrition.kcal)}kcal / たんぱく質 ${round1(nutrition.protein)}g / 脂質 ${round1(nutrition.fat)}g / 糖質 ${round1(nutrition.carbs)}g です。` : '今日は食事の記録がまだ少なめです。',
+    `現在のポイントは ${points?.total || 0}pt です。`,
+    '無理に詰め直すより、戻しやすい所を一つ整えられれば十分です。'
+  ].join('\n');
+}
+
 module.exports = { buildDailySummary };
