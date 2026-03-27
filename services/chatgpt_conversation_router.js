@@ -9,19 +9,17 @@ function normalizeText(value) {
 function normalizeConversationInput(input) {
   const event = input?.originalEvent || null;
   const messageType = input?.messageType || event?.message?.type || 'text';
-  const rawText =
-    typeof input?.rawText === 'string'
-      ? input.rawText
-      : messageType === 'text'
-        ? String(event?.message?.text || '')
-        : '';
-
+  const rawText = typeof input?.rawText === 'string'
+    ? input.rawText
+    : messageType === 'text'
+      ? String(event?.message?.text || '')
+      : '';
   return {
     userId: input?.userId || event?.source?.userId || null,
     replyToken: input?.replyToken || event?.replyToken || null,
     messageType,
     rawText: normalizeText(rawText),
-    imageMeta: input?.imageMeta || null,
+    imageMeta: input?.imageMeta || (messageType === 'image' ? { messageId: event?.message?.id || null } : null),
     messageId: input?.messageId || event?.message?.id || null,
     timestamp: input?.timestamp || event?.timestamp || Date.now(),
     sourceType: input?.sourceType || event?.source?.type || 'unknown',
@@ -30,14 +28,10 @@ function normalizeConversationInput(input) {
 }
 
 async function routeConversation(input) {
-  const normalized = normalizeConversationInput(input);
-
   return conversationOrchestratorService.orchestrateConversation({
-    ...normalized,
+    ...normalizeConversationInput(input),
     routerHints: {}
   });
 }
 
-module.exports = {
-  routeConversation
-};
+module.exports = { routeConversation };
