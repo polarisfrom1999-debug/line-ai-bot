@@ -1,9 +1,4 @@
-
 'use strict';
-
-/**
- * services/gemini_image_analysis_service.js
- */
 
 let GoogleGenAI = null;
 try {
