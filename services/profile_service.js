@@ -1,28 +1,26 @@
 'use strict';
 
-/**
- * services/profile_service.js
- *
- * 役割:
- * - 会話から人物理解に使う情報を整える
- */
+function normalizeText(value) {
+  return String(value || '').trim();
+}
 
-function extractProfileCandidates(text) {
-  const safe = String(text || '').trim();
-  const candidates = [];
+function extractProfilePatchFromText(text) {
+  const safeText = normalizeText(text);
+  const patch = {};
 
-  if (/うっし|呼んで|名前/.test(safe)) candidates.push('呼び方の希望がある');
-  if (/無理なく|痩せたい|体重を落としたい/.test(safe)) candidates.push('無理なく体重を落としたい');
-  if (/優しく|やわらかく/.test(safe)) candidates.push('優しく整理されると受け取りやすい');
-  if (/理屈で|理由が知りたい/.test(safe)) candidates.push('理屈で整理されると受け取りやすい');
-  if (/頑張りすぎ|無理しがち/.test(safe)) candidates.push('頑張りすぎやすい');
-  if (/隠しがち|言いにくい/.test(safe)) candidates.push('隠しやすさがある');
-  if (/家族|育児/.test(safe)) candidates.push('家族都合で生活リズムが揺れやすい');
-  if (/仕事|残業|夜勤/.test(safe)) candidates.push('仕事都合で生活リズムが揺れやすい');
+  const lines = safeText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
 
-  return [...new Set(candidates)];
+  for (const line of lines) {
+    if (/^名前[:：]/.test(line)) patch.preferredName = line.replace(/^名前[:：]/, '').trim();
+    if (/^体重[:：]/.test(line)) patch.weight = line.replace(/^体重[:：]/, '').trim();
+    if (/^体脂肪率[:：]/.test(line)) patch.bodyFat = line.replace(/^体脂肪率[:：]/, '').trim();
+    if (/^年齢[:：]/.test(line)) patch.age = line.replace(/^年齢[:：]/, '').trim();
+    if (/^目標[:：]/.test(line)) patch.goal = line.replace(/^目標[:：]/, '').trim();
+  }
+
+  return patch;
 }
 
 module.exports = {
-  extractProfileCandidates
+  extractProfilePatchFromText
 };
