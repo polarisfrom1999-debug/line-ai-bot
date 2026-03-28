@@ -1,4 +1,3 @@
-services/record_persistence_service.js
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
@@ -13,22 +12,27 @@ function round1(value) {
 }
 
 function normalizeMealRecord(record) {
+  const nutrition = {
+    kcal: round1(record?.estimatedNutrition?.kcal || record?.kcal || 0),
+    protein: round1(record?.estimatedNutrition?.protein || record?.protein || 0),
+    fat: round1(record?.estimatedNutrition?.fat || record?.fat || 0),
+    carbs: round1(record?.estimatedNutrition?.carbs || record?.carbs || 0)
+  };
+
   return {
     type: 'meal',
     name: normalizeText(record?.name || record?.summary || '食事'),
     summary: normalizeText(record?.summary || record?.name || '食事'),
-    estimatedNutrition: {
-      kcal: round1(record?.estimatedNutrition?.kcal || record?.kcal || 0),
-      protein: round1(record?.estimatedNutrition?.protein || record?.protein || 0),
-      fat: round1(record?.estimatedNutrition?.fat || record?.fat || 0),
-      carbs: round1(record?.estimatedNutrition?.carbs || record?.carbs || 0)
-    },
-    kcal: round1(record?.kcal || record?.estimatedNutrition?.kcal || 0),
-    protein: round1(record?.protein || record?.estimatedNutrition?.protein || 0),
-    fat: round1(record?.fat || record?.estimatedNutrition?.fat || 0),
-    carbs: round1(record?.carbs || record?.estimatedNutrition?.carbs || 0),
+    mealType: normalizeText(record?.mealType || ''),
+    source: normalizeText(record?.source || ''),
+    estimatedNutrition: nutrition,
+    kcal: nutrition.kcal,
+    protein: nutrition.protein,
+    fat: nutrition.fat,
+    carbs: nutrition.carbs,
     amountNote: normalizeText(record?.amountNote || ''),
-    amountRatio: Number(record?.amountRatio || 1)
+    amountRatio: Number(record?.amountRatio || 1),
+    items: Array.isArray(record?.items) ? record.items.filter(Boolean) : []
   };
 }
 
@@ -36,8 +40,11 @@ function normalizeExerciseRecord(record) {
   return {
     type: 'exercise',
     name: normalizeText(record?.name || '運動'),
+    exerciseType: normalizeText(record?.exerciseType || ''),
     summary: normalizeText(record?.summary || record?.name || '運動'),
     minutes: record?.minutes != null ? Number(record.minutes) : null,
+    steps: record?.steps != null ? Number(record.steps) : null,
+    distanceKm: record?.distanceKm != null ? Number(record.distanceKm) : null,
     estimatedCalories: record?.estimatedCalories != null ? Number(record.estimatedCalories) : null
   };
 }
@@ -72,18 +79,57 @@ function normalizeLabRecord(record) {
 
 function normalizeRecord(record) {
   if (!record?.type) return null;
-
   if (record.type === 'meal') return normalizeMealRecord(record);
   if (record.type === 'exercise') return normalizeExerciseRecord(record);
   if (record.type === 'weight') return normalizeWeightRecord(record);
   if (record.type === 'lab') return normalizeLabRecord(record);
-
   return null;
+}
+
+function buildRecordDigest(record) {
+  if (!record) return '';
+  if (record.type === 'meal') {
+    return ['meal', record.summary, record.kcal, record.protein, record.fat, record.carbs, record.amountRatio].join('|');
+  }
+  if (record.type === 'exercise') {
+    return ['exercise', record.summary, record.minutes, record.steps, record.distanceKm, record.estimatedCalories].join('|');
+  }
+  if (record.type === 'weight') {
+    return ['weight', record.summary, record.weight, record.bodyFat].join('|');
+  }
+  if (record.type === 'lab') {
+    return ['lab', record.summary, record.examDate, (record.items || []).map((i) => `${i.itemName}:${i.value}${i.unit}`).join(',')].join('|');
+  }
+  return '';
+}
+
+function isDuplicateRecord(record, todayRecords) {
+  const bucket = record?.type === 'meal'
+    ? todayRecords?.meals
+    : record?.type === 'exercise'
+      ? todayRecords?.exercises
+      : record?.type === 'weight'
+        ? todayRecords?.weights
+        : todayRecords?.labs;
+
+  const digest = buildRecordDigest(record);
+  return (Array.isArray(bucket) ? bucket : []).some((item) => buildRecordDigest(item) === digest);
 }
 
 async function persistOneRecord(userId, record) {
   const normalized = normalizeRecord(record);
   if (!normalized) return null;
+
+  const todayRecords = await contextMemoryService.getTodayRecords(userId);
+  if (isDuplicateRecord(normalized, todayRecords)) {
+    return {
+      record: normalized,
+      earnedPoints: 0,
+      totalPoints: await contextMemoryService.getPoints(userId),
+      pointMessage: '',
+      skippedAsDuplicate: true
+    };
+  }
 
   await contextMemoryService.addDailyRecord(userId, normalized);
 
@@ -94,11 +140,8 @@ async function persistOneRecord(userId, record) {
     record: normalized,
     earnedPoints,
     totalPoints,
-    pointMessage: pointsService.buildEarnedPointMessage(
-      normalized.type,
-      earnedPoints,
-      totalPoints
-    )
+    pointMessage: pointsService.buildEarnedPointMessage(normalized.type, earnedPoints, totalPoints),
+    skippedAsDuplicate: false
   };
 }
 
@@ -109,30 +152,38 @@ async function persistRecords({ userId, recordPayloads }) {
     return {
       ok: true,
       savedCount: 0,
+      skippedCount: 0,
       saved: [],
+      skipped: [],
       points: await contextMemoryService.getPoints(userId)
     };
   }
 
   const saved = [];
+  const skipped = [];
   let latestPoints = await contextMemoryService.getPoints(userId);
 
   for (const payload of payloads) {
     const persisted = await persistOneRecord(userId, payload);
     if (!persisted) continue;
 
-    saved.push(persisted.record);
     latestPoints = persisted.totalPoints;
+    if (persisted.skippedAsDuplicate) skipped.push(persisted.record);
+    else saved.push(persisted.record);
   }
 
   return {
     ok: true,
     savedCount: saved.length,
+    skippedCount: skipped.length,
     saved,
+    skipped,
     points: latestPoints
   };
 }
 
 module.exports = {
-  persistRecords
+  persistRecords,
+  persistOneRecord,
+  normalizeRecord
 };
