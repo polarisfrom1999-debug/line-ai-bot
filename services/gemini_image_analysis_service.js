@@ -1,4 +1,3 @@
-services/gemini_image_analysis_service.js
 'use strict';
 
 let GoogleGenAI = null;
@@ -41,16 +40,29 @@ function buildImagePart(imagePayload) {
 
 function buildModelCandidates(model) {
   const seen = new Set();
-  const candidates = [];
+  const list = [];
 
-  for (const item of [model, PRIMARY_MODEL, ...FALLBACK_MODELS]) {
-    const safe = normalizeText(item);
+  for (const candidate of [model, PRIMARY_MODEL, ...FALLBACK_MODELS]) {
+    const safe = normalizeText(candidate);
     if (!safe || seen.has(safe)) continue;
     seen.add(safe);
-    candidates.push(safe);
+    list.push(safe);
   }
 
-  return candidates;
+  return list;
+}
+
+function extractTextFromResult(result) {
+  if (!result) return '';
+  if (typeof result.text === 'string') return normalizeText(result.text);
+
+  const parts = result?.candidates?.[0]?.content?.parts || [];
+  const joined = parts
+    .map((part) => normalizeText(part?.text || ''))
+    .filter(Boolean)
+    .join('\n');
+
+  return normalizeText(joined);
 }
 
 async function generateWithModel({ client, model, prompt, imagePayload, timeoutMs }) {
@@ -65,12 +77,14 @@ async function generateWithModel({ client, model, prompt, imagePayload, timeoutM
         buildImagePart(imagePayload)
       ],
       config: {
-        temperature: 0.2
+        temperature: 0.2,
+        topP: 0.9,
+        maxOutputTokens: 1200
       },
       signal: controller.signal
     });
 
-    const text = normalizeText(result?.text || '');
+    const text = extractTextFromResult(result);
     return {
       ok: Boolean(text),
       text,
@@ -78,11 +92,12 @@ async function generateWithModel({ client, model, prompt, imagePayload, timeoutM
       reason: text ? null : 'empty_text'
     };
   } catch (error) {
+    const reason = normalizeText(error?.message || 'analysis_error') || 'analysis_error';
     return {
       ok: false,
       text: '',
       model,
-      reason: normalizeText(error?.message || 'analysis_error')
+      reason
     };
   } finally {
     clearTimeout(timer);
@@ -91,20 +106,27 @@ async function generateWithModel({ client, model, prompt, imagePayload, timeoutM
 
 async function analyzeImage({ imagePayload, prompt, model }) {
   if (!imagePayload?.buffer || !prompt) {
-    return { ok: false, text: '', reason: 'missing_input' };
+    return {
+      ok: false,
+      text: '',
+      reason: 'missing_input'
+    };
   }
 
   const client = getClient();
   if (!client) {
-    return { ok: false, text: '', reason: 'client_unavailable' };
+    return {
+      ok: false,
+      text: '',
+      reason: 'client_unavailable'
+    };
   }
 
   const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 20000);
-  const candidates = buildModelCandidates(model);
+  const models = buildModelCandidates(model);
+  let lastReason = 'analysis_error';
 
-  let lastError = 'analysis_error';
-
-  for (const candidate of candidates) {
+  for (const candidate of models) {
     const result = await generateWithModel({
       client,
       model: candidate,
@@ -117,14 +139,21 @@ async function analyzeImage({ imagePayload, prompt, model }) {
       return result;
     }
 
-    lastError = result.reason || lastError;
-    console.error('[gemini_image_analysis_service] analyzeImage error:', JSON.stringify({
-      model: candidate,
-      reason: result.reason
-    }));
+    lastReason = result.reason || lastReason;
   }
 
-  return { ok: false, text: '', reason: lastError };
+  console.error('[gemini_image_analysis_service] analyzeImage error:', JSON.stringify({
+    reason: lastReason,
+    mimeType: imagePayload?.mimeType || null,
+    size: Number(imagePayload?.size || 0),
+    models
+  }));
+
+  return {
+    ok: false,
+    text: '',
+    reason: lastReason
+  };
 }
 
 module.exports = {

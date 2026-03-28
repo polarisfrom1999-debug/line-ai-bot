@@ -1,4 +1,3 @@
-services/lab_image_analysis_service.js
 'use strict';
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
@@ -37,7 +36,6 @@ function extractJsonObject(text) {
   const safe = sanitizeGeminiText(text);
   const start = safe.indexOf('{');
   const end = safe.lastIndexOf('}');
-
   if (start === -1 || end === -1 || end <= start) return null;
 
   try {
@@ -62,8 +60,6 @@ function normalizeItemName(name) {
     .trim();
 
   if (/^TG$/i.test(safe)) return '中性脂肪';
-  if (/^空腹時血糖$/i.test(safe)) return '空腹時血糖';
-  if (/^血糖$/i.test(safe)) return '血糖';
   return safe;
 }
 
@@ -87,12 +83,10 @@ function normalizeItems(items) {
 
   const normalized = [];
   const seen = new Set();
-
   for (const item of items) {
     const itemName = normalizeItemName(item?.itemName || item?.name || '');
     const value = normalizeValue(item?.value || '');
     const unit = normalizeUnit(item?.unit || '');
-
     if (!itemName || !value) continue;
     if (!looksLikeTargetItem(itemName)) continue;
 
@@ -100,123 +94,89 @@ function normalizeItems(items) {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    normalized.push({
-      itemName,
-      value,
-      unit
-    });
+    normalized.push({ itemName, value, unit });
   }
 
   return normalized;
 }
 
-function inferIsLabImage(items, examDate) {
-  return Boolean((Array.isArray(items) && items.length) || normalizeText(examDate));
+function inferIsLabImage(items, examDate, sourceText) {
+  if (Array.isArray(items) && items.length >= 2) return true;
+  if (normalizeText(examDate)) return true;
+  if (/LDL|HDL|HbA1c|中性脂肪|血液検査|健診|検査結果/i.test(normalizeText(sourceText))) return true;
+  return false;
 }
 
 function tryHeuristicExtract(rawText) {
   const safe = sanitizeGeminiText(rawText);
-  if (!safe) {
-    return {
-      examDate: '',
-      items: []
-    };
-  }
-
+  const itemRegex = /(LDL|HDL|HbA1c|AST|ALT|LDH|γ-?GTP|TG|中性脂肪|血糖|空腹時血糖|尿酸|クレアチニン|eGFR|尿素窒素)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z%\/]+)?/g;
   const items = [];
-  const seen = new Set();
+  let match = null;
 
-  for (const target of TARGET_ITEMS) {
-    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`${escaped}[\\s:：]*([0-9]+(?:\\.[0-9]+)?)\\s*([%a-zA-Z/]+)?`, 'i');
-    const match = safe.match(regex);
-    if (!match) continue;
-
-    const itemName = normalizeItemName(target);
-    const value = normalizeValue(match[1] || '');
-    const unit = normalizeUnit(match[2] || '');
-
-    if (!itemName || !value) continue;
-
-    const key = `${itemName}:${value}:${unit}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
+  while ((match = itemRegex.exec(safe))) {
     items.push({
-      itemName,
-      value,
-      unit
+      itemName: match[1],
+      value: match[2],
+      unit: match[3] || ''
     });
   }
 
-  let examDate = '';
-  const dateMatch = safe.match(/(20\d{2})[\/\-.年]\s*(\d{1,2})[\/\-.月]\s*(\d{1,2})/);
-  if (dateMatch) {
-    const y = dateMatch[1];
-    const m = String(dateMatch[2]).padStart(2, '0');
-    const d = String(dateMatch[3]).padStart(2, '0');
-    examDate = `${y}-${m}-${d}`;
-  }
+  const dateMatch = safe.match(/(20\d{2}[\/\-年]\d{1,2}[\/\-月]\d{1,2}日?)/);
 
   return {
-    examDate,
-    items
+    examDate: dateMatch ? dateMatch[1] : '',
+    items: normalizeItems(items)
   };
 }
 
-async function analyzeLabImage(imagePayload) {
-  const prompt = [
-    'この画像が血液検査結果なら、日付と検査項目をJSONで返してください。',
-    'JSONのみを返してください。',
-    '対象項目は LDL, HDL, 中性脂肪, HbA1c, AST, ALT, γ-GTP, ALP, 尿酸, 血糖, 空腹時血糖, クレアチニン, eGFR, 尿素窒素, LDH を優先してください。',
+function buildPrompt() {
+  return [
+    'この画像が血液検査・健診結果の画像かどうかを判定してください。',
+    '血液検査画像なら、主要項目だけをJSONで返してください。',
+    '返答はJSONのみで、説明文は不要です。',
     '{',
-    '  "isLabImage": true,',
-    '  "examDate": "YYYY-MM-DD または 空文字",',
+    '  "isLabImage": true or false,',
+    '  "examDate": "読み取れた日付。なければ空文字",',
     '  "items": [',
-    '    { "itemName": "LDL", "value": "140", "unit": "mg/dL" }',
-    '  ],',
-    '  "confidence": 0.0',
+    '    { "itemName": "LDL", "value": "120", "unit": "mg/dL" }',
+    '  ]',
     '}'
   ].join('\n');
+}
 
-  const result = await geminiImageAnalysisService.analyzeImage({
-    imagePayload,
-    prompt
-  });
-
-  if (!result.ok) {
+async function analyzeLabImage(imagePayload) {
+  if (!imagePayload?.buffer) {
     return {
-      source: 'image',
       isLabImage: false,
       examDate: '',
       items: [],
-      confidence: 0
+      source: 'missing_image'
     };
   }
 
-  const parsed = extractJsonObject(result.text);
-  if (parsed) {
-    const items = normalizeItems(parsed.items);
-    return {
-      source: 'image',
-      isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(items, parsed.examDate)),
-      examDate: normalizeText(parsed.examDate || ''),
-      items,
-      confidence: Number(parsed.confidence || 0)
-    };
-  }
+  const result = await geminiImageAnalysisService.analyzeImage({
+    imagePayload,
+    prompt: buildPrompt()
+  });
 
-  const heuristic = tryHeuristicExtract(result.text);
+  const parsed = extractJsonObject(result?.text || '');
+  const heuristic = tryHeuristicExtract(result?.text || '');
+  const mergedItems = normalizeItems(parsed?.items || heuristic.items || []);
+  const examDate = normalizeText(parsed?.examDate || heuristic.examDate || '');
+  const isLabImage = Boolean(
+    parsed?.isLabImage === true || inferIsLabImage(mergedItems, examDate, result?.text || '')
+  );
 
   return {
-    source: 'image',
-    isLabImage: inferIsLabImage(heuristic.items, heuristic.examDate),
-    examDate: heuristic.examDate,
-    items: heuristic.items,
-    confidence: heuristic.items.length ? 0.55 : 0
+    isLabImage,
+    examDate,
+    items: mergedItems,
+    rawText: normalizeText(result?.text || ''),
+    source: result?.ok ? 'gemini' : (result?.reason || 'analysis_failed')
   };
 }
 
 module.exports = {
-  analyzeLabImage
+  analyzeLabImage,
+  normalizeItemName
 };
