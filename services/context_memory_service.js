@@ -4,9 +4,7 @@ const shortMemoryStore = new Map();
 const longMemoryStore = new Map();
 const userStateStore = new Map();
 const recentMessageStore = new Map();
-const recordStore = new Map();
-const surveyStore = new Map();
-const pointsStore = new Map();
+const dailyRecordStore = new Map();
 
 const DEFAULT_SHORT_MEMORY = {
   lastTopic: null,
@@ -19,15 +17,10 @@ const DEFAULT_SHORT_MEMORY = {
   followUpContext: null,
   onboardingState: {
     isActive: false,
+    mode: null,
     currentStep: null,
     completedSteps: [],
     answers: {}
-  },
-  surveySession: {
-    isActive: false,
-    surveyType: null,
-    currentIndex: 0,
-    answers: []
   }
 };
 
@@ -65,6 +58,7 @@ function clone(value) {
 function mergeDeep(base, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch;
   const result = Array.isArray(base) ? [...base] : { ...(base || {}) };
+
   for (const [key, value] of Object.entries(patch)) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       result[key] = mergeDeep(result[key], value);
@@ -72,40 +66,27 @@ function mergeDeep(base, patch) {
       result[key] = value;
     }
   }
+
   return result;
 }
 
-function nowTokyoDate() {
-  const now = new Date();
-  return new Intl.DateTimeFormat('en-CA', {
+function getTodayKey() {
+  return new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Asia/Tokyo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
-  }).format(now);
-}
-
-function dateKeyFromDaysAgo(daysAgo) {
-  const now = new Date();
-  const utc = new Date(now.getTime() - (daysAgo * 24 * 60 * 60 * 1000));
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(utc);
-}
-
-function recordKey(userId, dateKey) {
-  return `${userId}:${dateKey}`;
+  }).format(new Date());
 }
 
 async function getShortMemory(userId) {
-  return clone(shortMemoryStore.get(userId) || DEFAULT_SHORT_MEMORY);
+  const value = shortMemoryStore.get(userId);
+  return clone(value || DEFAULT_SHORT_MEMORY);
 }
 
 async function getLongMemory(userId) {
-  return clone(longMemoryStore.get(userId) || DEFAULT_LONG_MEMORY);
+  const value = longMemoryStore.get(userId);
+  return clone(value || DEFAULT_LONG_MEMORY);
 }
 
 async function saveShortMemory(userId, payload) {
@@ -118,6 +99,7 @@ async function saveShortMemory(userId, payload) {
 async function mergeLongMemory(userId, patch) {
   const current = await getLongMemory(userId);
   let next = clone(current);
+
   if (Array.isArray(patch)) {
     for (const candidate of patch) {
       if (typeof candidate !== 'string' || !candidate.trim()) continue;
@@ -126,12 +108,14 @@ async function mergeLongMemory(userId, patch) {
   } else {
     next = mergeDeep(current, patch || {});
   }
+
   longMemoryStore.set(userId, next);
   return clone(next);
 }
 
 async function getUserState(userId) {
-  return clone(userStateStore.get(userId) || DEFAULT_USER_STATE);
+  const value = userStateStore.get(userId);
+  return clone(value || DEFAULT_USER_STATE);
 }
 
 async function updateUserState(userId, nextState) {
@@ -141,7 +125,8 @@ async function updateUserState(userId, nextState) {
 }
 
 async function getRecentMessages(userId, limit = 20) {
-  return clone((recentMessageStore.get(userId) || []).slice(-limit));
+  const arr = recentMessageStore.get(userId) || [];
+  return clone(arr.slice(-limit));
 }
 
 async function appendRecentMessage(userId, role, content) {
@@ -152,77 +137,48 @@ async function appendRecentMessage(userId, role, content) {
     content: String(content),
     createdAt: new Date().toISOString()
   });
-  recentMessageStore.set(userId, arr.slice(-200));
+  recentMessageStore.set(userId, arr.slice(-100));
 }
 
-async function buildRecentSummary(userId) {
-  const messages = await getRecentMessages(userId, 40);
+async function buildRecentSummary(userId, _days = 3) {
+  const messages = await getRecentMessages(userId, 30);
   const userText = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+
   const parts = [];
   if (/疲れ|眠い|寝不足|だるい/.test(userText)) parts.push('最近は疲れや眠さの話が少し出ています。');
   if (/不安|つらい|しんどい|苦しい/.test(userText)) parts.push('不安やしんどさが時々あります。');
-  if (/ラーメン|ご飯|ごはん|朝ごはん|昼ごはん|夜ごはん|寿司|味噌汁|卵/.test(userText)) parts.push('食事の記録は少しずつ続いています。');
-  if (/歩いた|ジョギング|スクワット|運動/.test(userText)) parts.push('運動の話題も入ってきています。');
+  if (/ラーメン|ごはん|朝ごはん|昼ごはん|夜ごはん|寿司/.test(userText)) parts.push('食事の記録は少しずつ続いています。');
+  if (/歩いた|ジョギング|スクワット|運動|走りました|走った/.test(userText)) parts.push('運動の話題も入ってきています。');
+
   return parts.join(' ') || '';
 }
 
-async function addRecord(userId, record) {
-  const key = recordKey(userId, record?.eventDate || nowTokyoDate());
-  const arr = recordStore.get(key) || [];
-  const incoming = { ...record, createdAt: new Date().toISOString() };
+async function addDailyRecord(userId, record) {
+  const key = `${userId}:${getTodayKey()}`;
+  const current = dailyRecordStore.get(key) || {
+    meals: [],
+    exercises: [],
+    weights: [],
+    labs: []
+  };
 
-  if (record?._replaceLastOfType) {
-    for (let i = arr.length - 1; i >= 0; i--) {
-      if (arr[i]?.recordType === record.recordType) {
-        arr[i] = incoming;
-        recordStore.set(key, arr);
-        return clone(arr);
-      }
-    }
-  }
+  if (record?.type === 'meal') current.meals.push(record);
+  if (record?.type === 'exercise') current.exercises.push(record);
+  if (record?.type === 'weight') current.weights.push(record);
+  if (record?.type === 'lab') current.labs.push(record);
 
-  arr.push(incoming);
-  recordStore.set(key, arr);
-  return clone(arr);
-}
-
-async function getTodayRecords(userId) {
-  return clone(recordStore.get(recordKey(userId, nowTokyoDate())) || []);
-}
-
-async function getRecordsForDays(userId, days = 7) {
-  const out = [];
-  for (let i = 0; i < days; i++) {
-    const key = recordKey(userId, dateKeyFromDaysAgo(i));
-    const arr = recordStore.get(key) || [];
-    out.push(...arr);
-  }
-  return clone(out);
-}
-
-async function saveSurveyAnswer(userId, surveyType, payload) {
-  const key = `${userId}:${surveyType}`;
-  const arr = surveyStore.get(key) || [];
-  arr.push({ ...payload, createdAt: new Date().toISOString() });
-  surveyStore.set(key, arr);
-}
-
-async function getSurveyAnswers(userId, surveyType) {
-  return clone(surveyStore.get(`${userId}:${surveyType}`) || []);
-}
-
-async function addPoints(userId, points, reason) {
-  const current = pointsStore.get(userId) || { total: 0, history: [] };
-  const n = Number(points || 0);
-  if (!n) return clone(current);
-  current.total += n;
-  current.history.push({ points: n, reason, createdAt: new Date().toISOString() });
-  pointsStore.set(userId, current);
+  dailyRecordStore.set(key, current);
   return clone(current);
 }
 
-async function getPoints(userId) {
-  return clone(pointsStore.get(userId) || { total: 0, history: [] });
+async function getTodayRecords(userId) {
+  const key = `${userId}:${getTodayKey()}`;
+  return clone(dailyRecordStore.get(key) || {
+    meals: [],
+    exercises: [],
+    weights: [],
+    labs: []
+  });
 }
 
 module.exports = {
@@ -235,11 +191,6 @@ module.exports = {
   buildRecentSummary,
   updateUserState,
   getUserState,
-  addRecord,
-  getTodayRecords,
-  getRecordsForDays,
-  saveSurveyAnswer,
-  getSurveyAnswers,
-  addPoints,
-  getPoints
+  addDailyRecord,
+  getTodayRecords
 };
