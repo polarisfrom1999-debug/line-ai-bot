@@ -17,7 +17,4 @@ function normalizePlan(plan) {
   return safe;
 }
 
-module.exports = {
-  PLAN_LABELS,
-  normalizePlan
-};
+module.exports = { PLAN_LABELS, normalizePlan };
