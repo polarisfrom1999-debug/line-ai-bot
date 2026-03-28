@@ -1,4 +1,3 @@
-services/plan_service.js
 'use strict';
 
 const PLAN_LABELS = {
@@ -20,7 +19,7 @@ const PLAN_FEATURES = {
     canUseWeeklyReport: true,
     canUseMonthlyReport: false,
     canUsePoints: true,
-    note: 'まずは使い心地を試しながら、記録と会話の流れを整える体験用です。'
+    note: 'まずは使い心地を確かめながら、記録と会話の流れを整える体験用です。'
   },
   [PLAN_LABELS.light]: {
     label: PLAN_LABELS.light,
@@ -70,37 +69,54 @@ function normalizeText(value) {
 function normalizePlan(plan) {
   const safe = normalizeText(plan);
   if (!safe) return null;
-
   if (/無料/.test(safe)) return PLAN_LABELS.free;
   if (/ライト/.test(safe)) return PLAN_LABELS.light;
   if (/スタンダード/.test(safe)) return PLAN_LABELS.standard;
   if (/プレミアム/.test(safe)) return PLAN_LABELS.premium;
-
   return safe;
 }
 
 function getPlanFeatures(plan) {
-  const normalized = normalizePlan(plan) || PLAN_LABELS.free;
+  const normalized = normalizePlan(plan);
   return PLAN_FEATURES[normalized] || PLAN_FEATURES[PLAN_LABELS.free];
 }
 
-function canUseFeature(plan, featureName) {
-  const features = getPlanFeatures(plan);
-  return Boolean(features?.[featureName]);
+function pickPlanFromText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  const numericMap = {
+    '1': PLAN_LABELS.free,
+    '2': PLAN_LABELS.light,
+    '3': PLAN_LABELS.standard,
+    '4': PLAN_LABELS.premium
+  };
+  if (numericMap[safe]) return numericMap[safe];
+  return normalizePlan(safe);
 }
 
-function buildPlanAnswer(plan) {
+function canUseFeature(plan, featureKey) {
   const features = getPlanFeatures(plan);
+  return Boolean(features?.[featureKey]);
+}
+
+function buildPlanGuide(plan) {
+  const features = getPlanFeatures(plan);
+  const enabledLabels = [
+    features.canUseMealPhoto ? '食事写真' : null,
+    features.canUseMealText ? '食事文字' : null,
+    features.canUseWeightRecord ? '体重' : null,
+    features.canUseExerciseRecord ? '運動' : null,
+    features.canUseLabImage ? '血液検査' : null,
+    features.canUseDailySummary ? '日次まとめ' : null,
+    features.canUseWeeklyReport ? '週次まとめ' : null,
+    features.canUseMonthlyReport ? '月次まとめ' : null,
+    features.canUsePoints ? 'ポイント' : null
+  ].filter(Boolean);
 
   return [
-    `現在のプランは「${features.label}」です。`,
+    `${features.label}プランです。`,
     features.note,
-    `食事写真: ${features.canUseMealPhoto ? '使えます' : '使えません'}`,
-    `血液検査画像: ${features.canUseLabImage ? '使えます' : '使えません'}`,
-    `日次まとめ: ${features.canUseDailySummary ? '使えます' : '使えません'}`,
-    `週間報告: ${features.canUseWeeklyReport ? '使えます' : '使えません'}`,
-    `月間報告: ${features.canUseMonthlyReport ? '使えます' : '使えません'}`,
-    `ポイント: ${features.canUsePoints ? '使えます' : '使えません'}`
+    enabledLabels.length ? `使える主な機能: ${enabledLabels.join(' / ')}` : '使える主な機能は準備中です。'
   ].join('\n');
 }
 
@@ -109,6 +125,7 @@ module.exports = {
   PLAN_FEATURES,
   normalizePlan,
   getPlanFeatures,
+  pickPlanFromText,
   canUseFeature,
-  buildPlanAnswer
+  buildPlanGuide
 };

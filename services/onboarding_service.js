@@ -1,7 +1,7 @@
-services/onboarding_service.js
 'use strict';
 
 const profileService = require('./profile_service');
+const planService = require('./plan_service');
 
 const STEPS = {
   PROFILE: 'profile',
@@ -26,13 +26,6 @@ const CONSTITUTION_TYPES = [
   'まだ分からない'
 ];
 
-const PLAN_TYPES = [
-  '無料体験',
-  'ライト',
-  'スタンダード',
-  'プレミアム'
-];
-
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -40,8 +33,7 @@ function normalizeText(value) {
 function buildStartProfileMessage() {
   return [
     'ここから。の無料体験を始めますね。',
-    '最初に、あなたに合う伴走にするための入力から進めます。',
-    'この形で送ってください。',
+    'まずは伴走の土台を合わせたいので、この形で分かる所だけ送ってください。',
     '名前：',
     '年齢：',
     '体重：',
@@ -52,7 +44,7 @@ function buildStartProfileMessage() {
 
 function buildEditProfileMessage() {
   return [
-    'プロフィール変更ですね。更新したい項目だけで大丈夫です。',
+    'プロフィール変更ですね。直したい項目だけで大丈夫です。',
     'この形で送ってください。',
     '名前：',
     '年齢：',
@@ -64,7 +56,7 @@ function buildEditProfileMessage() {
 
 function buildAiTypeQuestion() {
   return [
-    'AIの関わり方を選んでください。',
+    '関わり方の好みを選んでください。',
     '1. やさしく伴走',
     '2. 理屈で整理',
     '3. 背中を押す',
@@ -74,7 +66,7 @@ function buildAiTypeQuestion() {
 
 function buildConstitutionQuestion() {
   return [
-    '太りやすさの体質タイプを選んでください。',
+    '今の感覚に近い体質タイプを選んでください。',
     '1. 糖質で太りやすい',
     '2. 脂質で太りやすい',
     '3. むくみやすい',
@@ -85,7 +77,7 @@ function buildConstitutionQuestion() {
 
 function buildPlanQuestion() {
   return [
-    '次にプランを選べます。',
+    '次にプランを選べます。今の段階で近いものを選んでください。',
     '1. 無料体験',
     '2. ライト',
     '3. スタンダード',
@@ -94,12 +86,13 @@ function buildPlanQuestion() {
 }
 
 function buildCompleteMessage(onboardingState, selectedPlan) {
+  const answers = onboardingState?.answers || {};
   return [
     'ありがとうございます。開始準備が整いました。',
-    `AIタイプ: ${(onboardingState.answers || {}).aiType || '未設定'}`,
-    `体質タイプ: ${(onboardingState.answers || {}).constitutionType || '未設定'}`,
-    `プラン: ${selectedPlan}`,
-    'ここから、一緒に進めていきましょう。'
+    `AIタイプ: ${answers.aiType || '未設定'}`,
+    `体質タイプ: ${answers.constitutionType || '未設定'}`,
+    `プラン: ${selectedPlan || '未設定'}`,
+    'ここからは、記録だけでなく今の生活やしんどさも含めて一緒に見ていきます。'
   ].join('\n');
 }
 
@@ -119,8 +112,7 @@ function isProfileEditTrigger(text) {
 }
 
 function looksLikeProfilePayload(text) {
-  const safe = normalizeText(text);
-  return /名前[:：]|年齢[:：]|体重[:：]|体脂肪率[:：]|目標[:：]/.test(safe);
+  return /名前[:：]|年齢[:：]|体重[:：]|体脂肪率[:：]|目標[:：]/.test(normalizeText(text));
 }
 
 function isOperationalMessage(text) {
@@ -139,14 +131,8 @@ function buildDefaultState(mode) {
 }
 
 async function startOnboarding(input, saveShortMemory) {
-  await saveShortMemory(input.userId, {
-    onboardingState: buildDefaultState('start')
-  });
-
-  return {
-    handled: true,
-    replyText: buildStartProfileMessage()
-  };
+  await saveShortMemory(input.userId, { onboardingState: buildDefaultState('start') });
+  return { handled: true, replyText: buildStartProfileMessage() };
 }
 
 async function startProfileEdit(input, shortMemory, saveShortMemory) {
@@ -158,42 +144,23 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
       currentStep: STEPS.PROFILE
     }
   });
-
-  return {
-    handled: true,
-    replyText: buildEditProfileMessage()
-  };
+  return { handled: true, replyText: buildEditProfileMessage() };
 }
 
 async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory }) {
   if (!looksLikeProfilePayload(text)) {
-    if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') {
-      return { handled: false };
-    }
-
-    return {
-      handled: true,
-      replyText: onboardingState.mode === 'profile_edit'
-        ? buildEditProfileMessage()
-        : buildStartProfileMessage()
-    };
+    if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
+    return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
 
   const patch = profileService.extractProfilePatchFromText(text);
   if (!Object.keys(patch).length) {
-    return {
-      handled: true,
-      replyText: onboardingState.mode === 'profile_edit'
-        ? buildEditProfileMessage()
-        : buildStartProfileMessage()
-    };
+    return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
 
   await mergeLongMemory(input.userId, {
     ...patch,
-    onboardingCompleted: onboardingState.mode === 'profile_edit'
-      ? Boolean(longMemory?.onboardingCompleted)
-      : false,
+    onboardingCompleted: onboardingState.mode === 'profile_edit' ? Boolean(longMemory?.onboardingCompleted) : false,
     trialStartedAt: longMemory?.trialStartedAt || new Date().toISOString()
   });
 
@@ -204,17 +171,10 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
         isActive: false,
         mode: null,
         currentStep: STEPS.COMPLETE,
-        answers: {
-          ...(onboardingState.answers || {}),
-          profile: patch
-        }
+        answers: { ...(onboardingState.answers || {}), profile: patch }
       }
     });
-
-    return {
-      handled: true,
-      replyText: 'プロフィールを更新しました。必要なら、続けて他の項目も直せます。'
-    };
+    return { handled: true, replyText: profileService.buildProfileUpdatedReply(patch) };
   }
 
   await saveShortMemory(input.userId, {
@@ -222,99 +182,61 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
       ...onboardingState,
       currentStep: STEPS.AI_TYPE,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.PROFILE])],
-      answers: {
-        ...(onboardingState.answers || {}),
-        profile: patch
-      }
+      answers: { ...(onboardingState.answers || {}), profile: patch }
     }
   });
 
-  return {
-    handled: true,
-    replyText: buildAiTypeQuestion()
-  };
+  return { handled: true, replyText: buildAiTypeQuestion() };
 }
 
 async function handleAiTypeStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
   if (isOperationalMessage(text)) return { handled: false };
 
   const selected = pickFromNumeric(text, AI_TYPES);
-  if (!selected) {
-    return {
-      handled: true,
-      replyText: buildAiTypeQuestion()
-    };
-  }
+  if (!selected) return { handled: true, replyText: buildAiTypeQuestion() };
 
-  await mergeLongMemory(input.userId, {
-    aiType: selected
-  });
-
+  await mergeLongMemory(input.userId, { aiType: selected });
   await saveShortMemory(input.userId, {
     onboardingState: {
       ...onboardingState,
       currentStep: STEPS.CONSTITUTION,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.AI_TYPE])],
-      answers: {
-        ...(onboardingState.answers || {}),
-        aiType: selected
-      }
+      answers: { ...(onboardingState.answers || {}), aiType: selected }
     }
   });
 
-  return {
-    handled: true,
-    replyText: buildConstitutionQuestion()
-  };
+  return { handled: true, replyText: buildConstitutionQuestion() };
 }
 
 async function handleConstitutionStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
   if (isOperationalMessage(text)) return { handled: false };
 
   const selected = pickFromNumeric(text, CONSTITUTION_TYPES);
-  if (!selected) {
-    return {
-      handled: true,
-      replyText: buildConstitutionQuestion()
-    };
-  }
+  if (!selected) return { handled: true, replyText: buildConstitutionQuestion() };
 
-  await mergeLongMemory(input.userId, {
-    constitutionType: selected
-  });
-
+  await mergeLongMemory(input.userId, { constitutionType: selected });
   await saveShortMemory(input.userId, {
     onboardingState: {
       ...onboardingState,
       currentStep: STEPS.PLAN,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.CONSTITUTION])],
-      answers: {
-        ...(onboardingState.answers || {}),
-        constitutionType: selected
-      }
+      answers: { ...(onboardingState.answers || {}), constitutionType: selected }
     }
   });
 
-  return {
-    handled: true,
-    replyText: buildPlanQuestion()
-  };
+  return { handled: true, replyText: buildPlanQuestion() };
 }
 
 async function handlePlanStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
   if (isOperationalMessage(text)) return { handled: false };
 
-  const selected = pickFromNumeric(text, PLAN_TYPES);
-  if (!selected) {
-    return {
-      handled: true,
-      replyText: buildPlanQuestion()
-    };
-  }
+  const selected = planService.pickPlanFromText(text);
+  if (!selected) return { handled: true, replyText: buildPlanQuestion() };
 
   await mergeLongMemory(input.userId, {
-    selectedPlan: selected,
-    onboardingCompleted: true
+    plan: selected,
+    onboardingCompleted: true,
+    planFeatures: planService.getPlanFeatures(selected)
   });
 
   await saveShortMemory(input.userId, {
@@ -324,85 +246,51 @@ async function handlePlanStep({ input, text, onboardingState, saveShortMemory, m
       mode: null,
       currentStep: STEPS.COMPLETE,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.PLAN])],
-      answers: {
-        ...(onboardingState.answers || {}),
-        plan: selected
-      }
+      answers: { ...(onboardingState.answers || {}), plan: selected }
     }
   });
 
-  return {
-    handled: true,
-    replyText: buildCompleteMessage(onboardingState, selected)
-  };
+  return { handled: true, replyText: buildCompleteMessage({ ...onboardingState, answers: { ...(onboardingState.answers || {}), plan: selected } }, selected) };
 }
 
 async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShortMemory, mergeLongMemory }) {
   const text = normalizeText(input?.rawText || '');
-  const onboardingState = shortMemory?.onboardingState || {
-    isActive: false,
-    mode: null,
-    currentStep: null,
-    completedSteps: [],
-    answers: {}
-  };
+  if (!text && input?.messageType !== 'text') return { handled: false };
 
-  if (isProfileEditTrigger(text)) {
-    return startProfileEdit(input, shortMemory, saveShortMemory);
-  }
+  if (isStartTrigger(text)) return startOnboarding(input, saveShortMemory);
+  if (isProfileEditTrigger(text)) return startProfileEdit(input, shortMemory, saveShortMemory);
 
-  if (!longMemory?.onboardingCompleted && isStartTrigger(text)) {
-    return startOnboarding(input, saveShortMemory);
-  }
-
-  if (!onboardingState.isActive) {
-    return { handled: false };
-  }
+  const onboardingState = shortMemory?.onboardingState || buildDefaultState('start');
+  if (!onboardingState?.isActive) return { handled: false };
 
   if (onboardingState.currentStep === STEPS.PROFILE) {
-    return handleProfileStep({
-      input,
-      text,
-      onboardingState,
-      longMemory,
-      saveShortMemory,
-      mergeLongMemory
-    });
+    return handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory });
   }
-
   if (onboardingState.currentStep === STEPS.AI_TYPE) {
-    return handleAiTypeStep({
-      input,
-      text,
-      onboardingState,
-      saveShortMemory,
-      mergeLongMemory
-    });
+    return handleAiTypeStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
   }
-
   if (onboardingState.currentStep === STEPS.CONSTITUTION) {
-    return handleConstitutionStep({
-      input,
-      text,
-      onboardingState,
-      saveShortMemory,
-      mergeLongMemory
-    });
+    return handleConstitutionStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
   }
-
   if (onboardingState.currentStep === STEPS.PLAN) {
-    return handlePlanStep({
-      input,
-      text,
-      onboardingState,
-      saveShortMemory,
-      mergeLongMemory
-    });
+    return handlePlanStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
   }
 
   return { handled: false };
 }
 
 module.exports = {
+  STEPS,
+  AI_TYPES,
+  CONSTITUTION_TYPES,
+  buildStartProfileMessage,
+  buildEditProfileMessage,
+  buildAiTypeQuestion,
+  buildConstitutionQuestion,
+  buildPlanQuestion,
+  buildCompleteMessage,
+  isStartTrigger,
+  isProfileEditTrigger,
+  looksLikeProfilePayload,
   maybeHandleOnboarding
 };
