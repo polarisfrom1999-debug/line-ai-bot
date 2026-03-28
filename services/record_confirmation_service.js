@@ -1,92 +1,97 @@
+services/record_confirmation_service.js
 'use strict';
-
-/**
- * services/record_confirmation_service.js
- *
- * 役割:
- * - 実績として保存してよい候補か判定する
- * - 曖昧なら最小確認へ回す
- */
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function isPlanText(text) {
-  return /予定|つもり|しようと思う|食べよう|控えるつもり|やるつもり|したい/.test(text);
+function isEmptyObject(value) {
+  return !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length === 0;
 }
 
-function isWishText(text) {
-  return /できたら|できれば|目指す|頑張れたら/.test(text);
+function shouldSkipByText(summary) {
+  const safe = normalizeText(summary);
+
+  if (!safe) return true;
+  if (/予定|つもり|しようと思う|やる予定|食べる予定/.test(safe)) return true;
+  if (/どうしたら|教えて|相談/.test(safe)) return true;
+
+  return false;
 }
 
-function isConsultationText(text) {
-  return /どうしたら|悩|困って|できない|つらい|不安|相談/.test(text);
-}
-
-function buildClarificationQuestion(candidate) {
-  if (!candidate) return '今日の実績として見てよさそうですか？';
-  switch (candidate.recordType) {
-    case 'meal':
-      return 'これは今日食べた分として見てよさそうですか？';
-    case 'weight':
-      return 'この体重は今朝の数値で見てよさそうですか？';
-    case 'exercise':
-      return 'これは実際にやった運動として見てよさそうですか？';
-    case 'lab':
-      return 'この検査値は今回の結果として保存してよさそうですか？';
-    default:
-      return 'この内容は実績として見てよさそうですか？';
-  }
-}
-
-function confirmCandidate(candidate, context) {
-  const rawText = normalizeText(candidate?.rawText || context?.input?.rawText);
-  if (!candidate) {
+async function confirmCandidate(candidate) {
+  if (!candidate || !candidate.type) {
     return {
       shouldPersist: false,
-      needsClarification: false,
-      clarificationQuestion: null,
-      reason: 'no_candidate'
+      reason: 'invalid_candidate'
     };
   }
 
-  if (!rawText) {
+  if (candidate.type === 'meal') {
+    const summary = normalizeText(candidate.summary || candidate.name || '');
+    const nutrition = candidate.estimatedNutrition || {};
+
+    if (shouldSkipByText(summary)) {
+      return {
+        shouldPersist: false,
+        reason: 'future_or_consultation'
+      };
+    }
+
+    if (!summary && isEmptyObject(nutrition)) {
+      return {
+        shouldPersist: false,
+        reason: 'empty_meal'
+      };
+    }
+
     return {
-      shouldPersist: false,
+      shouldPersist: true,
       needsClarification: false,
-      clarificationQuestion: null,
-      reason: 'empty_text'
+      clarificationQuestion: null
     };
   }
 
-  if (isPlanText(rawText) || isWishText(rawText) || isConsultationText(rawText)) {
+  if (candidate.type === 'exercise') {
+    const summary = normalizeText(candidate.summary || candidate.name || '');
+    if (shouldSkipByText(summary)) {
+      return {
+        shouldPersist: false,
+        reason: 'future_or_consultation'
+      };
+    }
+
     return {
-      shouldPersist: false,
+      shouldPersist: Boolean(summary),
       needsClarification: false,
-      clarificationQuestion: null,
-      reason: 'not_actual_record'
+      clarificationQuestion: null
     };
   }
 
-  if (candidate.needsConfirmation || /昨日|たぶん|くらい|半分|少し|軽め/.test(rawText)) {
+  if (candidate.type === 'weight') {
+    const summary = normalizeText(candidate.summary || '');
     return {
-      shouldPersist: false,
-      needsClarification: true,
-      clarificationQuestion: buildClarificationQuestion(candidate),
-      reason: 'needs_clarification'
+      shouldPersist: Boolean(summary),
+      needsClarification: false,
+      clarificationQuestion: null
+    };
+  }
+
+  if (candidate.type === 'lab') {
+    const items = Array.isArray(candidate.items) ? candidate.items : [];
+    return {
+      shouldPersist: items.length > 0 || Boolean(normalizeText(candidate.summary || '')),
+      needsClarification: false,
+      clarificationQuestion: null
     };
   }
 
   return {
-    shouldPersist: true,
-    needsClarification: false,
-    clarificationQuestion: null,
-    reason: 'confirmed'
+    shouldPersist: false,
+    reason: 'unsupported_type'
   };
 }
 
 module.exports = {
-  confirmCandidate,
-  buildClarificationQuestion
+  confirmCandidate
 };
