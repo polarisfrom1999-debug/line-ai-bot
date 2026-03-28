@@ -1,96 +1,151 @@
+services/record_candidate_service.js
 'use strict';
 
-/**
- * services/record_candidate_service.js
- *
- * 役割:
- * - capture系で拾った候補を後段で扱いやすい統一形式へそろえる
- * - ここでは保存しない
- */
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+function normalizeText(value) {
+  return String(value || '').trim();
 }
 
-function normalizeDateFromTimestamp(timestamp) {
-  const d = new Date(timestamp || Date.now());
-  return d.toISOString().slice(0, 10);
+function round1(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
 
-function normalizeRecordType(captureType, candidatePayload) {
-  if (candidatePayload && candidatePayload.recordType) return candidatePayload.recordType;
-  switch (captureType) {
-    case 'meal_record': return 'meal';
-    case 'weight_record': return 'weight';
-    case 'exercise_record': return 'exercise';
-    case 'lab_record': return 'lab';
-    case 'profile_update': return 'profile';
-    default: return 'unknown';
+function detectMealCandidate(text) {
+  const safe = normalizeText(text);
+  if (!/朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ/.test(safe)) {
+    return null;
   }
-}
 
-function buildCandidateFromCaptureRoute(captureRoute, context) {
-  if (!captureRoute || !captureRoute.candidatePayload) return null;
-
-  const payload = clone(captureRoute.candidatePayload);
   return {
-    recordType: normalizeRecordType(captureRoute.captureType, payload),
-    source: payload.source || (context?.input?.messageType === 'image' ? 'image_followup' : 'text'),
-    certainty: captureRoute.confidence >= 0.85 ? 'high' : captureRoute.confidence >= 0.6 ? 'medium' : 'low',
-    eventDate: payload.eventDate || normalizeDateFromTimestamp(context?.input?.timestamp),
-    extracted: payload,
-    needsConfirmation: Boolean(captureRoute.needsConfirmation),
-    rawText: payload.rawText || context?.input?.rawText || ''
+    type: 'meal',
+    summary: safe
   };
 }
 
-function buildCandidatesFromChatCapture(recordCandidates, context) {
-  return (recordCandidates || []).map((candidate) => ({
-    recordType: candidate.recordType || 'unknown',
-    source: candidate.source || (context?.input?.messageType === 'image' ? 'image_followup' : 'text'),
-    certainty: candidate.certainty || 'medium',
-    eventDate: normalizeDateFromTimestamp(context?.input?.timestamp),
-    extracted: clone(candidate),
-    needsConfirmation: Boolean(candidate.needsConfirmation),
-    rawText: candidate.rawText || context?.input?.rawText || ''
-  }));
-}
-
-function dedupeCandidates(candidates) {
-  const seen = new Set();
-  const result = [];
-  for (const candidate of candidates || []) {
-    if (!candidate) continue;
-    const key = JSON.stringify([
-      candidate.recordType,
-      candidate.eventDate,
-      candidate.rawText,
-      candidate.source
-    ]);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(candidate);
+function detectExerciseCandidate(text) {
+  const safe = normalizeText(text);
+  if (/スクワット/.test(safe)) {
+    return {
+      type: 'exercise',
+      name: 'スクワット',
+      summary: safe
+    };
   }
-  return result;
+
+  if (/ジョギング|ランニング|走った|走りました/.test(safe)) {
+    return {
+      type: 'exercise',
+      name: 'ジョギング',
+      summary: safe
+    };
+  }
+
+  if (/歩いた|ウォーキング/.test(safe)) {
+    return {
+      type: 'exercise',
+      name: 'ウォーキング',
+      summary: safe
+    };
+  }
+
+  return null;
 }
 
-function buildUnifiedRecordCandidates(params) {
-  const context = params?.context || {};
-  const captureRoute = params?.captureRoute || null;
-  const chatCapture = params?.chatCapture || {};
+function detectWeightCandidate(text) {
+  const safe = normalizeText(text);
+
+  if (/体脂肪率/.test(safe)) {
+    return {
+      type: 'weight',
+      summary: safe
+    };
+  }
+
+  if (/体重/.test(safe) || /^[0-9０-９]+(\.[0-9０-９]+)?\s*(kg|ＫＧ|キロ)/i.test(safe)) {
+    return {
+      type: 'weight',
+      summary: safe
+    };
+  }
+
+  return null;
+}
+
+function detectLabCandidate(text) {
+  const safe = normalizeText(text);
+  if (!/LDL|HDL|中性脂肪|HbA1c|AST|ALT|γ-GTP|LDH|血液検査/.test(safe)) {
+    return null;
+  }
+
+  return {
+    type: 'lab',
+    summary: safe
+  };
+}
+
+function extractCandidatesFromText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return [];
 
   const candidates = [];
 
-  const routeCandidate = buildCandidateFromCaptureRoute(captureRoute, context);
-  if (routeCandidate) candidates.push(routeCandidate);
+  const meal = detectMealCandidate(safe);
+  if (meal) candidates.push(meal);
 
-  candidates.push(...buildCandidatesFromChatCapture(chatCapture.recordCandidates, context));
+  const exercise = detectExerciseCandidate(safe);
+  if (exercise) candidates.push(exercise);
 
-  return dedupeCandidates(candidates);
+  const weight = detectWeightCandidate(safe);
+  if (weight) candidates.push(weight);
+
+  const lab = detectLabCandidate(safe);
+  if (lab) candidates.push(lab);
+
+  return candidates;
+}
+
+function buildMealCandidateFromAnalysis(parsedMeal, rawText) {
+  return {
+    type: 'meal',
+    name: Array.isArray(parsedMeal?.items) && parsedMeal.items.length ? parsedMeal.items.join('、') : normalizeText(rawText) || '食事',
+    summary: normalizeText(rawText) || '食事',
+    estimatedNutrition: {
+      kcal: round1(parsedMeal?.estimatedNutrition?.kcal || 0),
+      protein: round1(parsedMeal?.estimatedNutrition?.protein || 0),
+      fat: round1(parsedMeal?.estimatedNutrition?.fat || 0),
+      carbs: round1(parsedMeal?.estimatedNutrition?.carbs || 0)
+    },
+    amountRatio: Number(parsedMeal?.amountRatio || 1),
+    amountNote: normalizeText(parsedMeal?.amountNote || '')
+  };
+}
+
+function buildMealCandidateFromImageAnalysis(parsedMeal) {
+  return {
+    type: 'meal',
+    name: Array.isArray(parsedMeal?.items) && parsedMeal.items.length ? parsedMeal.items.join('、') : '食事写真',
+    summary: Array.isArray(parsedMeal?.items) && parsedMeal.items.length ? parsedMeal.items.join('、') : '食事写真',
+    estimatedNutrition: {
+      kcal: round1(parsedMeal?.estimatedNutrition?.kcal || 0),
+      protein: round1(parsedMeal?.estimatedNutrition?.protein || 0),
+      fat: round1(parsedMeal?.estimatedNutrition?.fat || 0),
+      carbs: round1(parsedMeal?.estimatedNutrition?.carbs || 0)
+    },
+    amountNote: normalizeText(parsedMeal?.amountNote || '標準')
+  };
+}
+
+function buildLabCandidateFromImageAnalysis(parsedLab) {
+  return {
+    type: 'lab',
+    summary: '血液検査画像',
+    examDate: normalizeText(parsedLab?.examDate || ''),
+    items: Array.isArray(parsedLab?.items) ? parsedLab.items : []
+  };
 }
 
 module.exports = {
-  buildUnifiedRecordCandidates,
-  buildCandidateFromCaptureRoute,
-  buildCandidatesFromChatCapture
+  extractCandidatesFromText,
+  buildMealCandidateFromAnalysis,
+  buildMealCandidateFromImageAnalysis,
+  buildLabCandidateFromImageAnalysis
 };
