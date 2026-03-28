@@ -2,6 +2,7 @@ services/record_persistence_service.js
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
+const pointsService = require('./points_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -35,14 +36,26 @@ function normalizeExerciseRecord(record) {
   return {
     type: 'exercise',
     name: normalizeText(record?.name || '運動'),
-    summary: normalizeText(record?.summary || record?.name || '運動')
+    summary: normalizeText(record?.summary || record?.name || '運動'),
+    minutes: record?.minutes != null ? Number(record.minutes) : null,
+    estimatedCalories: record?.estimatedCalories != null ? Number(record.estimatedCalories) : null
   };
 }
 
 function normalizeWeightRecord(record) {
   return {
     type: 'weight',
-    summary: normalizeText(record?.summary || '体重記録')
+    summary: normalizeText(record?.summary || '体重記録'),
+    weight: record?.weight != null ? Number(record.weight) : null,
+    bodyFat: record?.bodyFat != null ? Number(record.bodyFat) : null
+  };
+}
+
+function normalizeLabItem(item) {
+  return {
+    itemName: normalizeText(item?.itemName || item?.name || ''),
+    value: normalizeText(item?.value || ''),
+    unit: normalizeText(item?.unit || '')
   };
 }
 
@@ -50,7 +63,10 @@ function normalizeLabRecord(record) {
   return {
     type: 'lab',
     summary: normalizeText(record?.summary || '血液検査'),
-    items: Array.isArray(record?.items) ? record.items : []
+    examDate: normalizeText(record?.examDate || ''),
+    items: (Array.isArray(record?.items) ? record.items : [])
+      .map(normalizeLabItem)
+      .filter((item) => item.itemName && item.value)
   };
 }
 
@@ -65,8 +81,30 @@ function normalizeRecord(record) {
   return null;
 }
 
+async function persistOneRecord(userId, record) {
+  const normalized = normalizeRecord(record);
+  if (!normalized) return null;
+
+  await contextMemoryService.addDailyRecord(userId, normalized);
+
+  const earnedPoints = pointsService.getPointValueByRecordType(normalized.type);
+  const totalPoints = await contextMemoryService.addPoints(userId, earnedPoints);
+
+  return {
+    record: normalized,
+    earnedPoints,
+    totalPoints,
+    pointMessage: pointsService.buildEarnedPointMessage(
+      normalized.type,
+      earnedPoints,
+      totalPoints
+    )
+  };
+}
+
 async function persistRecords({ userId, recordPayloads }) {
   const payloads = Array.isArray(recordPayloads) ? recordPayloads : [];
+
   if (!userId || !payloads.length) {
     return {
       ok: true,
@@ -77,22 +115,21 @@ async function persistRecords({ userId, recordPayloads }) {
   }
 
   const saved = [];
+  let latestPoints = await contextMemoryService.getPoints(userId);
 
   for (const payload of payloads) {
-    const normalized = normalizeRecord(payload);
-    if (!normalized) continue;
+    const persisted = await persistOneRecord(userId, payload);
+    if (!persisted) continue;
 
-    const savedRecord = await contextMemoryService.addDailyRecord(userId, normalized);
-    saved.push(normalized);
+    saved.push(persisted.record);
+    latestPoints = persisted.totalPoints;
   }
-
-  const points = await contextMemoryService.getPoints(userId);
 
   return {
     ok: true,
     savedCount: saved.length,
     saved,
-    points
+    points: latestPoints
   };
 }
 
