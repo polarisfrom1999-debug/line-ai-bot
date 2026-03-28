@@ -1,4 +1,3 @@
-index.js
 'use strict';
 
 require('dotenv').config();
@@ -23,38 +22,51 @@ function buildLineClient() {
   if (!line || !token) return null;
 
   try {
-    return new line.messagingApi.MessagingApiClient({
-      channelAccessToken: token
-    });
+    return new line.messagingApi.MessagingApiClient({ channelAccessToken: token });
   } catch (error) {
     console.error('[index] buildLineClient error:', error?.message || error);
     return null;
   }
 }
 
+function sanitizeMessageText(text) {
+  const safe = String(text || '');
+  return safe.length <= 4900 ? safe : `${safe.slice(0, 4890)}…`;
+}
+
+function normalizeReplyMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .filter(Boolean)
+    .map((message) => {
+      if (message.type === 'text') {
+        return { ...message, text: sanitizeMessageText(message.text) };
+      }
+      return message;
+    })
+    .slice(0, 5);
+}
+
 async function replyLineMessages(replyToken, messages) {
   const client = buildLineClient();
+  const normalizedMessages = normalizeReplyMessages(messages);
 
-  if (!client || !replyToken || !Array.isArray(messages) || !messages.length) {
-    console.log('[reply fallback]', { replyToken, messages });
+  if (!client || !replyToken || !normalizedMessages.length) {
+    console.log('[reply fallback]', { replyToken, messages: normalizedMessages });
     return;
   }
 
   try {
-    await client.replyMessage({
-      replyToken,
-      messages
-    });
+    await client.replyMessage({ replyToken, messages: normalizedMessages });
   } catch (error) {
     console.error('[index] replyLineMessages error:', error?.message || error);
-    console.log('[reply fallback]', { replyToken, messages });
+    console.log('[reply fallback]', { replyToken, messages: normalizedMessages });
   }
 }
 
 function normalizeEventInput(event) {
   const messageType = event?.message?.type || 'other';
   const rawText = messageType === 'text' ? String(event?.message?.text || '') : '';
-
   return {
     userId: event?.source?.userId || null,
     replyToken: event?.replyToken || null,
@@ -76,16 +88,13 @@ async function handleEvent(event) {
 
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
+      return;
     }
+
+    await replyLineMessages(input.replyToken, [{ type: 'text', text: '受け取りました。少し言い換えて送ってもらえたら、今の流れに合わせて返せます。' }]);
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);
-
-    await replyLineMessages(event?.replyToken, [
-      {
-        type: 'text',
-        text: '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。'
-      }
-    ]);
+    await replyLineMessages(event?.replyToken, [{ type: 'text', text: '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。' }]);
   }
 }
 
@@ -97,7 +106,9 @@ app.get('/health', (_req, res) => {
   res.status(200).json({
     ok: true,
     service: 'kokokara-line-ai',
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    lineSdkLoaded: Boolean(line),
+    hasAccessToken: Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN)
   });
 });
 
@@ -111,10 +122,7 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (error) {
     console.error('[index] webhook error:', error?.message || error);
-
-    if (!res.headersSent) {
-      res.status(200).send('ok');
-    }
+    if (!res.headersSent) res.status(200).send('ok');
   }
 });
 
