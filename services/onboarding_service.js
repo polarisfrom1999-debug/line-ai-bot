@@ -66,54 +66,30 @@ function pickFromNumeric(text, options) {
 }
 
 function isStartTrigger(text) {
-  return /無料体験開始|スタート|開始/.test(String(text || ''));
+  return /^(無料体験開始|スタート|開始)$/.test(String(text || '').trim());
 }
 
 function isProfileStartTrigger(text) {
-  return /プロフィール変更|プロフィール入力|プロフィール/.test(String(text || ''));
+  return /^(プロフィール変更|プロフィール入力|プロフィール)$/.test(String(text || '').trim());
 }
 
 async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShortMemory, mergeLongMemory }) {
   const text = String(input?.rawText || '').trim();
-  const onboardingState = shortMemory?.onboardingState || {
-    isActive: false,
-    currentStep: null,
-    completedSteps: [],
-    answers: {}
-  };
+  const onboardingState = shortMemory?.onboardingState || { isActive: false, currentStep: null, completedSteps: [], answers: {} };
 
   if (!longMemory?.onboardingCompleted && (isStartTrigger(text) || isProfileStartTrigger(text))) {
     await saveShortMemory(input.userId, {
-      onboardingState: {
-        isActive: true,
-        currentStep: STEPS.PROFILE,
-        completedSteps: [],
-        answers: {}
-      }
+      onboardingState: { isActive: true, currentStep: STEPS.PROFILE, completedSteps: [], answers: {} }
     });
-
-    return {
-      handled: true,
-      replyText: buildStartMessage()
-    };
+    return { handled: true, replyText: buildStartMessage() };
   }
 
-  if (!onboardingState.isActive) {
-    return { handled: false };
-  }
+  if (!onboardingState.isActive) return { handled: false };
 
   if (onboardingState.currentStep === STEPS.PROFILE) {
     const patch = profileService.extractProfilePatchFromText(text);
-    if (!Object.keys(patch).length) {
-      return { handled: true, replyText: buildStartMessage() };
-    }
-
-    await mergeLongMemory(input.userId, {
-      ...patch,
-      onboardingCompleted: false,
-      trialStartedAt: new Date().toISOString()
-    });
-
+    if (!Object.keys(patch).length) return { handled: true, replyText: buildStartMessage() };
+    await mergeLongMemory(input.userId, { ...patch, onboardingCompleted: false, trialStartedAt: new Date().toISOString() });
     await saveShortMemory(input.userId, {
       onboardingState: {
         ...onboardingState,
@@ -122,14 +98,12 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
         answers: { ...(onboardingState.answers || {}), profile: patch }
       }
     });
-
     return { handled: true, replyText: buildAiTypeQuestion() };
   }
 
   if (onboardingState.currentStep === STEPS.AI_TYPE) {
     const selected = pickFromNumeric(text, AI_TYPES);
     if (!selected) return { handled: true, replyText: buildAiTypeQuestion() };
-
     await mergeLongMemory(input.userId, { aiType: selected });
     await saveShortMemory(input.userId, {
       onboardingState: {
@@ -139,14 +113,12 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
         answers: { ...(onboardingState.answers || {}), aiType: selected }
       }
     });
-
     return { handled: true, replyText: buildConstitutionQuestion() };
   }
 
   if (onboardingState.currentStep === STEPS.CONSTITUTION) {
     const selected = pickFromNumeric(text, CONSTITUTION_TYPES);
     if (!selected) return { handled: true, replyText: buildConstitutionQuestion() };
-
     await mergeLongMemory(input.userId, { constitutionType: selected });
     await saveShortMemory(input.userId, {
       onboardingState: {
@@ -156,19 +128,13 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
         answers: { ...(onboardingState.answers || {}), constitutionType: selected }
       }
     });
-
     return { handled: true, replyText: buildPlanQuestion() };
   }
 
   if (onboardingState.currentStep === STEPS.PLAN) {
     const selected = pickFromNumeric(text, PLAN_TYPES);
     if (!selected) return { handled: true, replyText: buildPlanQuestion() };
-
-    await mergeLongMemory(input.userId, {
-      selectedPlan: selected,
-      onboardingCompleted: true
-    });
-
+    await mergeLongMemory(input.userId, { selectedPlan: selected, onboardingCompleted: true });
     await saveShortMemory(input.userId, {
       onboardingState: {
         isActive: false,
@@ -177,7 +143,6 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
         answers: { ...(onboardingState.answers || {}), plan: selected }
       }
     });
-
     return {
       handled: true,
       replyText: [
@@ -193,6 +158,4 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
   return { handled: false };
 }
 
-module.exports = {
-  maybeHandleOnboarding
-};
+module.exports = { maybeHandleOnboarding };
