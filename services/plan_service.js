@@ -84,6 +84,11 @@ function getPlanFeatures(plan) {
   return PLAN_FEATURES[normalized] || PLAN_FEATURES[PLAN_LABELS.free];
 }
 
+function canUseFeature(plan, featureName) {
+  const features = getPlanFeatures(plan);
+  return Boolean(features?.[featureName]);
+}
+
 function buildPlanAnswer(plan) {
   const features = getPlanFeatures(plan);
 
@@ -94,7 +99,8 @@ function buildPlanAnswer(plan) {
     `血液検査画像: ${features.canUseLabImage ? '使えます' : '使えません'}`,
     `日次まとめ: ${features.canUseDailySummary ? '使えます' : '使えません'}`,
     `週間報告: ${features.canUseWeeklyReport ? '使えます' : '使えません'}`,
-    `月間報告: ${features.canUseMonthlyReport ? '使えます' : '使えません'}`
+    `月間報告: ${features.canUseMonthlyReport ? '使えます' : '使えません'}`,
+    `ポイント: ${features.canUsePoints ? '使えます' : '使えません'}`
   ].join('\n');
 }
 
@@ -103,5 +109,6 @@ module.exports = {
   PLAN_FEATURES,
   normalizePlan,
   getPlanFeatures,
+  canUseFeature,
   buildPlanAnswer
 };
