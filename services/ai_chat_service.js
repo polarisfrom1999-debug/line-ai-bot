@@ -1,4 +1,3 @@
-services/ai_chat_service.js
 'use strict';
 
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
@@ -21,18 +20,30 @@ function postProcessReply(text) {
     .trim();
 }
 
-function buildSystemPrompt(hiddenContext, responseMode) {
+function inferAiStyle(aiType) {
+  const safe = normalizeText(aiType);
+  if (/理屈|整理/.test(safe)) return 'logic_first';
+  if (/やさしく|伴走/.test(safe)) return 'gentle_first';
+  if (/背中を押す/.test(safe)) return 'push_lightly';
+  return 'balanced';
+}
+
+function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
+  const aiStyle = inferAiStyle(longMemory?.aiType);
+  const preferredName = normalizeText(longMemory?.preferredName || '');
+
   return [
     'あなたは「ここから。」の AI牛込 です。',
     '単なる記録AIではなく、人生の伴走OSとして振る舞ってください。',
     '口調はやや柔らかく、説教しません。丁寧すぎず、少し大人の余裕があります。',
-    '利用者の生活背景、疲れ、痛み、不安、継続しづらさを踏まえて返してください。',
-    '返答はLINE向けにやや短めで、必要以上に長くしません。',
-    'まず受け止め、その後に必要なら提案は1つだけにします。',
+    '会話はLINE向けで、1〜5文程度を基本にします。',
+    '会話の順番は「受け止める→必要なら整理→提案は1つまで」です。',
+    '質問攻めにしないでください。質問は本当に必要な時だけ1つまでです。',
+    '雑談や相談はすぐ記録モードに戻しすぎないでください。',
+    'しんどさ・痛み・不安がある時は、改善提案より先に負担を増やさない方向を優先してください。',
     '「報告ありがとうございます」「素晴らしいです」「引き続き頑張りましょう」は使わないでください。',
-    '必要なら「なるほど。」「うーん、そうでしたか。」のような呼吸を少し混ぜて構いません。',
-    '質問攻めにせず、相手の負担を増やさないでください。',
-    '雑談は雑談として楽しみ、すぐ記録モードへ戻しすぎないでください。',
+    preferredName ? `ユーザーの呼び方の候補: ${preferredName}` : null,
+    `AIスタイル: ${aiStyle}`,
     `responseMode: ${responseMode || 'empathy_plus_one_hint'}`,
     hiddenContext ? hiddenContext : ''
   ].filter(Boolean).join('\n');
@@ -51,12 +62,17 @@ function convertRecentMessages(recentMessages) {
 
 function fallbackGenerate(params) {
   const text = normalizeText(params?.userMessage || '');
+  const stateFlags = Array.isArray(params?.stateFlags) ? params.stateFlags : [];
 
-  if (/痛い|つらい|しんどい|苦しい/.test(text)) {
+  if (stateFlags.includes('safety_attention') || /心が苦しい|消えたい|激痛|骨折/.test(text)) {
+    return 'それはかなり優先度の高いしんどさですね。今は整えることより安全を先にして、無理を増やさない動きで考えましょう。';
+  }
+
+  if (stateFlags.includes('pain') || /痛い|つらい|しんどい|苦しい/.test(text)) {
     return 'うーん、それはしんどかったですね。今は無理に整えようとしすぎず、まず負担を増やさない方向で見ていきましょう。';
   }
 
-  if (/疲れ|眠い|寝不足|だるい/.test(text)) {
+  if (stateFlags.includes('fatigue') || /疲れ|眠い|寝不足|だるい/.test(text)) {
     return 'なるほど。今日は頑張って整えるというより、消耗を増やしすぎない方が大事そうですね。';
   }
 
@@ -97,7 +113,7 @@ async function callOpenAI(messages) {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.8,
+        temperature: 0.7,
         messages
       }),
       signal: controller.signal
@@ -120,7 +136,7 @@ async function callOpenAI(messages) {
 }
 
 async function generateReply(params) {
-  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode);
+  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode, params?.longMemory || {});
   const recent = convertRecentMessages(params?.recentMessages);
 
   const messages = [
@@ -138,5 +154,6 @@ async function generateReply(params) {
 }
 
 module.exports = {
-  generateReply
+  generateReply,
+  inferAiStyle
 };

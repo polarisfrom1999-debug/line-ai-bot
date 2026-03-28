@@ -1,4 +1,3 @@
-services/conversation_orchestrator_service.js
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
@@ -8,6 +7,9 @@ const weeklyReportService = require('./weekly_report_service');
 const lineMediaService = require('./line_media_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
+const dailySummaryService = require('./daily_summary_service');
+const profileService = require('./profile_service');
+const energyService = require('./energy_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -34,9 +36,7 @@ function getJapanNow() {
   }).formatToParts(now);
 
   const result = {};
-  for (const part of parts) {
-    result[part.type] = part.value;
-  }
+  for (const part of parts) result[part.type] = part.value;
 
   return {
     year: result.year,
@@ -52,35 +52,63 @@ function buildTimeAnswer() {
   return `今日は${now.month}月${now.day}日、今は${now.hour}時${now.minute}分くらいです。`;
 }
 
-function detectIntent(input) {
+function detectIntent(input, shortMemory) {
   const text = normalizeText(input?.rawText || '');
 
+  if (input?.messageType === 'image') return 'image';
   if (/今何時|何時|何月何日|今日何日|何時何分/.test(text)) return 'time_question';
   if (/私の名前|私の体重|私の体脂肪率|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
-  if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
+  if (/今日の食事記録|今日の記録|食事記録教えて|今日の合計/.test(text)) return 'today_records';
   if (/使い方教えて|使い方/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
+  if (/今日のまとめ|日次まとめ/.test(text)) return 'daily_summary';
+  if (/うっし〜って呼んで|うっし～って呼んで|うっし〜と呼んで|うっし～と呼んで/.test(text)) return 'rename_request';
+  if (shortMemory?.pendingRecordCandidate?.recordType === 'meal_record' && /半分|少し|全部|完食|残した|汁は飲んでない/.test(text)) return 'meal_followup';
+  if (/LDL|HDL|中性脂肪|HbA1c|AST|ALT|LDH|γ-GTP/i.test(text)) return 'lab_followup';
+  if (looksLikeMealText(text)) return 'meal_text';
+  if (looksLikeExerciseText(text)) return 'exercise_text';
+  if (looksLikeWeightText(text)) return 'weight_text';
   return 'normal';
 }
 
+function looksLikeMealText(text) {
+  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ/.test(normalizeText(text));
+}
+
+function looksLikeExerciseText(text) {
+  return /歩いた|ジョギング|ランニング|走った|走りました|スクワット|筋トレ|運動|ウォーキング/.test(normalizeText(text));
+}
+
+function looksLikeWeightText(text) {
+  return /体重|体脂肪率|kg|キロ/.test(normalizeText(text));
+}
+
+function detectStateFlags(text) {
+  const safe = normalizeText(text);
+  const flags = [];
+  if (/疲れ|眠い|寝不足|だるい/.test(safe)) flags.push('fatigue');
+  if (/痛い|腰痛|首|肩|骨折|激痛/.test(safe)) flags.push('pain');
+  if (/不安|焦る|つらい|しんどい|苦しい/.test(safe)) flags.push('emotional_distress');
+  if (/水分|のど乾/.test(safe)) flags.push('hydration');
+  if (/むくみ/.test(safe)) flags.push('swelling');
+  if (/便通|便秘|お腹/.test(safe)) flags.push('bowel');
+  if (/睡眠|眠い|寝不足/.test(safe)) flags.push('sleep');
+  if (/心が苦しい|消えたい|激痛|骨折/.test(safe)) flags.push('safety_attention');
+  return [...new Set(flags)];
+}
+
+function inferResponseMode(intent, stateFlags, longMemory) {
+  if (stateFlags.includes('safety_attention')) return 'safety_guidance';
+  if (stateFlags.includes('pain') || stateFlags.includes('fatigue')) return 'care_priority';
+  if (intent === 'meal_text' || intent === 'exercise_text' || intent === 'weight_text' || intent === 'meal_followup') return 'record_with_gentle_feedback';
+  if (/理屈|整理/.test(String(longMemory?.aiType || ''))) return 'light_structure';
+  if (/やさしく|伴走/.test(String(longMemory?.aiType || ''))) return 'empathy_first';
+  return 'empathy_plus_one_hint';
+}
+
 function buildMemoryAnswer(longMemory) {
-  const lines = [];
-
-  if (longMemory?.preferredName) lines.push(`名前は「${longMemory.preferredName}」として覚えています。`);
-  if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
-  if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
-  if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
-  if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
-  if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
-  if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
-  if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
-
-  if (!lines.length) {
-    return '今はまだ強く残っていることは多くないので、これから少しずつ覚えていきますね。';
-  }
-
-  return lines.join('\n');
+  return profileService.buildMemoryAnswer(longMemory);
 }
 
 function buildHelpAnswer() {
@@ -122,45 +150,13 @@ function buildTodayRecordsAnswer(records) {
 }
 
 function parseInlineProfile(text) {
-  const safe = normalizeText(text);
-  const patch = {};
-
-  const nameMatch = safe.match(/名前[は：:]\s*([^\n]+)/);
-  const ageMatch = safe.match(/年齢[は：:]\s*([^\n]+)/);
-  const weightMatch = safe.match(/体重[は：:]\s*([^\n]+)/);
-  const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
-  const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
-
-  if (nameMatch) patch.preferredName = nameMatch[1].trim();
-  if (ageMatch) patch.age = ageMatch[1].trim();
-  if (weightMatch) patch.weight = weightMatch[1].trim();
-  if (bodyFatMatch) patch.bodyFat = bodyFatMatch[1].trim();
-  if (goalMatch) patch.goal = goalMatch[1].trim();
-
-  return patch;
+  return profileService.extractProfilePatchFromText(text);
 }
 
 function detectWeightRecord(text) {
   const safe = normalizeText(text);
-  if (/体脂肪率/.test(safe)) {
-    return { type: 'weight', summary: safe };
-  }
-  if (/体重/.test(safe) || /^[0-9０-９]+(\.[0-9０-９]+)?\s*(kg|ＫＧ|キロ)/i.test(safe)) {
-    return { type: 'weight', summary: safe };
-  }
-  return null;
-}
-
-function detectExerciseRecord(text) {
-  const safe = normalizeText(text);
-  if (/スクワット/.test(safe)) return { type: 'exercise', summary: safe, name: 'スクワット' };
-  if (/ジョギング|ランニング|走りました|走った/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
-  if (/歩いた|ウォーキング/.test(safe)) return { type: 'exercise', summary: safe, name: 'ウォーキング' };
-  return null;
-}
-
-function looksLikeMealText(text) {
-  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ/.test(normalizeText(text));
+  if (!looksLikeWeightText(safe)) return null;
+  return { type: 'weight', summary: safe };
 }
 
 function buildMealReply(parsedMeal) {
@@ -245,13 +241,13 @@ function maybeAnswerLabFollowUp(text, shortMemory) {
   });
 
   if (!target) return null;
-
   return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''} と読めました。`;
 }
 
 async function appendTurn(userId, userText, replyText) {
   await contextMemoryService.appendRecentMessage(userId, 'user', userText);
   await contextMemoryService.appendRecentMessage(userId, 'assistant', replyText);
+  await contextMemoryService.rememberFromConversation(userId);
 }
 
 async function maybeHandleOnboarding(input, shortMemory, longMemory) {
@@ -278,7 +274,9 @@ async function maybeHandleLabImage(input) {
       source: 'image',
       imageType: 'lab',
       extractedItems: lab.items
-    }
+    },
+    lastImageType: 'lab',
+    activeHealthTheme: 'lab'
   });
 
   await contextMemoryService.addDailyRecord(input.userId, {
@@ -305,7 +303,9 @@ async function maybeHandleMealImage(input) {
     pendingRecordCandidate: {
       recordType: 'meal_record',
       extracted: meal
-    }
+    },
+    lastImageType: 'meal',
+    activeHealthTheme: 'meal'
   });
 
   return {
@@ -327,7 +327,8 @@ async function maybeHandleMealText(input) {
     pendingRecordCandidate: {
       recordType: 'meal_record',
       extracted: parsedMeal
-    }
+    },
+    activeHealthTheme: 'meal'
   });
 
   return {
@@ -341,7 +342,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   const pending = shortMemory?.pendingRecordCandidate;
 
   if (!pending || pending?.recordType !== 'meal_record') return null;
-  if (!/半分|少し|全部|完食/.test(text)) return null;
+  if (!/半分|少し|全部|完食|残した|汁は飲んでない/.test(text)) return null;
 
   const meal = pending?.extracted || {};
   const base = meal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 };
@@ -349,6 +350,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   let ratio = 1;
   if (/半分/.test(text)) ratio = 0.5;
   else if (/少し/.test(text)) ratio = 0.7;
+  else if (/残した|汁は飲んでない/.test(text)) ratio = 0.8;
   else if (/全部|完食/.test(text)) ratio = 1;
 
   const adjusted = {
@@ -366,7 +368,8 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     pendingRecordCandidate: {
       recordType: 'meal_record',
       extracted: adjusted
-    }
+    },
+    activeHealthTheme: 'meal'
   });
 
   return {
@@ -381,20 +384,8 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   };
 }
 
-async function maybeStoreSimpleRecords(userId, text) {
-  const mealParsed = looksLikeMealText(text) ? mealAnalysisService.parseMealText(text) : null;
-  if (mealParsed && Number(mealParsed.confidence || 0) >= 0.4) {
-    await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed));
-  }
-
-  const exercise = detectExerciseRecord(text);
-  if (exercise) await contextMemoryService.addDailyRecord(userId, exercise);
-
-  const weight = detectWeightRecord(text);
-  if (weight) await contextMemoryService.addDailyRecord(userId, weight);
-}
-
-async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest) {
+async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, stateFlags, responseMode) {
+  const narrative = longMemoryLatest?.narrativeMemory || {};
   const systemHint = [
     '[伴走OSルール]',
     '- 受け止めを先に置く',
@@ -408,7 +399,10 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     `- AIタイプ: ${longMemoryLatest?.aiType || '未設定'}`,
     `- 体質タイプ: ${longMemoryLatest?.constitutionType || '未設定'}`,
     `- プラン: ${longMemoryLatest?.selectedPlan || '未設定'}`,
-    recentSummary ? `- 最近の流れ: ${recentSummary}` : null
+    Array.isArray(narrative?.strugglePatterns) && narrative.strugglePatterns.length ? `- つまずき傾向: ${narrative.strugglePatterns.slice(0, 2).join(' / ')}` : null,
+    Array.isArray(narrative?.supportStyleNotes) && narrative.supportStyleNotes.length ? `- 受け取りやすい支え方: ${narrative.supportStyleNotes.slice(0, 2).join(' / ')}` : null,
+    recentSummary ? `- 最近の流れ: ${recentSummary}` : null,
+    stateFlags.length ? `- 今回の状態フラグ: ${stateFlags.join(', ')}` : null
   ].filter(Boolean).join('\n');
 
   return aiChatService.generateReply({
@@ -416,9 +410,23 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     userMessage: input.rawText || '',
     recentMessages,
     intentType: 'normal',
-    responseMode: 'empathy_plus_one_hint',
+    responseMode,
+    stateFlags,
+    longMemory: longMemoryLatest,
     hiddenContext: systemHint
   });
+}
+
+function inferTopicFromIntent(intent, text) {
+  if (intent === 'meal_text' || intent === 'meal_followup') return 'meal';
+  if (intent === 'exercise_text') return 'exercise';
+  if (intent === 'weight_text') return 'weight';
+  if (intent === 'lab_followup') return 'lab';
+  if (/仕事/.test(text)) return 'work';
+  if (/家族|子ども/.test(text)) return 'family';
+  if (/睡眠|眠い|寝不足/.test(text)) return 'sleep';
+  if (/痛い|腰痛|骨折/.test(text)) return 'pain';
+  return intent;
 }
 
 async function orchestrateConversation(input) {
@@ -429,17 +437,29 @@ async function orchestrateConversation(input) {
     const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
-    const intent = detectIntent(input);
     const text = normalizeText(input.rawText || '');
+    const intent = detectIntent(input, shortMemory);
+    const stateFlags = detectStateFlags(text);
+    const responseMode = inferResponseMode(intent, stateFlags, longMemory);
 
     const nextState = {
-      nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),
-      gasolineScore: clampScore((userStateBefore?.gasolineScore || 5) + (/眠い|疲れ/.test(text) ? -0.5 : 0)),
+      nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫|落ち着いた/.test(text) ? 0.3 : 0) + (stateFlags.includes('emotional_distress') ? -0.2 : 0)),
+      gasolineScore: clampScore((userStateBefore?.gasolineScore || 5) + (stateFlags.includes('fatigue') ? -0.5 : 0) + (/休めた|寝れた/.test(text) ? 0.3 : 0)),
       trustScore: clampScore((userStateBefore?.trustScore || 3) + 0.1),
-      lastEmotionTone: /眠い|疲れ/.test(text) ? 'tired' : 'neutral',
+      lastEmotionTone: stateFlags.includes('emotional_distress') ? 'distressed' : stateFlags.includes('fatigue') ? 'tired' : 'neutral',
       updatedAt: new Date().toISOString()
     };
     await contextMemoryService.updateUserState(input.userId, nextState);
+
+    await contextMemoryService.saveShortMemory(input.userId, {
+      currentIntent: intent,
+      currentStateFlags: stateFlags,
+      companionshipMode: responseMode,
+      lastUserNeed: responseMode,
+      lastTopic: inferTopicFromIntent(intent, text),
+      lastEmotionTone: nextState.lastEmotionTone,
+      activeHealthTheme: inferTopicFromIntent(intent, text)
+    });
 
     const onboarding = await maybeHandleOnboarding(input, shortMemory, longMemory);
     if (onboarding?.handled) {
@@ -549,6 +569,22 @@ async function orchestrateConversation(input) {
       };
     }
 
+    if (intent === 'daily_summary') {
+      const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+      const replyText = await dailySummaryService.buildDailySummary({
+        recentMessages: await contextMemoryService.getRecentMessages(input.userId, 40),
+        todayRecords,
+        userState: await contextMemoryService.getUserState(input.userId),
+        longMemory: await contextMemoryService.getLongMemory(input.userId)
+      });
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: replyText }],
+        internal: { intentType: 'daily_summary', responseMode: 'answer' }
+      };
+    }
+
     if (intent === 'help') {
       const replyText = buildHelpAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
@@ -562,7 +598,7 @@ async function orchestrateConversation(input) {
     const inlineProfile = parseInlineProfile(text);
     if (Object.keys(inlineProfile).length) {
       await contextMemoryService.mergeLongMemory(input.userId, inlineProfile);
-      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
+      const replyText = profileService.buildProfileUpdatedReply(inlineProfile);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return {
         ok: true,
@@ -571,7 +607,7 @@ async function orchestrateConversation(input) {
       };
     }
 
-    if (/うっし〜って呼んで|うっし～って呼んで|うっし〜と呼んで|うっし～と呼んで/.test(text)) {
+    if (intent === 'rename_request') {
       await contextMemoryService.mergeLongMemory(input.userId, { preferredName: 'うっし〜' });
       const replyText = 'いいですね。これからは「うっし〜」って呼びますね。';
       await appendTurn(input.userId, input.rawText || '', replyText);
@@ -582,28 +618,56 @@ async function orchestrateConversation(input) {
       };
     }
 
-    const mealTextHandled = await maybeHandleMealText(input);
-    if (mealTextHandled) {
-      await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
-      await appendTurn(input.userId, input.rawText || '', mealTextHandled.replyText);
-      return {
-        ok: true,
-        replyMessages: [{ type: 'text', text: mealTextHandled.replyText }],
-        internal: { intentType: 'meal_text', responseMode: 'record' }
-      };
+    if (intent === 'meal_text') {
+      const mealTextHandled = await maybeHandleMealText(input);
+      if (mealTextHandled) {
+        await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
+        await appendTurn(input.userId, input.rawText || '', mealTextHandled.replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: mealTextHandled.replyText }],
+          internal: { intentType: 'meal_text', responseMode: 'record' }
+        };
+      }
     }
 
-    await maybeStoreSimpleRecords(input.userId, text);
+    if (intent === 'exercise_text') {
+      const exercise = energyService.buildExerciseRecord(text);
+      if (exercise) {
+        await contextMemoryService.addDailyRecord(input.userId, exercise);
+        const replyText = energyService.buildExerciseReply(exercise);
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'exercise_text', responseMode: 'record' }
+        };
+      }
+    }
+
+    if (intent === 'weight_text') {
+      const weight = detectWeightRecord(text);
+      if (weight) {
+        await contextMemoryService.addDailyRecord(input.userId, weight);
+        const replyText = '体重の記録として受け取りました。数字そのものだけでなく、流れで見ていきますね。';
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'weight_text', responseMode: 'record' }
+        };
+      }
+    }
 
     const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
-    const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest);
+    const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, stateFlags, responseMode);
 
     await appendTurn(input.userId, input.rawText || '', replyText);
 
     return {
       ok: true,
       replyMessages: [{ type: 'text', text: replyText }],
-      internal: { intentType: 'normal', responseMode: 'empathy_plus_one_hint' }
+      internal: { intentType: 'normal', responseMode }
     };
   } catch (error) {
     console.error('[conversation_orchestrator] fatal error:', error?.message || error);

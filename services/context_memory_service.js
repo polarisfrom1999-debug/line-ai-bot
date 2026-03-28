@@ -1,4 +1,3 @@
-services/context_memory_service.js
 'use strict';
 
 const shortMemoryStore = new Map();
@@ -19,6 +18,12 @@ const DEFAULT_SHORT_MEMORY = {
   lastAdvice: null,
   recentSmallTalkTopic: null,
   followUpContext: null,
+  currentIntent: null,
+  currentStateFlags: [],
+  companionshipMode: 'balanced',
+  lastUserNeed: null,
+  activeHealthTheme: null,
+  conversationBridge: null,
   onboardingState: {
     isActive: false,
     mode: null,
@@ -44,7 +49,14 @@ const DEFAULT_LONG_MEMORY = {
   constitutionType: null,
   trialStartedAt: null,
   selectedPlan: null,
-  onboardingCompleted: false
+  onboardingCompleted: false,
+  narrativeMemory: {
+    strugglePatterns: [],
+    reliefPatterns: [],
+    supportStyleNotes: [],
+    recurringTopics: [],
+    backgroundContexts: []
+  }
 };
 
 const DEFAULT_USER_STATE = {
@@ -151,6 +163,51 @@ function uniquePush(target, value) {
   return target;
 }
 
+function normalizeTopicLabel(value) {
+  const safe = normalizeString(value);
+  if (!safe) return '';
+  return safe.length > 40 ? `${safe.slice(0, 40)}…` : safe;
+}
+
+function addNarrativeItems(next, key, values) {
+  if (!Array.isArray(next?.narrativeMemory?.[key])) return;
+  for (const value of values) uniquePush(next.narrativeMemory[key], value);
+}
+
+function inferNarrativePatchFromMessages(messages) {
+  const userText = (Array.isArray(messages) ? messages : [])
+    .filter((m) => m?.role === 'user')
+    .map((m) => normalizeString(m.content))
+    .join('\n');
+
+  const patch = {
+    strugglePatterns: [],
+    reliefPatterns: [],
+    supportStyleNotes: [],
+    recurringTopics: [],
+    backgroundContexts: []
+  };
+
+  if (!userText) return patch;
+
+  if (/疲れた|寝不足|だるい|眠い/.test(userText)) patch.strugglePatterns.push('疲労や睡眠不足が出やすい');
+  if (/痛い|腰痛|首|肩|骨折/.test(userText)) patch.strugglePatterns.push('痛みが行動制限につながりやすい');
+  if (/不安|焦る|停滞|増えた/.test(userText)) patch.strugglePatterns.push('停滞や変化に不安が出やすい');
+  if (/隠したい|言いづらい|怒られ/.test(userText)) patch.supportStyleNotes.push('責められない安心感を重視する');
+  if (/理屈|理由|なんで/.test(userText)) patch.supportStyleNotes.push('理由や見通しがあると受け取りやすい');
+  if (/やさしく|寄り添って|厳しくしない/.test(userText)) patch.supportStyleNotes.push('やさしい伴走の温度が合いやすい');
+  if (/安心した|落ち着いた|休めた/.test(userText)) patch.reliefPatterns.push('安心感や休息で整いやすい');
+  if (/仕事|残業|忙しい/.test(userText)) patch.backgroundContexts.push('仕事都合でリズムが乱れやすい');
+  if (/家族|子ども|家庭/.test(userText)) patch.backgroundContexts.push('家族都合を考慮した伴走が必要');
+  if (/ラーメン|ごはん|食べた|朝ごはん|昼ごはん|夜ごはん/.test(userText)) patch.recurringTopics.push('食事');
+  if (/歩いた|運動|ジョギング|スクワット|筋トレ/.test(userText)) patch.recurringTopics.push('運動');
+  if (/睡眠|眠い|寝不足/.test(userText)) patch.recurringTopics.push('睡眠');
+  if (/むくみ|便通|水分/.test(userText)) patch.recurringTopics.push('身体ノイズ');
+  if (/LDL|HDL|中性脂肪|HbA1c|血液検査/.test(userText)) patch.recurringTopics.push('血液検査');
+
+  return patch;
+}
+
 async function getShortMemory(userId) {
   const value = shortMemoryStore.get(userId);
   return clone(value || DEFAULT_SHORT_MEMORY);
@@ -176,6 +233,7 @@ async function getLongMemory(userId) {
 async function mergeLongMemory(userId, patch) {
   const current = await getLongMemory(userId);
   const next = clone(current);
+  next.narrativeMemory = mergeDeep(DEFAULT_LONG_MEMORY.narrativeMemory, current.narrativeMemory || {});
 
   if (Array.isArray(patch)) {
     for (const candidate of patch) {
@@ -211,6 +269,13 @@ async function mergeLongMemory(userId, patch) {
     if (Array.isArray(safePatch.lifeContext)) {
       for (const item of safePatch.lifeContext) uniquePush(next.lifeContext, item);
     }
+
+    const narrativePatch = safePatch.narrativeMemory || {};
+    addNarrativeItems(next, 'strugglePatterns', narrativePatch.strugglePatterns || []);
+    addNarrativeItems(next, 'reliefPatterns', narrativePatch.reliefPatterns || []);
+    addNarrativeItems(next, 'supportStyleNotes', narrativePatch.supportStyleNotes || []);
+    addNarrativeItems(next, 'recurringTopics', narrativePatch.recurringTopics || []);
+    addNarrativeItems(next, 'backgroundContexts', narrativePatch.backgroundContexts || []);
   }
 
   longMemoryStore.set(userId, next);
@@ -246,6 +311,15 @@ async function appendRecentMessage(userId, role, content) {
   });
 
   recentMessageStore.set(userId, arr.slice(-120));
+}
+
+async function rememberFromConversation(userId) {
+  const messages = await getRecentMessages(userId, 50);
+  const inferred = inferNarrativePatchFromMessages(messages);
+  return mergeLongMemory(userId, {
+    narrativeMemory: inferred,
+    lifeContext: inferred.backgroundContexts || []
+  });
 }
 
 async function buildRecentSummary(userId, _days = 3) {
@@ -386,6 +460,7 @@ module.exports = {
   updateUserState,
   getRecentMessages,
   appendRecentMessage,
+  rememberFromConversation,
   buildRecentSummary,
   addDailyRecord,
   getTodayRecords,
@@ -396,5 +471,6 @@ module.exports = {
   saveMonthlySurvey,
   getPoints,
   addPoints,
-  resetAllMemory
+  resetAllMemory,
+  normalizeTopicLabel
 };
