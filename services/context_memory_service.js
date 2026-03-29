@@ -8,6 +8,7 @@ const dailyRecordStore = new Map();
 const weeklySurveyStore = new Map();
 const monthlySurveyStore = new Map();
 const pointsStore = new Map();
+const labHistoryStore = new Map();
 
 const DEFAULT_SHORT_MEMORY = {
   lastTopic: null,
@@ -18,12 +19,7 @@ const DEFAULT_SHORT_MEMORY = {
   lastAdvice: null,
   recentSmallTalkTopic: null,
   followUpContext: null,
-  currentIntent: null,
-  currentStateFlags: [],
-  companionshipMode: 'balanced',
-  lastUserNeed: null,
   activeHealthTheme: null,
-  conversationBridge: null,
   onboardingState: {
     isActive: false,
     mode: null,
@@ -49,14 +45,7 @@ const DEFAULT_LONG_MEMORY = {
   constitutionType: null,
   trialStartedAt: null,
   selectedPlan: null,
-  onboardingCompleted: false,
-  narrativeMemory: {
-    strugglePatterns: [],
-    reliefPatterns: [],
-    supportStyleNotes: [],
-    recurringTopics: [],
-    backgroundContexts: []
-  }
+  onboardingCompleted: false
 };
 
 const DEFAULT_USER_STATE = {
@@ -163,49 +152,58 @@ function uniquePush(target, value) {
   return target;
 }
 
-function normalizeTopicLabel(value) {
-  const safe = normalizeString(value);
+function normalizeLabItemName(value) {
+  const safe = normalizeString(value)
+    .replace(/ｈｂａ１ｃ/gi, 'HbA1c')
+    .replace(/hb1ac/gi, 'HbA1c')
+    .replace(/γ/gi, 'γ')
+    .toUpperCase();
+
   if (!safe) return '';
-  return safe.length > 40 ? `${safe.slice(0, 40)}…` : safe;
+  if (safe.includes('LDL')) return 'LDL';
+  if (safe.includes('HDL')) return 'HDL';
+  if (safe.includes('HBA1C')) return 'HbA1c';
+  if (safe.includes('中性脂肪') || safe.includes('TG')) return '中性脂肪';
+  if (safe.includes('AST') || safe.includes('GOT')) return 'AST';
+  if (safe.includes('ALT') || safe.includes('GPT')) return 'ALT';
+  if (safe.includes('γ-GTP') || safe.includes('GTP')) return 'γ-GTP';
+  if (safe.includes('LDH')) return 'LDH';
+  if (safe.includes('ALP')) return 'ALP';
+  if (safe.includes('クレアチニン') || safe.includes('CRE')) return 'クレアチニン';
+  if (safe.includes('EGFR')) return 'eGFR';
+  if (safe.includes('尿酸') || safe.includes('UA')) return '尿酸';
+  if (safe.includes('血糖')) return '血糖';
+  if (safe.includes('空腹時血糖')) return '空腹時血糖';
+  return normalizeString(value);
 }
 
-function addNarrativeItems(next, key, values) {
-  if (!Array.isArray(next?.narrativeMemory?.[key])) return;
-  for (const value of values) uniquePush(next.narrativeMemory[key], value);
-}
+function normalizeLabPanelItem(item) {
+  const itemName = normalizeLabItemName(item?.itemName || item?.name || '');
+  const value = normalizeString(item?.value || item?.currentValue || '');
+  const unit = normalizeString(item?.unit || item?.currentUnit || '');
+  const flag = normalizeString(item?.flag || item?.currentFlag || '');
+  const history = Array.isArray(item?.history)
+    ? item.history
+      .map((row) => ({
+        date: normalizeString(row?.date || ''),
+        value: normalizeString(row?.value || ''),
+        unit: normalizeString(row?.unit || unit),
+        flag: normalizeString(row?.flag || '')
+      }))
+      .filter((row) => row.date && row.value)
+    : [];
 
-function inferNarrativePatchFromMessages(messages) {
-  const userText = (Array.isArray(messages) ? messages : [])
-    .filter((m) => m?.role === 'user')
-    .map((m) => normalizeString(m.content))
-    .join('\n');
-
-  const patch = {
-    strugglePatterns: [],
-    reliefPatterns: [],
-    supportStyleNotes: [],
-    recurringTopics: [],
-    backgroundContexts: []
+  return {
+    itemName,
+    value,
+    unit,
+    flag,
+    history
   };
+}
 
-  if (!userText) return patch;
-
-  if (/疲れた|寝不足|だるい|眠い/.test(userText)) patch.strugglePatterns.push('疲労や睡眠不足が出やすい');
-  if (/痛い|腰痛|首|肩|骨折/.test(userText)) patch.strugglePatterns.push('痛みが行動制限につながりやすい');
-  if (/不安|焦る|停滞|増えた/.test(userText)) patch.strugglePatterns.push('停滞や変化に不安が出やすい');
-  if (/隠したい|言いづらい|怒られ/.test(userText)) patch.supportStyleNotes.push('責められない安心感を重視する');
-  if (/理屈|理由|なんで/.test(userText)) patch.supportStyleNotes.push('理由や見通しがあると受け取りやすい');
-  if (/やさしく|寄り添って|厳しくしない/.test(userText)) patch.supportStyleNotes.push('やさしい伴走の温度が合いやすい');
-  if (/安心した|落ち着いた|休めた/.test(userText)) patch.reliefPatterns.push('安心感や休息で整いやすい');
-  if (/仕事|残業|忙しい/.test(userText)) patch.backgroundContexts.push('仕事都合でリズムが乱れやすい');
-  if (/家族|子ども|家庭/.test(userText)) patch.backgroundContexts.push('家族都合を考慮した伴走が必要');
-  if (/ラーメン|ごはん|食べた|朝ごはん|昼ごはん|夜ごはん/.test(userText)) patch.recurringTopics.push('食事');
-  if (/歩いた|運動|ジョギング|スクワット|筋トレ/.test(userText)) patch.recurringTopics.push('運動');
-  if (/睡眠|眠い|寝不足/.test(userText)) patch.recurringTopics.push('睡眠');
-  if (/むくみ|便通|水分/.test(userText)) patch.recurringTopics.push('身体ノイズ');
-  if (/LDL|HDL|中性脂肪|HbA1c|血液検査/.test(userText)) patch.recurringTopics.push('血液検査');
-
-  return patch;
+function sortByDateAsc(items) {
+  return [...items].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
 async function getShortMemory(userId) {
@@ -233,7 +231,6 @@ async function getLongMemory(userId) {
 async function mergeLongMemory(userId, patch) {
   const current = await getLongMemory(userId);
   const next = clone(current);
-  next.narrativeMemory = mergeDeep(DEFAULT_LONG_MEMORY.narrativeMemory, current.narrativeMemory || {});
 
   if (Array.isArray(patch)) {
     for (const candidate of patch) {
@@ -269,13 +266,6 @@ async function mergeLongMemory(userId, patch) {
     if (Array.isArray(safePatch.lifeContext)) {
       for (const item of safePatch.lifeContext) uniquePush(next.lifeContext, item);
     }
-
-    const narrativePatch = safePatch.narrativeMemory || {};
-    addNarrativeItems(next, 'strugglePatterns', narrativePatch.strugglePatterns || []);
-    addNarrativeItems(next, 'reliefPatterns', narrativePatch.reliefPatterns || []);
-    addNarrativeItems(next, 'supportStyleNotes', narrativePatch.supportStyleNotes || []);
-    addNarrativeItems(next, 'recurringTopics', narrativePatch.recurringTopics || []);
-    addNarrativeItems(next, 'backgroundContexts', narrativePatch.backgroundContexts || []);
   }
 
   longMemoryStore.set(userId, next);
@@ -313,15 +303,6 @@ async function appendRecentMessage(userId, role, content) {
   recentMessageStore.set(userId, arr.slice(-120));
 }
 
-async function rememberFromConversation(userId) {
-  const messages = await getRecentMessages(userId, 50);
-  const inferred = inferNarrativePatchFromMessages(messages);
-  return mergeLongMemory(userId, {
-    narrativeMemory: inferred,
-    lifeContext: inferred.backgroundContexts || []
-  });
-}
-
 async function buildRecentSummary(userId, _days = 3) {
   const messages = await getRecentMessages(userId, 40);
   const userText = messages
@@ -331,7 +312,7 @@ async function buildRecentSummary(userId, _days = 3) {
 
   const parts = [];
   if (/疲れ|眠い|寝不足|だるい/.test(userText)) parts.push('最近は疲れや眠さの話が少し出ています。');
-  if (/不安|つらい|しんどい|苦しい|痛い/.test(userText)) parts.push('心身のしんどさや痛みの話題があります。');
+  if (/不安|つらい|しんどい|苦しい|痛い|限界/.test(userText)) parts.push('心身のしんどさや痛みの話題があります。');
   if (/ラーメン|ごはん|朝ごはん|昼ごはん|夜ごはん|寿司|味噌汁|卵|ヨーグルト|バナナ/.test(userText)) parts.push('食事の記録は少しずつ続いています。');
   if (/歩いた|ジョギング|スクワット|運動|走りました|走った/.test(userText)) parts.push('運動の話題も入ってきています。');
   if (/血液検査|LDL|HDL|中性脂肪|HbA1c/.test(userText)) parts.push('血液検査への関心があります。');
@@ -390,6 +371,123 @@ async function getRecentDailyRecords(userId, limit = 7) {
   }));
 }
 
+async function getLatestWeightEntry(userId) {
+  const days = await getRecentDailyRecords(userId, 14);
+  const weights = [];
+  for (const day of days) {
+    for (const item of day.records?.weights || []) {
+      weights.push({ ...item, date: day.date });
+    }
+  }
+  return clone(weights.slice(-1)[0] || null);
+}
+
+async function upsertLabPanel(userId, panel) {
+  if (!userId || !panel) return null;
+
+  const current = clone(labHistoryStore.get(userId) || []);
+  const examDate = normalizeString(panel.examDate || '');
+  const items = (Array.isArray(panel.items) ? panel.items : [])
+    .map(normalizeLabPanelItem)
+    .filter((item) => item.itemName && (item.value || item.history.length));
+
+  if (!items.length) return null;
+
+  const normalizedPanel = {
+    examDate,
+    source: normalizeString(panel.source || 'image'),
+    capturedAt: nowIso(),
+    items
+  };
+
+  let merged = false;
+  for (let i = 0; i < current.length; i += 1) {
+    const existing = current[i];
+    if (examDate && existing.examDate === examDate) {
+      const map = new Map();
+      for (const item of existing.items || []) {
+        map.set(normalizeLabItemName(item.itemName), normalizeLabPanelItem(item));
+      }
+      for (const item of normalizedPanel.items) {
+        const key = normalizeLabItemName(item.itemName);
+        const before = map.get(key) || { itemName: key, value: '', unit: '', flag: '', history: [] };
+        const history = sortByDateAsc([
+          ...(before.history || []),
+          ...(item.history || [])
+        ].filter((row) => row.date && row.value));
+        map.set(key, {
+          itemName: item.itemName,
+          value: item.value || before.value,
+          unit: item.unit || before.unit,
+          flag: item.flag || before.flag,
+          history
+        });
+      }
+      current[i] = {
+        ...existing,
+        ...normalizedPanel,
+        items: [...map.values()]
+      };
+      merged = true;
+      break;
+    }
+  }
+
+  if (!merged) current.push(normalizedPanel);
+  current.sort((a, b) => String(a.examDate || '').localeCompare(String(b.examDate || '')));
+  labHistoryStore.set(userId, current);
+  return clone(normalizedPanel);
+}
+
+async function getLatestLabPanel(userId) {
+  const panels = clone(labHistoryStore.get(userId) || []);
+  return panels.slice(-1)[0] || null;
+}
+
+async function findLabItemTrend(userId, itemName) {
+  const safeItem = normalizeLabItemName(itemName);
+  if (!safeItem) return [];
+
+  const panels = clone(labHistoryStore.get(userId) || []);
+  const rows = [];
+  const seen = new Set();
+
+  for (const panel of panels) {
+    for (const item of panel.items || []) {
+      if (normalizeLabItemName(item.itemName) !== safeItem) continue;
+
+      if (panel.examDate && item.value) {
+        const key = `${panel.examDate}:${item.value}:${item.unit || ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          rows.push({
+            date: panel.examDate,
+            itemName: item.itemName,
+            value: item.value,
+            unit: item.unit,
+            flag: item.flag
+          });
+        }
+      }
+
+      for (const historyRow of item.history || []) {
+        const key = `${historyRow.date}:${historyRow.value}:${historyRow.unit || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push({
+          date: historyRow.date,
+          itemName: item.itemName,
+          value: historyRow.value,
+          unit: historyRow.unit || item.unit,
+          flag: historyRow.flag || ''
+        });
+      }
+    }
+  }
+
+  return sortByDateAsc(rows);
+}
+
 async function getWeeklySurvey(userId) {
   const key = `${userId}:${getWeekKey()}`;
   return clone(weeklySurveyStore.get(key) || buildSurveyBucket());
@@ -436,6 +534,7 @@ async function resetAllMemory(userId) {
   longMemoryStore.delete(userId);
   userStateStore.delete(userId);
   recentMessageStore.delete(userId);
+  labHistoryStore.delete(userId);
 
   for (const key of [...dailyRecordStore.keys()]) {
     if (key.startsWith(`${userId}:`)) dailyRecordStore.delete(key);
@@ -460,17 +559,19 @@ module.exports = {
   updateUserState,
   getRecentMessages,
   appendRecentMessage,
-  rememberFromConversation,
   buildRecentSummary,
   addDailyRecord,
   getTodayRecords,
   getRecentDailyRecords,
+  getLatestWeightEntry,
+  upsertLabPanel,
+  getLatestLabPanel,
+  findLabItemTrend,
   getWeeklySurvey,
   saveWeeklySurvey,
   getMonthlySurvey,
   saveMonthlySurvey,
   getPoints,
   addPoints,
-  resetAllMemory,
-  normalizeTopicLabel
+  resetAllMemory
 };
