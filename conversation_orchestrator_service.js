@@ -425,9 +425,10 @@ async function maybeHandleLabImage(input, imagePayload) {
   await contextMemoryService.upsertLabPanel(input.userId, lab);
   await contextMemoryService.addDailyRecord(input.userId, {
     type: 'lab',
-    summary: '血液検査画像',
+    summary: `血液検査画像${lab.examDate ? ` (${lab.examDate})` : ''}`,
     examDate: lab.examDate || '',
-    items: lab.items
+    items: lab.items,
+    panels: Array.isArray(lab.panels) ? lab.panels : []
   });
 
   return buildLabImageReply(lab);
