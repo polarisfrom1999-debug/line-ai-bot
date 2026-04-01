@@ -1,0 +1,16 @@
+{
+  "base_project": "line_ai_proj_symptom_core_minimal",
+  "delivery_project": "line_ai_proj_initial_complete",
+  "modified_files": [
+    ".env.stage-entry.example",
+    "config/feature_flags.js",
+    "package.json",
+    "services/conversation_orchestrator_service.js"
+  ],
+  "added_files": [
+    "docs/FULL_DELIVERY_FILE_LIST.md",
+    "docs/HOMECARE_CORE_INITIAL_DEPLOY.md",
+    "docs/TURN4_FINAL_SUMMARY.md",
+    "scripts/homecare_core_smoke_inputs.js"
+  ]
+}
