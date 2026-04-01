@@ -7,6 +7,20 @@ const weeklyReportService = require('./weekly_report_service');
 const lineMediaService = require('./line_media_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
+const featureFlags = require('../config/feature_flags');
+const {
+  detectGuideIntent,
+  buildFirstGuideMessage,
+  buildFoodGuideMessage,
+  buildExerciseGuideMessage,
+  buildWeightGuideMessage,
+  buildConsultGuideMessage,
+  buildHelpMenuMessage,
+  buildFaqMessage,
+} = require('./user_guide_service');
+const { textMessageWithQuickReplies } = require('./line_service');
+const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
+const { buildExerciseMenuResponse } = require('./video_support_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -79,6 +93,164 @@ function buildMemoryAnswer(longMemory) {
   }
 
   return lines.join('\n');
+}
+
+
+function normalizeLoose(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
+function includesAnyLoose(text, patterns) {
+  const normalized = normalizeLoose(text);
+  return patterns.some((pattern) => normalized.includes(normalizeLoose(pattern)));
+}
+
+function isLikelyRecordInput(text) {
+  const raw = normalizeText(text);
+  if (!raw) return false;
+  if (/^\d{2,3}(\.\d)?\s?kg$/i.test(raw) || /^\d{2,3}(\.\d)?$/.test(raw)) return true;
+  if (/^(朝|昼|夜)[:：]/.test(raw)) return true;
+  if (/歩いた|走った|ジョギング|ランニング|ウォーキング|散歩|筋トレ|ストレッチ|スクワット/.test(raw)) return true;
+  return false;
+}
+
+function isLikelySummaryExecutionRequest(text) {
+  const raw = normalizeText(text);
+  return ['グラフ出して', '今週の振り返り', '週間報告', '月間報告', '体重グラフ'].includes(raw);
+}
+
+function detectStageEntryGuideIntent(text) {
+  if (!featureFlags.ENABLE_STAGE_ENTRY_GUIDANCE) return null;
+
+  const raw = normalizeText(text);
+  const normalized = normalizeLoose(raw);
+  if (!normalized) return null;
+
+  if (isLikelyRecordInput(raw)) return null;
+  if (isLikelySummaryExecutionRequest(raw)) return null;
+
+  if (featureFlags.ENABLE_GUIDANCE_SYMPTOM_ENTRY && (
+    includesAnyLoose(normalized, ['痛みの相談ってどう', 'しびれはどう送れば', '違和感がある時はどう伝えれば']) ||
+    (normalized.includes('何を書けばいい') && includesAnyLoose(normalized, ['痛み', 'しびれ', '違和感', '相談']))
+  )) {
+    return 'symptom_entry_help';
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_HOMECARE_ENTRY && includesAnyLoose(normalized, ['家で何をしたらいいかわからない', '家で少しやりたい', '家メニュー'])) {
+    return 'homecare_entry_help';
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_SPORTS_ENTRY && includesAnyLoose(normalized, ['練習の相談ってどう送れば', 'フォームを見直したい時どう送れば', 'スポーツ相談'])) {
+    return 'sports_entry_help';
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_COMPETITION_ENTRY && includesAnyLoose(normalized, ['大会の日の食事ってどう相談すれば', '当日朝の食事どう相談', '補食ってどう相談'])) {
+    return 'competition_entry_help';
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_GENERAL) {
+    if (includesAnyLoose(normalized, ['どう使う', '何を送れば', '何をしたら'])) {
+      return 'general_usage_help';
+    }
+    if (includesAnyLoose(normalized, ['体重ってどう送れば', '体重はどう送れば', '体重どう送る'])) {
+      return 'weight_input_help';
+    }
+    if (includesAnyLoose(normalized, ['食事はどう送れば', '食事ってどう送れば', 'ごはんどう送る'])) {
+      return 'meal_input_help';
+    }
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_SUMMARY_VIEW && includesAnyLoose(normalized, ['振り返りってどう見る', 'グラフってどう見る', '振り返りどう見る'])) {
+    return 'summary_view_help';
+  }
+
+  if (featureFlags.ENABLE_GUIDANCE_PERSONA && includesAnyLoose(normalized, ['タイプ変更', '人格変更', '話し方を変更'])) {
+    return 'persona_change_help';
+  }
+
+  return null;
+}
+
+function buildGuideReplyMessage(guidanceType) {
+  const quickReplies = {
+    general_usage_help: ['56.8kg', '朝: トーストと卵', '今週の振り返り', '痛みの相談ってどう書く？'],
+    symptom_entry_help: ['右膝です', '3日前から', '階段でつらい'],
+    homecare_entry_help: ['腰です', '立ち上がりがつらい', '軽めで'],
+    sports_entry_help: ['800mです', 'フォーム相談です', '横から送れます'],
+    competition_entry_help: ['800mです', '10時です', 'おにぎりなら食べやすい'],
+  };
+
+  const guideIntent = detectGuideIntent(guidanceType === 'general_usage_help' ? '使い方' : guidanceType);
+  let text = '';
+
+  switch (guidanceType) {
+    case 'general_usage_help':
+      text = buildFirstGuideMessage();
+      break;
+    case 'weight_input_help':
+      text = buildWeightGuideMessage();
+      break;
+    case 'meal_input_help':
+      text = buildFoodGuideMessage();
+      break;
+    case 'summary_view_help':
+      text = buildFaqMessage();
+      break;
+    case 'persona_change_help':
+      text = 'タイプ変更はそのまま「タイプ変更したい」や、希望のタイプ名を送ってもらえれば大丈夫です。';
+      break;
+    case 'symptom_entry_help':
+      text = [
+        '痛みやしびれの相談は、全部まとまっていなくても大丈夫です。',
+        '',
+        '例えば',
+        '・どこが気になるか',
+        '・いつからか',
+        '・何をするとつらいか',
+        'このどれか1つだけでも送ってもらえれば大丈夫です。',
+      ].join('\n');
+      break;
+    case 'homecare_entry_help':
+      text = [
+        '家でのケア相談は、短くて大丈夫です。',
+        '',
+        '例えば',
+        '・どこがつらいか',
+        '・どんな動きで困るか',
+        '・今日は軽めがいいか',
+        'このあたりを一言でも送ってください。',
+      ].join('\n');
+      break;
+    case 'sports_entry_help':
+      text = [
+        '練習やフォームの相談は、競技名と困りごとを一言でも大丈夫です。',
+        '',
+        '例えば',
+        '・800mです',
+        '・フォームを見直したい',
+        '・横から動画を送れます',
+      ].join('\n');
+      break;
+    case 'competition_entry_help':
+      text = [
+        '大会の日の食事相談は、種目と時間だけでも大丈夫です。',
+        '',
+        '例えば',
+        '・800mです',
+        '・10時です',
+        '・おにぎりなら食べやすいです',
+      ].join('\n');
+      break;
+    default:
+      text = buildHelpMenuMessage();
+      break;
+  }
+
+  return textMessageWithQuickReplies(text, quickReplies[guidanceType] || []);
 }
 
 function buildHelpAnswer() {
@@ -319,6 +491,58 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
 }
 
+function looksLikeHomecareConsultation(text) {
+  const safe = normalizeText(text);
+  if (!safe || containsQuestionTone(safe)) return false;
+  if (/やった|できた|保存|記録/.test(safe)) return false;
+
+  const hasHomecareWord = /家で|ケア|ほぐし|伸ばし|ストレッチ|メニュー|整え/.test(safe);
+  const hasBodyOrMovement = /腰|膝|股関節|首|肩|足首|ふくらはぎ|立ち上がり|歩く|階段|固まり|動き/.test(safe);
+  const hasLightNeed = /軽め|少し|やさしく|無理なく|1分/.test(safe);
+
+  return (hasHomecareWord && hasBodyOrMovement) || (hasBodyOrMovement && hasLightNeed);
+}
+
+function maybeHandleHomecareCore(input) {
+  if (!featureFlags.ENABLE_HOMECARE_CORE) return null;
+  if (input?.messageType !== 'text') return null;
+
+  const text = normalizeText(input?.rawText || '');
+  if (!text) return null;
+  if (!looksLikeHomecareConsultation(text)) return null;
+
+  const area = detectPainArea(text) || '全身';
+  const stretch = buildStretchSupportResponse(area);
+  let menuText = '';
+  try {
+    const gentle = buildExerciseMenuResponse(area, 'gentle');
+    menuText = gentle?.text || '';
+  } catch (_error) {
+    menuText = '';
+  }
+
+  const replyLines = [
+    stretch?.message || `${area}まわりですね。今日は無理なくやさしく整える方向でいきましょう。`,
+    menuText ? '' : null,
+    menuText || '今日は小さく動かすだけでも十分です。無理に頑張らなくて大丈夫です。',
+  ].filter(Boolean);
+
+  const quickReplies = Array.isArray(stretch?.quickReplies) && stretch.quickReplies.length
+    ? stretch.quickReplies
+    : ['やさしい版', '1分メニュー', '動画で見たい', '今日はここまで'];
+
+  return {
+    replyText: replyLines.join('\n'),
+    replyMessage: textMessageWithQuickReplies(replyLines.join('\n'), quickReplies),
+    internal: {
+      intentType: 'homecare_core',
+      responseMode: 'guided',
+      homecareArea: area,
+    },
+  };
+}
+
+
 function buildPainReply(text) {
   const safe = normalizeText(text);
   if (/毎日心が苦しい|毎日心がしんどい|限界|かなりしんどい/.test(safe)) {
@@ -342,6 +566,34 @@ function buildPainReply(text) {
   return null;
 }
 
+function maybeHandleSymptomCore(input) {
+  if (!featureFlags.ENABLE_SYMPTOM_CORE) return null;
+  if (input?.messageType !== 'text') return null;
+
+  const text = normalizeText(input?.rawText || '');
+  if (!text) return null;
+  if (!looksLikePainConsultation(text)) return null;
+
+  const area = detectPainArea(text) || '全身';
+  const symptom = buildPainSupportResponse(text, area);
+  const replyText = symptom?.message || '';
+  if (!replyText) return null;
+
+  const quickReplies = Array.isArray(symptom?.quickReplies) ? symptom.quickReplies : [];
+  const adminSummary = buildAdminSymptomSummary(text, area);
+
+  return {
+    replyText,
+    replyMessage: textMessageWithQuickReplies(replyText, quickReplies),
+    internal: {
+      intentType: 'symptom_core',
+      responseMode: 'guided',
+      symptomArea: area,
+      symptomAdminSummary: adminSummary,
+    },
+  };
+}
+
 async function appendTurn(userId, userText, replyText) {
   await contextMemoryService.appendRecentMessage(userId, 'user', userText);
   await contextMemoryService.appendRecentMessage(userId, 'assistant', replyText);
@@ -360,6 +612,7 @@ async function maybeHandleOnboarding(input, shortMemory, longMemory) {
 async function maybeHandleSupportState(input) {
   const text = normalizeText(input?.rawText || '');
   if (!text) return null;
+  if (featureFlags.ENABLE_SYMPTOM_CORE && looksLikePainConsultation(text)) return null;
   const replyText = buildPainReply(text);
   if (!replyText) return null;
 
@@ -671,6 +924,38 @@ async function orchestrateConversation(input) {
       const replyText = buildTodayRecordsAnswer(records);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_records', responseMode: 'answer' } };
+    }
+
+    const stageGuideIntent = detectStageEntryGuideIntent(text);
+    if (stageGuideIntent) {
+      const replyMessage = buildGuideReplyMessage(stageGuideIntent);
+      const replyText = replyMessage?.text || buildHelpAnswer();
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return {
+        ok: true,
+        replyMessages: [replyMessage],
+        internal: { intentType: stageGuideIntent, responseMode: 'guided' }
+      };
+    }
+
+    const homecareCoreHandled = maybeHandleHomecareCore(input);
+    if (homecareCoreHandled) {
+      await appendTurn(input.userId, input.rawText || '', homecareCoreHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [homecareCoreHandled.replyMessage],
+        internal: homecareCoreHandled.internal
+      };
+    }
+
+    const symptomCoreHandled = maybeHandleSymptomCore(input);
+    if (symptomCoreHandled) {
+      await appendTurn(input.userId, input.rawText || '', symptomCoreHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [symptomCoreHandled.replyMessage],
+        internal: symptomCoreHandled.internal
+      };
     }
 
     if (intent === 'help') {
