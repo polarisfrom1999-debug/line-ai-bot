@@ -8,6 +8,8 @@ const lineMediaService = require('./line_media_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
 const featureFlags = require('../config/feature_flags');
+const { getConversationState, setConversationState } = require('./conversation_state_service');
+const { shouldCompressGuidance, compressGuidanceText } = require('./reply_fatigue_service');
 const {
   detectGuideIntent,
   buildFirstGuideMessage,
@@ -123,6 +125,18 @@ function isLikelySummaryExecutionRequest(text) {
   return ['グラフ出して', '今週の振り返り', '週間報告', '月間報告', '体重グラフ'].includes(raw);
 }
 
+function hasSpecificConsultationDetails(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+
+  const hasBody = /腰|膝|股関節|首|肩|足首|ふくらはぎ|太もも|背中|かかと|足裏|アキレス/.test(safe);
+  const hasSymptom = /痛い|痛み|しびれ|張る|違和感|固まり|重い|だるい|つらい/.test(safe);
+  const hasMovement = /歩く|階段|立ち上がり|走る|曲げる|伸ばす|座る|寝返り/.test(safe);
+  const hasTiming = /今日|昨日|一昨日|日前|週間|朝|夜|ずっと|から/.test(safe);
+
+  return (hasBody && hasSymptom) || (hasBody && hasMovement) || (hasBody && hasTiming);
+}
+
 function detectStageEntryGuideIntent(text) {
   if (!featureFlags.ENABLE_STAGE_ENTRY_GUIDANCE) return null;
 
@@ -175,8 +189,9 @@ function detectStageEntryGuideIntent(text) {
   return null;
 }
 
-function buildGuideReplyMessage(guidanceType) {
-  const quickReplies = {
+function buildGuideReplyMessage(guidanceType, options = {}) {
+  const conversationState = options.conversationState || null;
+  let quickReplies = {
     general_usage_help: ['56.8kg', '朝: トーストと卵', '今週の振り返り', '痛みの相談ってどう書く？'],
     symptom_entry_help: ['右膝です', '3日前から', '階段でつらい'],
     homecare_entry_help: ['腰です', '立ち上がりがつらい', '軽めで'],
@@ -184,7 +199,6 @@ function buildGuideReplyMessage(guidanceType) {
     competition_entry_help: ['800mです', '10時です', 'おにぎりなら食べやすい'],
   };
 
-  const guideIntent = detectGuideIntent(guidanceType === 'general_usage_help' ? '使い方' : guidanceType);
   let text = '';
 
   switch (guidanceType) {
@@ -248,6 +262,16 @@ function buildGuideReplyMessage(guidanceType) {
     default:
       text = buildHelpMenuMessage();
       break;
+  }
+
+  if (featureFlags.ENABLE_GUIDE_FATIGUE_COMPRESSION && shouldCompressGuidance({ conversationState, guidanceType })) {
+    text = compressGuidanceText(guidanceType, text);
+    if (guidanceType === 'general_usage_help') {
+      quickReplies = {
+        ...quickReplies,
+        general_usage_help: ['56.8kg', '朝: トーストと卵', '痛みの相談ってどう書く？'],
+      };
+    }
   }
 
   return textMessageWithQuickReplies(text, quickReplies[guidanceType] || []);
@@ -493,7 +517,7 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
 function looksLikeHomecareConsultation(text) {
   const safe = normalizeText(text);
-  if (!safe || containsQuestionTone(safe)) return false;
+  if (!safe) return false;
   if (/やった|できた|保存|記録/.test(safe)) return false;
 
   const hasHomecareWord = /家で|ケア|ほぐし|伸ばし|ストレッチ|メニュー|整え/.test(safe);
@@ -926,25 +950,20 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_records', responseMode: 'answer' } };
     }
 
-    const stageGuideIntent = detectStageEntryGuideIntent(text);
+    const stageGuideIntent = hasSpecificConsultationDetails(text)
+      ? null
+      : detectStageEntryGuideIntent(text);
     if (stageGuideIntent) {
-      const replyMessage = buildGuideReplyMessage(stageGuideIntent);
+      const replyMessage = buildGuideReplyMessage(stageGuideIntent, {
+        conversationState: getConversationState(input.userId),
+      });
+      setConversationState(input.userId, { lastGuidanceType: stageGuideIntent, lastIntent: 'guided' });
       const replyText = replyMessage?.text || buildHelpAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
       return {
         ok: true,
         replyMessages: [replyMessage],
         internal: { intentType: stageGuideIntent, responseMode: 'guided' }
-      };
-    }
-
-    const homecareCoreHandled = maybeHandleHomecareCore(input);
-    if (homecareCoreHandled) {
-      await appendTurn(input.userId, input.rawText || '', homecareCoreHandled.replyText);
-      return {
-        ok: true,
-        replyMessages: [homecareCoreHandled.replyMessage],
-        internal: homecareCoreHandled.internal
       };
     }
 
@@ -955,6 +974,16 @@ async function orchestrateConversation(input) {
         ok: true,
         replyMessages: [symptomCoreHandled.replyMessage],
         internal: symptomCoreHandled.internal
+      };
+    }
+
+    const homecareCoreHandled = maybeHandleHomecareCore(input);
+    if (homecareCoreHandled) {
+      await appendTurn(input.userId, input.rawText || '', homecareCoreHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [homecareCoreHandled.replyMessage],
+        internal: homecareCoreHandled.internal
       };
     }
 
