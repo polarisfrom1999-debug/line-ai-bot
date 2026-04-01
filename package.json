@@ -4,7 +4,11 @@
   "description": "Kokokara LINE AI bot",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "flags:stage-entry": "node scripts/stage_entry_flag_report.js",
+    "smoke:stage-entry": "node scripts/stage_entry_smoke_inputs.js",
+    "smoke:symptom-core": "node scripts/symptom_core_smoke_inputs.js",
+    "smoke:homecare-core": "node scripts/homecare_core_smoke_inputs.js"
   },
   "dependencies": {
     "@google/genai": "^1.44.0",
