@@ -804,7 +804,9 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     `- 体重: ${longMemoryLatest?.weight || '未設定'}`,
     `- 体脂肪率: ${longMemoryLatest?.bodyFat || '未設定'}`,
     `- AIタイプ: ${longMemoryLatest?.aiType || '未設定'}`,
+    `- 声かけスタイル: ${longMemoryLatest?.voiceStyle || '未設定'}`,
     `- 体質タイプ: ${longMemoryLatest?.constitutionType || '未設定'}`,
+    `- 体質副タイプ: ${longMemoryLatest?.constitutionSubType || '未設定'}`,
     `- プラン: ${longMemoryLatest?.selectedPlan || '未設定'}`,
     recentSummary ? `- 最近の流れ: ${recentSummary}` : null
   ].filter(Boolean).join('\n');
@@ -860,8 +862,18 @@ async function orchestrateConversation(input) {
 
     const onboarding = await maybeHandleOnboarding(input, shortMemory, longMemory);
     if (onboarding?.handled) {
+      const replyMessages = Array.isArray(onboarding.replyMessages) && onboarding.replyMessages.length
+        ? onboarding.replyMessages
+        : onboarding.replyMessage
+          ? [onboarding.replyMessage]
+          : [{ type: 'text', text: onboarding.replyText }];
+
       await appendTurn(input.userId, input.rawText || '', onboarding.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: onboarding.replyText }], internal: { intentType: 'onboarding', responseMode: 'guided' } };
+      return {
+        ok: true,
+        replyMessages,
+        internal: onboarding.internal || { intentType: 'onboarding', responseMode: 'guided' },
+      };
     }
 
     if (input?.messageType === 'text' && (looksLikeDistress(text) || looksLikePain(text))) {

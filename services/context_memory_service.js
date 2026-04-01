@@ -42,7 +42,16 @@ const DEFAULT_LONG_MEMORY = {
   weight: null,
   bodyFat: null,
   aiType: null,
+  voiceStyle: null,
   constitutionType: null,
+  constitutionMainType: null,
+  constitutionSubType: null,
+  constitutionSurveyScores: {},
+  constitutionSurveyAnswers: {},
+  constitutionCheckedAt: null,
+  periodicConstitutionAnswers: {},
+  periodicConstitutionDeltaMap: {},
+  periodicConstitutionCheckedAt: null,
   trialStartedAt: null,
   selectedPlan: null,
   onboardingCompleted: false
@@ -245,11 +254,29 @@ async function mergeLongMemory(userId, patch) {
     if (safePatch.weight != null) next.weight = safePatch.weight;
     if (safePatch.bodyFat != null) next.bodyFat = safePatch.bodyFat;
     if (safePatch.aiType != null) next.aiType = safePatch.aiType;
+    if (safePatch.voiceStyle != null) next.voiceStyle = safePatch.voiceStyle;
     if (safePatch.constitutionType != null) next.constitutionType = safePatch.constitutionType;
+    if (safePatch.constitutionMainType != null) next.constitutionMainType = safePatch.constitutionMainType;
+    if (safePatch.constitutionSubType != null) next.constitutionSubType = safePatch.constitutionSubType;
+    if (safePatch.constitutionCheckedAt != null) next.constitutionCheckedAt = safePatch.constitutionCheckedAt;
+    if (safePatch.periodicConstitutionCheckedAt != null) next.periodicConstitutionCheckedAt = safePatch.periodicConstitutionCheckedAt;
     if (safePatch.trialStartedAt != null) next.trialStartedAt = safePatch.trialStartedAt;
     if (safePatch.selectedPlan != null) next.selectedPlan = safePatch.selectedPlan;
     if (safePatch.onboardingCompleted != null) next.onboardingCompleted = Boolean(safePatch.onboardingCompleted);
     if (safePatch.stagnationTendency != null) next.stagnationTendency = safePatch.stagnationTendency;
+
+    if (isPlainObject(safePatch.constitutionSurveyScores)) {
+      next.constitutionSurveyScores = { ...safePatch.constitutionSurveyScores };
+    }
+    if (isPlainObject(safePatch.constitutionSurveyAnswers)) {
+      next.constitutionSurveyAnswers = { ...safePatch.constitutionSurveyAnswers };
+    }
+    if (isPlainObject(safePatch.periodicConstitutionAnswers)) {
+      next.periodicConstitutionAnswers = { ...safePatch.periodicConstitutionAnswers };
+    }
+    if (isPlainObject(safePatch.periodicConstitutionDeltaMap)) {
+      next.periodicConstitutionDeltaMap = { ...safePatch.periodicConstitutionDeltaMap };
+    }
 
     if (Array.isArray(safePatch.eatingPattern)) {
       for (const item of safePatch.eatingPattern) uniquePush(next.eatingPattern, item);

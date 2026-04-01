@@ -66,7 +66,9 @@ function buildProfileSummary(longMemory) {
   if (longMemory?.bodyFat) lines.push(`体脂肪率: ${longMemory.bodyFat}`);
   if (longMemory?.goal) lines.push(`目標: ${longMemory.goal}`);
   if (longMemory?.aiType) lines.push(`AIタイプ: ${longMemory.aiType}`);
+  if (longMemory?.voiceStyle) lines.push(`声かけ: ${longMemory.voiceStyle}`);
   if (longMemory?.constitutionType) lines.push(`体質タイプ: ${longMemory.constitutionType}`);
+  if (longMemory?.constitutionSubType) lines.push(`体質副タイプ: ${longMemory.constitutionSubType}`);
   if (longMemory?.selectedPlan) lines.push(`プラン: ${longMemory.selectedPlan}`);
 
   const narrative = longMemory?.narrativeMemory || {};
@@ -102,7 +104,9 @@ function buildMemoryAnswer(longMemory) {
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
   if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
   if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
+  if (longMemory?.voiceStyle) lines.push(`声かけスタイルは「${longMemory.voiceStyle}」です。`);
   if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
+  if (longMemory?.constitutionSubType) lines.push(`副タイプは「${longMemory.constitutionSubType}」です。`);
   if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
 
   const narrative = longMemory?.narrativeMemory || {};

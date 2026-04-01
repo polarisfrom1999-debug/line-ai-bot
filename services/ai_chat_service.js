@@ -22,9 +22,10 @@ function postProcessReply(text) {
 
 function inferAiStyle(aiType) {
   const safe = normalizeText(aiType);
-  if (/理屈|整理/.test(safe)) return 'logic_first';
-  if (/やさしく|伴走/.test(safe)) return 'gentle_first';
-  if (/背中を押す/.test(safe)) return 'push_lightly';
+  if (/頼もしく|導く|理屈|整理/.test(safe)) return 'logic_first';
+  if (/そっと|寄り添|やさしく|伴走/.test(safe)) return 'gentle_first';
+  if (/明るく|後押し|背中を押す/.test(safe)) return 'push_lightly';
+  if (/力強く|支える/.test(safe)) return 'balanced';
   return 'balanced';
 }
 
