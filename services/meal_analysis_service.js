@@ -1,29 +1,40 @@
 'use strict';
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
-const { analyzeMealImageWithAI } = require('./meal_image_ai_service');
 
 const FOOD_LIBRARY = [
   { keywords: ['ごはん', '白米'], kcal: 234, protein: 3.8, fat: 0.5, carbs: 55.2, unit: '1杯' },
   { keywords: ['食パン', 'パン'], kcal: 156, protein: 5.3, fat: 2.6, carbs: 28.0, unit: '2枚' },
-  { keywords: ['卵', 'たまご'], kcal: 76, protein: 6.2, fat: 5.2, carbs: 0.2, unit: '1個' },
+  { keywords: ['卵', 'たまご', 'ゆで卵'], kcal: 76, protein: 6.2, fat: 5.2, carbs: 0.2, unit: '1個' },
   { keywords: ['味噌汁', 'みそ汁'], kcal: 45, protein: 3.0, fat: 1.5, carbs: 4.0, unit: '1杯' },
+  { keywords: ['フォー'], kcal: 430, protein: 17.0, fat: 9.0, carbs: 68.0, unit: '1杯' },
+  { keywords: ['塩ラーメン'], kcal: 470, protein: 17.0, fat: 11.0, carbs: 69.0, unit: '1杯' },
   { keywords: ['ラーメン', '味噌ラーメン', '醤油ラーメン', '豚骨ラーメン'], kcal: 520, protein: 19.0, fat: 15.5, carbs: 70.5, unit: '1杯' },
   { keywords: ['カレー', 'カレーライス'], kcal: 520, protein: 14.0, fat: 16.0, carbs: 76.0, unit: '1皿' },
   { keywords: ['鍋'], kcal: 320, protein: 24.0, fat: 12.0, carbs: 18.0, unit: '1人前' },
   { keywords: ['サラダ'], kcal: 80, protein: 2.5, fat: 4.0, carbs: 7.0, unit: '1皿' },
   { keywords: ['鶏むね', '鶏胸', 'サラダチキン', '鶏肉'], kcal: 160, protein: 28.0, fat: 3.5, carbs: 0.0, unit: '100g' },
+  { keywords: ['豚肉'], kcal: 180, protein: 18.0, fat: 11.0, carbs: 0.0, unit: '100g' },
   { keywords: ['魚', '鮭', 'さけ', 'サーモン'], kcal: 180, protein: 20.0, fat: 10.0, carbs: 0.0, unit: '1切れ' },
   { keywords: ['ヨーグルト'], kcal: 90, protein: 4.0, fat: 3.0, carbs: 12.0, unit: '1個' },
   { keywords: ['プロテイン'], kcal: 120, protein: 20.0, fat: 2.0, carbs: 6.0, unit: '1杯' },
   { keywords: ['寿司', 'すし'], kcal: 220, protein: 12.0, fat: 3.0, carbs: 34.0, unit: '5貫' },
   { keywords: ['バナナ'], kcal: 86, protein: 1.1, fat: 0.2, carbs: 22.5, unit: '1本' },
+  { keywords: ['いちご', '苺', 'ストロベリー'], kcal: 18, protein: 0.3, fat: 0.1, carbs: 4.5, unit: '3個' },
   { keywords: ['納豆'], kcal: 90, protein: 7.4, fat: 4.5, carbs: 5.4, unit: '1パック' },
   { keywords: ['豆腐'], kcal: 72, protein: 6.6, fat: 4.2, carbs: 1.7, unit: '150g' },
   { keywords: ['おにぎり'], kcal: 180, protein: 3.5, fat: 1.0, carbs: 39.0, unit: '1個' },
   { keywords: ['うどん'], kcal: 320, protein: 8.0, fat: 5.0, carbs: 58.0, unit: '1杯' },
   { keywords: ['そば'], kcal: 300, protein: 12.0, fat: 4.0, carbs: 52.0, unit: '1杯' },
   { keywords: ['パスタ', 'スパゲティ'], kcal: 520, protein: 17.0, fat: 14.0, carbs: 74.0, unit: '1皿' },
+  { keywords: ['ソーセージ', 'ウインナー'], kcal: 120, protein: 5.0, fat: 10.0, carbs: 2.0, unit: '2本' },
+  { keywords: ['ブロッコリー'], kcal: 25, protein: 2.8, fat: 0.4, carbs: 5.2, unit: '1/2株' },
+  { keywords: ['パプリカ'], kcal: 20, protein: 0.7, fat: 0.2, carbs: 4.6, unit: '1/2個' },
+  { keywords: ['しめじ'], kcal: 18, protein: 2.7, fat: 0.3, carbs: 3.4, unit: '1/2袋' },
+  { keywords: ['牛乳'], kcal: 134, protein: 6.6, fat: 7.6, carbs: 9.9, unit: '200ml' },
+  { keywords: ['コーヒー'], kcal: 7, protein: 0.3, fat: 0.0, carbs: 1.2, unit: '1杯' },
+  { keywords: ['ミルクティー'], kcal: 70, protein: 1.5, fat: 2.0, carbs: 11.0, unit: '1杯' },
+  { keywords: ['水'], kcal: 0, protein: 0, fat: 0, carbs: 0, unit: '1杯' },
   { keywords: ['唐揚げ弁当', '弁当'], kcal: 780, protein: 28.0, fat: 31.0, carbs: 94.0, unit: '1食' },
   { keywords: ['味噌ラーメン'], kcal: 520, protein: 19.0, fat: 15.5, carbs: 70.5, unit: '1杯' }
 ];
@@ -52,8 +63,9 @@ const FRACTION_MAP = {
 };
 
 const FOOD_WORDS = [
-  'ラーメン', 'ごはん', '味噌汁', 'サラダ', 'パスタ', 'スパゲティ', '唐揚げ', '弁当', 'おにぎり',
-  '寿司', 'カレー', 'パン', 'ヨーグルト', 'バナナ', '納豆', '豆腐', 'スープ', '鶏', '魚', '鮭', 'サーモン'
+  'ラーメン', '塩ラーメン', 'フォー', 'ごはん', '味噌汁', 'サラダ', 'パスタ', 'スパゲティ', '唐揚げ', '弁当', 'おにぎり',
+  '寿司', 'カレー', 'パン', 'ヨーグルト', 'バナナ', 'いちご', '苺', '納豆', '豆腐', 'スープ', '鶏', '豚肉', '魚', '鮭', 'サーモン',
+  'ソーセージ', 'ウインナー', 'ブロッコリー', 'パプリカ', 'しめじ', '卵', 'ゆで卵', '牛乳', 'コーヒー', 'ミルクティー', '水'
 ];
 
 function normalizeText(value) {
@@ -240,46 +252,7 @@ function normalizeImageMeal(parsed) {
   };
 }
 
-
-function convertMealImageAIResult(result) {
-  const items = Array.isArray(result?.food_items)
-    ? result.food_items.map((item) => normalizeText(item?.name)).filter(Boolean)
-    : [];
-
-  return {
-    source: 'image',
-    isMealImage: Boolean(result?.is_meal),
-    imageKind: 'meal_photo',
-    mealType: 'unknown',
-    items,
-    amountNote: '標準',
-    amountRatio: 1,
-    estimatedNutrition: {
-      kcal: round1(result?.estimated_kcal || 0),
-      protein: round1(result?.protein_g || 0),
-      fat: round1(result?.fat_g || 0),
-      carbs: round1(result?.carbs_g || 0),
-    },
-    kcalMin: round1(result?.kcal_min || 0),
-    kcalMax: round1(result?.kcal_max || 0),
-    comment: normalizeText(result?.ai_comment || ''),
-    ocrText: '',
-    confidence: Number(result?.confidence || 0),
-    recordReady: Boolean(result?.is_meal),
-    uncertaintyNotes: Array.isArray(result?.uncertainty_notes) ? result.uncertainty_notes.filter(Boolean) : [],
-    confirmationQuestions: Array.isArray(result?.confirmation_questions) ? result.confirmation_questions.filter(Boolean) : [],
-  };
-}
-
 async function analyzeMealImage(imagePayload) {
-  try {
-    const aiResult = await analyzeMealImageWithAI(imagePayload?.buffer, imagePayload?.mimeType || 'image/jpeg');
-    const converted = convertMealImageAIResult(aiResult);
-    if (converted.isMealImage) return converted;
-  } catch (error) {
-    console.error('[meal_analysis_service] analyzeMealImageWithAI fallback:', error?.message || error);
-  }
-
   const prompt = [
     'この画像が食事関連なら、食事写真だけでなく、メニュー表、商品パッケージ、栄養成分表示、食品名ラベルも対象にしてください。',
     '画像の中の文字も必ず読み取って判断してください。',
@@ -299,7 +272,10 @@ async function analyzeMealImage(imagePayload) {
     '}'
   ].join('\n');
 
-  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  const result = await geminiImageAnalysisService.analyzeImage({
+    imagePayload,
+    prompt
+  });
 
   if (!result.ok) {
     return {
@@ -314,7 +290,9 @@ async function analyzeMealImage(imagePayload) {
   }
 
   const parsed = extractJsonObject(result.text);
-  if (!parsed) return buildHeuristicImageMeal(result.text);
+  if (!parsed) {
+    return buildHeuristicImageMeal(result.text);
+  }
 
   const normalized = normalizeImageMeal(parsed);
   if (!normalized.isMealImage) {

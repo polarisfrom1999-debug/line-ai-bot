@@ -9,7 +9,6 @@ const weeklySurveyStore = new Map();
 const monthlySurveyStore = new Map();
 const pointsStore = new Map();
 const labHistoryStore = new Map();
-const { getBusinessDayKey, getBusinessWeekKey } = require('./day_boundary_service');
 
 const DEFAULT_SHORT_MEMORY = {
   lastTopic: null,
@@ -40,20 +39,10 @@ const DEFAULT_LONG_MEMORY = {
   supportPreference: [],
   lifeContext: [],
   age: null,
-  height: null,
   weight: null,
   bodyFat: null,
   aiType: null,
-  voiceStyle: null,
   constitutionType: null,
-  constitutionMainType: null,
-  constitutionSubType: null,
-  constitutionSurveyScores: {},
-  constitutionSurveyAnswers: {},
-  constitutionCheckedAt: null,
-  periodicConstitutionAnswers: {},
-  periodicConstitutionDeltaMap: {},
-  periodicConstitutionCheckedAt: null,
   trialStartedAt: null,
   selectedPlan: null,
   onboardingCompleted: false
@@ -96,12 +85,27 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function getTodayKey(date = new Date()) {
-  return getBusinessDayKey(date);
+function getTodayKey() {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
 }
 
-function getWeekKey(date = new Date()) {
-  return getBusinessWeekKey(date);
+function getWeekKey() {
+  const now = new Date();
+  const tokyo = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const day = tokyo.getDay() || 7;
+  tokyo.setHours(0, 0, 0, 0);
+  tokyo.setDate(tokyo.getDate() - (day - 1));
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(tokyo);
 }
 
 function getMonthKey() {
@@ -238,33 +242,14 @@ async function mergeLongMemory(userId, patch) {
     if (safePatch.preferredName != null) next.preferredName = safePatch.preferredName;
     if (safePatch.goal != null) next.goal = safePatch.goal;
     if (safePatch.age != null) next.age = safePatch.age;
-    if (safePatch.height != null) next.height = safePatch.height;
     if (safePatch.weight != null) next.weight = safePatch.weight;
     if (safePatch.bodyFat != null) next.bodyFat = safePatch.bodyFat;
     if (safePatch.aiType != null) next.aiType = safePatch.aiType;
-    if (safePatch.voiceStyle != null) next.voiceStyle = safePatch.voiceStyle;
     if (safePatch.constitutionType != null) next.constitutionType = safePatch.constitutionType;
-    if (safePatch.constitutionMainType != null) next.constitutionMainType = safePatch.constitutionMainType;
-    if (safePatch.constitutionSubType != null) next.constitutionSubType = safePatch.constitutionSubType;
-    if (safePatch.constitutionCheckedAt != null) next.constitutionCheckedAt = safePatch.constitutionCheckedAt;
-    if (safePatch.periodicConstitutionCheckedAt != null) next.periodicConstitutionCheckedAt = safePatch.periodicConstitutionCheckedAt;
     if (safePatch.trialStartedAt != null) next.trialStartedAt = safePatch.trialStartedAt;
     if (safePatch.selectedPlan != null) next.selectedPlan = safePatch.selectedPlan;
     if (safePatch.onboardingCompleted != null) next.onboardingCompleted = Boolean(safePatch.onboardingCompleted);
     if (safePatch.stagnationTendency != null) next.stagnationTendency = safePatch.stagnationTendency;
-
-    if (isPlainObject(safePatch.constitutionSurveyScores)) {
-      next.constitutionSurveyScores = { ...safePatch.constitutionSurveyScores };
-    }
-    if (isPlainObject(safePatch.constitutionSurveyAnswers)) {
-      next.constitutionSurveyAnswers = { ...safePatch.constitutionSurveyAnswers };
-    }
-    if (isPlainObject(safePatch.periodicConstitutionAnswers)) {
-      next.periodicConstitutionAnswers = { ...safePatch.periodicConstitutionAnswers };
-    }
-    if (isPlainObject(safePatch.periodicConstitutionDeltaMap)) {
-      next.periodicConstitutionDeltaMap = { ...safePatch.periodicConstitutionDeltaMap };
-    }
 
     if (Array.isArray(safePatch.eatingPattern)) {
       for (const item of safePatch.eatingPattern) uniquePush(next.eatingPattern, item);
@@ -331,53 +316,40 @@ async function buildRecentSummary(userId, _days = 3) {
   if (/ラーメン|ごはん|朝ごはん|昼ごはん|夜ごはん|寿司|味噌汁|卵|ヨーグルト|バナナ/.test(userText)) parts.push('食事の記録は少しずつ続いています。');
   if (/歩いた|ジョギング|スクワット|運動|走りました|走った/.test(userText)) parts.push('運動の話題も入ってきています。');
   if (/血液検査|LDL|HDL|中性脂肪|HbA1c/.test(userText)) parts.push('血液検査への関心があります。');
-  if (/身長|体重|体脂肪率/.test(userText)) parts.push('体組成や代謝の話題が出ています。');
 
   return parts.join(' ') || '';
 }
 
-async function addDailyRecord(userId, record, options = {}) {
-  const targetDateKey = normalizeString(options?.targetDateKey || record?.targetDateKey || getTodayKey(options?.now || new Date()));
-  const key = `${userId}:${targetDateKey}`;
+async function addDailyRecord(userId, record) {
+  const key = `${userId}:${getTodayKey()}`;
   const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
   const next = clone(current);
-  const recordedAt = normalizeString(options?.recordedAt || record?.recordedAt || nowIso()) || nowIso();
 
-  const payload = { ...record, createdAt: recordedAt, targetDateKey };
-  delete payload.targetDateKey;
-
-  if (record?.type === 'meal') next.meals.push(payload);
-  if (record?.type === 'exercise') next.exercises.push(payload);
-  if (record?.type === 'weight') next.weights.push(payload);
-  if (record?.type === 'lab') next.labs.push(payload);
+  if (record?.type === 'meal') next.meals.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'exercise') next.exercises.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'weight') next.weights.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'lab') next.labs.push({ ...record, createdAt: nowIso() });
 
   dailyRecordStore.set(key, next);
 
   const points = await addPoints(userId, inferPointsFromRecord(record));
   return {
     ...clone(next),
-    points,
-    targetDateKey
+    points
   };
 }
 
-function buildDailyResultWithMeta(userId, dateKey, bucket) {
-  return {
-    date: dateKey,
-    weekKey: getWeekKey(new Date(`${dateKey}T12:00:00+09:00`)),
-    records: clone(bucket || buildDailyRecordBucket())
-  };
+function inferPointsFromRecord(record) {
+  if (!record?.type) return 0;
+  if (record.type === 'meal') return 1;
+  if (record.type === 'exercise') return 1;
+  if (record.type === 'weight') return 1;
+  if (record.type === 'lab') return 2;
+  return 0;
 }
 
-async function getTodayRecords(userId, date = new Date()) {
-  const dayKey = getTodayKey(date);
-  const key = `${userId}:${dayKey}`;
-  return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
-}
-
-async function getDailyRecordsByKey(userId, dateKey) {
-  const safeDateKey = normalizeString(dateKey);
-  const key = `${userId}:${safeDateKey}`;
+async function getTodayRecords(userId) {
+  const key = `${userId}:${getTodayKey()}`;
   return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
 }
 
@@ -393,14 +365,10 @@ async function getAllDailyRecordKeysForUser(userId) {
 async function getRecentDailyRecords(userId, limit = 7) {
   const keys = await getAllDailyRecordKeysForUser(userId);
   const selected = keys.slice(-limit);
-  return selected.map((key) => {
-    const dateKey = key.split(':')[1];
-    return {
-      date: dateKey,
-      weekKey: getWeekKey(new Date(`${dateKey}T12:00:00+09:00`)),
-      records: clone(dailyRecordStore.get(key) || buildDailyRecordBucket())
-    };
-  });
+  return selected.map((key) => ({
+    date: key.split(':')[1],
+    records: clone(dailyRecordStore.get(key) || buildDailyRecordBucket())
+  }));
 }
 
 async function getLatestWeightEntry(userId) {
@@ -594,7 +562,6 @@ module.exports = {
   buildRecentSummary,
   addDailyRecord,
   getTodayRecords,
-  getDailyRecordsByKey,
   getRecentDailyRecords,
   getLatestWeightEntry,
   upsertLabPanel,

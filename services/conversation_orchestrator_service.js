@@ -7,10 +7,6 @@ const weeklyReportService = require('./weekly_report_service');
 const lineMediaService = require('./line_media_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
-const metabolismService = require('./metabolism_service');
-const activityCalorieService = require('./activity_calorie_service');
-const calorieBalanceService = require('./calorie_balance_service');
-const { parseExplicitDate, stripRelativeDateWords, getBusinessDayKey } = require('./day_boundary_service');
 const featureFlags = require('../config/feature_flags');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
 const { shouldCompressGuidance, compressGuidanceText } = require('./reply_fatigue_service');
@@ -76,8 +72,6 @@ function detectIntent(input) {
   if (/今日の体重.*(教えて|知りたい)|最新の体重|今日の体脂肪率.*(教えて|知りたい)|私の体重は|私の体脂肪率は/.test(text)) return 'weight_lookup';
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
-  if (/今週どう|今週のバランス|今週どうかな|途中経過/.test(text)) return 'weekly_balance';
-  if (/今日のまとめ|今日どう|今日のバランス|今日の収支/.test(text)) return 'daily_balance';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
   if (/使い方教えて|使い方/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
@@ -88,7 +82,6 @@ function buildMemoryAnswer(longMemory) {
   const lines = [];
 
   if (longMemory?.preferredName) lines.push(`名前は「${longMemory.preferredName}」として覚えています。`);
-  if (longMemory?.height) lines.push(`身長は ${longMemory.height} として見ています。`);
   if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
@@ -333,14 +326,12 @@ function parseInlineProfile(text) {
 
   const nameMatch = safe.match(/名前[は：:]\s*([^\n]+)/);
   const ageMatch = safe.match(/年齢[は：:]\s*([^\n]+)/);
-  const heightMatch = safe.match(/身長[は：:]\s*([^\n]+)/);
   const weightMatch = safe.match(/体重[は：:]\s*([^\n]+)/);
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
 
   if (nameMatch) patch.preferredName = nameMatch[1].trim();
   if (ageMatch) patch.age = ageMatch[1].trim();
-  if (heightMatch) patch.height = heightMatch[1].trim();
   if (weightMatch) patch.weight = weightMatch[1].trim();
   if (bodyFatMatch) patch.bodyFat = bodyFatMatch[1].trim();
   if (goalMatch) patch.goal = goalMatch[1].trim();
@@ -374,8 +365,17 @@ function detectWeightRecord(text) {
   };
 }
 
-function detectExerciseRecord(text, longMemory = {}) {
-  return activityCalorieService.parseActivityText(text, longMemory) || null;
+function detectExerciseRecord(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  if (/痛|できない|出来ない|無理|休む|休みたい|限界|しんど/.test(safe) && !/した|やった|歩いた|走った|できた/.test(safe)) return null;
+  if (containsQuestionTone(safe)) return null;
+
+  if (/スクワット/.test(safe)) return { type: 'exercise', summary: safe, name: 'スクワット' };
+  if (/ジョギング|ランニング|走りました|走った|歩走/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
+  if (/歩いた|ウォーキング|散歩/.test(safe)) return { type: 'exercise', summary: safe, name: 'ウォーキング' };
+  if (/腕立て/.test(safe)) return { type: 'exercise', summary: safe, name: '腕立て' };
+  return null;
 }
 
 function looksLikeMealText(text) {
@@ -416,18 +416,13 @@ function buildMealReply(parsedMeal) {
     ].filter(Boolean).join('\n');
   }
 
-  const kcalLine = parsedMeal?.kcalMin && parsedMeal?.kcalMax
-    ? `推定: 約${kcal}kcal（目安 ${round1(parsedMeal.kcalMin)}〜${round1(parsedMeal.kcalMax)}kcal）`
-    : `推定: 約${kcal}kcal`;
-
   return [
     `受け取りました。今回は ${items} として見ています。`,
     amountText,
-    kcalLine,
+    `推定: 約${kcal}kcal`,
     `たんぱく質 ${protein}g / 脂質 ${fat}g / 糖質 ${carbs}g`,
-    parsedMeal?.comment || '必要なら、このまま今日の合計にもつなげていきます。',
-    Array.isArray(parsedMeal?.confirmationQuestions) && parsedMeal.confirmationQuestions.length ? `確認: ${parsedMeal.confirmationQuestions[0]}` : null
-  ].filter(Boolean).join('\n');
+    parsedMeal?.comment || '必要なら、このまま今日の合計にもつなげていきます。'
+  ].join('\n');
 }
 
 function buildMealRecordPayload(text, parsedMeal) {
@@ -693,8 +688,7 @@ async function maybeHandleMealImage(input, imagePayload) {
   const meal = await mealAnalysisService.analyzeMealImage(imagePayload);
   if (!meal?.isMealImage) return null;
 
-  let replyText = buildMealReply(meal);
-  const targetDateKey = getBusinessDayKey();
+  const replyText = buildMealReply(meal);
 
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: 'meal',
@@ -709,17 +703,9 @@ async function maybeHandleMealImage(input, imagePayload) {
     }
   });
 
-  if (meal?.recordReady) {
-    const record = buildImageMealRecordPayload(meal);
-    await contextMemoryService.addDailyRecord(input.userId, { ...record, targetDateKey });
-    const running = await calorieBalanceService.buildMealRunningTotalReply({ userId: input.userId, mealRecord: record, targetDateKey });
-    replyText = [replyText, running].filter(Boolean).join('\n\n');
-  }
-
   return {
     replyText,
-    meal,
-    targetDateKey
+    meal
   };
 }
 
@@ -727,27 +713,10 @@ async function maybeHandleMealText(input) {
   const text = normalizeText(input?.rawText || '');
   if (!looksLikeMealText(text)) return null;
 
-  const targetDate = parseExplicitDate(text);
-  const strippedText = stripRelativeDateWords(text) || text;
-  const parsedMeal = mealAnalysisService.parseMealText(strippedText);
+  const parsedMeal = mealAnalysisService.parseMealText(text);
   if (Number(parsedMeal?.confidence || 0) < 0.4) return null;
 
-  const record = buildMealRecordPayload(strippedText, parsedMeal);
-  const targetDateKey = targetDate?.targetDateKey || getBusinessDayKey();
-  await contextMemoryService.addDailyRecord(input.userId, { ...record, targetDateKey });
-
-  const running = await calorieBalanceService.buildMealRunningTotalReply({
-    userId: input.userId,
-    mealRecord: record,
-    targetDateKey,
-  });
-
-  const replyText = [
-    buildMealReply(parsedMeal),
-    targetDate?.detected ? `${targetDate.label} 分として保存しました。` : null,
-    running,
-  ].filter(Boolean).join('\n\n');
-
+  const replyText = buildMealReply(parsedMeal);
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -758,8 +727,7 @@ async function maybeHandleMealText(input) {
 
   return {
     replyText,
-    parsedMeal,
-    targetDateKey
+    parsedMeal
   };
 }
 
@@ -808,30 +776,19 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   };
 }
 
-async function maybeStoreSimpleRecords(userId, text, longMemory = {}) {
-  const targetDate = parseExplicitDate(text);
-  const cleanText = stripRelativeDateWords(text) || text;
-
-  const exercise = detectExerciseRecord(cleanText, longMemory);
-  if (exercise) {
-    await contextMemoryService.addDailyRecord(userId, { ...exercise, targetDateKey: targetDate?.targetDateKey || getBusinessDayKey() });
-    return { kind: 'exercise', record: exercise, targetDateKey: targetDate?.targetDateKey || getBusinessDayKey() };
+async function maybeStoreSimpleRecords(userId, text) {
+  const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text)
+    ? mealAnalysisService.parseMealText(text)
+    : null;
+  if (mealParsed && Number(mealParsed.confidence || 0) >= 0.4) {
+    await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed));
   }
 
-  const weight = detectWeightRecord(cleanText);
-  if (weight) {
-    await contextMemoryService.addDailyRecord(userId, { ...weight, targetDateKey: targetDate?.targetDateKey || getBusinessDayKey() });
-    const previousMeta = metabolismService.estimateBasalMetabolism({ longMemory });
-    const patch = {};
-    if (weight.weight != null) patch.weight = `${weight.weight}kg`;
-    if (weight.bodyFat != null) patch.bodyFat = `${weight.bodyFat}%`;
-    if (Object.keys(patch).length) await contextMemoryService.mergeLongMemory(userId, patch);
-    const currentLongMemory = await contextMemoryService.getLongMemory(userId);
-    const currentMeta = metabolismService.estimateBasalMetabolism({ longMemory: currentLongMemory });
-    return { kind: 'weight', record: weight, targetDateKey: targetDate?.targetDateKey || getBusinessDayKey(), previousMeta, currentMeta };
-  }
+  const exercise = detectExerciseRecord(text);
+  if (exercise) await contextMemoryService.addDailyRecord(userId, exercise);
 
-  return null;
+  const weight = detectWeightRecord(text);
+  if (weight) await contextMemoryService.addDailyRecord(userId, weight);
 }
 
 async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest) {
@@ -844,13 +801,10 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     '[プロフィール要約]',
     `- 名前: ${longMemoryLatest?.preferredName || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
-    `- 身長: ${longMemoryLatest?.height || '未設定'}`,
     `- 体重: ${longMemoryLatest?.weight || '未設定'}`,
     `- 体脂肪率: ${longMemoryLatest?.bodyFat || '未設定'}`,
     `- AIタイプ: ${longMemoryLatest?.aiType || '未設定'}`,
-    `- 声かけスタイル: ${longMemoryLatest?.voiceStyle || '未設定'}`,
     `- 体質タイプ: ${longMemoryLatest?.constitutionType || '未設定'}`,
-    `- 体質副タイプ: ${longMemoryLatest?.constitutionSubType || '未設定'}`,
     `- プラン: ${longMemoryLatest?.selectedPlan || '未設定'}`,
     recentSummary ? `- 最近の流れ: ${recentSummary}` : null
   ].filter(Boolean).join('\n');
@@ -906,18 +860,8 @@ async function orchestrateConversation(input) {
 
     const onboarding = await maybeHandleOnboarding(input, shortMemory, longMemory);
     if (onboarding?.handled) {
-      const replyMessages = Array.isArray(onboarding.replyMessages) && onboarding.replyMessages.length
-        ? onboarding.replyMessages
-        : onboarding.replyMessage
-          ? [onboarding.replyMessage]
-          : [{ type: 'text', text: onboarding.replyText }];
-
       await appendTurn(input.userId, input.rawText || '', onboarding.replyText);
-      return {
-        ok: true,
-        replyMessages,
-        internal: onboarding.internal || { intentType: 'onboarding', responseMode: 'guided' },
-      };
+      return { ok: true, replyMessages: [{ type: 'text', text: onboarding.replyText }], internal: { intentType: 'onboarding', responseMode: 'guided' } };
     }
 
     if (input?.messageType === 'text' && (looksLikeDistress(text) || looksLikePain(text))) {
@@ -940,6 +884,9 @@ async function orchestrateConversation(input) {
 
     const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
     if (mealImageHandled) {
+      if (mealImageHandled.meal?.recordReady) {
+        await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+      }
       await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
     }
@@ -980,9 +927,7 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'memory_question') {
-      const latestLongMemory = await contextMemoryService.getLongMemory(input.userId);
-      const bmrNote = metabolismService.buildBmrStatusMessage(metabolismService.estimateBasalMetabolism({ longMemory: latestLongMemory }), null);
-      const replyText = [buildMemoryAnswer(latestLongMemory), bmrNote].filter(Boolean).join('\n');
+      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
@@ -1051,9 +996,7 @@ async function orchestrateConversation(input) {
     const inlineProfile = parseInlineProfile(text);
     if (Object.keys(inlineProfile).length) {
       await contextMemoryService.mergeLongMemory(input.userId, inlineProfile);
-      const latestLongMemory = await contextMemoryService.getLongMemory(input.userId);
-      const bmrNote = metabolismService.buildBmrStatusMessage(metabolismService.estimateBasalMetabolism({ longMemory: latestLongMemory }), null);
-      const replyText = [buildMemoryAnswer(latestLongMemory), bmrNote].filter(Boolean).join('\n');
+      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
@@ -1067,29 +1010,12 @@ async function orchestrateConversation(input) {
 
     const mealTextHandled = await maybeHandleMealText(input);
     if (mealTextHandled) {
+      await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
       await appendTurn(input.userId, input.rawText || '', mealTextHandled.replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: mealTextHandled.replyText }], internal: { intentType: 'meal_text', responseMode: 'record' } };
     }
 
-    const simpleStored = await maybeStoreSimpleRecords(input.userId, text, longMemory);
-    if (simpleStored?.kind === 'exercise') {
-      const running = await calorieBalanceService.buildExerciseRunningTotalReply({
-        userId: input.userId,
-        exerciseRecord: simpleStored.record,
-        targetDateKey: simpleStored.targetDateKey,
-      });
-      await appendTurn(input.userId, input.rawText || '', running);
-      return { ok: true, replyMessages: [{ type: 'text', text: running }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
-    }
-
-    if (simpleStored?.kind === 'weight') {
-      const replyText = [
-        '受け取りました。体重の流れも更新しました。',
-        metabolismService.buildBmrStatusMessage(simpleStored.currentMeta, simpleStored.previousMeta),
-      ].join('\n');
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weight_record', responseMode: 'record' } };
-    }
+    await maybeStoreSimpleRecords(input.userId, text);
 
     const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
     const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest);

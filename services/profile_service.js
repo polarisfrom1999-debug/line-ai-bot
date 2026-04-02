@@ -31,7 +31,6 @@ function normalizeProfileValue(key, value) {
   const safe = normalizeText(value);
   if (!safe) return '';
 
-  if (key === 'height') return normalizeWeightLike(safe, 'cm');
   if (key === 'weight') return normalizeWeightLike(safe, 'kg');
   if (key === 'bodyFat') return normalizeWeightLike(safe, '%');
   return safe;
@@ -44,14 +43,12 @@ function extractProfilePatchFromText(text) {
   for (const line of lines) {
     const name = extractLineValue(line, '名前');
     const age = extractLineValue(line, '年齢');
-    const height = extractLineValue(line, '身長');
     const weight = extractLineValue(line, '体重');
     const bodyFat = extractLineValue(line, '体脂肪率');
     const goal = extractLineValue(line, '目標');
 
     if (name) patch.preferredName = normalizeProfileValue('preferredName', name);
     if (age) patch.age = normalizeProfileValue('age', age);
-    if (height) patch.height = normalizeProfileValue('height', height);
     if (weight) patch.weight = normalizeProfileValue('weight', weight);
     if (bodyFat) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFat);
     if (goal) patch.goal = normalizeProfileValue('goal', goal);
@@ -65,14 +62,11 @@ function buildProfileSummary(longMemory) {
 
   if (longMemory?.preferredName) lines.push(`名前: ${longMemory.preferredName}`);
   if (longMemory?.age) lines.push(`年齢: ${longMemory.age}`);
-  if (longMemory?.height) lines.push(`身長: ${longMemory.height}`);
   if (longMemory?.weight) lines.push(`体重: ${longMemory.weight}`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率: ${longMemory.bodyFat}`);
   if (longMemory?.goal) lines.push(`目標: ${longMemory.goal}`);
   if (longMemory?.aiType) lines.push(`AIタイプ: ${longMemory.aiType}`);
-  if (longMemory?.voiceStyle) lines.push(`声かけ: ${longMemory.voiceStyle}`);
   if (longMemory?.constitutionType) lines.push(`体質タイプ: ${longMemory.constitutionType}`);
-  if (longMemory?.constitutionSubType) lines.push(`体質副タイプ: ${longMemory.constitutionSubType}`);
   if (longMemory?.selectedPlan) lines.push(`プラン: ${longMemory.selectedPlan}`);
 
   const narrative = longMemory?.narrativeMemory || {};
@@ -92,7 +86,6 @@ function buildProfileUpdatedReply(patch) {
 
   if (patch?.preferredName) lines.push(`名前: ${patch.preferredName}`);
   if (patch?.age) lines.push(`年齢: ${patch.age}`);
-  if (patch?.height) lines.push(`身長: ${patch.height}`);
   if (patch?.weight) lines.push(`体重: ${patch.weight}`);
   if (patch?.bodyFat) lines.push(`体脂肪率: ${patch.bodyFat}`);
   if (patch?.goal) lines.push(`目標: ${patch.goal}`);
@@ -104,15 +97,12 @@ function buildMemoryAnswer(longMemory) {
   const lines = [];
 
   if (longMemory?.preferredName) lines.push(`名前は「${longMemory.preferredName}」として覚えています。`);
-  if (longMemory?.height) lines.push(`身長は ${longMemory.height} として見ています。`);
   if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
   if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
   if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
-  if (longMemory?.voiceStyle) lines.push(`声かけスタイルは「${longMemory.voiceStyle}」です。`);
   if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
-  if (longMemory?.constitutionSubType) lines.push(`副タイプは「${longMemory.constitutionSubType}」です。`);
   if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
 
   const narrative = longMemory?.narrativeMemory || {};

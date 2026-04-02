@@ -215,25 +215,6 @@ function buildMetabolismNote(snapshot = {}) {
   return '今日は大きく外しすぎず、流れを確認しやすい位置です。';
 }
 
-
-function buildBmrStatusMessage(currentSnapshot = {}, previousSnapshot = null) {
-  if (!currentSnapshot?.estimatedBmr) {
-    return '基礎代謝の目安を出すには、年齢・身長・体重・体脂肪率がそろうとかなり見やすいです。';
-  }
-
-  const lines = [`今の基礎代謝の目安は ${currentSnapshot.estimatedBmr}kcal 前後です。`];
-  if (previousSnapshot?.estimatedBmr) {
-    const diff = Number(currentSnapshot.estimatedBmr || 0) - Number(previousSnapshot.estimatedBmr || 0);
-    if (diff >= 20) lines.push('前回より代謝の土台が少し上向きかもしれません。いい流れです。');
-    else if (diff <= -20) lines.push('数値は日内変動もあるので、焦らず流れで見ていきましょう。');
-  }
-  if (currentSnapshot?.leanBodyMassKg && previousSnapshot?.leanBodyMassKg) {
-    const leanDiff = Number(currentSnapshot.leanBodyMassKg || 0) - Number(previousSnapshot.leanBodyMassKg || 0);
-    if (leanDiff >= 0.3) lines.push('除脂肪量の目安は少し上向きで、体の使い方が整ってきている可能性があります。');
-  }
-  return lines.join('\n');
-}
-
 function buildMetabolismSummaryText(input = {}) {
   const snapshot = estimateEnergyBalance(input);
   const lines = [];
@@ -266,6 +247,5 @@ module.exports = {
   estimateDailyExpenditure,
   estimateEnergyBalance,
   buildMetabolismNote,
-  buildMetabolismSummaryText,
-  buildBmrStatusMessage
+  buildMetabolismSummaryText
 };
