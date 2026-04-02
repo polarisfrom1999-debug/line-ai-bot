@@ -7,6 +7,9 @@ const weeklyReportService = require('./weekly_report_service');
 const lineMediaService = require('./line_media_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
+const { parseActivity } = require('./activity_calorie_service');
+const calorieBalanceService = require('./calorie_balance_service');
+const profileService = require('./profile_service');
 const featureFlags = require('../config/feature_flags');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
 const { shouldCompressGuidance, compressGuidanceText } = require('./reply_fatigue_service');
@@ -69,9 +72,10 @@ function detectIntent(input) {
   const text = normalizeText(input?.rawText || '');
 
   if (/今何時|何時|何月何日|今日何日|何時何分/.test(text)) return 'time_question';
+  if (/今日のまとめ|今日のバランス|今日どうだった/.test(text)) return 'daily_summary';
+  if (/今週どう|今週のバランス|週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の体重.*(教えて|知りたい)|最新の体重|今日の体脂肪率.*(教えて|知りたい)|私の体重は|私の体脂肪率は/.test(text)) return 'weight_lookup';
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
-  if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
   if (/使い方教えて|使い方/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
@@ -79,22 +83,7 @@ function detectIntent(input) {
 }
 
 function buildMemoryAnswer(longMemory) {
-  const lines = [];
-
-  if (longMemory?.preferredName) lines.push(`名前は「${longMemory.preferredName}」として覚えています。`);
-  if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
-  if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
-  if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
-  if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
-  if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
-  if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
-  if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
-
-  if (!lines.length) {
-    return '今はまだ強く残っていることは多くないので、これから少しずつ覚えていきますね。';
-  }
-
-  return lines.join('\n');
+  return profileService.buildMemoryAnswer(longMemory);
 }
 
 
@@ -326,12 +315,14 @@ function parseInlineProfile(text) {
 
   const nameMatch = safe.match(/名前[は：:]\s*([^\n]+)/);
   const ageMatch = safe.match(/年齢[は：:]\s*([^\n]+)/);
+  const heightMatch = safe.match(/身長[は：:]\s*([^\n]+)/);
   const weightMatch = safe.match(/体重[は：:]\s*([^\n]+)/);
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
 
   if (nameMatch) patch.preferredName = nameMatch[1].trim();
   if (ageMatch) patch.age = ageMatch[1].trim();
+  if (heightMatch) patch.height = heightMatch[1].trim();
   if (weightMatch) patch.weight = weightMatch[1].trim();
   if (bodyFatMatch) patch.bodyFat = bodyFatMatch[1].trim();
   if (goalMatch) patch.goal = goalMatch[1].trim();
@@ -365,21 +356,16 @@ function detectWeightRecord(text) {
   };
 }
 
-function detectExerciseRecord(text) {
+function detectExerciseRecord(text, longMemory = {}) {
   const safe = normalizeText(text);
   if (!safe) return null;
-  if (/痛|できない|出来ない|無理|休む|休みたい|限界|しんど/.test(safe) && !/した|やった|歩いた|走った|できた/.test(safe)) return null;
   if (containsQuestionTone(safe)) return null;
-
-  if (/スクワット/.test(safe)) return { type: 'exercise', summary: safe, name: 'スクワット' };
-  if (/ジョギング|ランニング|走りました|走った|歩走/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
-  if (/歩いた|ウォーキング|散歩/.test(safe)) return { type: 'exercise', summary: safe, name: 'ウォーキング' };
-  if (/腕立て/.test(safe)) return { type: 'exercise', summary: safe, name: '腕立て' };
-  return null;
+  const weightNumber = Number(String(longMemory?.weight || '').replace(/[^\d.\-]/g, '')) || 60;
+  return parseActivity(safe, weightNumber);
 }
 
 function looksLikeMealText(text) {
-  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当/.test(normalizeText(text));
+  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|フォー|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ|いちご|パスタ|おにぎり|弁当|豆腐|ソーセージ|ブロッコリー|パプリカ/.test(normalizeText(text));
 }
 
 function looksLikeDistress(text) {
@@ -392,37 +378,24 @@ function looksLikePain(text) {
 }
 
 function buildMealReply(parsedMeal) {
-  const items = Array.isArray(parsedMeal?.items) && parsedMeal.items.length
-    ? parsedMeal.items.join('、')
-    : '食事';
-
+  const label = parsedMeal?.summaryLabel || (Array.isArray(parsedMeal?.items) && parsedMeal.items.length ? parsedMeal.items.join('、') : '食事');
   const kcal = round1(parsedMeal?.estimatedNutrition?.kcal || 0);
-  const protein = round1(parsedMeal?.estimatedNutrition?.protein || 0);
-  const fat = round1(parsedMeal?.estimatedNutrition?.fat || 0);
-  const carbs = round1(parsedMeal?.estimatedNutrition?.carbs || 0);
-  const imageKind = parsedMeal?.imageKind || '';
+  const kcalLow = round1(parsedMeal?.kcalRange?.low || 0);
+  const kcalHigh = round1(parsedMeal?.kcalRange?.high || 0);
 
-  const amountText = parsedMeal?.amountNote
-    ? `量の反映: ${parsedMeal.amountNote}`
-    : parsedMeal?.amountRatio && parsedMeal.amountRatio !== 1
-      ? `量の反映: ${parsedMeal.amountRatio}倍`
-      : '量の反映: 標準';
-
-  if ((imageKind === 'menu_text' || imageKind === 'food_package') && !kcal) {
-    return [
-      `食事の候補として ${items} を読み取りました。`,
-      parsedMeal?.ocrText ? `読めた文字: ${parsedMeal.ocrText.slice(0, 80)}` : null,
-      'どれを実際に食べたか分かれば、その分だけ栄養までつなげられます。'
-    ].filter(Boolean).join('\n');
+  if (!kcal && !kcalLow && !kcalHigh) {
+    return `${label}として見ています。もう少し分かる情報があれば、ざっくりしたカロリーにもつなげられます。`;
   }
 
+  const kcalText = kcalLow && kcalHigh
+    ? `ざっくり ${kcalLow}〜${kcalHigh}kcal くらいで見てよさそうです。`
+    : `ざっくり ${kcal}kcal くらいで見てよさそうです。`;
+
   return [
-    `受け取りました。今回は ${items} として見ています。`,
-    amountText,
-    `推定: 約${kcal}kcal`,
-    `たんぱく質 ${protein}g / 脂質 ${fat}g / 糖質 ${carbs}g`,
-    parsedMeal?.comment || '必要なら、このまま今日の合計にもつなげていきます。'
-  ].join('\n');
+    `${label}として見て大丈夫そうです。`,
+    kcalText,
+    parsedMeal?.comment || '細かい明細より、ざっくりした食事として受け取っています。'
+  ].filter(Boolean).join('\n');
 }
 
 function buildMealRecordPayload(text, parsedMeal) {
@@ -460,27 +433,12 @@ function buildImageMealRecordPayload(parsedMeal) {
 
 function buildLabImageReply(lab) {
   const items = Array.isArray(lab?.items) ? lab.items : [];
-  const preview = items.slice(0, 5).map((item) => {
-    const marker = item.flag ? ` ${item.flag}` : '';
-    return `${item.itemName} ${item.value}${item.unit ? ` ${item.unit}` : ''}${marker}`;
-  }).join(' / ');
-  const trendInfo = items.some((item) => Array.isArray(item.history) && item.history.length >= 2)
-    ? ' 過去の列も見えた項目は推移として持っておきます。'
-    : '';
-  if (!items.length) {
-    return [
-      '血液検査の画像として受け取りました。',
-      lab?.examDate ? `見えている日付: ${lab.examDate}` : null,
-      '数値の読み取りが弱い時は、もう1枚だけ正面から送ってもらえると拾いやすくなります。',
-      '続けて「LDLは？」「HbA1cは？」と聞いても大丈夫です。'
-    ].filter(Boolean).join('\n');
-  }
-
+  const preview = items.slice(0, 5).map((item) => `${item.itemName} ${item.value}${item.unit ? ` ${item.unit}` : ''}${item.flag ? ` ${item.flag}` : ''}`).join(' / ');
   return [
     '血液検査画像を受け取りました。',
-    lab?.examDate ? `検査日: ${lab.examDate}` : null,
-    preview ? `読み取れた主な項目: ${preview}` : null,
-    `このまま「LDLは？」「HbA1cは？」のように聞いても大丈夫です。${trendInfo}`.trim()
+    lab?.examDate ? `検査日候補: ${lab.examDate}` : null,
+    preview ? `今回の画像で読み取れた候補: ${preview}` : null,
+    '聞きたい項目は「TGは？」「HbA1cは？」のように送ってください。今回の画像を優先して答えます。'
   ].filter(Boolean).join('\n');
 }
 
@@ -512,16 +470,18 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const targetName = normalizeLabTarget(safe);
   if (!targetName) return null;
 
-  const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
-  if (trend.length) return buildLabTrendReply(targetName, trend);
-
   const items = shortMemory?.followUpContext?.imageType === 'lab'
     ? shortMemory.followUpContext.extractedItems || []
     : [];
   const target = items.find((item) => normalizeLabTarget(item?.itemName || '') === targetName);
-  if (!target) return null;
+  if (target?.value) {
+    return `${target.itemName} は今回の画像では ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めています。`;
+  }
 
-  return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
+  const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
+  if (trend.length) return buildLabTrendReply(targetName, trend);
+
+  return 'この項目は今回の画像ではまだ安定して読めていません。別の写真や、もう少し見やすい画像があると精度を上げやすいです。';
 }
 
 function looksLikeHomecareConsultation(text) {
@@ -668,7 +628,7 @@ async function maybeHandleLabImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload) return null;
 
   const lab = await labImageAnalysisService.analyzeLabImage(imagePayload);
-  if (!lab?.isLabImage) return null;
+  if (!lab?.isLabImage || !Array.isArray(lab.items) || !lab.items.length) return null;
 
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: 'lab',
@@ -680,15 +640,13 @@ async function maybeHandleLabImage(input, imagePayload) {
     }
   });
 
-  if (Array.isArray(lab.items) && lab.items.length) {
-    await contextMemoryService.upsertLabPanel(input.userId, lab);
-    await contextMemoryService.addDailyRecord(input.userId, {
-      type: 'lab',
-      summary: '血液検査画像',
-      examDate: lab.examDate || '',
-      items: lab.items
-    });
-  }
+  await contextMemoryService.upsertLabPanel(input.userId, lab);
+  await contextMemoryService.addDailyRecord(input.userId, {
+    type: 'lab',
+    summary: '血液検査画像',
+    examDate: lab.examDate || '',
+    items: lab.items
+  });
 
   return buildLabImageReply(lab);
 }
@@ -787,31 +745,35 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   };
 }
 
-async function maybeStoreSimpleRecords(userId, text) {
+async function maybeStoreSimpleRecords(userId, text, longMemory = {}) {
+  const dayKey = contextMemoryService.getDayKeyFromText(text);
   const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text)
     ? mealAnalysisService.parseMealText(text)
     : null;
   if (mealParsed && Number(mealParsed.confidence || 0) >= 0.4) {
-    await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed));
+    await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed), { dayKey });
   }
 
-  const exercise = detectExerciseRecord(text);
-  if (exercise) await contextMemoryService.addDailyRecord(userId, exercise);
+  const exercise = detectExerciseRecord(text, longMemory);
+  if (exercise) await contextMemoryService.addDailyRecord(userId, exercise, { dayKey });
 
   const weight = detectWeightRecord(text);
-  if (weight) await contextMemoryService.addDailyRecord(userId, weight);
+  if (weight) await contextMemoryService.addDailyRecord(userId, weight, { dayKey });
 }
 
 async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest) {
   const systemHint = [
     '[伴走OSルール]',
-    '- 受け止めを先に置く',
+    '- 会話を先、分析や記録は後ろに置く',
+    '- まず受け止めてから答える',
     '- 提案は多くて1つ',
     '- 管理者のような言い方は禁止',
     '- 痛みやしんどさが出たら記録よりケアを優先する',
+    '- ChatGPTと話すような自然さを優先する',
     '[プロフィール要約]',
     `- 名前: ${longMemoryLatest?.preferredName || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
+    `- 身長: ${longMemoryLatest?.height || '未設定'}`,
     `- 体重: ${longMemoryLatest?.weight || '未設定'}`,
     `- 体脂肪率: ${longMemoryLatest?.bodyFat || '未設定'}`,
     `- AIタイプ: ${longMemoryLatest?.aiType || '未設定'}`,
@@ -847,6 +809,32 @@ async function buildWeightLookupReply(userId) {
   if (latest.weight != null) parts.push(`体重 ${latest.weight}`);
   if (latest.bodyFat != null) parts.push(`体脂肪率 ${latest.bodyFat}`);
   return `${latest.date} の最新は ${parts.join(' / ')} です。`;
+}
+
+async function maybeHandleActivityText(input, longMemory) {
+  const text = normalizeText(input?.rawText || '');
+  const exercise = detectExerciseRecord(text, longMemory);
+  if (!exercise) return null;
+
+  const dayKey = contextMemoryService.getDayKeyFromText(text);
+  await contextMemoryService.addDailyRecord(input.userId, exercise, { dayKey });
+  const dayRecords = await contextMemoryService.getDayRecords(input.userId, dayKey);
+
+  return [
+    exercise.praise || 'いいですね。',
+    calorieBalanceService.buildExerciseRunningTotalReply(exercise, dayRecords)
+  ].join('\n');
+}
+
+async function buildDailySummaryAnswer(userId) {
+  const longMemory = await contextMemoryService.getLongMemory(userId);
+  const todayRecords = await contextMemoryService.getTodayRecords(userId);
+  return calorieBalanceService.buildDailySummaryReply(longMemory, todayRecords);
+}
+
+async function buildWeeklyBalanceAnswer(userId) {
+  const recent = await contextMemoryService.getRecentDailyRecords(userId, 7);
+  return calorieBalanceService.buildWeeklyProgressReply(recent);
 }
 
 async function orchestrateConversation(input) {
@@ -895,11 +883,14 @@ async function orchestrateConversation(input) {
 
     const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
     if (mealImageHandled) {
+      let replyText = mealImageHandled.replyText;
       if (mealImageHandled.meal?.recordReady) {
         await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+        const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+        replyText = `${replyText}\n${calorieBalanceService.buildMealRunningTotalReply(mealImageHandled.meal, todayRecords)}`;
       }
-      await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+      await appendTurn(input.userId, input.rawText || '[image]', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
@@ -943,13 +934,14 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
 
+    if (intent === 'daily_summary') {
+      const replyText = await buildDailySummaryAnswer(input.userId);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'daily_summary', responseMode: 'answer' } };
+    }
+
     if (intent === 'weekly_report') {
-      const records = await contextMemoryService.getTodayRecords(input.userId);
-      const replyText = await weeklyReportService.buildWeeklyReport({
-        longMemory: await contextMemoryService.getLongMemory(input.userId),
-        recentMessages,
-        todayRecords: records
-      });
+      const replyText = await buildWeeklyBalanceAnswer(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weekly_report', responseMode: 'answer' } };
     }
@@ -1019,14 +1011,23 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
 
-    const mealTextHandled = await maybeHandleMealText(input);
-    if (mealTextHandled) {
-      await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
-      await appendTurn(input.userId, input.rawText || '', mealTextHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealTextHandled.replyText }], internal: { intentType: 'meal_text', responseMode: 'record' } };
+    const activityReply = await maybeHandleActivityText(input, longMemory);
+    if (activityReply) {
+      await appendTurn(input.userId, input.rawText || '', activityReply);
+      return { ok: true, replyMessages: [{ type: 'text', text: activityReply }], internal: { intentType: 'activity_text', responseMode: 'record' } };
     }
 
-    await maybeStoreSimpleRecords(input.userId, text);
+    const mealTextHandled = await maybeHandleMealText(input);
+    if (mealTextHandled) {
+      const dayKey = contextMemoryService.getDayKeyFromText(text);
+      await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal), { dayKey });
+      const dayRecords = await contextMemoryService.getDayRecords(input.userId, dayKey);
+      const replyText = `${mealTextHandled.replyText}\n${calorieBalanceService.buildMealRunningTotalReply(mealTextHandled.parsedMeal, dayRecords)}`;
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'meal_text', responseMode: 'record' } };
+    }
+
+    await maybeStoreSimpleRecords(input.userId, text, longMemory);
 
     const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
     const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest);
