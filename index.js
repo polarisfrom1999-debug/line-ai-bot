@@ -18,6 +18,7 @@ app.use(bodyParser.json({ limit: '10mb' }));
 const conversationRouter = require('./services/chatgpt_conversation_router');
 const chatLogService = require('./services/chat_log_service');
 const conversationSummaryService = require('./services/conversation_summary_service');
+const memoryCurationService = require('./services/memory_curation_service');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -97,6 +98,7 @@ async function handleEvent(event) {
       await replyLineMessages(input.replyToken, result.replyMessages);
       await chatLogService.logConversationOutcome({ input, result });
       await conversationSummaryService.recordTurn({ input, result });
+      await memoryCurationService.recordStableMemories({ input, result });
       return;
     }
 
@@ -108,6 +110,7 @@ async function handleEvent(event) {
     await replyLineMessages(input.replyToken, fallbackResult.replyMessages);
     await chatLogService.logConversationOutcome({ input, result: fallbackResult });
     await conversationSummaryService.recordTurn({ input, result: fallbackResult });
+    await memoryCurationService.recordStableMemories({ input, result: fallbackResult });
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);
     const input = normalizeEventInput(event || {});
