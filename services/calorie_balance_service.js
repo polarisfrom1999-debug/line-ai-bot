@@ -1,6 +1,7 @@
 'use strict';
 
 const metabolismService = require('./metabolism_service');
+const { buildDayLabel } = require('./day_boundary_service');
 
 function round0(value) {
   return Math.round(Number(value || 0));
@@ -14,19 +15,21 @@ function sumExercises(exercises = []) {
   return round0(exercises.reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0));
 }
 
-function buildMealRunningTotalReply(parsedMeal, todayRecords) {
+function buildMealRunningTotalReply(parsedMeal, dayRecords, options = {}) {
   const mealKcal = round0(parsedMeal?.estimatedNutrition?.kcal || 0);
-  const total = sumMeals(todayRecords?.meals || []);
-  return `ざっくり ${mealKcal}kcal くらいで見てよさそうです。\n今日ここまでの摂取は ${total}kcal です。`;
+  const total = sumMeals(dayRecords?.meals || []);
+  const label = options.dayLabel || buildDayLabel(options.dayKey);
+  return `ざっくり ${mealKcal}kcal くらいで見てよさそうです。\n${label}ここまでの摂取は ${total}kcal です。`;
 }
 
-function buildExerciseRunningTotalReply(exerciseRecord, todayRecords) {
+function buildExerciseRunningTotalReply(exerciseRecord, dayRecords, options = {}) {
   const activityKcal = round0(exerciseRecord?.estimatedCalories || 0);
-  const total = sumExercises(todayRecords?.exercises || []);
-  return `${exerciseRecord?.name || '活動'}は ざっくり ${activityKcal}kcal くらいです。\n今日ここまでの運動消費は ${total}kcal です。`;
+  const total = sumExercises(dayRecords?.exercises || []);
+  const label = options.dayLabel || buildDayLabel(options.dayKey);
+  return `${exerciseRecord?.name || '活動'}は ざっくり ${activityKcal}kcal くらいです。\n${label}ここまでの運動消費は ${total}kcal です。`;
 }
 
-function buildDailySummaryReply(longMemory, todayRecords) {
+function buildDailySummaryReply(longMemory, todayRecords, options = {}) {
   const snapshot = metabolismService.estimateEnergyBalance({
     longMemory,
     todayRecords,
@@ -38,8 +41,9 @@ function buildDailySummaryReply(longMemory, todayRecords) {
   const output = round0(snapshot.outputKcal || snapshot.totalOutputEstimate || 0);
   const balance = Number.isFinite(snapshot.balanceKcal) ? round0(snapshot.balanceKcal) : null;
 
+  const dayLabel = options.dayLabel || buildDayLabel(options.dayKey);
   const lines = [
-    `今日は摂取 ${intake}kcal、運動消費 ${activity}kcal です。`,
+    `${dayLabel}は摂取 ${intake}kcal、運動消費 ${activity}kcal です。`,
     bmr ? `基礎代謝の目安は ${bmr}kcal です。` : null,
     output ? `ざっくり消費全体は ${output}kcal 前後で見ています。` : null,
     balance != null ? `今日のざっくり収支は ${balance > 0 ? '+' : ''}${balance}kcal です。` : null,

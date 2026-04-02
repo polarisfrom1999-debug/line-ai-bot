@@ -55,9 +55,29 @@ function resolveDateFromText(text, baseDate = new Date()) {
   return getBusinessDateInfo(base).dayKey;
 }
 
+function compareDayKeys(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 0;
+  return String(a).localeCompare(String(b));
+}
+
+function buildDayLabel(dayKey, baseDate = new Date()) {
+  const todayKey = getBusinessDateInfo(baseDate).dayKey;
+  const yesterday = new Date(toJapanDate(baseDate));
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = getBusinessDateInfo(yesterday).dayKey;
+  if (dayKey === todayKey) return '今日';
+  if (dayKey === yesterdayKey) return '昨日';
+  const [y, m, d] = String(dayKey || '').split('-');
+  if (y && m && d) return `${Number(m)}月${Number(d)}日`;
+  return 'その日';
+}
+
 module.exports = {
   BUSINESS_DAY_START_HOUR,
   getBusinessDateInfo,
   resolveDateFromText,
   formatDayKey,
+  compareDayKeys,
+  buildDayLabel,
 };

@@ -106,21 +106,23 @@ function normalizeItems(items) {
   return out;
 }
 
-function extractValueFromLine(line) {
-  const cleaned = line
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/[（［【][^）］】]*[）］】]/g, ' ')
-    .replace(/基準値.*$/i, ' ')
-    .replace(/参考.*$/i, ' ')
-    .replace(/\b[HL]\b/g, (m) => ` ${m} `);
-
-  const matches = [...cleaned.matchAll(/\b([HL])?\s*(-?\d+(?:\.\d+)?)\b/g)];
+function extractValueFromLine(line, canonical = '') {
+  const cleaned = line.replace(/\b[HL]\b/g, (m) => ` ${m} `);
+  const aliases = ITEM_ALIASES[canonical] || [];
+  let tail = cleaned;
+  for (const alias of aliases) {
+    const idx = cleaned.toUpperCase().indexOf(String(alias).replace(/\s+/g, '').toUpperCase());
+    if (idx >= 0) {
+      tail = cleaned.slice(idx + alias.length);
+      break;
+    }
+  }
+  const matches = [...tail.matchAll(/\b([HL])?\s*(-?\d+(?:\.\d+)?)\b/g)];
   if (!matches.length) return { value: '', flag: '' };
-
   for (const hit of matches) {
     const value = String(hit[2] || '');
     if (/^20\d{2}$/.test(value)) continue;
-    return { value, flag: normalizeFlag(hit[1] || '') };
+    if (/^\d{1,3}(?:\.\d+)?$/.test(value)) return { value, flag: normalizeFlag(hit[1] || '') };
   }
   return { value: '', flag: '' };
 }
@@ -140,7 +142,7 @@ function tryHeuristicExtract(rawText) {
   for (const line of lines) {
     const canonical = toCanonicalItemName(line);
     if (!canonical) continue;
-    const { value, flag } = extractValueFromLine(line);
+    const { value, flag } = extractValueFromLine(line, canonical);
     if (!value) continue;
     const unit = extractUnitFromLine(line);
     const key = `${canonical}:${value}:${unit}`;
@@ -186,7 +188,14 @@ async function analyzeLabImage(imagePayload) {
 
   if (parsed) {
     const jsonItems = normalizeItems(parsed.items);
-    const mergedItems = jsonItems.length ? jsonItems : heuristic.items;
+    const mergedMap = new Map();
+    for (const item of [...heuristic.items, ...jsonItems]) {
+      const key = item.itemName;
+      if (!mergedMap.has(key) || (item.value && jsonItems.some((j) => j.itemName === key && j.value))) {
+        mergedMap.set(key, item);
+      }
+    }
+    const mergedItems = [...mergedMap.values()];
     const examDate = normalizeDateToken(parsed.examDate || '') || heuristic.examDate;
     return {
       source: 'image',

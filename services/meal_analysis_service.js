@@ -30,7 +30,7 @@ const FOOD_LIBRARY = [
 ];
 
 const MEAL_WORDS = FOOD_LIBRARY.flatMap((item) => item.keywords);
-const LAB_BLOCK_WORDS = [/検査結果/, /HbA1c/i, /LDL/i, /HDL/i, /TG/i, /中性脂肪/, /血液検査/];
+const LAB_BLOCK_WORDS = [/検査結果/, /HbA1c/i, /LDL/i, /HDL/i, /TG/i, /中性脂肪/, /血液検査/, /検査項目名/, /基準値/, /患者番号/];
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -112,7 +112,7 @@ function parseMealText(text) {
     isMealText: foods.length > 0,
     isMealImage: false,
     mealType: detectMealType(safe),
-    items: foods.map((item) => item.label),
+    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 3),
     summaryLabel: buildSummaryLabel(foods, safe || '食事'),
     amountNote: '',
     amountRatio: 1,
@@ -145,24 +145,24 @@ function buildHeuristicImageMeal(rawText) {
 
   const foods = pickMatchedFoods(safe);
   const nutrition = buildSimpleNutritionFromFoods(foods);
-  const kcalRange = buildKcalRange(nutrition.kcal || (foods.length ? 380 : 0));
-  const estimatedKcal = foods.length ? nutrition.kcal : (safe ? 380 : 0);
+  const defaultKcal = foods.length ? nutrition.kcal : 520;
+  const kcalRange = buildKcalRange(defaultKcal);
 
   return {
     source: 'image',
-    isMealImage: foods.length > 0 || /料理|食事|ランチ|朝食|昼食|夕食|弁当/.test(safe),
-    imageKind: foods.length ? 'meal_photo' : 'unknown',
+    isMealImage: true,
+    imageKind: 'meal_photo',
     mealType: detectMealType(safe),
-    items: foods.map((item) => item.label),
+    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 3),
     summaryLabel: buildSummaryLabel(foods, foods.length ? '食事' : '食事写真'),
     amountNote: '',
     amountRatio: 1,
-    estimatedNutrition: { kcal: round0(estimatedKcal), protein: 0, fat: 0, carbs: 0 },
+    estimatedNutrition: { kcal: round0(defaultKcal), protein: 0, fat: 0, carbs: 0 },
     kcalRange,
-    comment: '細かい明細ではなく、ざっくりした献立として見ています。',
+    comment: foods.length ? '細かい明細ではなく、ざっくりした献立として見ています。' : '写真全体から、ざっくりした食事として見ています。',
     ocrText: safe,
-    confidence: foods.length ? 0.62 : 0.2,
-    recordReady: foods.length > 0,
+    confidence: foods.length ? 0.62 : 0.35,
+    recordReady: true,
   };
 }
 
@@ -185,15 +185,16 @@ function normalizeImageMeal(parsed, rawText = '') {
     low: round0(parsed?.kcalLow || parsed?.estimatedKcalLow || buildKcalRange(estimatedKcal).low),
     high: round0(parsed?.kcalHigh || parsed?.estimatedKcalHigh || buildKcalRange(estimatedKcal).high),
   };
-  const summaryLabel = normalizeText(parsed?.summaryLabel || parsed?.mealLabel || buildSummaryLabel(foods, '食事写真'));
-  const mealLike = Boolean(parsed?.isMealImage || foods.length || summaryLabel);
+  const freeItems = items.filter(Boolean);
+  const summaryLabel = normalizeText(parsed?.summaryLabel || parsed?.mealLabel || buildSummaryLabel(foods, freeItems[0] || '食事写真'));
+  const mealLike = Boolean(parsed?.isMealImage || foods.length || freeItems.length || summaryLabel);
 
   return {
     source: 'image',
     isMealImage: mealLike && !LAB_BLOCK_WORDS.some((pattern) => pattern.test(safeText)),
     imageKind: normalizeText(parsed?.imageKind || 'meal_photo') || 'meal_photo',
     mealType: normalizeText(parsed?.mealTypeHint || parsed?.mealType || 'unknown') || 'unknown',
-    items: foods.map((item) => item.label),
+    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 3),
     summaryLabel,
     amountNote: '',
     amountRatio: 1,

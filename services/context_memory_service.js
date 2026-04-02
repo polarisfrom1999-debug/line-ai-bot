@@ -29,6 +29,7 @@ const DEFAULT_SHORT_MEMORY = {
   lastEmotionTone: 'neutral',
   lastAdvice: null,
   recentSmallTalkTopic: null,
+  latestImageContexts: { meal: null, lab: null },
   followUpContext: null,
   activeHealthTheme: null,
   onboardingState: {
