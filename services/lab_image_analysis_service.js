@@ -164,6 +164,22 @@ function normalizeDateToken(token) {
   return `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
 }
 
+
+function extractPriorityExamDate(rawText) {
+  const safe = sanitizeGeminiText(rawText);
+  const keywordPatterns = [
+    /(?:検査日|採血日|受診日|実施日|報告日|印刷日)\s*[:：]?\s*(20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2})/i,
+  ];
+  for (const pattern of keywordPatterns) {
+    const m = safe.match(pattern);
+    if (m) {
+      const normalized = normalizeDateToken(m[1]);
+      if (normalized) return normalized;
+    }
+  }
+  return '';
+}
+
 function tryHeuristicExtract(rawText) {
   const safe = sanitizeGeminiText(rawText);
   if (!safe) {
@@ -173,6 +189,7 @@ function tryHeuristicExtract(rawText) {
     };
   }
 
+  const priorityExamDate = extractPriorityExamDate(safe);
   const dateMatches = [...safe.matchAll(/20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}/g)]
     .map((m) => normalizeDateToken(m[0]))
     .filter(Boolean);
@@ -228,15 +245,15 @@ function tryHeuristicExtract(rawText) {
   }
 
   return {
-    examDate: dateMatches.slice(-1)[0] || '',
+    examDate: priorityExamDate || dateMatches.slice(-1)[0] || '',
     items
   };
 }
 
 async function analyzeLabImage(imagePayload) {
   const prompt = [
-    'この画像が血液検査結果なら、表を読んで日付と検査項目をJSONで返してください。',
-    '複数の日付列がある場合は、各項目のhistoryにも過去値を入れてください。',
+    'この画像が血液検査結果なら、表を読んで検査日と検査項目をJSONで返してください。',
+    '印刷日・検査日・採血日・受診日などの日付があれば examDate に入れてください。複数の日付列がある場合は、各項目のhistoryにも過去値を入れてください。',
     '画像の中の文字を優先して正確に読んでください。',
     'JSONのみを返してください。',
     '{',
