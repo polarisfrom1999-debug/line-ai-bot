@@ -467,6 +467,15 @@ function buildLabImageReply(lab) {
   const trendInfo = items.some((item) => Array.isArray(item.history) && item.history.length >= 2)
     ? ' 過去の列も見えた項目は推移として持っておきます。'
     : '';
+  if (!items.length) {
+    return [
+      '血液検査の画像として受け取りました。',
+      lab?.examDate ? `見えている日付: ${lab.examDate}` : null,
+      '数値の読み取りが弱い時は、もう1枚だけ正面から送ってもらえると拾いやすくなります。',
+      '続けて「LDLは？」「HbA1cは？」と聞いても大丈夫です。'
+    ].filter(Boolean).join('\n');
+  }
+
   return [
     '血液検査画像を受け取りました。',
     lab?.examDate ? `検査日: ${lab.examDate}` : null,
@@ -659,7 +668,7 @@ async function maybeHandleLabImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload) return null;
 
   const lab = await labImageAnalysisService.analyzeLabImage(imagePayload);
-  if (!lab?.isLabImage || !Array.isArray(lab.items) || !lab.items.length) return null;
+  if (!lab?.isLabImage) return null;
 
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: 'lab',
@@ -671,13 +680,15 @@ async function maybeHandleLabImage(input, imagePayload) {
     }
   });
 
-  await contextMemoryService.upsertLabPanel(input.userId, lab);
-  await contextMemoryService.addDailyRecord(input.userId, {
-    type: 'lab',
-    summary: '血液検査画像',
-    examDate: lab.examDate || '',
-    items: lab.items
-  });
+  if (Array.isArray(lab.items) && lab.items.length) {
+    await contextMemoryService.upsertLabPanel(input.userId, lab);
+    await contextMemoryService.addDailyRecord(input.userId, {
+      type: 'lab',
+      summary: '血液検査画像',
+      examDate: lab.examDate || '',
+      items: lab.items
+    });
+  }
 
   return buildLabImageReply(lab);
 }
