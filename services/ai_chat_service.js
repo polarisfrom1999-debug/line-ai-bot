@@ -22,14 +22,13 @@ function postProcessReply(text) {
 
 function inferAiStyle(aiType) {
   const safe = normalizeText(aiType);
-  if (/頼もしく|導く|理屈|整理/.test(safe)) return 'logic_first';
-  if (/そっと|寄り添|やさしく|伴走/.test(safe)) return 'gentle_first';
-  if (/明るく|後押し|背中を押す/.test(safe)) return 'push_lightly';
-  if (/力強く|支える/.test(safe)) return 'balanced';
+  if (/理屈|整理/.test(safe)) return 'logic_first';
+  if (/やさしく|伴走/.test(safe)) return 'gentle_first';
+  if (/背中を押す/.test(safe)) return 'push_lightly';
   return 'balanced';
 }
 
-function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
+function buildSystemPrompt(hiddenContext, responseMode, longMemory, conversationSummary) {
   const aiStyle = inferAiStyle(longMemory?.aiType);
   const preferredName = normalizeText(longMemory?.preferredName || '');
 
@@ -46,6 +45,8 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
     preferredName ? `ユーザーの呼び方の候補: ${preferredName}` : null,
     `AIスタイル: ${aiStyle}`,
     `responseMode: ${responseMode || 'empathy_plus_one_hint'}`,
+    conversationSummary ? `[要約レイヤ]
+${conversationSummary}` : null,
     hiddenContext ? hiddenContext : ''
   ].filter(Boolean).join('\n');
 }
@@ -137,7 +138,7 @@ async function callOpenAI(messages) {
 }
 
 async function generateReply(params) {
-  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode, params?.longMemory || {});
+  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode, params?.longMemory || {}, params?.conversationSummary || '');
   const recent = convertRecentMessages(params?.recentMessages);
 
   const messages = [

@@ -10,6 +10,7 @@ const labImageAnalysisService = require('./lab_image_analysis_service');
 const { parseActivity } = require('./activity_calorie_service');
 const calorieBalanceService = require('./calorie_balance_service');
 const profileService = require('./profile_service');
+const conversationSummaryService = require('./conversation_summary_service');
 const { buildDayLabel } = require('./day_boundary_service');
 const featureFlags = require('../config/feature_flags');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
@@ -791,7 +792,8 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     recentMessages,
     intentType: 'normal',
     responseMode: 'empathy_plus_one_hint',
-    hiddenContext: systemHint
+    hiddenContext: systemHint,
+    conversationSummary: recentSummary
   });
 }
 
@@ -846,7 +848,8 @@ async function orchestrateConversation(input) {
     const shortMemory = await contextMemoryService.getShortMemory(input.userId);
     const longMemory = await contextMemoryService.getLongMemory(input.userId);
     const userStateBefore = await contextMemoryService.getUserState(input.userId);
-    const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
+    const rollingSummary = await conversationSummaryService.getPromptSummary(input.userId);
+    const recentSummary = rollingSummary || await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
     const intent = detectIntent(input);

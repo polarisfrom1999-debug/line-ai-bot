@@ -70,6 +70,9 @@ function normalizeConversationInput(input) {
     imageMeta: extractImageMeta(input, messageType),
     mediaMeta: extractMediaMeta(input, messageType),
     messageId: input?.messageId || event?.message?.id || null,
+    lineUserId: input?.lineUserId || input?.userId || event?.source?.userId || null,
+    relatedEventId: input?.relatedEventId || input?.messageId || event?.message?.id || null,
+    traceId: input?.traceId || null,
     timestamp: input?.timestamp || event?.timestamp || Date.now(),
     sourceType: input?.sourceType || event?.source?.type || 'unknown',
     originalEvent: event

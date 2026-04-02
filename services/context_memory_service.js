@@ -614,6 +614,27 @@ async function addPoints(userId, amount) {
   return next;
 }
 
+
+async function getMemorySnapshot(userId) {
+  const longMemory = await getLongMemory(userId);
+  const latestWeight = await getLatestWeightEntry(userId);
+  const latestLabPanel = await getLatestLabPanel(userId);
+
+  return {
+    preferredName: normalizeString(longMemory?.preferredName),
+    goal: normalizeString(longMemory?.goal),
+    age: normalizeString(longMemory?.age),
+    height: normalizeString(longMemory?.height),
+    weight: latestWeight?.weight != null ? `${latestWeight.weight}kg` : normalizeString(longMemory?.weight),
+    bodyFat: latestWeight?.bodyFat != null ? `${latestWeight.bodyFat}%` : normalizeString(longMemory?.bodyFat),
+    aiType: normalizeString(longMemory?.aiType),
+    constitutionType: normalizeString(longMemory?.constitutionType),
+    selectedPlan: normalizeString(longMemory?.selectedPlan),
+    latestLabExamDate: normalizeString(latestLabPanel?.examDate),
+    latestLabItemCount: Array.isArray(latestLabPanel?.items) ? latestLabPanel.items.length : 0
+  };
+}
+
 async function resetAllMemory(userId) {
   shortMemoryStore.delete(userId);
   longMemoryStore.delete(userId);
@@ -660,5 +681,6 @@ module.exports = {
   saveMonthlySurvey,
   getPoints,
   addPoints,
+  getMemorySnapshot,
   resetAllMemory
 };
