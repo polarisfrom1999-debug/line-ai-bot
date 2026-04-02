@@ -16,6 +16,8 @@ const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
 
 const conversationRouter = require('./services/chatgpt_conversation_router');
+const chatLogService = require('./services/chat_log_service');
+const conversationSummaryService = require('./services/conversation_summary_service');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -69,10 +71,13 @@ function normalizeEventInput(event) {
   const rawText = messageType === 'text' ? String(event?.message?.text || '') : '';
   return {
     userId: event?.source?.userId || null,
+    lineUserId: event?.source?.userId || null,
     replyToken: event?.replyToken || null,
     messageType,
     rawText,
     messageId: event?.message?.id || null,
+    relatedEventId: event?.message?.id || null,
+    traceId: chatLogService.buildTraceId(),
     timestamp: event?.timestamp || Date.now(),
     sourceType: event?.source?.type || 'unknown',
     originalEvent: event
@@ -80,6 +85,8 @@ function normalizeEventInput(event) {
 }
 
 async function handleEvent(event) {
+  const fallbackText = '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。';
+
   try {
     if (!event || event.type !== 'message') return;
 
@@ -88,13 +95,24 @@ async function handleEvent(event) {
 
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
+      await chatLogService.logConversationOutcome({ input, result });
+      await conversationSummaryService.recordTurn({ input, result });
       return;
     }
 
-    await replyLineMessages(input.replyToken, [{ type: 'text', text: '受け取りました。少し言い換えて送ってもらえたら、今の流れに合わせて返せます。' }]);
+    const fallbackResult = {
+      ok: true,
+      replyMessages: [{ type: 'text', text: '受け取りました。少し言い換えて送ってもらえたら、今の流れに合わせて返せます。' }],
+      internal: { intentType: 'fallback', responseMode: 'empathy_only' }
+    };
+    await replyLineMessages(input.replyToken, fallbackResult.replyMessages);
+    await chatLogService.logConversationOutcome({ input, result: fallbackResult });
+    await conversationSummaryService.recordTurn({ input, result: fallbackResult });
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);
-    await replyLineMessages(event?.replyToken, [{ type: 'text', text: '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。' }]);
+    const input = normalizeEventInput(event || {});
+    await replyLineMessages(event?.replyToken, [{ type: 'text', text: fallbackText }]);
+    await chatLogService.logFailedTurn({ input, error, fallbackReplyText: fallbackText });
   }
 }
 
