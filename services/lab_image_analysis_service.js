@@ -7,35 +7,20 @@ const LAB_DOCUMENT_HINTS = [
 ];
 
 const TARGET_ITEMS = [
-  'LDL',
-  'HDL',
-  '中性脂肪',
-  'TG',
-  'HbA1c',
-  'AST',
-  'ALT',
-  'γ-GTP',
-  'γGTP',
-  'ALP',
-  '尿酸',
-  '血糖',
-  '空腹時血糖',
-  'クレアチニン',
-  'eGFR',
-  '尿素窒素',
-  'LDH',
-  'BUN',
-  'CRE'
+  'LDL', 'HDL', '中性脂肪', 'TG', 'HbA1c', 'AST', 'ALT', 'γ-GTP', 'γGTP', 'ALP',
+  '尿酸', '血糖', '空腹時血糖', 'クレアチニン', 'eGFR', '尿素窒素', 'LDH', 'BUN', 'CRE'
 ];
+
+const PRIORITY_ITEMS = ['中性脂肪', 'HbA1c', 'LDL', 'HDL', 'AST', 'ALT', 'γ-GTP'];
 
 const TARGET_ALIASES = {
   '中性脂肪': ['中性脂肪', 'TG', 'トリグリセリド', 'TG(中性脂肪)'],
   'HbA1c': ['HbA1c', 'HbA1c(NGSP)', 'HBA1C', 'HB1AC'],
-  'LDL': ['LDL', 'LDLコレステロール', 'LDL-CHO', 'LDL(IFCC)'],
-  'HDL': ['HDL', 'HDLコレステロール', 'HDL-CHO', 'HDL(HDL-コレステロール)'],
+  'LDL': ['LDL', 'LDLコレステロール', 'LDL-CHO', 'LDL(IFCC)', 'LDLコレステロール(F)'],
+  'HDL': ['HDL', 'HDLコレステロール', 'HDL-CHO', 'HDL(HDL-コレステロール)', 'HDLコレステロール'],
   'AST': ['AST', 'GOT', 'AST(GOT)'],
   'ALT': ['ALT', 'GPT', 'ALT(GPT)'],
-  'γ-GTP': ['γ-GTP', 'γGTP', 'GTP', 'GGT'],
+  'γ-GTP': ['γ-GTP', 'γGTP', 'GTP', 'GGT', 'γｰGTP'],
   'クレアチニン': ['クレアチニン', 'CRE'],
   '尿素窒素': ['尿素窒素', 'BUN'],
   'eGFR': ['eGFR'],
@@ -53,7 +38,9 @@ function normalizeText(value) {
 function sanitizeGeminiText(text) {
   return normalizeText(text)
     .replace(/```json/gi, '')
-    .replace(/```/g, '');
+    .replace(/```/g, '')
+    .replace(/\r/g, '')
+    .replace(/\t/g, ' ');
 }
 
 function extractJsonObject(text) {
@@ -61,7 +48,6 @@ function extractJsonObject(text) {
   const start = safe.indexOf('{');
   const end = safe.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) return null;
-
   try {
     return JSON.parse(safe.slice(start, end + 1));
   } catch (_) {
@@ -85,6 +71,7 @@ function normalizeItemName(name) {
     .replace(/ＢＵＮ/gi, 'BUN')
     .replace(/ＣＲＥ/gi, 'CRE')
     .replace(/ＥＧＦＲ/gi, 'eGFR')
+    .replace(/ＵＡ/gi, 'UA')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -119,7 +106,8 @@ function normalizeUnit(unit) {
     .replace(/％/g, '%')
     .replace(/μ/g, 'u')
     .replace(/IU\/ℓ/gi, 'IU/L')
-    .replace(/U\/ℓ/gi, 'U/L');
+    .replace(/U\/ℓ/gi, 'U/L')
+    .replace(/mEq\/l/gi, 'mEq/L');
 }
 
 function normalizeFlag(flag) {
@@ -138,20 +126,44 @@ function normalizeDateToken(token) {
   return `${year}-${month}-${day}`;
 }
 
-function extractDateCandidates(rawText = '') {
-  const safe = sanitizeGeminiText(rawText);
-  if (!safe) return [];
-
+function uniqueDates(values) {
   const seen = new Set();
-  const dates = [];
-  const regex = /(20\d{2}|\d{2})[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}(?:日)?/g;
-  for (const match of safe.matchAll(regex)) {
-    const normalized = normalizeDateToken(match[0]);
+  const rows = [];
+  for (const value of values || []) {
+    const normalized = normalizeDateToken(value);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
-    dates.push(normalized);
+    rows.push(normalized);
   }
-  return dates;
+  return rows;
+}
+
+function extractDateSignals(rawText = '') {
+  const safe = sanitizeGeminiText(rawText);
+  if (!safe) return { reportDates: [], columnDates: [], mergedDates: [] };
+
+  const reportDates = [];
+  const columnDates = [];
+  for (const match of safe.matchAll(/20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}(?:日)?/g)) {
+    const normalized = normalizeDateToken(match[0]);
+    if (normalized) reportDates.push(normalized);
+  }
+  for (const match of safe.matchAll(/(?<!20)(\d{2})[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}(?:日)?/g)) {
+    const normalized = normalizeDateToken(match[0]);
+    if (normalized) columnDates.push(normalized);
+  }
+
+  const uniqueColumnDates = uniqueDates(columnDates);
+  const uniqueReportDates = uniqueDates(reportDates).filter((date) => !uniqueColumnDates.includes(date));
+  return {
+    reportDates: uniqueReportDates,
+    columnDates: uniqueColumnDates,
+    mergedDates: uniqueColumnDates.length ? uniqueColumnDates : uniqueReportDates
+  };
+}
+
+function extractDateCandidates(rawText = '') {
+  return extractDateSignals(rawText).mergedDates;
 }
 
 function looksLikeLabDocumentText(rawText = '') {
@@ -190,16 +202,16 @@ function normalizeItems(items) {
     const unit = normalizeUnit(item?.unit || item?.currentUnit || '');
     const flag = normalizeFlag(item?.flag || item?.currentFlag || '');
     const history = uniqueHistory(item?.history || []);
-
     if (!value && !history.length) continue;
 
     const existing = merged.get(itemName) || { itemName, value: '', unit: '', flag: '', history: [] };
+    const mergedHistory = uniqueHistory([...(existing.history || []), ...history]);
     merged.set(itemName, {
       itemName,
-      value: existing.value || value,
-      unit: existing.unit || unit,
-      flag: existing.flag || flag,
-      history: uniqueHistory([...(existing.history || []), ...history])
+      value: value || existing.value || (mergedHistory.length ? mergedHistory[mergedHistory.length - 1].value : ''),
+      unit: unit || existing.unit || (mergedHistory.length ? mergedHistory[mergedHistory.length - 1].unit : ''),
+      flag: flag || existing.flag || (mergedHistory.length ? mergedHistory[mergedHistory.length - 1].flag : ''),
+      history: mergedHistory
     });
   }
 
@@ -216,7 +228,7 @@ function inferIsLabImage(items, examDate, rawText = '', dateCandidates = []) {
 }
 
 function extractUnitFromLine(line) {
-  const unitMatch = normalizeText(line).match(/(mg\/dL|IU\/L|U\/L|ng\/dL|pg\/mL|%|g\/dL|x10|万\/uL|\/uL|mEq\/L)/i);
+  const unitMatch = normalizeText(line).match(/(mg\/dL|IU\/L|U\/L|ng\/dL|pg\/mL|uIU\/mL|%|g\/dL|x10|万\/uL|\/uL|mEq\/L)/i);
   return normalizeUnit(unitMatch?.[1] || '');
 }
 
@@ -229,21 +241,34 @@ function lineIncludesAlias(line, canonicalName) {
 function extractNumericTokens(line) {
   const values = [];
   for (const match of normalizeText(line).matchAll(/([HL])?\s*([0-9]+(?:\.[0-9]+)?)/g)) {
-    values.push({
-      flag: normalizeFlag(match[1] || ''),
-      value: normalizeValue(match[2] || '')
-    });
+    values.push({ flag: normalizeFlag(match[1] || ''), value: normalizeValue(match[2] || '') });
   }
   return values.filter((row) => row.value);
 }
 
+function getAliasTail(line, canonicalName) {
+  const aliases = TARGET_ALIASES[canonicalName] || [canonicalName];
+  const upperLine = normalizeText(line).toUpperCase();
+  let bestIndex = -1;
+  let bestAlias = '';
+  for (const alias of aliases) {
+    const idx = upperLine.indexOf(String(alias).toUpperCase());
+    if (idx !== -1 && (bestIndex === -1 || idx < bestIndex)) {
+      bestIndex = idx;
+      bestAlias = alias;
+    }
+  }
+  if (bestIndex === -1) return normalizeText(line);
+  return normalizeText(line).slice(bestIndex + bestAlias.length);
+}
+
 function buildItemFromLine(line, canonicalName, dateCandidates = []) {
   if (!lineIncludesAlias(line, canonicalName)) return null;
-
-  const tokens = extractNumericTokens(line);
+  const tail = getAliasTail(line, canonicalName);
+  const tokens = extractNumericTokens(tail);
   if (!tokens.length) return null;
-
   const unit = extractUnitFromLine(line);
+
   if (dateCandidates.length >= 2 && tokens.length >= 2) {
     const usableCount = Math.min(dateCandidates.length, tokens.length);
     const pickedDates = dateCandidates.slice(-usableCount);
@@ -266,22 +291,21 @@ function buildItemFromLine(line, canonicalName, dateCandidates = []) {
     }
   }
 
-  const latest = tokens[tokens.length - 1];
+  const primary = tokens[0];
   return {
     itemName: canonicalName,
-    value: latest.value,
+    value: primary.value,
     unit,
-    flag: latest.flag,
+    flag: primary.flag,
     history: []
   };
 }
 
 function tryHeuristicExtract(rawText) {
   const safe = sanitizeGeminiText(rawText);
-  const dateCandidates = extractDateCandidates(safe);
-  if (!safe) {
-    return { examDate: '', dateCandidates, items: [] };
-  }
+  const dateSignals = extractDateSignals(safe);
+  const dateCandidates = dateSignals.mergedDates;
+  if (!safe) return { examDate: '', reportDate: '', dateCandidates, items: [] };
 
   const lines = safe.split(/\n+/).map((line) => normalizeText(line)).filter(Boolean);
   const items = [];
@@ -290,7 +314,6 @@ function tryHeuristicExtract(rawText) {
   for (const target of TARGET_ITEMS) {
     const canonical = normalizeItemName(target);
     if (!canonical || seen.has(canonical)) continue;
-
     for (const line of lines) {
       const built = buildItemFromLine(line, canonical, dateCandidates);
       if (!built) continue;
@@ -302,6 +325,7 @@ function tryHeuristicExtract(rawText) {
 
   return {
     examDate: dateCandidates.slice(-1)[0] || '',
+    reportDate: dateSignals.reportDates.slice(-1)[0] || '',
     dateCandidates,
     items: normalizeItems(items)
   };
@@ -327,24 +351,12 @@ function extractTargetItemFromRawText(rawText, targetName, preferredDate = 'late
 
     if (preferredDate && preferredDate !== 'latest') {
       const row = (item.history || []).find((historyRow) => historyRow.date === preferredDate);
-      if (row) {
-        return {
-          itemName: canonical,
-          value: row.value,
-          unit: row.unit || item.unit,
-          flag: row.flag || ''
-        };
-      }
+      if (row) return { itemName: canonical, value: row.value, unit: row.unit || item.unit, flag: row.flag || '' };
     }
 
     if ((item.history || []).length) {
       const row = item.history[item.history.length - 1];
-      return {
-        itemName: canonical,
-        value: row.value,
-        unit: row.unit || item.unit,
-        flag: row.flag || ''
-      };
+      return { itemName: canonical, value: row.value, unit: row.unit || item.unit, flag: row.flag || '' };
     }
 
     return item;
@@ -361,35 +373,15 @@ function getItemValueByDate(items, targetName, preferredDate = 'latest') {
 
   if (preferredDate && preferredDate !== 'latest') {
     const row = (item.history || []).find((historyRow) => historyRow.date === preferredDate);
-    if (row) {
-      return {
-        itemName: item.itemName,
-        value: row.value,
-        unit: row.unit || item.unit,
-        flag: row.flag || ''
-      };
-    }
+    if (row) return { itemName: item.itemName, value: row.value, unit: row.unit || item.unit, flag: row.flag || '' };
   }
 
   if ((item.history || []).length) {
     const row = item.history[item.history.length - 1];
-    return {
-      itemName: item.itemName,
-      value: row.value,
-      unit: row.unit || item.unit,
-      flag: row.flag || ''
-    };
+    return { itemName: item.itemName, value: row.value, unit: row.unit || item.unit, flag: row.flag || '' };
   }
 
-  if (item.value) {
-    return {
-      itemName: item.itemName,
-      value: item.value,
-      unit: item.unit,
-      flag: item.flag || ''
-    };
-  }
-
+  if (item.value) return { itemName: item.itemName, value: item.value, unit: item.unit, flag: item.flag || '' };
   return null;
 }
 
@@ -409,36 +401,77 @@ function buildPanelsFromLabAnalysis(lab, requestedDates = []) {
     for (const item of items) {
       const historyRow = (item.history || []).find((row) => row.date === date);
       if (historyRow) {
-        panelItems.push({
-          itemName: item.itemName,
-          value: historyRow.value,
-          unit: historyRow.unit || item.unit,
-          flag: historyRow.flag || '',
-          history: []
-        });
+        panelItems.push({ itemName: item.itemName, value: historyRow.value, unit: historyRow.unit || item.unit, flag: historyRow.flag || '', history: [] });
         continue;
       }
       if (normalizeText(lab?.examDate || '') === date && item.value) {
-        panelItems.push({
-          itemName: item.itemName,
-          value: item.value,
-          unit: item.unit,
-          flag: item.flag || '',
-          history: []
-        });
+        panelItems.push({ itemName: item.itemName, value: item.value, unit: item.unit, flag: item.flag || '', history: [] });
       }
     }
-
-    if (panelItems.length) {
-      panels.push({
-        examDate: date,
-        source: normalizeText(lab?.source || 'image'),
-        items: panelItems
-      });
-    }
+    if (panelItems.length) panels.push({ examDate: date, source: normalizeText(lab?.source || 'image'), items: panelItems });
   }
-
   return panels;
+}
+
+async function analyzeDateColumns(imagePayload) {
+  const prompt = [
+    'この画像が血液検査結果なら、列見出しの日付だけを読み取ってJSONで返してください。',
+    '表の中の検査日だけを dateCandidates に左から右の順で入れてください。',
+    '発行日や印刷日時は reportDate に入れて、dateCandidates には入れないでください。',
+    '2桁年も YYYY-MM-DD に正規化してください。',
+    'JSONのみを返してください。',
+    '{',
+    '  "reportDate": "YYYY-MM-DD または 空文字",',
+    '  "dateCandidates": ["YYYY-MM-DD"]',
+    '}'
+  ].join('\n');
+
+  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  if (!result.ok) return { reportDate: '', dateCandidates: [], rawText: '' };
+
+  const parsed = extractJsonObject(result.text) || {};
+  const textDates = extractDateSignals(result.text);
+  return {
+    reportDate: normalizeDateToken(parsed?.reportDate || '') || textDates.reportDates.slice(-1)[0] || '',
+    dateCandidates: [...new Set([
+      ...(Array.isArray(parsed?.dateCandidates) ? parsed.dateCandidates.map(normalizeDateToken) : []),
+      ...(textDates.columnDates || [])
+    ].filter(Boolean))],
+    rawText: sanitizeGeminiText(result.text)
+  };
+}
+
+async function analyzePriorityMatrix(imagePayload, dateCandidates = []) {
+  const prompt = [
+    'この血液検査画像から、重要項目だけを日付ごとにJSONで返してください。',
+    `優先項目: ${PRIORITY_ITEMS.join(', ')}`,
+    '各項目で見えている日付列ごとの値を history に入れてください。',
+    '最新列が分かるなら value には最新列の値を入れてください。',
+    '基準値は value に入れないでください。',
+    Array.isArray(dateCandidates) && dateCandidates.length
+      ? `使ってよい日付候補: ${dateCandidates.join(', ')}`
+      : '日付候補が見える場合は YYYY-MM-DD で history.date に入れてください。',
+    'JSONのみを返してください。',
+    '{',
+    '  "items": [',
+    '    {',
+    '      "itemName": "中性脂肪",',
+    '      "value": "91",',
+    '      "unit": "mg/dL",',
+    '      "flag": "",',
+    '      "history": [',
+    '        { "date": "2016-01-21", "value": "147", "unit": "mg/dL", "flag": "" },',
+    '        { "date": "2025-03-22", "value": "91", "unit": "mg/dL", "flag": "" }',
+    '      ]',
+    '    }',
+    '  ]',
+    '}'
+  ].join('\n');
+
+  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  if (!result.ok) return { items: [], rawText: '' };
+  const parsed = extractJsonObject(result.text) || {};
+  return { items: normalizeItems(parsed?.items || []), rawText: sanitizeGeminiText(result.text) };
 }
 
 async function analyzePriorityLabImage(imagePayload) {
@@ -458,20 +491,17 @@ async function analyzePriorityLabImage(imagePayload) {
   ].join('\n');
 
   const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
-  if (!result.ok) {
-    return { examDate: '', dateCandidates: [], items: [], rawText: '' };
-  }
+  if (!result.ok) return { examDate: '', dateCandidates: [], items: [], rawText: '' };
 
   const parsed = extractJsonObject(result.text);
+  const dateSignals = extractDateSignals(result.text);
   const items = normalizeItems(parsed?.items || []);
-  const dateCandidates = [...new Set([
-    ...(Array.isArray(parsed?.dateCandidates) ? parsed.dateCandidates.map(normalizeDateToken) : []),
-    ...extractDateCandidates(result.text)
-  ].filter(Boolean))];
-
   return {
-    examDate: normalizeText(parsed?.examDate || dateCandidates.slice(-1)[0] || ''),
-    dateCandidates,
+    examDate: normalizeText(parsed?.examDate || dateSignals.columnDates.slice(-1)[0] || ''),
+    dateCandidates: [...new Set([
+      ...(Array.isArray(parsed?.dateCandidates) ? parsed.dateCandidates.map(normalizeDateToken) : []),
+      ...(dateSignals.columnDates || [])
+    ].filter(Boolean))],
     items,
     rawText: sanitizeGeminiText(result.text)
   };
@@ -481,11 +511,13 @@ async function analyzeLabImage(imagePayload) {
   const prompt = [
     'この画像が血液検査結果なら、表を読んでJSONで返してください。',
     '最初に複数の日付列が見えるかを確認し、dateCandidates に左から右の順で YYYY-MM-DD にして入れてください。',
+    'reportDate が見える場合は reportDate に入れてください。',
     '各項目では最新列の value を返し、過去列が見える場合は history に date/value を入れてください。',
     '項目は LDL, HDL, TG(中性脂肪), HbA1c, AST, ALT, γ-GTP を優先しつつ、見えた主要項目を入れてください。',
     'JSONのみを返してください。',
     '{',
     '  "isLabImage": true,',
+    '  "reportDate": "YYYY-MM-DD または 空文字",',
     '  "examDate": "最新の日付を YYYY-MM-DD または 空文字",',
     '  "dateCandidates": ["YYYY-MM-DD"],',
     '  "items": [',
@@ -505,40 +537,39 @@ async function analyzeLabImage(imagePayload) {
   ].join('\n');
 
   const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
-
   if (!result.ok) {
-    return {
-      source: 'image',
-      isLabImage: false,
-      examDate: '',
-      dateCandidates: [],
-      items: [],
-      confidence: 0
-    };
+    return { source: 'image', isLabImage: false, reportDate: '', examDate: '', dateCandidates: [], items: [], confidence: 0 };
   }
 
+  const dateOnly = await analyzeDateColumns(imagePayload);
   const priority = await analyzePriorityLabImage(imagePayload);
+  const matrix = await analyzePriorityMatrix(imagePayload, dateOnly.dateCandidates.length ? dateOnly.dateCandidates : priority.dateCandidates);
   const heuristic = tryHeuristicExtract(result.text);
-  const parsed = extractJsonObject(result.text);
-
+  const parsed = extractJsonObject(result.text) || {};
   const parsedItems = normalizeItems(parsed?.items || []);
-  const mergedItems = mergeNormalizedItems(parsedItems, mergeNormalizedItems(priority.items, heuristic.items));
+  const mergedItems = mergeNormalizedItems(parsedItems, mergeNormalizedItems(priority.items, mergeNormalizedItems(matrix.items, heuristic.items)));
+  const textSignals = extractDateSignals(result.text);
   const dateCandidates = [...new Set([
     ...(Array.isArray(parsed?.dateCandidates) ? parsed.dateCandidates.map(normalizeDateToken) : []),
+    ...(dateOnly.dateCandidates || []),
     ...(priority.dateCandidates || []),
     ...(heuristic.dateCandidates || []),
-    ...extractDateCandidates(result.text)
-  ].filter(Boolean))];
+    ...(textSignals.columnDates || [])
+  ].filter(Boolean))].sort();
+  const reportDate = normalizeDateToken(parsed?.reportDate || '') || dateOnly.reportDate || heuristic.reportDate || textSignals.reportDates.slice(-1)[0] || '';
 
   return {
     source: 'image',
     isLabImage: Boolean(parsed?.isLabImage || inferIsLabImage(mergedItems, parsed?.examDate || priority.examDate || heuristic.examDate, result.text, dateCandidates)),
+    reportDate,
     examDate: normalizeText(parsed?.examDate || priority.examDate || heuristic.examDate || dateCandidates.slice(-1)[0] || ''),
     dateCandidates,
     items: mergedItems,
-    confidence: Number(parsed?.confidence || (mergedItems.length ? 0.72 : dateCandidates.length ? 0.63 : 0)),
+    confidence: Number(parsed?.confidence || (mergedItems.length ? 0.84 : dateCandidates.length ? 0.74 : 0)),
     rawText: sanitizeGeminiText(result.text),
+    dateRawText: dateOnly.rawText || '',
     priorityRawText: priority.rawText || '',
+    matrixRawText: matrix.rawText || '',
     labLike: looksLikeLabDocumentText(result.text) || String(parsed?.documentType || '').toLowerCase() === 'blood_test'
   };
 }

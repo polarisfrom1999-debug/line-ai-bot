@@ -580,7 +580,8 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   if (!targetName) return null;
 
   const followUp = shortMemory?.followUpContext || {};
-  const preferredDate = normalizeText(followUp.selectedDate || '') || 'latest';
+  const dateCandidates = Array.isArray(followUp.dateCandidates) ? followUp.dateCandidates.filter(Boolean) : [];
+  const preferredDate = normalizeText(followUp.selectedDate || '') || dateCandidates[dateCandidates.length - 1] || 'latest';
 
   const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
   if (trend.length) {
@@ -603,10 +604,10 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   }
 
   const rawTarget = labImageAnalysisService.extractTargetItemFromRawText(
-    followUp.rawText || followUp.priorityRawText || '',
+    [followUp.rawText, followUp.priorityRawText, followUp.matrixRawText, followUp.dateRawText].filter(Boolean).join('\n'),
     targetName,
     preferredDate,
-    followUp.dateCandidates || []
+    dateCandidates
   );
   if (rawTarget?.value) {
     const prefix = preferredDate !== 'latest' ? `${preferredDate} の ` : '';
@@ -787,6 +788,10 @@ async function maybeHandleLabImage(input, imagePayload) {
       return { handled: false, analysis: lab || null };
     }
 
+    const defaultDate = Array.isArray(lab?.dateCandidates) && lab.dateCandidates.length
+      ? lab.dateCandidates[lab.dateCandidates.length - 1]
+      : (lab?.examDate || '');
+
     if (!hasItems) {
       await contextMemoryService.saveShortMemory(input.userId, {
         lastImageType: 'lab_pending',
@@ -795,9 +800,13 @@ async function maybeHandleLabImage(input, imagePayload) {
           imageType: 'lab_pending',
           extractedItems: [],
           examDate: lab?.examDate || '',
+          reportDate: lab?.reportDate || '',
+          selectedDate: defaultDate || '',
           dateCandidates: lab?.dateCandidates || [],
           rawText: lab?.rawText || '',
-          priorityRawText: lab?.priorityRawText || ''
+          dateRawText: lab?.dateRawText || '',
+          priorityRawText: lab?.priorityRawText || '',
+          matrixRawText: lab?.matrixRawText || ''
         }
       });
 
@@ -815,9 +824,13 @@ async function maybeHandleLabImage(input, imagePayload) {
         imageType: 'lab',
         extractedItems: lab.items,
         examDate: lab.examDate || '',
+        reportDate: lab.reportDate || '',
+        selectedDate: defaultDate || '',
         dateCandidates: lab.dateCandidates || [],
         rawText: lab?.rawText || '',
-        priorityRawText: lab?.priorityRawText || ''
+        dateRawText: lab?.dateRawText || '',
+        priorityRawText: lab?.priorityRawText || '',
+        matrixRawText: lab?.matrixRawText || ''
       }
     });
 
@@ -1078,6 +1091,9 @@ async function orchestrateConversation(input) {
             imageType: 'lab_pending',
             extractedItems: [],
             examDate: labImageHandled.analysis.examDate || '',
+            selectedDate: (Array.isArray(labImageHandled.analysis.dateCandidates) && labImageHandled.analysis.dateCandidates.length)
+              ? labImageHandled.analysis.dateCandidates[labImageHandled.analysis.dateCandidates.length - 1]
+              : (labImageHandled.analysis.examDate || ''),
             dateCandidates: labImageHandled.analysis.dateCandidates || []
           }
         });
