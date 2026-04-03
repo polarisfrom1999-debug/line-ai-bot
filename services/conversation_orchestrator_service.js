@@ -4,6 +4,7 @@ const contextMemoryService = require('./context_memory_service');
 const aiChatService = require('./ai_chat_service');
 const onboardingService = require('./onboarding_service');
 const weeklyReportService = require('./weekly_report_service');
+const profileService = require('./profile_service');
 const lineMediaService = require('./line_media_service');
 const imageIngestService = require('./image_ingest_service');
 const imageClassificationService = require('./image_classification_service');
@@ -108,24 +109,9 @@ function detectIntent(input) {
   return 'normal';
 }
 
-function buildMemoryAnswer(longMemory) {
-  const lines = [];
-
-  const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
-  if (preferredName) lines.push(`名前は「${preferredName}」として覚えています。`);
-  if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
-  if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
-  if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
-  if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
-  if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
-  if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
-  if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
-
-  if (!lines.length) {
-    return '今はまだ強く残っていることは多くないので、これから少しずつ覚えていきますね。';
-  }
-
-  return lines.join('\n');
+function isNameMemoryQuestion(text) {
+  const safe = normalizeText(text);
+  return /名前覚えてる|私の名前|名前は\?|名前教えて|何て呼ぶ/.test(safe);
 }
 
 
@@ -528,12 +514,17 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   if (trend.length) return buildLabTrendReply(targetName, trend);
 
   const followUp = shortMemory?.followUpContext || {};
-  const items = followUp.imageType === 'lab'
+  const items = (followUp.imageType === 'lab' || followUp.imageType === 'lab_pending')
     ? followUp.extractedItems || []
     : [];
   const target = items.find((item) => normalizeLabTarget(item?.itemName || '') === targetName);
   if (target) {
     return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
+  }
+
+  const rawTarget = labImageAnalysisService.extractTargetItemFromRawText(followUp.rawText || followUp.priorityRawText || '', targetName);
+  if (rawTarget?.value) {
+    return `${rawTarget.itemName} は ${rawTarget.value}${rawTarget.unit ? ` ${rawTarget.unit}` : ''}${rawTarget.flag ? ` ${rawTarget.flag}` : ''} と読めました。`;
   }
 
   if (followUp.imageType === 'lab_pending' || followUp.imageType === 'lab') {
@@ -715,7 +706,9 @@ async function maybeHandleLabImage(input, imagePayload) {
           source: 'image',
           imageType: 'lab_pending',
           extractedItems: [],
-          examDate: lab?.examDate || ''
+          examDate: lab?.examDate || '',
+          rawText: lab?.rawText || '',
+          priorityRawText: lab?.priorityRawText || ''
         }
       });
 
@@ -1048,7 +1041,10 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'memory_question') {
-      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
+      const longMemory = await contextMemoryService.getLongMemory(input.userId);
+      const replyText = isNameMemoryQuestion(input.rawText || '')
+        ? profileService.buildPreferredNameAnswer(longMemory)
+        : profileService.buildMemoryAnswer(longMemory);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
@@ -1117,7 +1113,10 @@ async function orchestrateConversation(input) {
     const inlineProfile = parseInlineProfile(text);
     if (Object.keys(inlineProfile).length) {
       await contextMemoryService.mergeLongMemory(input.userId, inlineProfile);
-      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
+      const longMemory = await contextMemoryService.getLongMemory(input.userId);
+      const replyText = isNameMemoryQuestion(input.rawText || '')
+        ? profileService.buildPreferredNameAnswer(longMemory)
+        : profileService.buildMemoryAnswer(longMemory);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }

@@ -51,6 +51,25 @@ function normalizeProfileValue(key, value) {
   return safe;
 }
 
+function extractExplicitPreferredName(text) {
+  const safe = normalizeText(text);
+  if (!safe) return '';
+
+  const patterns = [
+    /(?:^|\s)(?:私の名前は|名前は)[：:]?\s*([^\n。!?！？]{1,16}?)(?:です|だよ|ですよ)?(?:。|$)/u,
+    /(?:^|\s)([^\n。!?！？]{1,12}?)\s*(?:と呼んでください|って呼んで|と呼んで)(?:。|$)/u
+  ];
+
+  for (const pattern of patterns) {
+    const match = safe.match(pattern);
+    if (!match) continue;
+    const preferredName = sanitizePreferredName(match[1] || '');
+    if (preferredName) return preferredName;
+  }
+
+  return '';
+}
+
 function extractProfilePatchFromText(text) {
   const lines = splitLines(text);
   const patch = {};
@@ -70,6 +89,21 @@ function extractProfilePatchFromText(text) {
     if (weight) patch.weight = normalizeProfileValue('weight', weight);
     if (bodyFat) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFat);
     if (goal) patch.goal = normalizeProfileValue('goal', goal);
+  }
+
+  if (!patch.preferredName) {
+    const preferredName = extractExplicitPreferredName(text);
+    if (preferredName) patch.preferredName = preferredName;
+  }
+
+  const safe = normalizeText(text);
+  if (!patch.weight) {
+    const weightMatch = safe.match(/体重は?[：:]?\s*([0-9]+(?:\.[0-9]+)?)\s*kg/iu);
+    if (weightMatch) patch.weight = normalizeProfileValue('weight', weightMatch[1]);
+  }
+  if (!patch.bodyFat) {
+    const bodyFatMatch = safe.match(/体脂肪率は?[：:]?\s*([0-9]+(?:\.[0-9]+)?)\s*%/iu);
+    if (bodyFatMatch) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFatMatch[1]);
   }
 
   return patch;
@@ -113,6 +147,12 @@ function buildProfileUpdatedReply(patch) {
   return lines.join('\n');
 }
 
+function buildPreferredNameAnswer(longMemory) {
+  const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
+  if (preferredName) return `名前は「${preferredName}」として覚えています。`;
+  return 'まだ名前ははっきり受け取れていないので、よければ「名前は うっし〜です」のように送ってください。';
+}
+
 function buildMemoryAnswer(longMemory) {
   const lines = [];
 
@@ -142,8 +182,10 @@ function buildMemoryAnswer(longMemory) {
 }
 
 module.exports = {
+  extractExplicitPreferredName,
   extractProfilePatchFromText,
   buildProfileSummary,
   buildProfileUpdatedReply,
+  buildPreferredNameAnswer,
   buildMemoryAnswer
 };

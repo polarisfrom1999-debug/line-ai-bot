@@ -26,6 +26,16 @@ const TARGET_ITEMS = [
   'LDH'
 ];
 
+const TARGET_ALIASES = {
+  '中性脂肪': ['中性脂肪', 'TG', 'トリグリセリド'],
+  'HbA1c': ['HbA1c', 'HbA1c(NGSP)', 'HBA1C', 'HB1AC'],
+  'LDL': ['LDL', 'LDLコレステロール', 'LDL-CHO'],
+  'HDL': ['HDL', 'HDLコレステロール', 'HDL-CHO'],
+  'AST': ['AST', 'GOT'],
+  'ALT': ['ALT', 'GPT'],
+  'γ-GTP': ['γ-GTP', 'γGTP', 'GTP', 'GGT']
+};
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -244,6 +254,89 @@ function tryHeuristicExtract(rawText) {
   };
 }
 
+function mergeNormalizedItems(primaryItems, extraItems) {
+  const map = new Map();
+
+  for (const item of [...(Array.isArray(primaryItems) ? primaryItems : []), ...(Array.isArray(extraItems) ? extraItems : [])]) {
+    const normalized = normalizeItems([item])[0];
+    if (!normalized) continue;
+
+    const key = normalizeItemName(normalized.itemName);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, normalized);
+      continue;
+    }
+
+    map.set(key, {
+      itemName: existing.itemName || normalized.itemName,
+      value: existing.value || normalized.value,
+      unit: existing.unit || normalized.unit,
+      flag: existing.flag || normalized.flag,
+      history: uniqueHistory([...(existing.history || []), ...(normalized.history || [])])
+    });
+  }
+
+  return [...map.values()];
+}
+
+function extractTargetItemFromRawText(rawText, targetName) {
+  const canonical = normalizeItemName(targetName);
+  const safe = sanitizeGeminiText(rawText);
+  if (!safe || !canonical) return null;
+
+  const aliases = TARGET_ALIASES[canonical] || [canonical];
+  const lines = safe.split(/\n+/).map((line) => normalizeText(line)).filter(Boolean);
+
+  for (const line of lines) {
+    const upperLine = line.toUpperCase();
+    const matched = aliases.some((alias) => upperLine.includes(String(alias).toUpperCase()));
+    if (!matched) continue;
+
+    const values = [...line.matchAll(/([HL])?\s*([0-9]+(?:\.[0-9]+)?)/g)];
+    if (!values.length) continue;
+
+    const picked = values[values.length - 1];
+    const unitMatch = line.match(/(mg\/dL|IU\/L|U\/L|%)/i);
+    return {
+      itemName: canonical,
+      value: normalizeValue(picked?.[2] || ''),
+      unit: normalizeUnit(unitMatch?.[1] || ''),
+      flag: normalizeFlag(picked?.[1] || '')
+    };
+  }
+
+  return null;
+}
+
+async function analyzePriorityLabImage(imagePayload) {
+  const prompt = [
+    'この画像が血液検査結果であれば、最新列の主要項目だけをJSONで返してください。',
+    '基準値ではなく、今回の結果値だけを返してください。',
+    '項目は TG(中性脂肪), HbA1c, LDL, HDL, AST, ALT, γ-GTP を優先してください。',
+    '読めない項目は空文字で構いません。JSONのみを返してください。',
+    '{',
+    '  "examDate": "YYYY-MM-DD または 空文字",',
+    '  "items": [',
+    '    { "itemName": "中性脂肪", "value": "91", "unit": "mg/dL", "flag": "" }',
+    '  ]',
+    '}'
+  ].join('\n');
+
+  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  if (!result.ok) {
+    return { examDate: '', items: [], rawText: '' };
+  }
+
+  const parsed = extractJsonObject(result.text);
+  const items = normalizeItems(parsed?.items || []);
+  return {
+    examDate: normalizeText(parsed?.examDate || ''),
+    items,
+    rawText: sanitizeGeminiText(result.text)
+  };
+}
+
 async function analyzeLabImage(imagePayload) {
   const prompt = [
     'この画像が血液検査結果なら、表を読んで日付と検査項目をJSONで返してください。',
@@ -287,33 +380,40 @@ async function analyzeLabImage(imagePayload) {
   const parsed = extractJsonObject(result.text);
   if (parsed) {
     const items = normalizeItems(parsed.items);
+    const priority = await analyzePriorityLabImage(imagePayload);
+    const mergedItems = mergeNormalizedItems(items, priority.items);
     return {
       source: 'image',
-      isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(items, parsed.examDate, result.text)),
-      examDate: normalizeText(parsed.examDate || ''),
-      items: items.map((item) => ({
+      isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(mergedItems, parsed.examDate || priority.examDate, result.text)),
+      examDate: normalizeText(parsed.examDate || priority.examDate || ''),
+      items: mergedItems.map((item) => ({
         ...item,
         history: uniqueHistory(item.history || [])
       })),
-      confidence: Number(parsed.confidence || 0),
+      confidence: Number(parsed.confidence || (mergedItems.length ? 0.7 : 0)),
       rawText: sanitizeGeminiText(result.text),
+      priorityRawText: priority.rawText || '',
       labLike: looksLikeLabDocumentText(result.text) || String(parsed.documentType || '').toLowerCase() === 'blood_test'
     };
   }
 
   const heuristic = tryHeuristicExtract(result.text);
+  const priority = await analyzePriorityLabImage(imagePayload);
+  const mergedItems = mergeNormalizedItems(heuristic.items, priority.items);
 
   return {
     source: 'image',
-    isLabImage: inferIsLabImage(heuristic.items, heuristic.examDate, result.text),
-    examDate: heuristic.examDate,
-    items: heuristic.items,
-    confidence: heuristic.items.length ? 0.55 : 0,
+    isLabImage: inferIsLabImage(mergedItems, heuristic.examDate || priority.examDate, result.text),
+    examDate: heuristic.examDate || priority.examDate,
+    items: mergedItems,
+    confidence: mergedItems.length ? 0.62 : 0,
     rawText: sanitizeGeminiText(result.text),
+    priorityRawText: priority.rawText || '',
     labLike: looksLikeLabDocumentText(result.text)
   };
 }
 
 module.exports = {
-  analyzeLabImage
+  analyzeLabImage,
+  extractTargetItemFromRawText
 };
