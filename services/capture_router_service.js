@@ -109,6 +109,18 @@ async function routeCapture(context) {
   };
 }
 
+
+
+function detectCaptureTypeFromImageAnalysis(imageAnalysis = {}, rawText = '') {
+  if (imageAnalysis?.lab?.isLabImage) return 'lab_record';
+  if (imageAnalysis?.meal?.isMealImage) return 'meal_record';
+  const safeText = normalizeText(rawText);
+  if (/血液検査|採血|LDL|HDL|HbA1c|中性脂肪|TG/i.test(safeText)) return 'lab_record';
+  if (/食事|ごはん|朝食|昼食|夕食|カロリー/i.test(safeText)) return 'meal_record';
+  return 'image_consultation';
+}
+
 module.exports = {
-  routeCapture
+  routeCapture,
+  detectCaptureTypeFromImageAnalysis
 };

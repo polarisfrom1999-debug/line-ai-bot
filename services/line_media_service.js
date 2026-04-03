@@ -1,20 +1,16 @@
 'use strict';
 
+const https = require('https');
+
 let line = null;
-let axios = null;
 try {
   line = require('@line/bot-sdk');
 } catch (_) {
   line = null;
 }
-try {
-  axios = require('axios');
-} catch (_) {
-  axios = null;
-}
 
 function buildLineBlobClient() {
-  const token = getChannelAccessToken();
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!line || !token) return null;
 
   try {
@@ -25,38 +21,6 @@ function buildLineBlobClient() {
     console.error('[line_media_service] buildLineBlobClient error:', error?.message || error);
     return null;
   }
-}
-
-
-function getChannelAccessToken() {
-  return String(process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
-}
-
-async function fetchMessageContentBufferViaHttp(messageId) {
-  const token = getChannelAccessToken();
-  if (!axios || !messageId || !token) return null;
-
-  const urls = [
-    `https://api-data.line.me/v2/bot/message/${messageId}/content`,
-    `https://api.line.me/v2/bot/message/${messageId}/content`,
-  ];
-
-  for (const url of urls) {
-    try {
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer',
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: Number(process.env.LINE_MEDIA_TIMEOUT_MS || 20000),
-        validateStatus: (status) => status >= 200 && status < 300
-      });
-      const data = response && response.data ? Buffer.from(response.data) : null;
-      if (data && data.length) return data;
-    } catch (error) {
-      console.error('[line_media_service] http fallback error:', error?.message || error);
-    }
-  }
-
-  return null;
 }
 
 function streamToBuffer(stream) {
@@ -71,33 +35,68 @@ function streamToBuffer(stream) {
   });
 }
 
+function fetchContentViaHttps(messageId) {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!messageId || !token) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const req = https.request({
+      method: 'GET',
+      hostname: 'api-data.line.me',
+      path: `/v2/bot/message/${encodeURIComponent(messageId)}/content`,
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      timeout: 20000
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          return resolve(Buffer.concat(chunks));
+        }
+        console.error('[line_media_service] https fallback status:', res.statusCode);
+        return resolve(null);
+      });
+    });
+
+    req.on('error', (error) => {
+      console.error('[line_media_service] https fallback error:', error?.message || error);
+      resolve(null);
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error('timeout'));
+    });
+    req.end();
+  });
+}
+
 async function getMessageContentBuffer(messageId) {
   if (!messageId) return null;
 
   const client = buildLineBlobClient();
-  if (!client || typeof client.getMessageContent !== 'function') return null;
-
-  try {
-    const response = await client.getMessageContent(messageId);
-    if (!response) return null;
-    if (Buffer.isBuffer(response)) return response;
-    if (Buffer.isBuffer(response?.data)) return response.data;
-
-    if (typeof response?.arrayBuffer === 'function') {
-      return Buffer.from(await response.arrayBuffer());
+  if (client && typeof client.getMessageContent === 'function') {
+    try {
+      const response = await client.getMessageContent(messageId);
+      if (response) {
+        if (Buffer.isBuffer(response)) return response;
+        if (Buffer.isBuffer(response?.data)) return response.data;
+        if (typeof response?.arrayBuffer === 'function') {
+          return Buffer.from(await response.arrayBuffer());
+        }
+        if (response?.readable === true && typeof response?.on === 'function') {
+          return await streamToBuffer(response);
+        }
+        if (response?.data?.readable === true && typeof response.data?.on === 'function') {
+          return await streamToBuffer(response.data);
+        }
+      }
+    } catch (error) {
+      console.error('[line_media_service] blob client error:', error?.message || error);
     }
-    if (response?.readable === true && typeof response?.on === 'function') {
-      return streamToBuffer(response);
-    }
-    if (response?.data?.readable === true && typeof response.data?.on === 'function') {
-      return streamToBuffer(response.data);
-    }
-
-    return null;
-  } catch (error) {
-    console.error('[line_media_service] getMessageContentBuffer error:', error?.message || error);
-    return null;
   }
+
+  return fetchContentViaHttps(messageId);
 }
 
 function detectMimeTypeFromBytes(buffer) {
@@ -124,20 +123,27 @@ async function getMediaPayload(input) {
   const event = input?.originalEvent || null;
   const messageId = input?.imageMeta?.messageId || input?.messageId || event?.message?.id || null;
   const messageType = input?.messageType || event?.message?.type || 'unknown';
-  if (!messageId) return null;
+  if (!messageId) {
+    return {
+      ok: false,
+      errorCode: 'missing_message_id',
+      errorMessage: 'messageId が見つかりません。'
+    };
+  }
 
-  let buffer = await getMessageContentBuffer(messageId);
+  const buffer = await getMessageContentBuffer(messageId);
   if (!buffer || !buffer.length) {
-    buffer = await fetchMessageContentBufferViaHttp(messageId);
+    return {
+      ok: false,
+      messageId,
+      errorCode: 'content_fetch_failed',
+      errorMessage: 'LINE画像の取得に失敗しました。'
+    };
   }
-  if (!buffer || !buffer.length) return null;
 
-  let mimeType = detectMimeTypeFromBytes(buffer);
-  if (messageType === 'image' && mimeType === 'application/octet-stream') {
-    mimeType = 'image/jpeg';
-  }
-
+  const mimeType = detectMimeTypeFromBytes(buffer);
   return {
+    ok: true,
     messageId,
     buffer,
     size: buffer.length,
@@ -149,8 +155,15 @@ async function getMediaPayload(input) {
 
 async function getImagePayload(input) {
   const payload = await getMediaPayload(input);
-  if (!payload) return null;
-  if (payload.kind !== 'image') return null;
+  if (!payload?.ok) return payload;
+  if (payload.kind !== 'image') {
+    return {
+      ok: false,
+      messageId: payload.messageId,
+      errorCode: 'not_image',
+      errorMessage: '画像メッセージではありません。'
+    };
+  }
   return payload;
 }
 

@@ -8,6 +8,13 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function buildTraceId(event, input) {
+  const userId = normalizeText(input?.userId || event?.source?.userId || 'unknown');
+  const messageId = normalizeText(input?.messageId || event?.message?.id || 'no-message');
+  const timestamp = Number(input?.timestamp || event?.timestamp || Date.now());
+  return `${userId}:${timestamp}:${messageId}`;
+}
+
 function detectMessageType(input) {
   if (input?.messageType) return input.messageType;
   const event = input?.originalEvent || null;
@@ -70,11 +77,10 @@ function normalizeConversationInput(input) {
     imageMeta: extractImageMeta(input, messageType),
     mediaMeta: extractMediaMeta(input, messageType),
     messageId: input?.messageId || event?.message?.id || null,
-    lineUserId: input?.lineUserId || input?.userId || event?.source?.userId || null,
-    relatedEventId: input?.relatedEventId || input?.messageId || event?.message?.id || null,
-    traceId: input?.traceId || null,
     timestamp: input?.timestamp || event?.timestamp || Date.now(),
     sourceType: input?.sourceType || event?.source?.type || 'unknown',
+    sourceChannel: 'line',
+    traceId: buildTraceId(event, input),
     originalEvent: event
   };
 }
