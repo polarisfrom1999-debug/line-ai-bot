@@ -28,6 +28,7 @@ const {
 const { textMessageWithQuickReplies } = require('./line_service');
 const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
+const { parseDisplayName } = require('../parsers/name_parser');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -322,7 +323,7 @@ function parseInlineProfile(text) {
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
 
-  if (nameMatch) patch.preferredName = nameMatch[1].trim();
+  if (explicitName) patch.preferredName = explicitName;
   if (ageMatch) patch.age = ageMatch[1].trim();
   if (heightMatch) patch.height = heightMatch[1].trim();
   if (weightMatch) patch.weight = weightMatch[1].trim();
@@ -653,6 +654,20 @@ async function maybeHandleLabImage(input, imagePayload) {
   });
 
   return buildLabImageReply(lab);
+}
+
+function buildImageRetryReply(kindHint = 'image') {
+  if (kindHint === 'lab') {
+    return '画像は受け取っていますが、まだ血液検査表としてうまく整理できていません。真上から、表全体が入るようにもう一度だけ送ってもらえたら精度を上げやすいです。';
+  }
+  return '画像は受け取っていますが、まだ食事としてうまく整理できていません。真上から、料理全体が入るようにもう一度だけ送ってもらえたら見やすいです。';
+}
+
+function guessImageIntentFromContext(input, shortMemory) {
+  const safe = normalizeText(input?.rawText || '');
+  if (/LDL|HDL|中性脂肪|HbA1c|AST|ALT|血液検査|採血/.test(safe)) return 'lab';
+  if (shortMemory?.followUpContext?.imageType === 'lab') return 'lab';
+  return 'meal';
 }
 
 async function maybeHandleMealImage(input, imagePayload) {

@@ -5,9 +5,11 @@ const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 const FOOD_LIBRARY = [
   { keywords: ['ラーメン', '塩ラーメン', '味噌ラーメン', '醤油ラーメン'], label: 'ラーメン', kcal: 520 },
   { keywords: ['フォー'], label: 'フォー', kcal: 430 },
-  { keywords: ['カレー'], label: 'カレー', kcal: 620 },
+  { keywords: ['カレー', 'カレーライス'], label: 'カレー系', kcal: 620 },
+  { keywords: ['カツ丼'], label: '丼もの', kcal: 820 },
+  { keywords: ['お好み焼き'], label: '粉もの', kcal: 420 },
   { keywords: ['ごはん', '白米', 'おにぎり'], label: 'ごはんもの', kcal: 230 },
-  { keywords: ['パン', 'トースト'], label: 'パン', kcal: 180 },
+  { keywords: ['パン', 'トースト', 'ナン'], label: 'パン系', kcal: 220 },
   { keywords: ['パスタ', 'スパゲティ'], label: 'パスタ', kcal: 520 },
   { keywords: ['うどん'], label: 'うどん', kcal: 320 },
   { keywords: ['そば'], label: 'そば', kcal: 300 },
@@ -16,41 +18,29 @@ const FOOD_LIBRARY = [
   { keywords: ['味噌汁', 'みそ汁', 'スープ'], label: '汁物', kcal: 50 },
   { keywords: ['卵', 'たまご', '目玉焼き'], label: '卵料理', kcal: 120 },
   { keywords: ['鶏肉', '鶏', 'サラダチキン'], label: '鶏肉料理', kcal: 220 },
-  { keywords: ['牛肉'], label: '牛肉料理', kcal: 260 },
+  { keywords: ['牛肉', '牛丼', '牛皿'], label: '牛肉料理', kcal: 260 },
   { keywords: ['豚肉'], label: '豚肉料理', kcal: 260 },
   { keywords: ['豆腐'], label: '豆腐料理', kcal: 90 },
   { keywords: ['納豆'], label: '納豆', kcal: 90 },
-  { keywords: ['いちご'], label: 'いちご', kcal: 35 },
-  { keywords: ['バナナ'], label: 'バナナ', kcal: 86 },
+  { keywords: ['いちご'], label: '果物', kcal: 35 },
+  { keywords: ['りんご'], label: '果物', kcal: 60 },
+  { keywords: ['バナナ'], label: '果物', kcal: 86 },
   { keywords: ['ヨーグルト'], label: 'ヨーグルト', kcal: 90 },
   { keywords: ['ソーセージ'], label: 'ソーセージ', kcal: 140 },
-  { keywords: ['ブロッコリー'], label: 'ブロッコリー', kcal: 30 },
-  { keywords: ['パプリカ'], label: 'パプリカ', kcal: 25 },
+  { keywords: ['ブロッコリー'], label: '野菜おかず', kcal: 30 },
+  { keywords: ['パプリカ'], label: '野菜おかず', kcal: 25 },
   { keywords: ['弁当'], label: 'お弁当', kcal: 650 },
 ];
 
-const MEAL_WORDS = FOOD_LIBRARY.flatMap((item) => item.keywords);
-const LAB_BLOCK_WORDS = [/検査結果/, /HbA1c/i, /LDL/i, /HDL/i, /TG/i, /中性脂肪/, /血液検査/, /検査項目名/, /基準値/, /患者番号/];
+const LAB_BLOCK_WORDS = [/検査結果/, /HbA1c/i, /LDL/i, /HDL/i, /TG/i, /中性脂肪/, /血液検査/, /検査項目名/, /基準値/, /患者番号/, /レントゲン/, /X線/];
+const XRAY_HINT_WORDS = [/骨折/, /左手/, /右手/, /cm\b/i, /^L$/m, /^R$/m, /手関節/, /指骨/];
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function round1(n) {
-  return Math.round((Number(n || 0) + Number.EPSILON) * 10) / 10;
-}
-
 function round0(n) {
   return Math.round(Number(n || 0));
-}
-
-function detectMealType(text) {
-  const safe = normalizeText(text);
-  if (/朝|朝ごはん|朝食/.test(safe)) return 'breakfast';
-  if (/昼|昼ごはん|昼食|ランチ/.test(safe)) return 'lunch';
-  if (/夜|夕食|晩ごはん|ディナー/.test(safe)) return 'dinner';
-  if (/間食|おやつ/.test(safe)) return 'snack';
-  return 'unknown';
 }
 
 function sanitizeGeminiText(text) {
@@ -69,6 +59,15 @@ function extractJsonObject(text) {
   }
 }
 
+function detectMealType(text) {
+  const safe = normalizeText(text);
+  if (/朝|朝ごはん|朝食/.test(safe)) return 'breakfast';
+  if (/昼|昼ごはん|昼食|ランチ/.test(safe)) return 'lunch';
+  if (/夜|夕食|晩ごはん|ディナー/.test(safe)) return 'dinner';
+  if (/間食|おやつ/.test(safe)) return 'snack';
+  return 'unknown';
+}
+
 function pickMatchedFoods(text) {
   const safe = normalizeText(text);
   const matched = [];
@@ -76,6 +75,22 @@ function pickMatchedFoods(text) {
     if (food.keywords.some((kw) => safe.includes(kw))) matched.push(food);
   }
   return matched;
+}
+
+function extractFreeItems(text) {
+  const safe = normalizeText(text)
+    .replace(/[、,]/g, ' ')
+    .replace(/[\n\r]/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (!safe) return [];
+
+  const tokens = safe.split(' ')
+    .map((token) => token.replace(/[「」『』【】()（）]/g, '').trim())
+    .filter(Boolean)
+    .filter((token) => token.length >= 2 && token.length <= 18)
+    .filter((token) => !/^(image|meal|photo|breakfast|lunch|dinner|snack|unknown)$/i.test(token));
+
+  return [...new Set(tokens)].slice(0, 3);
 }
 
 function buildSimpleNutritionFromFoods(foods) {
@@ -88,7 +103,7 @@ function buildSummaryLabel(foods, fallback = '食事') {
   if (!foods.length) return fallback;
   const uniqueLabels = [...new Set(foods.map((item) => item.label))];
   if (uniqueLabels.length === 1) return uniqueLabels[0];
-  if (uniqueLabels.length === 2) return `${uniqueLabels[0]}と${uniqueLabels[1]}`;
+  if (uniqueLabels.length === 2) return `${uniqueLabels[0]}寄りの食事`;
   return `${uniqueLabels[0]}中心の食事`;
 }
 
@@ -104,6 +119,7 @@ function buildKcalRange(baseKcal) {
 function parseMealText(text) {
   const safe = normalizeText(text);
   const foods = pickMatchedFoods(safe);
+  const freeItems = extractFreeItems(safe);
   const nutrition = buildSimpleNutritionFromFoods(foods);
   const kcalRange = buildKcalRange(nutrition.kcal);
 
@@ -118,15 +134,23 @@ function parseMealText(text) {
     amountRatio: 1,
     estimatedNutrition: nutrition,
     kcalRange,
-    comment: foods.length ? 'ざっくりした食事として見ています。' : '',
+    comment: foods.length ? '細かく分けすぎず、ざっくりした食事として見ています。' : '',
     confidence: foods.length ? 0.72 : 0.15,
     recordReady: foods.length > 0,
   };
 }
 
+function looksLikeLabText(text) {
+  return LAB_BLOCK_WORDS.some((pattern) => pattern.test(text));
+}
+
+function looksLikeXrayText(text) {
+  return XRAY_HINT_WORDS.some((pattern) => pattern.test(text));
+}
+
 function buildHeuristicImageMeal(rawText) {
   const safe = sanitizeGeminiText(rawText);
-  if (LAB_BLOCK_WORDS.some((pattern) => pattern.test(safe))) {
+  if (!safe || looksLikeLabText(safe) || looksLikeXrayText(safe)) {
     return {
       source: 'image',
       isMealImage: false,
@@ -144,8 +168,9 @@ function buildHeuristicImageMeal(rawText) {
   }
 
   const foods = pickMatchedFoods(safe);
+  const freeItems = extractFreeItems(safe);
   const nutrition = buildSimpleNutritionFromFoods(foods);
-  const defaultKcal = foods.length ? nutrition.kcal : 520;
+  const defaultKcal = foods.length ? nutrition.kcal : 480;
   const kcalRange = buildKcalRange(defaultKcal);
 
   return {
@@ -153,7 +178,7 @@ function buildHeuristicImageMeal(rawText) {
     isMealImage: true,
     imageKind: 'meal_photo',
     mealType: detectMealType(safe),
-    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 3),
+    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 2),
     summaryLabel: buildSummaryLabel(foods, foods.length ? '食事' : '食事写真'),
     amountNote: '',
     amountRatio: 1,
@@ -168,11 +193,16 @@ function buildHeuristicImageMeal(rawText) {
 
 function normalizeImageMeal(parsed, rawText = '') {
   const safeText = sanitizeGeminiText(rawText);
+  if (looksLikeLabText(safeText) || looksLikeXrayText(safeText)) {
+    return buildHeuristicImageMeal('');
+  }
+
   const items = Array.isArray(parsed?.items)
     ? parsed.items.map((item) => normalizeText(item)).filter(Boolean)
     : [];
   const joined = [safeText, ...items].join(' ');
   const foods = pickMatchedFoods(joined);
+  const freeItems = items.length ? items : extractFreeItems(joined);
 
   const estimatedKcal = round0(
     parsed?.estimatedNutrition?.kcal ||
@@ -181,24 +211,24 @@ function normalizeImageMeal(parsed, rawText = '') {
     buildSimpleNutritionFromFoods(foods).kcal ||
     0
   );
+  const rangeBase = estimatedKcal || buildSimpleNutritionFromFoods(foods).kcal || 480;
   const kcalRange = {
-    low: round0(parsed?.kcalLow || parsed?.estimatedKcalLow || buildKcalRange(estimatedKcal).low),
-    high: round0(parsed?.kcalHigh || parsed?.estimatedKcalHigh || buildKcalRange(estimatedKcal).high),
+    low: round0(parsed?.estimatedKcalLow || parsed?.kcalLow || buildKcalRange(rangeBase).low),
+    high: round0(parsed?.estimatedKcalHigh || parsed?.kcalHigh || buildKcalRange(rangeBase).high),
   };
-  const freeItems = items.filter(Boolean);
   const summaryLabel = normalizeText(parsed?.summaryLabel || parsed?.mealLabel || buildSummaryLabel(foods, freeItems[0] || '食事写真'));
   const mealLike = Boolean(parsed?.isMealImage || foods.length || freeItems.length || summaryLabel);
 
   return {
     source: 'image',
-    isMealImage: mealLike && !LAB_BLOCK_WORDS.some((pattern) => pattern.test(safeText)),
+    isMealImage: mealLike,
     imageKind: normalizeText(parsed?.imageKind || 'meal_photo') || 'meal_photo',
     mealType: normalizeText(parsed?.mealTypeHint || parsed?.mealType || 'unknown') || 'unknown',
-    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 3),
+    items: foods.length ? foods.map((item) => item.label) : freeItems.slice(0, 2),
     summaryLabel,
     amountNote: '',
     amountRatio: 1,
-    estimatedNutrition: { kcal: estimatedKcal, protein: 0, fat: 0, carbs: 0 },
+    estimatedNutrition: { kcal: round0(rangeBase), protein: 0, fat: 0, carbs: 0 },
     kcalRange,
     comment: normalizeText(parsed?.comment || '細かい明細は省いて、ざっくりした献立として見ています。'),
     ocrText: safeText,
@@ -209,15 +239,17 @@ function normalizeImageMeal(parsed, rawText = '') {
 
 async function analyzeMealImage(imagePayload) {
   const prompt = [
-    'この画像が食事なら、細かい一品明細よりも、ざっくりした献立名で返してください。',
-    '量は反映しなくて大丈夫です。',
+    'あなたは食事写真のざっくり判定担当です。',
+    'この画像が食事写真なら、細かい一品明細は省いて、全体の献立をざっくり表す短い結果をJSONだけで返してください。',
+    '量の推定や詳細なマクロ栄養素の内訳は不要です。',
+    '血液検査表、レントゲン、PC画面、文書、食事以外の画像なら isMealImage を false にしてください。',
     'JSONのみを返してください。',
     '{',
     '  "isMealImage": true,',
-    '  "imageKind": "meal_photo | menu_text | food_package | nutrition_label | unknown",',
+    '  "imageKind": "meal_photo|menu_text|food_package|unknown",',
     '  "mealTypeHint": "breakfast|lunch|dinner|snack|unknown",',
-    '  "summaryLabel": "和食寄りの食事 / ラーメン / カレー など",',
-    '  "items": ["料理名を1〜3個まで"],',
+    '  "summaryLabel": "朝食プレート / カレー系 / 麺類 / 和食寄りの食事 など",',
+    '  "items": ["料理名を0〜2個まで"],',
     '  "estimatedKcal": 0,',
     '  "estimatedKcalLow": 0,',
     '  "estimatedKcalHigh": 0,',
@@ -228,7 +260,7 @@ async function analyzeMealImage(imagePayload) {
 
   const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
   if (!result.ok) {
-    return buildHeuristicImageMeal('');
+    return { source: 'image', isMealImage: false, mealType: 'unknown', items: [], summaryLabel: '', estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, kcalRange: { low: 0, high: 0 }, comment: '', confidence: 0.05, recordReady: false };
   }
 
   const parsed = extractJsonObject(result.text);

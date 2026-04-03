@@ -1,6 +1,7 @@
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
+const { parseDisplayName } = require('../parsers/name_parser');
 
 let supabase = null;
 let ensureUser = null;
@@ -82,21 +83,7 @@ async function resolvePersistentUser(lineUserId) {
 function extractPreferredName(text) {
   const safe = normalizeText(text);
   if (!safe || isQuestionLike(safe)) return null;
-
-  const patterns = [
-    /(?:私の名前は|名前は)\s*([ぁ-んァ-ヶー一-龠A-Za-z0-9_\-]{1,20})/,
-    /([ぁ-んァ-ヶー一-龠A-Za-z0-9_\-]{1,20})\s*(?:です|だよ)[。！!]?$/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = safe.match(pattern);
-    if (match && normalizeText(match[1])) {
-      const candidate = normalizeText(match[1]);
-      if (/^(名前|私|あなた|今日|昨日)$/.test(candidate)) continue;
-      return candidate;
-    }
-  }
-  return null;
+  return parseDisplayName(safe) || null;
 }
 
 function extractGoal(text) {

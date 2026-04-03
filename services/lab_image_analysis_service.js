@@ -24,9 +24,12 @@ const ITEM_ALIASES = {
   TSH: ['TSH'],
   FT4: ['FT4', 'F-T4'],
   FT3: ['FT3', 'F-T3'],
+  CPK: ['CPK'],
+  LDH: ['LDH'],
 };
 
 const DATE_LABELS = ['検査日', '採血日', '受診日', '測定日', '印刷日'];
+const LAB_SIGNAL_WORDS = /検査結果|血液検査|検査項目名|基準値|患者番号|HbA1c|LDL|HDL|TG|中性脂肪|クレアチニン|eGFR|甲状腺/i;
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -79,12 +82,16 @@ function normalizeDateToken(token) {
 function extractBestExamDate(text) {
   const safe = sanitizeGeminiText(text);
   for (const label of DATE_LABELS) {
-    const labelRegex = new RegExp(`${label}[^\n\r]{0,20}(20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2})`, 'i');
+    const labelRegex = new RegExp(`${label}[^\n\r]{0,20}(20\\d{2}[\\/\\-.年]\\s*\\d{1,2}[\\/\\-.月]\\s*\\d{1,2})`, 'i');
     const match = safe.match(labelRegex);
     if (match) return normalizeDateToken(match[1]);
   }
   const allDates = [...safe.matchAll(/20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}/g)].map((m) => normalizeDateToken(m[0])).filter(Boolean);
-  return allDates[allDates.length - 1] || '';
+  return allDates[0] || '';
+}
+
+function looksLikeLabImageText(text) {
+  return LAB_SIGNAL_WORDS.test(sanitizeGeminiText(text));
 }
 
 function normalizeItems(items) {
@@ -95,7 +102,7 @@ function normalizeItems(items) {
     const itemName = toCanonicalItemName(item?.itemName || item?.name || '');
     if (!itemName) continue;
     const value = normalizeText(item?.value || item?.currentValue || '').replace(/[^\d.\-]/g, '');
-    if (!value) continue;
+    if (!value || /^20\d{2}$/.test(value)) continue;
     const unit = normalizeUnit(item?.unit || item?.currentUnit || '');
     const flag = normalizeFlag(item?.flag || item?.currentFlag || '');
     const key = `${itemName}:${value}:${unit}`;
@@ -104,6 +111,11 @@ function normalizeItems(items) {
     out.push({ itemName, value, unit, flag, history: [] });
   }
   return out;
+}
+
+function extractUnitFromLine(line) {
+  const match = line.match(/(mg\/dL|g\/dL|IU\/L|U\/L|%|10\^\d+\/uL|10\*\d+\/uL|pg|fL|mEq\/L|uIU\/mL|ng\/dL|pg\/mL|μIU\/mL)/i);
+  return normalizeUnit(match?.[1] || '');
 }
 
 function extractValueFromLine(line, canonical = '') {
@@ -117,19 +129,18 @@ function extractValueFromLine(line, canonical = '') {
       break;
     }
   }
+
   const matches = [...tail.matchAll(/\b([HL])?\s*(-?\d+(?:\.\d+)?)\b/g)];
   if (!matches.length) return { value: '', flag: '' };
+
   for (const hit of matches) {
     const value = String(hit[2] || '');
-    if (/^20\d{2}$/.test(value)) continue;
-    if (/^\d{1,3}(?:\.\d+)?$/.test(value)) return { value, flag: normalizeFlag(hit[1] || '') };
+    if (!value || /^20\d{2}$/.test(value)) continue;
+    if (/^\d{1,4}(?:\.\d+)?$/.test(value)) {
+      return { value, flag: normalizeFlag(hit[1] || '') };
+    }
   }
   return { value: '', flag: '' };
-}
-
-function extractUnitFromLine(line) {
-  const match = line.match(/(mg\/dL|g\/dL|IU\/L|U\/L|%|10\^\d+\/uL|10\*\d+\/uL|pg|fL|mEq\/L|uIU\/mL|ng\/dL|pg\/mL)/i);
-  return normalizeUnit(match?.[1] || '');
 }
 
 function tryHeuristicExtract(rawText) {
@@ -154,23 +165,37 @@ function tryHeuristicExtract(rawText) {
   return { examDate, items };
 }
 
+function mergeItems(preferredItems = [], fallbackItems = []) {
+  const merged = new Map();
+  for (const item of fallbackItems) {
+    if (!merged.has(item.itemName)) merged.set(item.itemName, item);
+  }
+  for (const item of preferredItems) {
+    if (!item?.itemName || !item?.value) continue;
+    merged.set(item.itemName, item);
+  }
+  return [...merged.values()];
+}
+
 function inferIsLabImage(items, examDate, rawText = '') {
   const safe = sanitizeGeminiText(rawText);
   return Boolean(
     (Array.isArray(items) && items.length >= 2) ||
-    (examDate && /検査|採血|受診|HbA1c|LDL|HDL|TG|中性脂肪|TSH|FT4|WBC|RBC/i.test(safe)) ||
-    /検査結果|血液検査|生化学|HbA1c|LDL|HDL|TG|中性脂肪|クレアチニン|eGFR|甲状腺/i.test(safe)
+    (examDate && looksLikeLabImageText(safe)) ||
+    looksLikeLabImageText(safe)
   );
 }
 
 async function analyzeLabImage(imagePayload) {
   const prompt = [
-    'この画像が血液検査結果なら、表の文字を優先して読んでください。',
-    '項目名ごとの現在値だけを短く JSON で返してください。',
+    'あなたは血液検査結果表の読み取り担当です。',
+    '今見えている最新列だけを見てください。基準範囲や過去列は value に入れないでください。',
+    '血液検査表ではない画像なら isLabImage を false にしてください。',
     'JSONのみを返してください。',
     '{',
     '  "isLabImage": true,',
     '  "examDate": "YYYY-MM-DD or empty",',
+    '  "facilityName": "empty or clinic name",',
     '  "items": [',
     '    { "itemName": "HbA1c", "value": "6.8", "unit": "%", "flag": "H" }',
     '  ],',
@@ -188,21 +213,14 @@ async function analyzeLabImage(imagePayload) {
 
   if (parsed) {
     const jsonItems = normalizeItems(parsed.items);
-    const mergedMap = new Map();
-    for (const item of [...heuristic.items, ...jsonItems]) {
-      const key = item.itemName;
-      if (!mergedMap.has(key) || (item.value && jsonItems.some((j) => j.itemName === key && j.value))) {
-        mergedMap.set(key, item);
-      }
-    }
-    const mergedItems = [...mergedMap.values()];
+    const mergedItems = mergeItems(jsonItems, heuristic.items);
     const examDate = normalizeDateToken(parsed.examDate || '') || heuristic.examDate;
     return {
       source: 'image',
       isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(mergedItems, examDate, result.text)),
       examDate,
       items: mergedItems,
-      confidence: Number(parsed.confidence || (mergedItems.length ? 0.7 : 0.25)),
+      confidence: Number(parsed.confidence || (mergedItems.length ? 0.72 : 0.2)),
       rawText: sanitizeGeminiText(result.text),
     };
   }

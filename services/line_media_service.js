@@ -1,14 +1,20 @@
 'use strict';
 
 let line = null;
+let axios = null;
 try {
   line = require('@line/bot-sdk');
 } catch (_) {
   line = null;
 }
+try {
+  axios = require('axios');
+} catch (_) {
+  axios = null;
+}
 
 function buildLineBlobClient() {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const token = getChannelAccessToken();
   if (!line || !token) return null;
 
   try {
@@ -19,6 +25,38 @@ function buildLineBlobClient() {
     console.error('[line_media_service] buildLineBlobClient error:', error?.message || error);
     return null;
   }
+}
+
+
+function getChannelAccessToken() {
+  return String(process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+}
+
+async function fetchMessageContentBufferViaHttp(messageId) {
+  const token = getChannelAccessToken();
+  if (!axios || !messageId || !token) return null;
+
+  const urls = [
+    `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+    `https://api.line.me/v2/bot/message/${messageId}/content`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: Number(process.env.LINE_MEDIA_TIMEOUT_MS || 20000),
+        validateStatus: (status) => status >= 200 && status < 300
+      });
+      const data = response && response.data ? Buffer.from(response.data) : null;
+      if (data && data.length) return data;
+    } catch (error) {
+      console.error('[line_media_service] http fallback error:', error?.message || error);
+    }
+  }
+
+  return null;
 }
 
 function streamToBuffer(stream) {
@@ -88,10 +126,17 @@ async function getMediaPayload(input) {
   const messageType = input?.messageType || event?.message?.type || 'unknown';
   if (!messageId) return null;
 
-  const buffer = await getMessageContentBuffer(messageId);
+  let buffer = await getMessageContentBuffer(messageId);
+  if (!buffer || !buffer.length) {
+    buffer = await fetchMessageContentBufferViaHttp(messageId);
+  }
   if (!buffer || !buffer.length) return null;
 
-  const mimeType = detectMimeTypeFromBytes(buffer);
+  let mimeType = detectMimeTypeFromBytes(buffer);
+  if (messageType === 'image' && mimeType === 'application/octet-stream') {
+    mimeType = 'image/jpeg';
+  }
+
   return {
     messageId,
     buffer,
