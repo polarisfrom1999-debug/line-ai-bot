@@ -2,74 +2,170 @@
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 
-const ITEM_ALIASES = {
-  LDL: ['LDL', 'LDL(IFCC)', 'LDLコレステロール'],
-  HDL: ['HDL', 'HDL(IFCC)', 'HDLコレステロール', 'HDL-コレステロール'],
-  中性脂肪: ['中性脂肪', 'TG', 'TRIGLYCERIDES'],
-  HbA1c: ['HBA1C', 'HB1AC', 'HbA1c', 'HbA1c(NGSP)', 'HbA1c（NGSP）'],
-  AST: ['AST', 'GOT'],
-  ALT: ['ALT', 'GPT'],
-  'γ-GTP': ['γ-GTP', 'GGT', 'γGTP'],
-  ALP: ['ALP'],
-  BUN: ['BUN', '尿素窒素'],
-  クレアチニン: ['CRE', 'クレアチニン', 'CREATININE'],
-  eGFR: ['EGFR', 'eGFR'],
-  血糖: ['血糖', 'GLU', 'GLUCOSE'],
-  空腹時血糖: ['空腹時血糖'],
-  WBC: ['WBC', '白血球'],
-  RBC: ['RBC', '赤血球'],
-  Hgb: ['HGB', 'Hb', 'ヘモグロビン'],
-  Hct: ['HCT', 'ヘマトクリット'],
-  PLT: ['PLT', '血小板'],
-  TSH: ['TSH'],
-  FT4: ['FT4', 'F-T4'],
-  FT3: ['FT3', 'F-T3'],
-  CPK: ['CPK'],
-  LDH: ['LDH'],
-};
+const LAB_DOCUMENT_HINTS = [
+  '検査結果', '検査結果リスト', '血液検査', '基準値', '検査項目', '総コレステロール', '中性脂肪', 'TG', 'HbA1c', 'LDL', 'HDL', 'AST', 'ALT'
+];
 
-const DATE_LABELS = ['検査日', '採血日', '受診日', '測定日', '印刷日'];
-const LAB_SIGNAL_WORDS = /検査結果|血液検査|検査項目名|基準値|患者番号|HbA1c|LDL|HDL|TG|中性脂肪|クレアチニン|eGFR|甲状腺/i;
+const TARGET_ITEMS = [
+  'LDL',
+  'HDL',
+  '中性脂肪',
+  'TG',
+  'HbA1c',
+  'AST',
+  'ALT',
+  'γ-GTP',
+  'γGTP',
+  'ALP',
+  '尿酸',
+  '血糖',
+  '空腹時血糖',
+  'クレアチニン',
+  'eGFR',
+  '尿素窒素',
+  'LDH'
+];
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
 function sanitizeGeminiText(text) {
-  return normalizeText(text).replace(/```json/gi, '').replace(/```/g, '');
+  return normalizeText(text)
+    .replace(/```json/gi, '')
+    .replace(/```/g, '');
 }
 
 function extractJsonObject(text) {
   const safe = sanitizeGeminiText(text);
   const start = safe.indexOf('{');
   const end = safe.lastIndexOf('}');
+
   if (start === -1 || end === -1 || end <= start) return null;
+
   try {
     return JSON.parse(safe.slice(start, end + 1));
-  } catch (_error) {
+  } catch (_) {
     return null;
   }
 }
 
-function toCanonicalItemName(name) {
-  const safe = normalizeText(name).replace(/\s+/g, '').toUpperCase();
-  for (const [canonical, aliases] of Object.entries(ITEM_ALIASES)) {
-    if (aliases.some((alias) => safe.includes(String(alias).replace(/\s+/g, '').toUpperCase()))) {
-      return canonical;
-    }
-  }
-  return '';
+function normalizeItemName(name) {
+  const safe = normalizeText(name)
+    .replace(/ＬＤＬ/gi, 'LDL')
+    .replace(/ＨＤＬ/gi, 'HDL')
+    .replace(/ＴＧ/gi, 'TG')
+    .replace(/ＨｂＡ１ｃ/gi, 'HbA1c')
+    .replace(/hb1ac/gi, 'HbA1c')
+    .replace(/ＡＳＴ/gi, 'AST')
+    .replace(/ＡＬＴ/gi, 'ALT')
+    .replace(/γＧＴＰ/gi, 'γ-GTP')
+    .replace(/γGTP/gi, 'γ-GTP')
+    .replace(/ＧＧＴ/gi, 'γ-GTP')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/^TG$/i.test(safe)) return '中性脂肪';
+  if (/^空腹時血糖$/i.test(safe)) return '空腹時血糖';
+  if (/^血糖$/i.test(safe)) return '血糖';
+  return safe;
+}
+
+function normalizeValue(value) {
+  return normalizeText(value).replace(/[^\d.\-]/g, '');
 }
 
 function normalizeUnit(unit) {
   return normalizeText(unit)
     .replace(/ｍｇ\/ｄＬ/gi, 'mg/dL')
+    .replace(/μ/g, 'u')
     .replace(/％/g, '%');
 }
 
 function normalizeFlag(flag) {
   const safe = normalizeText(flag).toUpperCase();
-  return safe === 'H' || safe === 'L' ? safe : '';
+  if (safe === 'H' || safe === 'L') return safe;
+  return '';
+}
+
+function looksLikeTargetItem(name) {
+  const safe = normalizeItemName(name);
+  return TARGET_ITEMS.some((item) => safe.toUpperCase() === normalizeItemName(item).toUpperCase());
+}
+
+function normalizeHistoryRows(rows, fallbackUnit = '') {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      date: normalizeText(row?.date || ''),
+      value: normalizeValue(row?.value || ''),
+      unit: normalizeUnit(row?.unit || fallbackUnit),
+      flag: normalizeFlag(row?.flag || '')
+    }))
+    .filter((row) => row.date && row.value);
+}
+
+function normalizeItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  const normalized = [];
+  const seen = new Set();
+
+  for (const item of items) {
+    const itemName = normalizeItemName(item?.itemName || item?.name || '');
+    const value = normalizeValue(item?.value || item?.currentValue || '');
+    const unit = normalizeUnit(item?.unit || item?.currentUnit || '');
+    const flag = normalizeFlag(item?.flag || item?.currentFlag || '');
+
+    if (!itemName) continue;
+    if (!looksLikeTargetItem(itemName)) continue;
+
+    const history = normalizeHistoryRows(item?.history, unit);
+    if (!value && !history.length) continue;
+
+    const key = `${itemName}:${value}:${unit}:${flag}`;
+    if (seen.has(key) && !history.length) continue;
+    seen.add(key);
+
+    normalized.push({
+      itemName,
+      value,
+      unit,
+      flag,
+      history
+    });
+  }
+
+  return normalized;
+}
+
+function looksLikeLabDocumentText(rawText = '') {
+  const safe = sanitizeGeminiText(rawText);
+  if (!safe) return false;
+  return LAB_DOCUMENT_HINTS.some((hint) => safe.includes(hint));
+}
+
+function inferIsLabImage(items, examDate, rawText = '') {
+  return Boolean(
+    (Array.isArray(items) && items.length) ||
+    normalizeText(examDate) ||
+    looksLikeLabDocumentText(rawText)
+  );
+}
+
+
+function sortHistoryRows(rows) {
+  return [...rows].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+}
+
+function uniqueHistory(rows) {
+  const seen = new Set();
+  return sortHistoryRows(rows).filter((row) => {
+    const key = `${row.date}:${row.value}:${row.unit || ''}:${row.flag || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeDateToken(token) {
@@ -79,162 +175,145 @@ function normalizeDateToken(token) {
   return `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
 }
 
-function extractBestExamDate(text) {
-  const safe = sanitizeGeminiText(text);
-  for (const label of DATE_LABELS) {
-    const labelRegex = new RegExp(`${label}[^\n\r]{0,20}(20\\d{2}[\\/\\-.年]\\s*\\d{1,2}[\\/\\-.月]\\s*\\d{1,2})`, 'i');
-    const match = safe.match(labelRegex);
-    if (match) return normalizeDateToken(match[1]);
+function tryHeuristicExtract(rawText) {
+  const safe = sanitizeGeminiText(rawText);
+  if (!safe) {
+    return {
+      examDate: '',
+      items: []
+    };
   }
-  const allDates = [...safe.matchAll(/20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}/g)].map((m) => normalizeDateToken(m[0])).filter(Boolean);
-  return allDates[0] || '';
-}
 
-function looksLikeLabImageText(text) {
-  return LAB_SIGNAL_WORDS.test(sanitizeGeminiText(text));
-}
+  const dateMatches = [...safe.matchAll(/20\d{2}[\/\-.年]\s*\d{1,2}[\/\-.月]\s*\d{1,2}/g)]
+    .map((m) => normalizeDateToken(m[0]))
+    .filter(Boolean);
 
-function normalizeItems(items) {
-  if (!Array.isArray(items)) return [];
-  const out = [];
+  const items = [];
   const seen = new Set();
-  for (const item of items) {
-    const itemName = toCanonicalItemName(item?.itemName || item?.name || '');
-    if (!itemName) continue;
-    const value = normalizeText(item?.value || item?.currentValue || '').replace(/[^\d.\-]/g, '');
-    if (!value || /^20\d{2}$/.test(value)) continue;
-    const unit = normalizeUnit(item?.unit || item?.currentUnit || '');
-    const flag = normalizeFlag(item?.flag || item?.currentFlag || '');
-    const key = `${itemName}:${value}:${unit}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ itemName, value, unit, flag, history: [] });
-  }
-  return out;
-}
 
-function extractUnitFromLine(line) {
-  const match = line.match(/(mg\/dL|g\/dL|IU\/L|U\/L|%|10\^\d+\/uL|10\*\d+\/uL|pg|fL|mEq\/L|uIU\/mL|ng\/dL|pg\/mL|μIU\/mL)/i);
-  return normalizeUnit(match?.[1] || '');
-}
+  for (const target of TARGET_ITEMS) {
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const lineRegex = new RegExp(`${escaped}[^\n]{0,120}`, 'ig');
+    const lineMatch = safe.match(lineRegex) || [];
 
-function extractValueFromLine(line, canonical = '') {
-  const cleaned = line.replace(/\b[HL]\b/g, (m) => ` ${m} `);
-  const aliases = ITEM_ALIASES[canonical] || [];
-  let tail = cleaned;
-  for (const alias of aliases) {
-    const idx = cleaned.toUpperCase().indexOf(String(alias).replace(/\s+/g, '').toUpperCase());
-    if (idx >= 0) {
-      tail = cleaned.slice(idx + alias.length);
+    for (const rawLine of lineMatch) {
+      const valueMatches = [...rawLine.matchAll(/([HL])?\s*([0-9]+(?:\.[0-9]+)?)/g)];
+      if (!valueMatches.length) continue;
+
+      const itemName = normalizeItemName(target);
+      const current = valueMatches[valueMatches.length - 1];
+      const currentValue = normalizeValue(current[2] || '');
+      const currentFlag = normalizeFlag(current[1] || '');
+      const unitMatch = rawLine.match(/(mg\/dL|IU\/L|U\/L|%)/i);
+      const unit = normalizeUnit(unitMatch?.[1] || '');
+      const history = [];
+
+      if (dateMatches.length >= 2 && valueMatches.length >= 2) {
+        const offset = Math.max(0, dateMatches.length - valueMatches.length);
+        for (let i = 0; i < Math.min(dateMatches.length, valueMatches.length); i += 1) {
+          const rowDate = dateMatches[i + offset] || '';
+          const valueHit = valueMatches[i];
+          const rowValue = normalizeValue(valueHit?.[2] || '');
+          if (!rowDate || !rowValue) continue;
+          history.push({
+            date: rowDate,
+            value: rowValue,
+            unit,
+            flag: normalizeFlag(valueHit?.[1] || '')
+          });
+        }
+      }
+
+      const key = `${itemName}:${currentValue}:${unit}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({
+        itemName,
+        value: currentValue,
+        unit,
+        flag: currentFlag,
+        history: uniqueHistory(history)
+      });
       break;
     }
   }
 
-  const matches = [...tail.matchAll(/\b([HL])?\s*(-?\d+(?:\.\d+)?)\b/g)];
-  if (!matches.length) return { value: '', flag: '' };
-
-  for (const hit of matches) {
-    const value = String(hit[2] || '');
-    if (!value || /^20\d{2}$/.test(value)) continue;
-    if (/^\d{1,4}(?:\.\d+)?$/.test(value)) {
-      return { value, flag: normalizeFlag(hit[1] || '') };
-    }
-  }
-  return { value: '', flag: '' };
-}
-
-function tryHeuristicExtract(rawText) {
-  const safe = sanitizeGeminiText(rawText);
-  const examDate = extractBestExamDate(safe);
-  const lines = safe.split(/\r?\n/).map((line) => normalizeText(line)).filter(Boolean);
-  const items = [];
-  const seen = new Set();
-
-  for (const line of lines) {
-    const canonical = toCanonicalItemName(line);
-    if (!canonical) continue;
-    const { value, flag } = extractValueFromLine(line, canonical);
-    if (!value) continue;
-    const unit = extractUnitFromLine(line);
-    const key = `${canonical}:${value}:${unit}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push({ itemName: canonical, value, unit, flag, history: [] });
-  }
-
-  return { examDate, items };
-}
-
-function mergeItems(preferredItems = [], fallbackItems = []) {
-  const merged = new Map();
-  for (const item of fallbackItems) {
-    if (!merged.has(item.itemName)) merged.set(item.itemName, item);
-  }
-  for (const item of preferredItems) {
-    if (!item?.itemName || !item?.value) continue;
-    merged.set(item.itemName, item);
-  }
-  return [...merged.values()];
-}
-
-function inferIsLabImage(items, examDate, rawText = '') {
-  const safe = sanitizeGeminiText(rawText);
-  return Boolean(
-    (Array.isArray(items) && items.length >= 2) ||
-    (examDate && looksLikeLabImageText(safe)) ||
-    looksLikeLabImageText(safe)
-  );
+  return {
+    examDate: dateMatches.slice(-1)[0] || '',
+    items
+  };
 }
 
 async function analyzeLabImage(imagePayload) {
   const prompt = [
-    'あなたは血液検査結果表の読み取り担当です。',
-    '今見えている最新列だけを見てください。基準範囲や過去列は value に入れないでください。',
-    '血液検査表ではない画像なら isLabImage を false にしてください。',
+    'この画像が血液検査結果なら、表を読んで日付と検査項目をJSONで返してください。',
+    '複数の日付列がある場合は、各項目のhistoryにも過去値を入れてください。',
+    '画像の中の文字を優先して正確に読んでください。',
     'JSONのみを返してください。',
     '{',
     '  "isLabImage": true,',
-    '  "examDate": "YYYY-MM-DD or empty",',
-    '  "facilityName": "empty or clinic name",',
+    '  "examDate": "最新の日付を YYYY-MM-DD または 空文字",',
     '  "items": [',
-    '    { "itemName": "HbA1c", "value": "6.8", "unit": "%", "flag": "H" }',
+    '    {',
+    '      "itemName": "LDL",',
+    '      "value": "151",',
+    '      "unit": "mg/dL",',
+    '      "flag": "H",',
+    '      "history": [',
+    '        { "date": "2024-07-01", "value": "169", "unit": "mg/dL", "flag": "H" }',
+    '      ]',
+    '    }',
     '  ],',
+    '  "documentType": "blood_test | unknown",',
     '  "confidence": 0.0',
-    '}',
+    '}'
   ].join('\n');
 
-  const result = await geminiImageAnalysisService.analyzeImage({ imagePayload, prompt });
+  const result = await geminiImageAnalysisService.analyzeImage({
+    imagePayload,
+    prompt
+  });
+
   if (!result.ok) {
-    return { source: 'image', isLabImage: false, examDate: '', items: [], confidence: 0, rawText: '' };
+    return {
+      source: 'image',
+      isLabImage: false,
+      examDate: '',
+      items: [],
+      confidence: 0
+    };
   }
 
   const parsed = extractJsonObject(result.text);
-  const heuristic = tryHeuristicExtract(result.text);
-
   if (parsed) {
-    const jsonItems = normalizeItems(parsed.items);
-    const mergedItems = mergeItems(jsonItems, heuristic.items);
-    const examDate = normalizeDateToken(parsed.examDate || '') || heuristic.examDate;
+    const items = normalizeItems(parsed.items);
     return {
       source: 'image',
-      isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(mergedItems, examDate, result.text)),
-      examDate,
-      items: mergedItems,
-      confidence: Number(parsed.confidence || (mergedItems.length ? 0.72 : 0.2)),
+      isLabImage: Boolean(parsed.isLabImage || inferIsLabImage(items, parsed.examDate, result.text)),
+      examDate: normalizeText(parsed.examDate || ''),
+      items: items.map((item) => ({
+        ...item,
+        history: uniqueHistory(item.history || [])
+      })),
+      confidence: Number(parsed.confidence || 0),
       rawText: sanitizeGeminiText(result.text),
+      labLike: looksLikeLabDocumentText(result.text) || String(parsed.documentType || '').toLowerCase() === 'blood_test'
     };
   }
+
+  const heuristic = tryHeuristicExtract(result.text);
 
   return {
     source: 'image',
     isLabImage: inferIsLabImage(heuristic.items, heuristic.examDate, result.text),
     examDate: heuristic.examDate,
     items: heuristic.items,
-    confidence: heuristic.items.length ? 0.58 : 0.18,
+    confidence: heuristic.items.length ? 0.55 : 0,
     rawText: sanitizeGeminiText(result.text),
+    labLike: looksLikeLabDocumentText(result.text)
   };
 }
 
 module.exports = {
-  analyzeLabImage,
+  analyzeLabImage
 };

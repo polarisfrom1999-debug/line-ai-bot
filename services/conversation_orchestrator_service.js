@@ -39,6 +39,33 @@ function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
 
+
+function sanitizePreferredName(value) {
+  const safe = normalizeText(value)
+    .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
+    .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .trim();
+
+  if (!safe) return '';
+  if (safe.length > 12) return '';
+  if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
+  if (/\s/.test(safe)) return '';
+  return safe;
+}
+
+function buildLabFollowUpFallback(targetName) {
+  return `${targetName} はまだ安定して読めていません。血液検査の画像をもう一度送ってもらえれば、その画像を優先して見ます。`;
+}
+
+function summarizeMealItems(parsedMeal) {
+  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
+  if (!items.length) return '食事';
+  const joined = items.slice(0, 2).join('、');
+  if (/カレー/.test(joined)) return 'カレー系の食事';
+  if (/ラーメン|うどん|そば|パスタ/.test(joined)) return '麺系の食事';
+  return joined;
+}
+
 function getJapanNow() {
   const now = new Date();
   const parts = new Intl.DateTimeFormat('ja-JP', {
@@ -84,7 +111,8 @@ function detectIntent(input) {
 function buildMemoryAnswer(longMemory) {
   const lines = [];
 
-  if (longMemory?.preferredName) lines.push(`名前は「${longMemory.preferredName}」として覚えています。`);
+  const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
+  if (preferredName) lines.push(`名前は「${preferredName}」として覚えています。`);
   if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
@@ -333,7 +361,10 @@ function parseInlineProfile(text) {
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
 
-  if (nameMatch) patch.preferredName = nameMatch[1].trim();
+  if (nameMatch) {
+    const preferredName = sanitizePreferredName(nameMatch[1]);
+    if (preferredName) patch.preferredName = preferredName;
+  }
   if (ageMatch) patch.age = ageMatch[1].trim();
   if (weightMatch) patch.weight = weightMatch[1].trim();
   if (bodyFatMatch) patch.bodyFat = bodyFatMatch[1].trim();
@@ -395,37 +426,24 @@ function looksLikePain(text) {
 }
 
 function buildMealReply(parsedMeal) {
-  const items = Array.isArray(parsedMeal?.items) && parsedMeal.items.length
-    ? parsedMeal.items.join('、')
-    : '食事';
-
+  const mealLabel = summarizeMealItems(parsedMeal);
   const kcal = round1(parsedMeal?.estimatedNutrition?.kcal || 0);
-  const protein = round1(parsedMeal?.estimatedNutrition?.protein || 0);
-  const fat = round1(parsedMeal?.estimatedNutrition?.fat || 0);
-  const carbs = round1(parsedMeal?.estimatedNutrition?.carbs || 0);
   const imageKind = parsedMeal?.imageKind || '';
-
-  const amountText = parsedMeal?.amountNote
-    ? `量の反映: ${parsedMeal.amountNote}`
-    : parsedMeal?.amountRatio && parsedMeal.amountRatio !== 1
-      ? `量の反映: ${parsedMeal.amountRatio}倍`
-      : '量の反映: 標準';
 
   if ((imageKind === 'menu_text' || imageKind === 'food_package') && !kcal) {
     return [
-      `食事の候補として ${items} を読み取りました。`,
+      `受け取りました。今回は ${mealLabel} として見ています。`,
       parsedMeal?.ocrText ? `読めた文字: ${parsedMeal.ocrText.slice(0, 80)}` : null,
-      'どれを実際に食べたか分かれば、その分だけ栄養までつなげられます。'
+      '必要なら、どれを実際に食べたか教えてもらえればそこから整えます。'
     ].filter(Boolean).join('\n');
   }
 
+  const kcalText = kcal ? `ざっくり 約${kcal}kcal くらいです。` : 'ざっくり見立てています。';
   return [
-    `受け取りました。今回は ${items} として見ています。`,
-    amountText,
-    `推定: 約${kcal}kcal`,
-    `たんぱく質 ${protein}g / 脂質 ${fat}g / 糖質 ${carbs}g`,
+    `受け取りました。今回は ${mealLabel} として見ています。`,
+    kcalText,
     parsedMeal?.comment || '必要なら、このまま今日の合計にもつなげていきます。'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 function buildMealRecordPayload(text, parsedMeal) {
@@ -457,7 +475,7 @@ function buildImageMealRecordPayload(parsedMeal) {
     protein: Number(parsedMeal?.estimatedNutrition?.protein || 0),
     fat: Number(parsedMeal?.estimatedNutrition?.fat || 0),
     carbs: Number(parsedMeal?.estimatedNutrition?.carbs || 0),
-    amountNote: parsedMeal?.amountNote || '標準'
+    amountNote: parsedMeal?.amountNote || ''
   };
 }
 
@@ -509,13 +527,35 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
   if (trend.length) return buildLabTrendReply(targetName, trend);
 
-  const items = shortMemory?.followUpContext?.imageType === 'lab'
-    ? shortMemory.followUpContext.extractedItems || []
+  const followUp = shortMemory?.followUpContext || {};
+  const items = followUp.imageType === 'lab'
+    ? followUp.extractedItems || []
     : [];
   const target = items.find((item) => normalizeLabTarget(item?.itemName || '') === targetName);
-  if (!target) return null;
+  if (target) {
+    return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
+  }
 
-  return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
+  if (followUp.imageType === 'lab_pending' || followUp.imageType === 'lab') {
+    return buildLabFollowUpFallback(targetName);
+  }
+
+  return `${targetName} を見る時は、血液検査の画像を送ってもらえればその画像を優先して確認します。`;
+}
+
+
+function buildImageIngestFailureReply() {
+  return '画像の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
+}
+
+function buildUnhandledImageReply(kind) {
+  if (kind === 'lab_record') {
+    return '血液検査の画像として見ていますが、読み取りがまだ安定していません。もう一度送ってもらえると助かります。';
+  }
+  if (kind === 'meal_record') {
+    return '食事の画像は受け取りましたが、まだうまく整理し切れていません。もう一度送ってもらえると助かります。';
+  }
+  return '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。';
 }
 
 function looksLikeHomecareConsultation(text) {
@@ -663,8 +703,27 @@ async function maybeHandleLabImage(input, imagePayload) {
 
   try {
     const lab = await labImageAnalysisService.analyzeLabImage(imagePayload);
-    if (!lab?.isLabImage || !Array.isArray(lab.items) || !lab.items.length) {
+    const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
+    if (!lab?.isLabImage && !lab?.labLike) {
       return { handled: false, analysis: lab || null };
+    }
+
+    if (!hasItems) {
+      await contextMemoryService.saveShortMemory(input.userId, {
+        lastImageType: 'lab_pending',
+        followUpContext: {
+          source: 'image',
+          imageType: 'lab_pending',
+          extractedItems: [],
+          examDate: lab?.examDate || ''
+        }
+      });
+
+      return {
+        handled: true,
+        analysis: lab,
+        replyText: '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。'
+      };
     }
 
     await contextMemoryService.saveShortMemory(input.userId, {
@@ -692,7 +751,7 @@ async function maybeHandleLabImage(input, imagePayload) {
     };
   } catch (error) {
     console.error('[conversation_orchestrator] lab image error:', error?.message || error);
-    return { handled: false, analysis: { isLabImage: false }, error };
+    return { handled: false, analysis: { isLabImage: false, labLike: false }, error };
   }
 }
 
@@ -788,13 +847,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   });
 
   return {
-    replyText: [
-      '了解です。量を反映しました。',
-      `量の反映: ${text}`,
-      `推定: 約${round1(adjusted.estimatedNutrition.kcal)}kcal`,
-      `たんぱく質 ${round1(adjusted.estimatedNutrition.protein)}g / 脂質 ${round1(adjusted.estimatedNutrition.fat)}g / 糖質 ${round1(adjusted.estimatedNutrition.carbs)}g`,
-      '必要なら、このまま今日の合計にもつなげていきます。'
-    ].join('\n'),
+    replyText: `了解です。${text}として見直すと、ざっくり 約${round1(adjusted.estimatedNutrition.kcal)}kcal くらいです。`,
     adjusted
   };
 }
@@ -822,7 +875,7 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     '- 管理者のような言い方は禁止',
     '- 痛みやしんどさが出たら記録よりケアを優先する',
     '[プロフィール要約]',
-    `- 名前: ${longMemoryLatest?.preferredName || '未設定'}`,
+    `- 名前: ${sanitizePreferredName(longMemoryLatest?.preferredName || '') || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
     `- 体重: ${longMemoryLatest?.weight || '未設定'}`,
     `- 体脂肪率: ${longMemoryLatest?.bodyFat || '未設定'}`,
@@ -932,6 +985,24 @@ async function orchestrateConversation(input) {
         lab: labImageHandled?.analysis,
         meal: mealImageHandled?.analysis
       }, text);
+      if (labImageHandled?.analysis?.labLike) {
+        await contextMemoryService.saveShortMemory(input.userId, {
+          lastImageType: 'lab_pending',
+          followUpContext: {
+            source: 'image',
+            imageType: 'lab_pending',
+            extractedItems: [],
+            examDate: labImageHandled.analysis.examDate || ''
+          }
+        });
+        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。';
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
+        };
+      }
       const replyText = buildUnhandledImageReply(imageKind === 'unknown' ? fallbackKind : `${imageKind}_record`);
       await appendTurn(input.userId, input.rawText || '[image]', replyText);
       return {

@@ -1,16 +1,5 @@
 'use strict';
 
-const { getBusinessDateInfo, resolveDateFromText } = require('./day_boundary_service');
-let supabase = null;
-let ensureUser = null;
-try {
-  ({ supabase } = require('./supabase_service'));
-  ({ ensureUser } = require('./user_service'));
-} catch (_error) {
-  supabase = null;
-  ensureUser = null;
-}
-
 const shortMemoryStore = new Map();
 const longMemoryStore = new Map();
 const userStateStore = new Map();
@@ -29,7 +18,6 @@ const DEFAULT_SHORT_MEMORY = {
   lastEmotionTone: 'neutral',
   lastAdvice: null,
   recentSmallTalkTopic: null,
-  latestImageContexts: { meal: null, lab: null },
   followUpContext: null,
   activeHealthTheme: null,
   onboardingState: {
@@ -51,7 +39,6 @@ const DEFAULT_LONG_MEMORY = {
   supportPreference: [],
   lifeContext: [],
   age: null,
-  height: null,
   weight: null,
   bodyFat: null,
   aiType: null,
@@ -68,6 +55,24 @@ const DEFAULT_USER_STATE = {
   lastEmotionTone: 'neutral',
   updatedAt: null
 };
+
+
+function normalizeText(value) {
+  return String(value || '').trim();
+}
+
+function sanitizePreferredName(value) {
+  const safe = normalizeText(value)
+    .replace(/^(名前[は：:]?\s*)/u, '')
+    .replace(/(です|だよ|だよね|ですよ|になります|になりそう).*$/u, '')
+    .trim();
+
+  if (!safe) return '';
+  if (safe.length > 12) return '';
+  if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
+  if (/\s/.test(safe)) return '';
+  return safe;
+}
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -99,11 +104,12 @@ function nowIso() {
 }
 
 function getTodayKey() {
-  return getBusinessDateInfo(new Date()).dayKey;
-}
-
-function getDayKeyFromText(text) {
-  return resolveDateFromText(text || '', new Date());
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
 }
 
 function getWeekKey() {
@@ -218,69 +224,6 @@ function sortByDateAsc(items) {
   return [...items].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
-
-async function getPersistentUser(lineUserId) {
-  if (!supabase || !ensureUser || !lineUserId) return null;
-  try {
-    return await ensureUser(supabase, lineUserId, 'Asia/Tokyo');
-  } catch (_error) {
-    return null;
-  }
-}
-
-async function hydrateLongMemoryFromPersistence(userId, draft) {
-  const next = clone(draft || DEFAULT_LONG_MEMORY);
-  const user = await getPersistentUser(userId);
-  if (!user) return next;
-
-  if (!next.preferredName && normalizeString(user.display_name)) next.preferredName = normalizeString(user.display_name);
-  if (!next.weight && user.weight_kg != null) next.weight = `${user.weight_kg}kg`;
-  if (!next.bodyFat && user.body_fat_pct != null) next.bodyFat = `${user.body_fat_pct}%`;
-  if (!next.aiType && normalizeString(user.ai_type)) next.aiType = normalizeString(user.ai_type);
-
-  if (supabase && user.id) {
-    try {
-      const { data: latestWeight } = await supabase
-        .from('weight_logs')
-        .select('weight_kg, body_fat_pct, logged_at')
-        .eq('user_id', user.id)
-        .order('logged_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (!next.weight && latestWeight?.weight_kg != null) next.weight = `${latestWeight.weight_kg}kg`;
-      if (!next.bodyFat && latestWeight?.body_fat_pct != null) next.bodyFat = `${latestWeight.body_fat_pct}%`;
-    } catch (_error) {
-      // noop
-    }
-  }
-
-  return next;
-}
-
-async function syncLongMemoryToPersistence(userId, longMemory) {
-  const user = await getPersistentUser(userId);
-  if (!user || !supabase) return;
-
-  const payload = {};
-  if (normalizeString(longMemory?.preferredName)) payload.display_name = normalizeString(longMemory.preferredName);
-  if (normalizeString(longMemory?.weight)) {
-    const weightNumber = Number(String(longMemory.weight).replace(/[^\d.\-]/g, ''));
-    if (Number.isFinite(weightNumber) && weightNumber > 0) payload.weight_kg = weightNumber;
-  }
-  if (normalizeString(longMemory?.bodyFat)) {
-    const bodyFatNumber = Number(String(longMemory.bodyFat).replace(/[^\d.\-]/g, ''));
-    if (Number.isFinite(bodyFatNumber) && bodyFatNumber >= 0) payload.body_fat_pct = bodyFatNumber;
-  }
-  if (normalizeString(longMemory?.aiType)) payload.ai_type = normalizeString(longMemory.aiType);
-
-  if (!Object.keys(payload).length) return;
-  try {
-    await supabase.from('users').update(payload).eq('id', user.id);
-  } catch (_error) {
-    // noop
-  }
-}
-
 async function getShortMemory(userId) {
   const value = shortMemoryStore.get(userId);
   return clone(value || DEFAULT_SHORT_MEMORY);
@@ -300,9 +243,7 @@ async function clearShortMemory(userId) {
 
 async function getLongMemory(userId) {
   const value = longMemoryStore.get(userId);
-  const hydrated = await hydrateLongMemoryFromPersistence(userId, value || DEFAULT_LONG_MEMORY);
-  longMemoryStore.set(userId, hydrated);
-  return clone(hydrated);
+  return clone(value || DEFAULT_LONG_MEMORY);
 }
 
 async function mergeLongMemory(userId, patch) {
@@ -316,10 +257,12 @@ async function mergeLongMemory(userId, patch) {
   } else {
     const safePatch = patch || {};
 
-    if (safePatch.preferredName != null) next.preferredName = safePatch.preferredName;
+    if (safePatch.preferredName != null) {
+      const preferredName = sanitizePreferredName(safePatch.preferredName);
+      if (preferredName) next.preferredName = preferredName;
+    }
     if (safePatch.goal != null) next.goal = safePatch.goal;
     if (safePatch.age != null) next.age = safePatch.age;
-    if (safePatch.height != null) next.height = safePatch.height;
     if (safePatch.weight != null) next.weight = safePatch.weight;
     if (safePatch.bodyFat != null) next.bodyFat = safePatch.bodyFat;
     if (safePatch.aiType != null) next.aiType = safePatch.aiType;
@@ -347,7 +290,6 @@ async function mergeLongMemory(userId, patch) {
   }
 
   longMemoryStore.set(userId, next);
-  await syncLongMemoryToPersistence(userId, next);
   return clone(next);
 }
 
@@ -399,9 +341,8 @@ async function buildRecentSummary(userId, _days = 3) {
   return parts.join(' ') || '';
 }
 
-async function addDailyRecord(userId, record, options = {}) {
-  const dayKey = normalizeString(options.dayKey || getTodayKey());
-  const key = `${userId}:${dayKey}`;
+async function addDailyRecord(userId, record) {
+  const key = `${userId}:${getTodayKey()}`;
   const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
   const next = clone(current);
 
@@ -430,11 +371,6 @@ function inferPointsFromRecord(record) {
 
 async function getTodayRecords(userId) {
   const key = `${userId}:${getTodayKey()}`;
-  return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
-}
-
-async function getDayRecords(userId, dayKey) {
-  const key = `${userId}:${normalizeString(dayKey || getTodayKey())}`;
   return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
 }
 
@@ -614,27 +550,6 @@ async function addPoints(userId, amount) {
   return next;
 }
 
-
-async function getMemorySnapshot(userId) {
-  const longMemory = await getLongMemory(userId);
-  const latestWeight = await getLatestWeightEntry(userId);
-  const latestLabPanel = await getLatestLabPanel(userId);
-
-  return {
-    preferredName: normalizeString(longMemory?.preferredName),
-    goal: normalizeString(longMemory?.goal),
-    age: normalizeString(longMemory?.age),
-    height: normalizeString(longMemory?.height),
-    weight: latestWeight?.weight != null ? `${latestWeight.weight}kg` : normalizeString(longMemory?.weight),
-    bodyFat: latestWeight?.bodyFat != null ? `${latestWeight.bodyFat}%` : normalizeString(longMemory?.bodyFat),
-    aiType: normalizeString(longMemory?.aiType),
-    constitutionType: normalizeString(longMemory?.constitutionType),
-    selectedPlan: normalizeString(longMemory?.selectedPlan),
-    latestLabExamDate: normalizeString(latestLabPanel?.examDate),
-    latestLabItemCount: Array.isArray(latestLabPanel?.items) ? latestLabPanel.items.length : 0
-  };
-}
-
 async function resetAllMemory(userId) {
   shortMemoryStore.delete(userId);
   longMemoryStore.delete(userId);
@@ -668,19 +583,16 @@ module.exports = {
   buildRecentSummary,
   addDailyRecord,
   getTodayRecords,
-  getDayRecords,
   getRecentDailyRecords,
   getLatestWeightEntry,
   upsertLabPanel,
   getLatestLabPanel,
   findLabItemTrend,
-  getDayKeyFromText,
   getWeeklySurvey,
   saveWeeklySurvey,
   getMonthlySurvey,
   saveMonthlySurvey,
   getPoints,
   addPoints,
-  getMemorySnapshot,
   resetAllMemory
 };
