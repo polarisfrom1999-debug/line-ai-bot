@@ -3,28 +3,21 @@
 /**
  * services/lab_image_analysis_service.js
  *
- * Phase 6: lab reading rebuilt around panel dates + metric rows.
- *
- * 目的:
- * - 血液検査画像から「帳票日」と「検査列日付」を分けて扱う
- * - 複数日付の列構造を優先して読む
- * - TG / HbA1c / LDL / HDL / AST / ALT / γ-GTP の値セルを日付別に拾う
- * - follow-up で「TGは？」「HbA1cは？」に日付優先で答えやすくする
- *
- * 注意:
- * - 既存 Gemini / OCR / 画像解析の返り text を受け取って使えるよう、
- *   生テキスト中心の再抽出ロジックで構成している
- * - 外部API呼び出しはここに入れず、あくまで正規化と抽出に寄せている
+ * Phase 7:
+ * - 血液検査の「帳票日」と「検査日」を分離
+ * - 単日表 / 複数日表の両方を扱う
+ * - 日付ごとの主要項目をまとめて保持
+ * - TG / HbA1c / LDL / HDL / AST / ALT / γ-GTP の follow-up と傾向要約を返しやすくする
  */
 
-const IMPORTANT_METRICS = [
-  { key: 'tg', aliases: ['TG', '中性脂肪', 'トリグリセリド'] },
-  { key: 'hba1c', aliases: ['HbA1c', 'HBA1C', 'HbA1c(NGSP)', 'HbA1c（NGSP）'] },
-  { key: 'ldl', aliases: ['LDL', 'LDLコレステロール', 'LDL-コレステロール', 'LDL(コレステロール)'] },
-  { key: 'hdl', aliases: ['HDL', 'HDLコレステロール', 'HDL-コレステロール', 'HDL(コレステロール)'] },
-  { key: 'ast', aliases: ['AST', 'GOT', 'GOT(AST)'] },
-  { key: 'alt', aliases: ['ALT', 'GPT', 'GPT(ALT)'] },
-  { key: 'ggt', aliases: ['γ-GTP', 'γGTP', 'GGT', 'γｰGTP'] },
+const METRIC_DEFS = [
+  { key: 'tg', label: 'TG（中性脂肪）', aliases: ['TG', '中性脂肪', 'トリグリセリド'] },
+  { key: 'hba1c', label: 'HbA1c', aliases: ['HbA1c', 'HBA1C', 'HbA1c(NGSP)', 'HbA1c（NGSP）'] },
+  { key: 'ldl', label: 'LDL', aliases: ['LDL', 'LDLコレステロール', 'LDL-コレステロール', 'LDL(LDLコレステロール)'] },
+  { key: 'hdl', label: 'HDL', aliases: ['HDL', 'HDLコレステロール', 'HDL-コレステロール', 'HDL(HDLコレステロール)'] },
+  { key: 'ast', label: 'AST', aliases: ['AST', 'GOT', 'GOT(AST)'] },
+  { key: 'alt', label: 'ALT', aliases: ['ALT', 'GPT', 'GPT(ALT)'] },
+  { key: 'ggt', label: 'γ-GTP', aliases: ['γ-GTP', 'γGTP', 'γｰGTP', 'GGT', 'y-GTP', 'γ-GTP'] },
 ];
 
 const FOLLOWUP_METRIC_MAP = {
@@ -39,6 +32,7 @@ const FOLLOWUP_METRIC_MAP = {
   'γ-gtp': 'ggt',
   'γgtp': 'ggt',
   'ggt': 'ggt',
+  'y-gtp': 'ggt',
 };
 
 function compactText(input) {
@@ -49,22 +43,55 @@ function compactText(input) {
     .trim();
 }
 
+function uniq(arr) {
+  return Array.from(new Set(arr.filter(Boolean)));
+}
+
+function pad2(v) {
+  return String(v).padStart(2, '0');
+}
+
+function normalizeDateParts(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!y || !m || !d) return null;
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+}
+
+function normalizeEraDate(era, yy, mm, dd) {
+  const e = String(era || '').toUpperCase();
+  const year = Number(yy);
+  if (!year) return null;
+  let base = null;
+  if (e === 'R') base = 2018; // Reiwa 1 => 2019
+  if (e === 'H') base = 1988; // Heisei 1 => 1989
+  if (!base) return null;
+  return normalizeDateParts(base + year, mm, dd);
+}
+
 function normalizeDateToken(token) {
   if (!token) return null;
   const raw = String(token).trim();
 
-  let m = raw.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  let m = raw.match(/^([RrHh])\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (m) return normalizeEraDate(m[1], m[2], m[3], m[4]);
+
+  m = raw.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (m) return normalizeDateParts(m[1], m[2], m[3]);
 
   m = raw.match(/^(\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
   if (m) {
     const yy = Number(m[1]);
     const yyyy = yy >= 70 ? 1900 + yy : 2000 + yy;
-    return `${yyyy}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+    return normalizeDateParts(yyyy, m[2], m[3]);
   }
 
   m = raw.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
-  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  if (m) return normalizeDateParts(m[1], m[2], m[3]);
+
+  m = raw.match(/^([RrHh])(\d{1,2})年(\d{1,2})月(\d{1,2})日$/);
+  if (m) return normalizeEraDate(m[1], m[2], m[3], m[4]);
 
   return null;
 }
@@ -73,78 +100,123 @@ function findAllDateTokens(text) {
   const source = compactText(text);
   if (!source) return [];
 
-  const regex = /(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日)/g;
-  const found = new Set();
+  const regex = /([RrHh]\s*\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日|[RrHh]\d{1,2}年\d{1,2}月\d{1,2}日)/g;
+  const out = [];
   let match;
   while ((match = regex.exec(source))) {
-    const normalized = normalizeDateToken(match[1]);
-    if (normalized) found.add(normalized);
+    const d = normalizeDateToken(match[1]);
+    if (d) out.push(d);
   }
-  return Array.from(found);
+  return uniq(out);
 }
 
-function parseReportIssuedDate(text) {
+function parseIssuedDate(text) {
   const source = compactText(text);
   const patterns = [
-    /印刷日[:：]?\s*(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2})/i,
-    /作成日[:：]?\s*(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2})/i,
-    /報告日[:：]?\s*(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2})/i,
+    /(?:印刷日|作成日|報告日|作成)[:：]?\s*([RrHh]\s*\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日)/,
   ];
   for (const pattern of patterns) {
-    const match = source.match(pattern);
-    if (match) return normalizeDateToken(match[1]);
+    const m = source.match(pattern);
+    if (m) {
+      const d = normalizeDateToken(m[1]);
+      if (d) return d;
+    }
   }
   return null;
+}
+
+function parseExamDatesByLabel(text) {
+  const source = compactText(text);
+  const dates = [];
+  const patterns = [
+    /(?:検査年月日|検査日|採血日|採取日|受診日)[:：]?\s*([RrHh]\s*\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日)/g,
+  ];
+  for (const pattern of patterns) {
+    let m;
+    while ((m = pattern.exec(source))) {
+      const d = normalizeDateToken(m[1]);
+      if (d) dates.push(d);
+    }
+  }
+  return uniq(dates);
 }
 
 function looksLikePanelDateLine(line) {
   const trimmed = String(line || '').trim();
   if (!trimmed) return false;
-  const count = findAllDateTokens(trimmed).length;
-  if (count >= 2) return true;
-  if (/基準値/.test(trimmed) && count >= 1) return true;
+  const dates = findAllDateTokens(trimmed);
+  if (dates.length >= 2) return true;
+  if (/基準値/.test(trimmed) && dates.length >= 1) return true;
+  if (/正準値|検査項目/.test(trimmed) && dates.length >= 1) return true;
   return false;
 }
 
 function extractPanelDates(text) {
   const source = compactText(text);
-  const issuedDate = parseReportIssuedDate(source);
+  const issuedDate = parseIssuedDate(source);
+  const labeledExamDates = parseExamDatesByLabel(source);
   const lines = source.split('\n').map((s) => s.trim()).filter(Boolean);
 
-  let panelDateCandidates = [];
+  let candidates = [];
   for (const line of lines) {
-    if (!looksLikePanelDateLine(line)) continue;
-    panelDateCandidates.push(...findAllDateTokens(line));
+    if (looksLikePanelDateLine(line)) {
+      candidates.push(...findAllDateTokens(line));
+    }
   }
 
-  if (!panelDateCandidates.length) {
-    panelDateCandidates = findAllDateTokens(source);
+  if (!candidates.length) {
+    candidates.push(...labeledExamDates);
+  }
+  if (!candidates.length) {
+    candidates.push(...findAllDateTokens(source));
   }
 
-  const seen = new Set();
-  const filtered = [];
-  for (const d of panelDateCandidates) {
-    if (!d || seen.has(d)) continue;
-    if (issuedDate && d === issuedDate) continue;
-    seen.add(d);
-    filtered.push(d);
+  candidates = uniq(candidates).filter((d) => d && d !== issuedDate);
+  candidates.sort();
+
+  if (!candidates.length && labeledExamDates.length) {
+    candidates = labeledExamDates.slice().sort();
   }
 
-  filtered.sort();
   return {
-    issuedDate,
-    panelDates: filtered,
+    issuedDate: issuedDate || null,
+    panelDates: candidates,
+    labeledExamDates,
   };
 }
 
-function buildMetricPattern(metricDef) {
-  const aliases = metricDef.aliases
-    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .sort((a, b) => b.length - a.length);
-  return new RegExp(`(?:^|\\s)(${aliases.join('|')})(?:\\s|$)`, 'i');
+function combinePayloadTexts(payload) {
+  const parts = [
+    payload && payload.matrixRawText,
+    payload && payload.priorityRawText,
+    payload && payload.rawText,
+    payload && payload.dateRawText,
+    payload && payload.text,
+  ].map(compactText).filter(Boolean);
+  return uniq(parts).join('\n');
 }
 
-function tokenizeNumbers(line) {
+function buildMetricRegex(metricDef) {
+  const escaped = metricDef.aliases
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length);
+  return new RegExp(`(${escaped.join('|')})`, 'i');
+}
+
+function lineHasMetric(line, metricDef) {
+  return buildMetricRegex(metricDef).test(line || '');
+}
+
+function stripUnitsAndRanges(line) {
+  return String(line || '')
+    .replace(/\b\d+(?:\.\d+)?\s*[~〜-]\s*\d+(?:\.\d+)?\b/g, ' ')
+    .replace(/\b(?:mg\/dL|g\/dL|U\/L|%|mEq\/L|IU\/L|ng\/dL|pg\/mL|fL|x10|\/μL|\/ul)\b/gi, ' ')
+    .replace(/[()（）]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeNumberCells(line) {
   const out = [];
   const regex = /(-?\d+(?:\.\d+)?)(?:\s*([HL]))?/g;
   let m;
@@ -154,62 +226,57 @@ function tokenizeNumbers(line) {
   return out;
 }
 
-function removeReferenceRangeNoise(line) {
-  return String(line || '')
-    .replace(/\b\d+(?:\.\d+)?\s*[~〜-]\s*\d+(?:\.\d+)?\b/g, ' ')
-    .replace(/\b\d+(?:\.\d+)?\s*to\s*\d+(?:\.\d+)?\b/gi, ' ')
-    .replace(/\b(?:mg\/dL|g\/dL|U\/L|%|mEq\/L|x10|IU\/L|pg\/mL|ng\/dL)\b/gi, ' ');
-}
-
-function findMetricLine(text, metricDef) {
-  const pattern = buildMetricPattern(metricDef);
+function findMetricLineCandidates(text, metricDef) {
   const lines = compactText(text).split('\n');
-  for (const line of lines) {
-    if (pattern.test(line)) return line;
-  }
-  return null;
+  return lines.filter((line) => lineHasMetric(line, metricDef));
 }
 
-function extractMetricFromLineByDate(line, panelDates, targetDate) {
-  if (!line) return null;
-  const cleaned = removeReferenceRangeNoise(line);
-  const numbers = tokenizeNumbers(cleaned);
-  if (!numbers.length) return null;
-
-  // 単日表なら最初の結果値を返す
-  if (!panelDates || panelDates.length <= 1) {
-    return { value: numbers[0].value, flag: numbers[0].flag || null };
-  }
+function chooseCellForDate(tokens, panelDates, targetDate) {
+  if (!tokens.length) return null;
+  if (!panelDates.length || panelDates.length === 1) return tokens[0];
 
   const idx = Math.max(0, panelDates.indexOf(targetDate));
-  if (idx < numbers.length) {
-    return { value: numbers[idx].value, flag: numbers[idx].flag || null };
-  }
-
-  // 最後に使える値を fallback
-  const fallback = numbers[numbers.length - 1];
-  return { value: fallback.value, flag: fallback.flag || null };
+  if (idx < tokens.length) return tokens[idx];
+  if (tokens.length === panelDates.length - 1 && idx > 0 && idx - 1 < tokens.length) return tokens[idx - 1];
+  return tokens[tokens.length - 1];
 }
 
-function extractImportantMetricsByDate(text, panelDates, targetDate) {
-  const result = {};
-  for (const metric of IMPORTANT_METRICS) {
-    const line = findMetricLine(text, metric);
-    const value = extractMetricFromLineByDate(line, panelDates, targetDate);
-    if (value && value.value != null) {
-      result[metric.key] = {
-        metricKey: metric.key,
-        value: String(value.value),
-        flag: value.flag || null,
+function extractMetricValueFromText(text, metricDef, panelDates, targetDate) {
+  const candidates = findMetricLineCandidates(text, metricDef);
+  for (const line of candidates) {
+    const cleaned = stripUnitsAndRanges(line);
+    const afterMetric = cleaned.replace(buildMetricRegex(metricDef), ' ').trim();
+    const tokens = tokenizeNumberCells(afterMetric);
+    if (!tokens.length) continue;
+    const cell = chooseCellForDate(tokens, panelDates, targetDate);
+    if (cell) {
+      return {
+        metricKey: metricDef.key,
+        value: String(cell.value),
+        flag: cell.flag || null,
         sourceLine: line,
       };
     }
   }
-  return result;
+  return null;
+}
+
+function buildMetricsByDate(text, panelDates) {
+  const dates = panelDates.length ? panelDates : [null];
+  const byDate = {};
+  for (const date of dates) {
+    const key = date || 'single';
+    byDate[key] = {};
+    for (const metric of METRIC_DEFS) {
+      const value = extractMetricValueFromText(text, metric, panelDates, date);
+      if (value && value.value != null) byDate[key][metric.key] = value;
+    }
+  }
+  return byDate;
 }
 
 function pickDefaultDate(panelDates) {
-  if (!Array.isArray(panelDates) || !panelDates.length) return null;
+  if (!panelDates || !panelDates.length) return null;
   return panelDates.slice().sort().slice(-1)[0];
 }
 
@@ -232,48 +299,77 @@ function extractDateSelection(text, panelDates) {
 
 function buildDateListReply(panelDates) {
   if (!panelDates || !panelDates.length) {
-    return '血液検査画像は受け取りましたが、日付列の読み取りがまだ安定していません。もう少しはっきり写る画像があると助かります。';
+    return '血液検査画像は受け取りましたが、検査日がまだはっきり拾えていません。別角度の画像があると助かります。';
   }
   const bullets = panelDates.map((d) => `・${d}`).join('\n');
   return [
     '複数の日付を読み取りました。',
     bullets,
     '1日分を確認するなら日付をそのまま送ってください。',
-    '全部まとめて保存するなら「読み取れた日付を全部保存」と送ってください。',
+    '今までの傾向を見たい時は「今までの傾向は？」、まとめて使う時は「読み取れた日付を全部保存」と送ってください。',
   ].join('\n');
 }
 
+function labelForMetric(metricKey) {
+  const found = METRIC_DEFS.find((m) => m.key === metricKey);
+  return found ? found.label : metricKey;
+}
+
 function buildMetricReply(metricKey, date, metricData) {
-  const labels = {
-    tg: 'TG（中性脂肪）',
-    hba1c: 'HbA1c',
-    ldl: 'LDL',
-    hdl: 'HDL',
-    ast: 'AST',
-    alt: 'ALT',
-    ggt: 'γ-GTP',
-  };
-  const label = labels[metricKey] || metricKey;
+  const label = labelForMetric(metricKey);
   if (!metricData || !metricData.value) {
     return `${label} は ${date} の値がまだ安定して読めていません。別の日付を見るなら日付をそのまま送ってください。`;
   }
   return `${label} は ${date} で ${metricData.value}${metricData.flag ? `（${metricData.flag}）` : ''} と読めています。`;
 }
 
+function summarizeTrendForMetric(metricKey, metricsByDate, panelDates) {
+  const label = labelForMetric(metricKey);
+  const points = [];
+  for (const date of panelDates) {
+    const item = metricsByDate[date] && metricsByDate[date][metricKey];
+    if (item && item.value != null) points.push({ date, value: item.value, flag: item.flag || null });
+  }
+  if (points.length < 2) return null;
+  const latest = points[points.length - 1];
+  const first = points[0];
+  return `・${label}: ${first.date} は ${first.value}${first.flag ? `(${first.flag})` : ''}、${latest.date} は ${latest.value}${latest.flag ? `(${latest.flag})` : ''}`;
+}
+
+function buildTrendSummary(labState) {
+  const panelDates = labState.panelDates || [];
+  const metricsByDate = labState.metricsByDate || {};
+  if (!panelDates.length) {
+    return 'まだ推移をまとめるだけの検査日が取れていません。';
+  }
+
+  const lines = [];
+  for (const key of ['tg', 'hba1c', 'ldl', 'hdl', 'ast', 'alt', 'ggt']) {
+    const line = summarizeTrendForMetric(key, metricsByDate, panelDates);
+    if (line) lines.push(line);
+  }
+
+  if (!lines.length) {
+    return '日付は読み取れていますが、推移として安定して見える値はまだ少ないです。気になる項目を一つずつ聞いてもらえれば優先して見ます。';
+  }
+
+  return ['今までの傾向をざっくり整理します。', ...lines].join('\n');
+}
+
 function parseLabImageAnalysis(payload) {
-  const rawText = compactText(
-    payload && (payload.priorityRawText || payload.matrixRawText || payload.rawText || payload.text || '')
-  );
-  const dateInfo = extractPanelDates(rawText);
-  const selectedDate = payload && payload.selectedDate ? payload.selectedDate : pickDefaultDate(dateInfo.panelDates);
-  const metrics = extractImportantMetricsByDate(rawText, dateInfo.panelDates, selectedDate);
+  const combinedText = combinePayloadTexts(payload);
+  const dateInfo = extractPanelDates(combinedText);
+  const panelDates = dateInfo.panelDates.length ? dateInfo.panelDates : dateInfo.labeledExamDates;
+  const selectedDate = payload && payload.selectedDate ? payload.selectedDate : pickDefaultDate(panelDates);
+  const metricsByDate = buildMetricsByDate(combinedText, panelDates || []);
 
   return {
     issuedDate: dateInfo.issuedDate || null,
-    panelDates: dateInfo.panelDates,
-    selectedDate,
-    metrics,
-    rawText,
+    panelDates: panelDates || [],
+    selectedDate: selectedDate || null,
+    metrics: selectedDate ? (metricsByDate[selectedDate] || {}) : (metricsByDate.single || {}),
+    metricsByDate,
+    rawText: combinedText,
   };
 }
 
@@ -283,10 +379,15 @@ function makeLabSessionState(analysis) {
     issuedDate: analysis.issuedDate || null,
     panelDates: analysis.panelDates || [],
     selectedDate: analysis.selectedDate || null,
+    metricsByDate: analysis.metricsByDate || {},
     metricsBySelectedDate: analysis.metrics || {},
     rawText: analysis.rawText || '',
     updatedAt: new Date().toISOString(),
   };
+}
+
+function hasEnoughMetrics(metrics) {
+  return Object.keys(metrics || {}).length >= 2;
 }
 
 function handleLabFollowup(inputText, labState) {
@@ -297,16 +398,35 @@ function handleLabFollowup(inputText, labState) {
   const selectedDate = askedDate || labState.selectedDate || pickDefaultDate(labState.panelDates);
   const metricKey = detectFollowupMetric(text);
 
+  if (/傾向|推移|分析|今まで/.test(text)) {
+    return { reply: buildTrendSummary(labState), selectedDate };
+  }
+
   if (askedDate && !metricKey) {
     return {
-      reply: `${askedDate} を優先して見ます。このまま「TGは？」「HbA1cは？」のように聞いても大丈夫です。`,
+      reply: `${askedDate} を優先して見ます。このまま「TGは？」「HbA1cは？」のように聞いて大丈夫です。`,
       selectedDate: askedDate,
     };
   }
 
+  if (/全部保存|全て保存|読み取れた日付を全部保存/.test(text)) {
+    const saveable = (labState.panelDates || []).filter((d) => hasEnoughMetrics(labState.metricsByDate && labState.metricsByDate[d]));
+    if (saveable.length) {
+      return {
+        reply: `読み取れた日付のうち、主要項目が見えている ${saveable.length} 日分を整理しました。今までの傾向も見られます。`,
+        selectedDate: selectedDate || pickDefaultDate(saveable),
+        savedDates: saveable,
+      };
+    }
+    return {
+      reply: '読み取れた日付はありますが、数値の並びがまだ弱いです。気になる日付を送るか、「今までの傾向は？」と聞いてもらえれば整理を続けます。',
+      selectedDate,
+    };
+  }
+
   if (metricKey) {
-    const metrics = extractImportantMetricsByDate(labState.rawText, labState.panelDates, selectedDate);
-    const metricData = metrics[metricKey] || null;
+    const dateMetrics = (labState.metricsByDate && labState.metricsByDate[selectedDate]) || {};
+    const metricData = dateMetrics[metricKey] || null;
     return {
       reply: buildMetricReply(metricKey, selectedDate, metricData),
       selectedDate,
@@ -315,24 +435,17 @@ function handleLabFollowup(inputText, labState) {
     };
   }
 
-  if (/全部保存|全て保存|読み取れた日付を全部保存/.test(text)) {
-    return {
-      reply: '読み取れた日付はありましたが、数値の保存はまだ安定していません。今回の画像を優先して確認は続けられます。',
-      selectedDate,
-    };
-  }
-
   return null;
 }
 
 module.exports = {
-  IMPORTANT_METRICS,
+  METRIC_DEFS,
   parseLabImageAnalysis,
   makeLabSessionState,
   handleLabFollowup,
   extractPanelDates,
-  extractImportantMetricsByDate,
   extractDateSelection,
   detectFollowupMetric,
   buildDateListReply,
+  buildTrendSummary,
 };

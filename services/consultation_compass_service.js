@@ -6,8 +6,16 @@ function buildConsultationCompass({ latestInput = '', labState = null } = {}) {
   if (labState) {
     return {
       title: '相談の見方',
-      shortText: '数値の不安は、まず気になる項目を一つずつ見る流れが入りやすいです。',
-      guidanceHint: '検査画像の話なら、項目単位で確認しやすい返しを優先します。',
+      shortText: '検査の相談は、気になる項目を一つずつ確認し、必要なら今までの傾向も一緒に見る流れが入りやすいです。',
+      guidanceHint: '検査画像の話なら、項目確認と傾向整理の両方を返しやすくします。',
+    };
+  }
+
+  if (/フォーム|走り|ランニング|投球|ジャンプ|着地|筋トレ|可動域|動画|静止画|リハビリ|スポーツ/.test(text)) {
+    return {
+      title: '相談の見方',
+      shortText: 'スポーツ相談は、種目・目的・痛みの有無から整理すると入りやすいです。',
+      guidanceHint: 'スポーツ相談はフォーム・負荷・可動域・安全性の整理を優先します。',
     };
   }
 
