@@ -467,6 +467,7 @@ function buildImageMealRecordPayload(parsedMeal) {
 
 function buildLabImageReply(lab) {
   const items = Array.isArray(lab?.items) ? lab.items : [];
+  const dateCandidates = Array.isArray(lab?.dateCandidates) ? lab.dateCandidates.filter(Boolean) : [];
   const preview = items.slice(0, 5).map((item) => {
     const marker = item.flag ? ` ${item.flag}` : '';
     return `${item.itemName} ${item.value}${item.unit ? ` ${item.unit}` : ''}${marker}`;
@@ -474,6 +475,17 @@ function buildLabImageReply(lab) {
   const trendInfo = items.some((item) => Array.isArray(item.history) && item.history.length >= 2)
     ? ' 過去の列も見えた項目は推移として持っておきます。'
     : '';
+
+  if (dateCandidates.length >= 2) {
+    return [
+      '複数の日付を読み取りました。',
+      ...dateCandidates.map((date) => `・ ${date}`),
+      '',
+      '1日分を確認するなら日付をそのまま送ってください。',
+      '全部まとめて保存するなら「読み取れた日付を全部保存」と送ってください。'
+    ].filter(Boolean).join('\n');
+  }
+
   return [
     '血液検査画像を受け取りました。',
     lab?.examDate ? `検査日: ${lab.examDate}` : null,
@@ -505,35 +517,111 @@ function buildLabTrendReply(itemName, trend) {
   ].filter(Boolean).join('\n');
 }
 
+function normalizeLabDateInput(text) {
+  const safe = normalizeText(text);
+  if (!safe) return '';
+  const match = safe.match(/(20\d{2}|\d{2})[\/\-.年]\s*(\d{1,2})[\/\-.月]\s*(\d{1,2})/);
+  if (!match) return '';
+  let year = Number(match[1]);
+  if (year < 100) year += 2000;
+  const month = String(Number(match[2])).padStart(2, '0');
+  const day = String(Number(match[3])).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isSaveAllLabDatesCommand(text) {
+  const safe = normalizeText(text);
+  return /読み取れた日付を全部保存|日付を全部保存|全部保存/.test(safe);
+}
+
+async function maybeHandleLabDateCommand(userId, text, shortMemory) {
+  const followUp = shortMemory?.followUpContext || {};
+  if (!['lab', 'lab_pending'].includes(followUp.imageType)) return null;
+
+  const dateCandidates = Array.isArray(followUp.dateCandidates) ? followUp.dateCandidates.filter(Boolean) : [];
+  if (!dateCandidates.length) return null;
+
+  if (isSaveAllLabDatesCommand(text)) {
+    const panels = labImageAnalysisService.buildPanelsFromLabAnalysis({
+      source: 'image',
+      examDate: followUp.examDate || '',
+      dateCandidates,
+      items: followUp.extractedItems || []
+    }, dateCandidates);
+
+    let saved = 0;
+    for (const panel of panels) {
+      const result = await contextMemoryService.upsertLabPanel(userId, panel);
+      if (result) saved += 1;
+    }
+
+    if (saved > 0) {
+      return `読み取れた日付をまとめて保存しました。\n保存件数: ${saved}件\n血液検査グラフでも確認できます。`;
+    }
+    return '読み取れた日付はありましたが、数値の保存はまだ安定していません。今回の画像を優先して確認は続けられます。';
+  }
+
+  const selectedDate = normalizeLabDateInput(text);
+  if (!selectedDate || !dateCandidates.includes(selectedDate)) return null;
+
+  await contextMemoryService.saveShortMemory(userId, {
+    followUpContext: {
+      ...followUp,
+      selectedDate
+    }
+  });
+
+  return `${selectedDate} を優先して見ます。このまま「TGは？」「HbA1cは？」のように聞いても大丈夫です。`;
+}
+
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
   const targetName = normalizeLabTarget(safe);
   if (!targetName) return null;
 
-  const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
-  if (trend.length) return buildLabTrendReply(targetName, trend);
-
   const followUp = shortMemory?.followUpContext || {};
+  const preferredDate = normalizeText(followUp.selectedDate || '') || 'latest';
+
+  const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
+  if (trend.length) {
+    if (preferredDate !== 'latest') {
+      const exact = trend.find((row) => row.date === preferredDate);
+      if (exact) {
+        return `${targetName} は ${preferredDate} で ${exact.value}${exact.unit ? ` ${exact.unit}` : ''}${exact.flag ? ` ${exact.flag}` : ''} です。`;
+      }
+    }
+    return buildLabTrendReply(targetName, trend);
+  }
+
   const items = (followUp.imageType === 'lab' || followUp.imageType === 'lab_pending')
     ? followUp.extractedItems || []
     : [];
-  const target = items.find((item) => normalizeLabTarget(item?.itemName || '') === targetName);
-  if (target) {
-    return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
+  const target = labImageAnalysisService.getItemValueByDate(items, targetName, preferredDate);
+  if (target?.value) {
+    const prefix = preferredDate !== 'latest' ? `${preferredDate} の ` : '';
+    return `${prefix}${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
   }
 
-  const rawTarget = labImageAnalysisService.extractTargetItemFromRawText(followUp.rawText || followUp.priorityRawText || '', targetName);
+  const rawTarget = labImageAnalysisService.extractTargetItemFromRawText(
+    followUp.rawText || followUp.priorityRawText || '',
+    targetName,
+    preferredDate,
+    followUp.dateCandidates || []
+  );
   if (rawTarget?.value) {
-    return `${rawTarget.itemName} は ${rawTarget.value}${rawTarget.unit ? ` ${rawTarget.unit}` : ''}${rawTarget.flag ? ` ${rawTarget.flag}` : ''} と読めました。`;
+    const prefix = preferredDate !== 'latest' ? `${preferredDate} の ` : '';
+    return `${prefix}${rawTarget.itemName} は ${rawTarget.value}${rawTarget.unit ? ` ${rawTarget.unit}` : ''}${rawTarget.flag ? ` ${rawTarget.flag}` : ''} と読めました。`;
   }
 
   if (followUp.imageType === 'lab_pending' || followUp.imageType === 'lab') {
+    if (preferredDate !== 'latest') {
+      return `${targetName} は ${preferredDate} の値がまだ安定して読めていません。別の日付を見るなら日付をそのまま送ってください。`;
+    }
     return buildLabFollowUpFallback(targetName);
   }
 
   return `${targetName} を見る時は、血液検査の画像を送ってもらえればその画像を優先して確認します。`;
 }
-
 
 function buildImageIngestFailureReply() {
   return '画像の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
@@ -707,6 +795,7 @@ async function maybeHandleLabImage(input, imagePayload) {
           imageType: 'lab_pending',
           extractedItems: [],
           examDate: lab?.examDate || '',
+          dateCandidates: lab?.dateCandidates || [],
           rawText: lab?.rawText || '',
           priorityRawText: lab?.priorityRawText || ''
         }
@@ -715,7 +804,7 @@ async function maybeHandleLabImage(input, imagePayload) {
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。'
+        replyText: buildLabImageReply(lab)
       };
     }
 
@@ -725,7 +814,10 @@ async function maybeHandleLabImage(input, imagePayload) {
         source: 'image',
         imageType: 'lab',
         extractedItems: lab.items,
-        examDate: lab.examDate || ''
+        examDate: lab.examDate || '',
+        dateCandidates: lab.dateCandidates || [],
+        rawText: lab?.rawText || '',
+        priorityRawText: lab?.priorityRawText || ''
       }
     });
 
@@ -985,7 +1077,8 @@ async function orchestrateConversation(input) {
             source: 'image',
             imageType: 'lab_pending',
             extractedItems: [],
-            examDate: labImageHandled.analysis.examDate || ''
+            examDate: labImageHandled.analysis.examDate || '',
+            dateCandidates: labImageHandled.analysis.dateCandidates || []
           }
         });
         const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。';
@@ -1006,6 +1099,12 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
+    const labDateCommandReply = await maybeHandleLabDateCommand(input.userId, text, refreshedShortMemory);
+    if (labDateCommandReply) {
+      await appendTurn(input.userId, input.rawText || '', labDateCommandReply);
+      return { ok: true, replyMessages: [{ type: 'text', text: labDateCommandReply }], internal: { intentType: 'lab_date_command', responseMode: 'answer' } };
+    }
+
     const labFollowUpReply = await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
     if (labFollowUpReply) {
       await appendTurn(input.userId, input.rawText || '', labFollowUpReply);
