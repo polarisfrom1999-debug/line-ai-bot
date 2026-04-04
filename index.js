@@ -24,6 +24,7 @@ const webPortalDataService = require('./services/web_portal_data_service');
 const webPortalRealtimeService = require('./services/web_portal_realtime_service');
 const { supabase } = require('./services/supabase_service');
 const { ensureUser } = require('./services/user_service');
+const webLinkCommandService = require('./services/web_link_command_service');
 const webRouter = require('./routes/web');
 
 function buildLineClient() {
@@ -92,18 +93,6 @@ function normalizeEventInput(event) {
   };
 }
 
-function isWebCodeRequest(input) {
-  const text = String(input?.rawText || '').trim();
-  return /^(web|WEB|ウェブ)\s*(接続コード|コード|接続)$/.test(text) || /WEB接続コード/.test(text);
-}
-
-function getWebPortalUrl() {
-  const explicit = String(process.env.WEB_PUBLIC_URL || '').trim();
-  if (explicit) return explicit.replace(/\/$/, '');
-  const render = String(process.env.RENDER_EXTERNAL_URL || '').trim();
-  if (render) return `${render.replace(/\/$/, '')}/web`;
-  return '/web';
-}
 
 function inferWebSyncContext(input = {}, result = {}) {
   const intent = String(result?.internal?.intentType || '').trim();
@@ -137,21 +126,11 @@ function refreshWebPortalCachesForLineUser(lineUserId, options = {}) {
 }
 
 async function handleWebCodeCommand(input) {
-  const issued = await webPortalAuthService.createLinkCodeForLineUser(input.lineUserId || input.userId);
-  const webUrl = getWebPortalUrl();
+  const issued = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
   return {
     ok: true,
-    replyMessages: [{
-      type: 'text',
-      text: [
-        'WEB接続コードを発行しました。',
-        `コード: ${issued.code}`,
-        `有効期限: 約${webPortalAuthService.LINK_CODE_MINUTES}分`,
-        `WEB: ${webUrl}`,
-        'WEBを開いて、このコードを入力してください。'
-      ].join('\n')
-    }],
-    internal: { intentType: 'web_link_code', responseMode: 'support' }
+    replyMessages: [{ type: 'text', text: issued.replyText }],
+    internal: issued.internal
   };
 }
 
@@ -162,7 +141,7 @@ async function handleEvent(event) {
     if (!event || event.type !== 'message') return;
 
     const input = normalizeEventInput(event);
-    const result = isWebCodeRequest(input)
+    const result = webLinkCommandService.isWebLinkCommand(input?.rawText || '')
       ? await handleWebCodeCommand(input)
       : await conversationRouter.routeConversation(input);
 
