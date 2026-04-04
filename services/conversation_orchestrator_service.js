@@ -29,6 +29,7 @@ const {
 const { textMessageWithQuickReplies } = require('./line_service');
 const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
+const webLinkCommandService = require('./web_link_command_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -946,6 +947,16 @@ async function orchestrateConversation(input) {
 
     const intent = detectIntent(input);
     const text = normalizeText(input.rawText || '');
+
+    if (input?.messageType === 'text' && webLinkCommandService.isWebLinkCommand(text)) {
+      const webLink = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
+      await appendTurn(input.userId, input.rawText || '', webLink.replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: webLink.replyText }],
+        internal: webLink.internal
+      };
+    }
 
     const nextState = {
       nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),

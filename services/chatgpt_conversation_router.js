@@ -1,6 +1,7 @@
 'use strict';
 
 const conversationOrchestratorService = require('./conversation_orchestrator_service');
+const webLinkCommandService = require('./web_link_command_service');
 
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'sticker', 'audio', 'video', 'file', 'location', 'other']);
 
@@ -101,6 +102,7 @@ function buildRouterHints(normalized) {
     looksLikeTodayRecords: /今日の食事記録|今日の記録|食事記録教えて|今日の合計|今日どうだった/.test(text),
     looksLikeHelp: /使い方教えて|使い方|何ができる/.test(text),
     looksLikeOnboarding: /無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text),
+    looksLikeWebLinkCode: webLinkCommandService.isWebLinkCommand(text),
     looksLikeMealText: /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ|プロテイン|おにぎり/.test(text),
     looksLikeExerciseText: /歩いた|ジョギング|ランニング|走った|走りました|スクワット|筋トレ|運動|散歩|ウォーキング|歩数/.test(text),
     looksLikeWeightText: /体重|体脂肪率|kg|キロ|％|パーセント/.test(text),
