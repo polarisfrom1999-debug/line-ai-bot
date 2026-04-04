@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const bodyParser = require('body-parser');
 
@@ -18,7 +19,12 @@ app.use(bodyParser.json({ limit: '10mb' }));
 const conversationRouter = require('./services/chatgpt_conversation_router');
 const chatLogService = require('./services/chat_log_service');
 const conversationSummaryService = require('./services/conversation_summary_service');
-const memoryCurationService = require('./services/memory_curation_service');
+const webPortalAuthService = require('./services/web_portal_auth_service');
+const webPortalDataService = require('./services/web_portal_data_service');
+const webPortalRealtimeService = require('./services/web_portal_realtime_service');
+const { supabase } = require('./services/supabase_service');
+const { ensureUser } = require('./services/user_service');
+const webRouter = require('./routes/web');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -81,7 +87,71 @@ function normalizeEventInput(event) {
     traceId: chatLogService.buildTraceId(),
     timestamp: event?.timestamp || Date.now(),
     sourceType: event?.source?.type || 'unknown',
+    sourceChannel: 'line',
     originalEvent: event
+  };
+}
+
+function isWebCodeRequest(input) {
+  const text = String(input?.rawText || '').trim();
+  return /^(web|WEB|ウェブ)\s*(接続コード|コード|接続)$/.test(text) || /WEB接続コード/.test(text);
+}
+
+function getWebPortalUrl() {
+  const explicit = String(process.env.WEB_PUBLIC_URL || '').trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+  const render = String(process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (render) return `${render.replace(/\/$/, '')}/web`;
+  return '/web';
+}
+
+function inferWebSyncContext(input = {}, result = {}) {
+  const intent = String(result?.internal?.intentType || '').trim();
+  const text = String(input?.rawText || '').trim();
+  const type = String(input?.messageType || '').trim();
+
+  if (intent === 'web_link_code') return { reason: 'line_link', scopes: { chat: false, records: false, home: false } };
+  if (intent === 'meal_image' || intent === 'meal_followup' || intent === 'meal_text') return { reason: 'line_meal', scopes: { chat: true, records: true, home: true } };
+  if (intent === 'lab_image' || intent === 'lab_followup') return { reason: 'line_lab', scopes: { chat: true, records: true, home: true } };
+  if (intent === 'weight_lookup' || /(体重|kg|キロ|体脂肪|%)/.test(text)) return { reason: 'line_weight', scopes: { chat: true, records: true, home: true } };
+  if (/(運動|散歩|歩数|ウォーキング|筋トレ|activity)/i.test(text)) return { reason: 'line_activity', scopes: { chat: true, records: true, home: true } };
+  if (type === 'image') return { reason: 'line_image', scopes: { chat: true, records: true, home: true } };
+  return { reason: 'line_chat', scopes: { chat: true, records: false, home: true } };
+}
+
+function refreshWebPortalCachesForLineUser(lineUserId, options = {}) {
+  const safeLineUserId = String(lineUserId || '').trim();
+  if (!safeLineUserId) return;
+  Promise.resolve()
+    .then(async () => {
+      const user = await ensureUser(supabase, safeLineUserId, 'Asia/Tokyo');
+      if (user?.id) {
+        const reason = String(options.reason || 'line_update').trim() || 'line_update';
+        const scopes = options.scopes && typeof options.scopes === 'object' ? options.scopes : { chat: true, records: true, home: true };
+        webPortalDataService.invalidateUserCache(user.id, { reason, scopes });
+        const sync = await webPortalDataService.getSyncStatus(user);
+        webPortalRealtimeService.notifyUser(user.id, { userId: user.id, sync, reason, scopes });
+      }
+    })
+    .catch((error) => console.error('[index] refreshWebPortalCachesForLineUser error:', error?.message || error));
+}
+
+async function handleWebCodeCommand(input) {
+  const issued = await webPortalAuthService.createLinkCodeForLineUser(input.lineUserId || input.userId);
+  const webUrl = getWebPortalUrl();
+  return {
+    ok: true,
+    replyMessages: [{
+      type: 'text',
+      text: [
+        'WEB接続コードを発行しました。',
+        `コード: ${issued.code}`,
+        `有効期限: 約${webPortalAuthService.LINK_CODE_MINUTES}分`,
+        `WEB: ${webUrl}`,
+        'WEBを開いて、このコードを入力してください。'
+      ].join('\n')
+    }],
+    internal: { intentType: 'web_link_code', responseMode: 'support' }
   };
 }
 
@@ -92,13 +162,15 @@ async function handleEvent(event) {
     if (!event || event.type !== 'message') return;
 
     const input = normalizeEventInput(event);
-    const result = await conversationRouter.routeConversation(input);
+    const result = isWebCodeRequest(input)
+      ? await handleWebCodeCommand(input)
+      : await conversationRouter.routeConversation(input);
 
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
       await chatLogService.logConversationOutcome({ input, result });
       await conversationSummaryService.recordTurn({ input, result });
-      await memoryCurationService.recordStableMemories({ input, result });
+      refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, result));
       return;
     }
 
@@ -110,7 +182,7 @@ async function handleEvent(event) {
     await replyLineMessages(input.replyToken, fallbackResult.replyMessages);
     await chatLogService.logConversationOutcome({ input, result: fallbackResult });
     await conversationSummaryService.recordTurn({ input, result: fallbackResult });
-    await memoryCurationService.recordStableMemories({ input, result: fallbackResult });
+    refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, fallbackResult));
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);
     const input = normalizeEventInput(event || {});
@@ -132,6 +204,9 @@ app.get('/health', (_req, res) => {
     hasAccessToken: Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN)
   });
 });
+
+app.use('/web', express.static(path.join(__dirname, 'public/web'), { index: 'index.html' }));
+app.use('/api/web', webRouter);
 
 app.post('/webhook', async (req, res) => {
   try {
