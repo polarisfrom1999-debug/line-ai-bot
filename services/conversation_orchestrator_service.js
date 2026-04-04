@@ -9,6 +9,9 @@ const imageIngestService = require('./image_ingest_service');
 const imageClassificationService = require('./image_classification_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labImageAnalysisService = require('./lab_image_analysis_service');
+const labFollowupService = require('./lab_followup_service');
+const sportsConsultationService = require('./sports_consultation_service');
+const profileService = require('./profile_service');
 const featureFlags = require('../config/feature_flags');
 const { detectCaptureTypeFromImageAnalysis } = require('./capture_router_service');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
@@ -100,6 +103,7 @@ function detectIntent(input) {
 
   if (/今何時|何時|何月何日|今日何日|何時何分/.test(text)) return 'time_question';
   if (/今日の体重.*(教えて|知りたい)|最新の体重|今日の体脂肪率.*(教えて|知りたい)|私の体重は|私の体脂肪率は/.test(text)) return 'weight_lookup';
+  if (/プロフィール|プロフ/.test(text)) return 'profile_summary';
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
@@ -480,69 +484,81 @@ function buildImageMealRecordPayload(parsedMeal) {
 }
 
 function buildLabImageReply(lab) {
-  const items = Array.isArray(lab?.items) ? lab.items : [];
-  const preview = items.slice(0, 5).map((item) => {
-    const marker = item.flag ? ` ${item.flag}` : '';
-    return `${item.itemName} ${item.value}${item.unit ? ` ${item.unit}` : ''}${marker}`;
-  }).join(' / ');
-  const trendInfo = items.some((item) => Array.isArray(item.history) && item.history.length >= 2)
-    ? ' 過去の列も見えた項目は推移として持っておきます。'
-    : '';
-  return [
-    '血液検査画像を受け取りました。',
-    lab?.examDate ? `検査日: ${lab.examDate}` : null,
-    preview ? `読み取れた主な項目: ${preview}` : null,
-    `このまま「LDLは？」「HbA1cは？」のように聞いても大丈夫です。${trendInfo}`.trim()
-  ].filter(Boolean).join('\n');
-}
-
-function normalizeLabTarget(text) {
-  const safe = normalizeText(text).toUpperCase();
-  if (safe.includes('LDL')) return 'LDL';
-  if (safe.includes('HDL')) return 'HDL';
-  if (safe.includes('HBA1C') || safe.includes('HB1AC')) return 'HbA1c';
-  if (safe.includes('中性脂肪') || safe.includes('TG')) return '中性脂肪';
-  if (safe.includes('AST') || safe.includes('GOT')) return 'AST';
-  if (safe.includes('ALT') || safe.includes('GPT')) return 'ALT';
-  if (safe.includes('GTP')) return 'γ-GTP';
-  if (safe.includes('LDH')) return 'LDH';
-  return '';
-}
-
-function buildLabTrendReply(itemName, trend) {
-  if (!trend.length) return null;
-  const latest = trend[trend.length - 1];
-  const historyText = trend.slice(-4).map((row) => `${row.date} ${row.value}${row.unit ? ` ${row.unit}` : ''}${row.flag ? ` ${row.flag}` : ''}`).join(' / ');
-  return [
-    `${itemName} は最新で ${latest.value}${latest.unit ? ` ${latest.unit}` : ''}${latest.flag ? ` ${latest.flag}` : ''} です。`,
-    trend.length >= 2 ? `見えている推移: ${historyText}` : null
-  ].filter(Boolean).join('\n');
+  return labFollowupService.buildLabImageReply(lab);
 }
 
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
-  const targetName = normalizeLabTarget(safe);
+  const panel = shortMemory?.followUpContext?.labPanel || null;
+  if (!panel) return null;
+
+  if (labFollowupService.shouldHandleTrendQuestion(safe)) {
+    return labFollowupService.buildTrendReply(panel, safe);
+  }
+
+  const targetName = labFollowupService.normalizeTarget(safe);
   if (!targetName) return null;
 
-  const trend = await contextMemoryService.findLabItemTrend(userId, targetName);
-  if (trend.length) return buildLabTrendReply(targetName, trend);
-
-  const followUp = shortMemory?.followUpContext || {};
-  const items = followUp.imageType === 'lab'
-    ? followUp.extractedItems || []
-    : [];
-  const target = items.find((item) => normalizeLabTarget(item?.itemName || '') === targetName);
-  if (target) {
-    return `${target.itemName} は ${target.value}${target.unit ? ` ${target.unit}` : ''}${target.flag ? ` ${target.flag}` : ''} と読めました。`;
-  }
-
-  if (followUp.imageType === 'lab_pending' || followUp.imageType === 'lab') {
-    return buildLabFollowUpFallback(targetName);
-  }
-
-  return `${targetName} を見る時は、血液検査の画像を送ってもらえればその画像を優先して確認します。`;
+  const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
+  return labFollowupService.buildItemReply(panel, targetName, selectedDate);
 }
 
+async function maybeHandleLabDateSelection(input, shortMemory) {
+  const safe = normalizeText(input?.rawText || '');
+  const panel = shortMemory?.followUpContext?.labPanel || null;
+  if (!panel) return null;
+
+  const selectedDate = labFollowupService.extractRequestedDate(safe);
+  if (!selectedDate) return null;
+
+  const availableDates = labFollowupService.collectAvailableDates(panel);
+  if (!availableDates.includes(selectedDate)) return null;
+
+  await contextMemoryService.saveShortMemory(input.userId, {
+    followUpContext: {
+      ...shortMemory.followUpContext,
+      selectedLabExamDate: selectedDate,
+      availableLabDates: availableDates,
+      labPanel: panel
+    }
+  });
+
+  return labFollowupService.buildDateSelectionReply(selectedDate);
+}
+
+async function maybeHandleLabSaveAll(input, shortMemory) {
+  const safe = normalizeText(input?.rawText || '');
+  const panel = shortMemory?.followUpContext?.labPanel || null;
+  if (!panel) return null;
+  if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
+
+  await contextMemoryService.upsertLabPanel(input.userId, panel);
+  await contextMemoryService.saveShortMemory(input.userId, {
+    followUpContext: {
+      ...shortMemory.followUpContext,
+      selectedLabExamDate: panel?.latestExamDate || panel?.examDate || '',
+      labPanel: panel,
+      availableLabDates: labFollowupService.collectAvailableDates(panel)
+    }
+  });
+
+  return labFollowupService.buildSaveReply(panel);
+}
+
+async function maybeHandleSportsConsultation(input) {
+  if (input?.messageType !== 'text') return null;
+  const text = normalizeText(input?.rawText || '');
+  const intent = sportsConsultationService.detectSportsIntent(text);
+  if (!intent) return null;
+
+  return {
+    replyText: sportsConsultationService.buildSportsReply(intent),
+    internal: {
+      intentType: `sports_${intent}`,
+      responseMode: 'guided'
+    }
+  };
+}
 
 function buildImageIngestFailureReply() {
   return '画像の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
@@ -715,7 +731,9 @@ async function maybeHandleLabImage(input, imagePayload) {
           source: 'image',
           imageType: 'lab_pending',
           extractedItems: [],
-          examDate: lab?.examDate || ''
+          examDate: lab?.examDate || '',
+          latestExamDate: lab?.latestExamDate || lab?.examDate || '',
+          availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : []
         }
       });
 
@@ -732,7 +750,11 @@ async function maybeHandleLabImage(input, imagePayload) {
         source: 'image',
         imageType: 'lab',
         extractedItems: lab.items,
-        examDate: lab.examDate || ''
+        examDate: lab.examDate || '',
+        latestExamDate: lab.latestExamDate || lab.examDate || '',
+        selectedLabExamDate: lab.latestExamDate || lab.examDate || '',
+        availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+        labPanel: lab
       }
     });
 
@@ -992,10 +1014,12 @@ async function orchestrateConversation(input) {
             source: 'image',
             imageType: 'lab_pending',
             extractedItems: [],
-            examDate: labImageHandled.analysis.examDate || ''
+            examDate: labImageHandled.analysis.examDate || '',
+            latestExamDate: labImageHandled.analysis.latestExamDate || labImageHandled.analysis.examDate || '',
+            availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
           }
         });
-        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。';
+        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」「今までの傾向は？」のように聞いてもらえれば、この画像を優先して見ます。';
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,
@@ -1013,6 +1037,19 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
+
+    const labSaveReply = await maybeHandleLabSaveAll(input, refreshedShortMemory);
+    if (labSaveReply) {
+      await appendTurn(input.userId, input.rawText || '', labSaveReply);
+      return { ok: true, replyMessages: [{ type: 'text', text: labSaveReply }], internal: { intentType: 'lab_save', responseMode: 'answer' } };
+    }
+
+    const labDateReply = await maybeHandleLabDateSelection(input, refreshedShortMemory);
+    if (labDateReply) {
+      await appendTurn(input.userId, input.rawText || '', labDateReply);
+      return { ok: true, replyMessages: [{ type: 'text', text: labDateReply }], internal: { intentType: 'lab_date_select', responseMode: 'answer' } };
+    }
+
     const labFollowUpReply = await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
     if (labFollowUpReply) {
       await appendTurn(input.userId, input.rawText || '', labFollowUpReply);
@@ -1053,6 +1090,12 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
 
+    if (intent === 'profile_summary') {
+      const replyText = profileService.buildProfileSummary(await contextMemoryService.getLongMemory(input.userId));
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_summary', responseMode: 'answer' } };
+    }
+
     if (intent === 'weekly_report') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
       const replyText = await weeklyReportService.buildWeeklyReport({
@@ -1085,6 +1128,16 @@ async function orchestrateConversation(input) {
         ok: true,
         replyMessages: [replyMessage],
         internal: { intentType: stageGuideIntent, responseMode: 'guided' }
+      };
+    }
+
+    const sportsHandled = await maybeHandleSportsConsultation(input);
+    if (sportsHandled) {
+      await appendTurn(input.userId, input.rawText || '', sportsHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: sportsHandled.replyText }],
+        internal: sportsHandled.internal
       };
     }
 
