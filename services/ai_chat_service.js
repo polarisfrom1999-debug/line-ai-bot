@@ -28,7 +28,7 @@ function inferAiStyle(aiType) {
   return 'balanced';
 }
 
-function buildSystemPrompt(hiddenContext, responseMode, longMemory, conversationSummary) {
+function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
   const aiStyle = inferAiStyle(longMemory?.aiType);
   const preferredName = normalizeText(longMemory?.preferredName || '');
 
@@ -45,8 +45,6 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory, conversation
     preferredName ? `ユーザーの呼び方の候補: ${preferredName}` : null,
     `AIスタイル: ${aiStyle}`,
     `responseMode: ${responseMode || 'empathy_plus_one_hint'}`,
-    conversationSummary ? `[要約レイヤ]
-${conversationSummary}` : null,
     hiddenContext ? hiddenContext : ''
   ].filter(Boolean).join('\n');
 }
@@ -138,7 +136,7 @@ async function callOpenAI(messages) {
 }
 
 async function generateReply(params) {
-  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode, params?.longMemory || {}, params?.conversationSummary || '');
+  const systemPrompt = buildSystemPrompt(params?.hiddenContext, params?.responseMode, params?.longMemory || {});
   const recent = convertRecentMessages(params?.recentMessages);
 
   const messages = [

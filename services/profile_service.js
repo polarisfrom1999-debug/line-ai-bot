@@ -1,79 +1,149 @@
 'use strict';
 
-/**
- * services/profile_service.js
- *
- * 明示入力だけで重要プロフィールを更新する。
- */
-
-function normalizeName(name) {
-  const cleaned = String(name || '').trim().replace(/[！!。.]$/g, '');
-  if (!cleaned) return null;
-  if (/日になりそう|暖かい|気分/.test(cleaned)) return null;
-  if (cleaned.length > 20) return null;
-  return cleaned;
+function normalizeText(value) {
+  return String(value || '').trim();
 }
 
-function parseExplicitProfileInput(text) {
-  const src = String(text || '').trim();
-  const out = {};
-
-  let m = src.match(/^名前は\s*(.+?)\s*です[！!。]?$/);
-  if (m) {
-    const n = normalizeName(m[1]);
-    if (n) out.preferredName = n;
-  }
-
-  m = src.match(/^(.+?)\s*と呼んでください[！!。]?$/);
-  if (m) {
-    const n = normalizeName(m[1]);
-    if (n) out.preferredName = n;
-  }
-
-  m = src.match(/(\d+(?:\.\d+)?)\s*kg/);
-  if (m) out.weightKg = Number(m[1]);
-
-  m = src.match(/(19\d{2}|20\d{2})年生まれ/);
-  if (m) out.birthYear = Number(m[1]);
-
-  return out;
+function toHalfWidth(text) {
+  return normalizeText(text).replace(/[０-９．％]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
 }
 
-function mergeProfile(profile = {}, updates = {}) {
-  return { ...profile, ...updates, updatedAt: new Date().toISOString() };
+function extractLineValue(line, label) {
+  const regex = new RegExp(`^${label}[：:]\s*(.+)$`);
+  const match = normalizeText(line).match(regex);
+  return match ? normalizeText(match[1]) : '';
 }
 
-function describeProfile(profile = {}) {
-  const parts = [];
-  if (profile.preferredName) parts.push(`名前は「${profile.preferredName}」`);
-  if (profile.weightKg != null) parts.push(`体重は${profile.weightKg}kg`);
-  if (profile.birthYear) parts.push(`生年は${profile.birthYear}年`);
-  return parts.length ? `${parts.join('、')}として見ています。` : '今のところプロフィール情報はまだ多くありません。';
+function splitLines(text) {
+  return normalizeText(text)
+    .split(/\n+/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
 }
 
-function answerProfileQuestion(text, profile = {}) {
-  const src = String(text || '');
-  if (/名前.*覚えて|私の名前|名前は\?$|名前は？/.test(src)) {
-    return profile.preferredName
-      ? `名前は「${profile.preferredName}」として覚えています。`
-      : 'まだ名前ははっきり受け取れていないので、よければ「名前は うっし〜です」のように送ってください。';
+function normalizeWeightLike(value, unit) {
+  const safe = toHalfWidth(value).replace(/[^\d.]/g, '');
+  if (!safe) return normalizeText(value);
+  return unit ? `${safe}${unit}` : safe;
+}
+
+
+function sanitizePreferredName(value) {
+  const safe = normalizeText(value)
+    .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
+    .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .trim();
+
+  if (!safe) return '';
+  if (safe.length > 12) return '';
+  if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
+  if (/\s/.test(safe)) return '';
+  return safe;
+}
+
+function normalizeProfileValue(key, value) {
+  const safe = normalizeText(value);
+  if (!safe) return '';
+
+  if (key === 'preferredName') return sanitizePreferredName(safe);
+  if (key === 'weight') return normalizeWeightLike(safe, 'kg');
+  if (key === 'bodyFat') return normalizeWeightLike(safe, '%');
+  return safe;
+}
+
+function extractProfilePatchFromText(text) {
+  const lines = splitLines(text);
+  const patch = {};
+
+  for (const line of lines) {
+    const name = extractLineValue(line, '名前');
+    const age = extractLineValue(line, '年齢');
+    const weight = extractLineValue(line, '体重');
+    const bodyFat = extractLineValue(line, '体脂肪率');
+    const goal = extractLineValue(line, '目標');
+
+    if (name) {
+      const preferredName = normalizeProfileValue('preferredName', name);
+      if (preferredName) patch.preferredName = preferredName;
+    }
+    if (age) patch.age = normalizeProfileValue('age', age);
+    if (weight) patch.weight = normalizeProfileValue('weight', weight);
+    if (bodyFat) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFat);
+    if (goal) patch.goal = normalizeProfileValue('goal', goal);
   }
 
-  if (/プロフィール/.test(src)) {
-    return describeProfile(profile);
+  return patch;
+}
+
+function buildProfileSummary(longMemory) {
+  const lines = [];
+
+  const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
+  if (preferredName) lines.push(`名前: ${preferredName}`);
+  if (longMemory?.age) lines.push(`年齢: ${longMemory.age}`);
+  if (longMemory?.weight) lines.push(`体重: ${longMemory.weight}`);
+  if (longMemory?.bodyFat) lines.push(`体脂肪率: ${longMemory.bodyFat}`);
+  if (longMemory?.goal) lines.push(`目標: ${longMemory.goal}`);
+  if (longMemory?.aiType) lines.push(`AIタイプ: ${longMemory.aiType}`);
+  if (longMemory?.constitutionType) lines.push(`体質タイプ: ${longMemory.constitutionType}`);
+  if (longMemory?.selectedPlan) lines.push(`プラン: ${longMemory.selectedPlan}`);
+
+  const narrative = longMemory?.narrativeMemory || {};
+  if (Array.isArray(narrative?.supportStyleNotes) && narrative.supportStyleNotes.length) {
+    lines.push(`伴走メモ: ${narrative.supportStyleNotes.slice(0, 2).join(' / ')}`);
   }
 
-  if (/体重/.test(src) && profile.weightKg != null) {
-    return `体重は ${profile.weightKg}kg として見ています。`;
+  if (!lines.length) {
+    return 'プロフィールはまだ強く残っていません。これから少しずつ整えていきましょう。';
   }
 
-  return null;
+  return lines.join('\n');
+}
+
+function buildProfileUpdatedReply(patch) {
+  const lines = ['プロフィールを更新しました。'];
+
+  const preferredName = sanitizePreferredName(patch?.preferredName || '');
+  if (preferredName) lines.push(`名前: ${preferredName}`);
+  if (patch?.age) lines.push(`年齢: ${patch.age}`);
+  if (patch?.weight) lines.push(`体重: ${patch.weight}`);
+  if (patch?.bodyFat) lines.push(`体脂肪率: ${patch.bodyFat}`);
+  if (patch?.goal) lines.push(`目標: ${patch.goal}`);
+
+  return lines.join('\n');
+}
+
+function buildMemoryAnswer(longMemory) {
+  const lines = [];
+
+  const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
+  if (preferredName) lines.push(`名前は「${preferredName}」として覚えています。`);
+  if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
+  if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
+  if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
+  if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
+  if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
+  if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
+  if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
+
+  const narrative = longMemory?.narrativeMemory || {};
+  if (Array.isArray(narrative?.strugglePatterns) && narrative.strugglePatterns.length) {
+    lines.push(`最近は「${narrative.strugglePatterns.slice(0, 2).join(' / ')}」も頭に置いています。`);
+  }
+  if (Array.isArray(narrative?.backgroundContexts) && narrative.backgroundContexts.length) {
+    lines.push(`生活背景では「${narrative.backgroundContexts.slice(0, 2).join(' / ')}」も見ています。`);
+  }
+
+  if (!lines.length) {
+    return '今はまだ強く残っていることは多くないので、これから少しずつ覚えていきますね。';
+  }
+
+  return lines.join('\n');
 }
 
 module.exports = {
-  normalizeName,
-  parseExplicitProfileInput,
-  mergeProfile,
-  describeProfile,
-  answerProfileQuestion,
+  extractProfilePatchFromText,
+  buildProfileSummary,
+  buildProfileUpdatedReply,
+  buildMemoryAnswer
 };

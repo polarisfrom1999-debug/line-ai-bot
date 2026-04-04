@@ -109,10 +109,21 @@ function buildKeyFacts(memorySnapshot) {
   return facts;
 }
 
+async function getMemorySnapshotSafe(userId) {
+  if (!userId) return null;
+  if (typeof contextMemoryService.getMemorySnapshot === 'function') {
+    return contextMemoryService.getMemorySnapshot(userId).catch(() => null);
+  }
+  if (typeof contextMemoryService.getLongMemory === 'function') {
+    return contextMemoryService.getLongMemory(userId).catch(() => null);
+  }
+  return null;
+}
+
 async function recordTurn({ input, result }) {
   if (!input?.userId || !result) return;
 
-  const memorySnapshot = await contextMemoryService.getMemorySnapshot(input.userId).catch(() => null);
+  const memorySnapshot = await getMemorySnapshotSafe(input.userId);
   const userText = normalizeText(input.rawText || (input.messageType === 'image' ? '[image]' : ''));
   const replyText = normalizeText((Array.isArray(result.replyMessages) ? result.replyMessages : []).map((m) => normalizeText(m?.text || '')).filter(Boolean).join('\n'));
   const topics = extractTopics(userText, result.internal || {});
