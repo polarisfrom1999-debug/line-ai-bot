@@ -52,6 +52,9 @@ function getWebPortalUrl() {
 async function buildWebLinkReplyByLineUser(lineUserId) {
   const issued = await webPortalAuthService.createLinkCodeForLineUser(lineUserId);
   const webUrl = getWebPortalUrl();
+  const debug = typeof webPortalAuthService.getStorageDebugInfo === 'function'
+    ? webPortalAuthService.getStorageDebugInfo()
+    : { mode: issued?.storageMode || 'db', fallbackReason: '' };
 
   return {
     ok: true,
@@ -60,11 +63,14 @@ async function buildWebLinkReplyByLineUser(lineUserId) {
       `コード: ${issued.code}`,
       `有効期限: 約${webPortalAuthService.LINK_CODE_MINUTES}分`,
       `WEB: ${webUrl}`,
-      'WEBを開いて、このコードを入力してください。'
+      'WEBを開いて、このコードを入力してください。',
+      'ハイフンが入っていても、そのまま入力して大丈夫です。'
     ].join('\n'),
     internal: {
       intentType: 'web_link_code',
-      responseMode: 'support'
+      responseMode: 'support',
+      webLinkStorageMode: debug.mode || issued?.storageMode || 'db',
+      webLinkFallbackReason: debug.fallbackReason || ''
     }
   };
 }
