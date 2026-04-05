@@ -30,6 +30,7 @@ const { textMessageWithQuickReplies } = require('./line_service');
 const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
+const lineEntryGatewayService = require('./line_entry_gateway_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -948,37 +949,16 @@ async function orchestrateConversation(input) {
     const intent = detectIntent(input);
     const text = normalizeText(input.rawText || '');
 
-    if (input?.messageType === 'text' && webLinkCommandService.isWebLinkCommand(text)) {
-      try {
-        const webLink = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
-        await appendTurn(input.userId, input.rawText || '', webLink.replyText);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: webLink.replyText }],
-          internal: webLink.internal
-        };
-      } catch (error) {
-        console.error('[conversation_orchestrator] web link command error:', error?.message || error);
-        const webUrl = typeof webLinkCommandService.getWebPortalUrl === 'function'
-          ? webLinkCommandService.getWebPortalUrl()
-          : '/web';
-        const replyText = [
-          'WEB接続コードの発行で準備エラーが起きました。',
-          `WEB: ${webUrl}`,
-          '接続コード発行ルートを確認中です。少し時間をあけて、もう一度「WEB接続コード」と送ってください。'
-        ].join('\n');
-        await appendTurn(input.userId, input.rawText || '', replyText);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
-          internal: {
-            intentType: 'web_link_code_error',
-            responseMode: 'support',
-            errorMessage: String(error?.message || error || '')
-          }
-        };
-      }
+    const entryHandled = await lineEntryGatewayService.tryHandleLineEntry(input);
+    if (entryHandled?.handled) {
+      await appendTurn(input.userId, input.rawText || '', entryHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: entryHandled.replyMessages,
+        internal: entryHandled.internal
+      };
     }
+
 
     const nextState = {
       nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),

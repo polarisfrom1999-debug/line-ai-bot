@@ -39,38 +39,53 @@ function isWebLinkCommand(text) {
   return false;
 }
 
-function getWebPortalUrl() {
-  const explicit = normalizeText(process.env.WEB_PUBLIC_URL);
+function getBaseUrl() {
+  const explicit = normalizeText(process.env.WEB_PUBLIC_URL || process.env.APP_PUBLIC_URL || '');
   if (explicit) return explicit.replace(/\/$/, '');
+  const render = normalizeText(process.env.RENDER_EXTERNAL_URL || '');
+  if (render) return render.replace(/\/$/, '');
+  return '';
+}
 
-  const render = normalizeText(process.env.RENDER_EXTERNAL_URL);
-  if (render) return `${render.replace(/\/$/, '')}/web`;
+function getWebPortalUrl() {
+  const base = getBaseUrl();
+  if (!base) return '/web';
+  if (/\/web$/i.test(base)) return base;
+  return `${base}/web`;
+}
 
-  return '/web';
+function buildAutoConnectUrl(code) {
+  const baseUrl = getWebPortalUrl();
+  if (!baseUrl.startsWith('http')) return baseUrl;
+  return `${baseUrl}?code=${encodeURIComponent(code)}`;
 }
 
 async function buildWebLinkReplyByLineUser(lineUserId) {
   const issued = await webPortalAuthService.createLinkCodeForLineUser(lineUserId);
   const webUrl = getWebPortalUrl();
+  const autoConnectUrl = buildAutoConnectUrl(issued.code);
   const debug = typeof webPortalAuthService.getStorageDebugInfo === 'function'
     ? webPortalAuthService.getStorageDebugInfo()
-    : { mode: issued?.storageMode || 'db', fallbackReason: '' };
+    : { mode: issued?.storageMode || 'stateless', fallbackReason: '' };
 
   return {
     ok: true,
     replyText: [
       'WEB接続コードを発行しました。',
-      `コード: ${issued.code}`,
+      `接続コード: ${issued.code}`,
       `有効期限: 約${webPortalAuthService.LINK_CODE_MINUTES}分`,
       `WEB: ${webUrl}`,
-      'WEBを開いて、このコードを入力してください。',
-      'ハイフンが入っていても、そのまま入力して大丈夫です。'
+      `自動接続URL: ${autoConnectUrl}`,
+      '一番かんたんなのは、自動接続URLをそのまま開く方法です。',
+      'コード入力欄には、接続コードだけでなく自動接続URL全体を貼っても大丈夫です。'
     ].join('\n'),
     internal: {
       intentType: 'web_link_code',
       responseMode: 'support',
-      webLinkStorageMode: debug.mode || issued?.storageMode || 'db',
-      webLinkFallbackReason: debug.fallbackReason || ''
+      webLinkStorageMode: debug.mode || issued?.storageMode || 'stateless',
+      webLinkFallbackReason: debug.fallbackReason || '',
+      webPortalUrl: webUrl,
+      autoConnectUrl
     }
   };
 }
@@ -78,5 +93,6 @@ async function buildWebLinkReplyByLineUser(lineUserId) {
 module.exports = {
   isWebLinkCommand,
   getWebPortalUrl,
+  buildAutoConnectUrl,
   buildWebLinkReplyByLineUser
 };
