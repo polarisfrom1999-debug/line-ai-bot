@@ -25,6 +25,7 @@ const webPortalRealtimeService = require('./services/web_portal_realtime_service
 const { supabase } = require('./services/supabase_service');
 const { ensureUser } = require('./services/user_service');
 const webLinkCommandService = require('./services/web_link_command_service');
+const lineEntryGatewayService = require('./services/line_entry_gateway_service');
 const webRouter = require('./routes/web');
 
 function buildLineClient() {
@@ -165,9 +166,8 @@ async function handleEvent(event) {
     if (!event || event.type !== 'message') return;
 
     const input = normalizeEventInput(event);
-    const result = webLinkCommandService.isWebLinkCommand(input?.rawText || '')
-      ? await handleWebCodeCommand(input)
-      : await conversationRouter.routeConversation(input);
+    const preHandled = await lineEntryGatewayService.tryHandleLineEntry(input);
+    const result = preHandled || await conversationRouter.routeConversation(input);
 
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
