@@ -22,6 +22,18 @@ function getSessionToken(req) {
   return String(req.query?.token || '').trim();
 }
 
+
+function looksAuthFailure(error) {
+  const safe = String(error?.message || error || '').toLowerCase();
+  return [
+    'invalid_token',
+    'invalid_signature',
+    'token_expired',
+    'unsupported_token_version',
+    'invalid_token_type'
+  ].some((part) => safe.includes(part));
+}
+
 async function requireSession(req, res, next) {
   try {
     const token = getSessionToken(req);
@@ -33,6 +45,9 @@ async function requireSession(req, res, next) {
     next();
   } catch (error) {
     console.error('[web] requireSession error:', error?.message || error);
+    if (looksAuthFailure(error)) {
+      return res.status(401).json({ ok: false, error: 'invalid_session', message: '接続の有効期限が切れているか、接続情報が古くなっています。もう一度コードを入力してください。' });
+    }
     res.status(500).json({ ok: false, error: 'session_error', message: '接続確認でエラーが起きました。' });
   }
 }
