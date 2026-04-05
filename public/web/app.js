@@ -1,4 +1,6 @@
 
+const APP_VERSION = 'phase12-root-rebuild';
+
 const state = {
   token: localStorage.getItem('kokokara_web_token') || '',
   profile: null,
@@ -32,6 +34,37 @@ function qs(sel) { return document.querySelector(sel); }
 function qsa(sel) { return Array.from(document.querySelectorAll(sel)); }
 function escapeHtml(text) {
   return String(text || '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function extractCodeCandidate(value) {
+  const safe = String(value || '').trim();
+  if (!safe) return '';
+  if (/^https?:\/\//i.test(safe)) {
+    try {
+      const url = new URL(safe);
+      return String(url.searchParams.get('code') || url.searchParams.get('token') || '').trim();
+    } catch (_error) {
+      return safe;
+    }
+  }
+  return safe;
+}
+
+function readCodeFromLocation() {
+  try {
+    const url = new URL(window.location.href);
+    return String(url.searchParams.get('code') || '').trim();
+  } catch (_error) {
+    return '';
+  }
+}
+
+function clearCodeFromLocation() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('code');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch (_error) {}
 }
 
 function normalizeSyncPayload(sync = {}) {
@@ -261,6 +294,19 @@ async function api(path, options = {}) {
     throw error;
   }
   return data;
+}
+
+async function validateSessionToken() {
+  if (!state.token) return null;
+  try {
+    return await api('/me');
+  } catch (error) {
+    if (error.isAuthError) {
+      resetAuthState(error.message || '接続が切れました。もう一度コードを入力してください。');
+      return null;
+    }
+    throw error;
+  }
 }
 
 function setMessage(text, isError = false) {
@@ -1106,12 +1152,17 @@ async function initializeSession(force = false) {
     closeRealtime();
     showView('home');
     renderProfile();
-    setStatus('LINEで接続コードを発行してから、ここで入力してください。');
+    setStatus(`LINEで接続コードを発行してから、ここで入力してください。 (${APP_VERSION})`);
     syncSendButton();
     return;
   }
   try {
     setLoading(true, 'WEBの準備をしています…');
+    const me = await validateSessionToken();
+    if (!me) return;
+    state.profile = me.profile || state.profile;
+    state.sessionExpiresAt = me.session?.expiresAt || state.sessionExpiresAt;
+    renderProfile();
     await loadBootstrap(force, requestId);
     state.pendingSync = null;
     state.pendingSyncCount = 0;
@@ -1125,6 +1176,7 @@ async function initializeSession(force = false) {
     setStatus('最新状態を読み込みました。', 'success');
   } catch (error) {
     if (error.isAuthError) return resetAuthState(error.message);
+    if (error.isAuthError) { resetAuthState(error.message); return; }
     setMessage(error.message, true);
     setStatus(error.message, 'error');
   } finally {
@@ -1133,7 +1185,7 @@ async function initializeSession(force = false) {
 }
 
 async function connect() {
-  const code = qs('#codeInput').value.trim().toUpperCase();
+  const code = extractCodeCandidate(qs('#codeInput').value).trim();
   if (!code) return setMessage('接続コードを入力してください。', true);
   try {
     setLoading(true, '接続を確認しています…');
@@ -1144,11 +1196,13 @@ async function connect() {
     state.bootstrapped = false;
     localStorage.setItem('kokokara_web_token', state.token);
     renderProfile();
-    setMessage('接続できました。');
+    setMessage(`接続できました。 (${APP_VERSION})`);
     setStatus('接続できました。最新情報を読み込みます。', 'success');
     await initializeSession(true);
     qs('#codeInput').value = '';
+    clearCodeFromLocation();
   } catch (error) {
+    if (error.isAuthError) { resetAuthState(error.message); return; }
     setMessage(error.message, true);
     setStatus(error.message, 'error');
   } finally {
@@ -1337,8 +1391,14 @@ qs('#chatInput').value = state.chatDraft || '';
 autoResizeChatInput();
 syncSendButton();
 startSyncPolling();
-initializeSession();
 
+const initialCode = readCodeFromLocation();
+if (initialCode && !state.token) {
+  qs('#codeInput').value = initialCode;
+  connect();
+} else {
+  initializeSession();
+}
 
 window.addEventListener('pagehide', () => { if (state.token) rememberVisitNow(); });
 window.addEventListener('beforeunload', () => { if (state.token) rememberVisitNow(); });
