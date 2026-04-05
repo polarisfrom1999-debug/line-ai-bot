@@ -126,12 +126,36 @@ function refreshWebPortalCachesForLineUser(lineUserId, options = {}) {
 }
 
 async function handleWebCodeCommand(input) {
-  const issued = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
-  return {
-    ok: true,
-    replyMessages: [{ type: 'text', text: issued.replyText }],
-    internal: issued.internal
-  };
+  try {
+    const issued = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
+    return {
+      ok: true,
+      replyMessages: [{ type: 'text', text: issued.replyText }],
+      internal: issued.internal
+    };
+  } catch (error) {
+    console.error('[index] handleWebCodeCommand error:', error?.message || error);
+    const webUrl = typeof webLinkCommandService.getWebPortalUrl === 'function'
+      ? webLinkCommandService.getWebPortalUrl()
+      : '/web';
+    return {
+      ok: true,
+      replyMessages: [{
+        type: 'text',
+        text: [
+          'WEB接続コードの発行で準備エラーが起きました。',
+          'まず /web の画面は開けています。',
+          `WEB: ${webUrl}`,
+          'このまま運営側で接続コード発行ルートを確認します。少し時間をあけて、もう一度「WEB接続コード」と送ってください。'
+        ].join('\n')
+      }],
+      internal: {
+        intentType: 'web_link_code_error',
+        responseMode: 'support',
+        errorMessage: String(error?.message || error || '')
+      }
+    };
+  }
 }
 
 async function handleEvent(event) {
