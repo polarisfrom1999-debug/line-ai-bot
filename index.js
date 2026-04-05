@@ -25,7 +25,7 @@ const webPortalRealtimeService = require('./services/web_portal_realtime_service
 const { supabase } = require('./services/supabase_service');
 const { ensureUser } = require('./services/user_service');
 const webLinkCommandService = require('./services/web_link_command_service');
-const lineEntryGatewayService = require('./services/line_entry_gateway_service');
+const inputGatewayService = require('./services/input_gateway_service');
 const webRouter = require('./routes/web');
 
 function buildLineClient() {
@@ -166,8 +166,10 @@ async function handleEvent(event) {
     if (!event || event.type !== 'message') return;
 
     const input = normalizeEventInput(event);
-    const preHandled = await lineEntryGatewayService.tryHandleLineEntry(input);
-    const result = preHandled || await conversationRouter.routeConversation(input);
+    const gatewayResult = await inputGatewayService.handleLineTopLevel(input);
+    const result = gatewayResult?.handled
+      ? { ok: true, replyMessages: gatewayResult.replyMessages, internal: gatewayResult.internal || {} }
+      : await conversationRouter.routeConversation({ ...input, entryLane: gatewayResult?.lane || '' });
 
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
@@ -202,6 +204,7 @@ app.get('/health', (_req, res) => {
   res.status(200).json({
     ok: true,
     service: 'kokokara-line-ai',
+    version: 'phase12-root-rebuild',
     time: new Date().toISOString(),
     lineSdkLoaded: Boolean(line),
     hasAccessToken: Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN)
