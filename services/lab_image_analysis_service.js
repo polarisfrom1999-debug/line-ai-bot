@@ -187,7 +187,7 @@ function buildStructurePrompt() {
     '単日表で結果列の日付が無い時だけ reportDate を examDates に入れてください。',
     '{',
     '  "isLabImage": true,',
-    '  "documentKind": "single_panel | multi_panel | unknown",',
+    '  "documentKind": "single_panel | multi_panel | chat_screenshot | unknown",',
     '  "reportDate": "YYYY-MM-DD or empty",',
     '  "examDates": ["YYYY-MM-DD"],',
     '  "latestExamDate": "YYYY-MM-DD or empty"',
@@ -206,6 +206,7 @@ function buildValuesPrompt(examDates) {
     '左側の基準値列や正常値列は value に入れないでください。結果列の値だけを使ってください。',
     '以下の固定項目を優先してください: 総コレステロール, LDL, HDL, LDL/HDL比, 中性脂肪, HbA1c, AST, ALT, γ-GTP, クレアチニン, eGFR, 尿酸, 血糖, CPK, LDH。',
     '複数日付表では各項目の history に日付ごとの値を入れてください。最新日付の値は currentValue にも入れてください。',
+    '重要: LINEやチャット画面のスクリーンショット、会話の吹き出し、入力欄、共有ボタン、スマホUIが大きく写っている時は、isLabImage を false にしてください。',
     '{',
     '  "isLabImage": true,',
     '  "items": [',
@@ -238,6 +239,25 @@ async function analyzeLabImage(imagePayload) {
 
   const values = await analyzeJsonPrompt(imagePayload, buildValuesPrompt(structureDates));
   const valuesJson = values.json || {};
+
+  const documentKind = normalizeText(structureJson.documentKind || '').toLowerCase();
+  if (documentKind === 'chat_screenshot') {
+    return {
+      source: 'image',
+      isLabImage: false,
+      labLike: false,
+      reportDate: '',
+      examDate: '',
+      latestExamDate: '',
+      examDates: [],
+      availableDates: [],
+      documentKind: 'chat_screenshot',
+      items: [],
+      trendSummary: '',
+      confidence: 0.1,
+      ignoredReason: 'chat_screenshot'
+    };
+  }
 
   let latestExamDate = normalizeDateToken(structureJson.latestExamDate || '');
   let items = normalizeItems(valuesJson.items, latestExamDate);

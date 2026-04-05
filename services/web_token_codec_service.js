@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 
-const VERSION = 1;
+const VERSION = 2;
 const TYPE_LINK = 1;
 const TYPE_SESSION = 2;
 const TOKEN_SECRET = String(
@@ -13,6 +13,8 @@ const TOKEN_SECRET = String(
   'kokokara-web-secret'
 );
 const SIGNATURE_BYTES = 12;
+const LINK_PREFIX = 'K12-';
+const SESSION_PREFIX = 'S12-';
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -86,32 +88,41 @@ function verifyToken(token, expectedType) {
   };
 }
 
+function stripKnownPrefix(token) {
+  const safe = normalizeText(token);
+  if (safe.startsWith(LINK_PREFIX)) return safe.slice(LINK_PREFIX.length);
+  if (safe.startsWith(SESSION_PREFIX)) return safe.slice(SESSION_PREFIX.length);
+  return safe;
+}
+
 function createLinkCode({ userId, expiresAt }) {
-  return makeToken(TYPE_LINK, { userId, expiresAt });
+  return `${LINK_PREFIX}${makeToken(TYPE_LINK, { userId, expiresAt })}`;
 }
 
 function createSessionToken({ userId, expiresAt }) {
-  return makeToken(TYPE_SESSION, { userId, expiresAt });
+  return `${SESSION_PREFIX}${makeToken(TYPE_SESSION, { userId, expiresAt })}`;
 }
 
 function verifyLinkCode(token) {
-  return verifyToken(token, TYPE_LINK);
+  return verifyToken(stripKnownPrefix(token), TYPE_LINK);
 }
 
 function verifySessionToken(token) {
-  return verifyToken(token, TYPE_SESSION);
+  return verifyToken(stripKnownPrefix(token), TYPE_SESSION);
 }
 
 function looksLikeSignedToken(token) {
   try {
-    const raw = fromBase64url(token);
-    return raw.length === 22 + SIGNATURE_BYTES && raw.readUInt8(0) === VERSION;
+    const raw = fromBase64url(stripKnownPrefix(token));
+    return raw.length === 22 + SIGNATURE_BYTES && [1, VERSION].includes(raw.readUInt8(0));
   } catch (_error) {
     return false;
   }
 }
 
 module.exports = {
+  LINK_PREFIX,
+  SESSION_PREFIX,
   createLinkCode,
   createSessionToken,
   verifyLinkCode,

@@ -71,13 +71,14 @@ async function buildWebLinkReplyByLineUser(lineUserId) {
   return {
     ok: true,
     replyText: [
-      'WEB接続コードを発行しました。',
+      'WEB接続コード [phase12] を発行しました。',
       `接続コード: ${issued.code}`,
       `有効期限: 約${webPortalAuthService.LINK_CODE_MINUTES}分`,
       `WEB: ${webUrl}`,
       `自動接続URL: ${autoConnectUrl}`,
-      '一番かんたんなのは、自動接続URLをそのまま開く方法です。',
-      'コード入力欄には、接続コードだけでなく自動接続URL全体を貼っても大丈夫です。'
+      'まずは自動接続URLを開く方法がいちばん確実です。',
+      '入力欄には、接続コードだけでなく自動接続URL全体を貼っても大丈夫です。',
+      'もし別バージョンの短いコードが出たら、まだ旧入口が動いています。phase12 の反映を確認してください。'
     ].join('\n'),
     internal: {
       intentType: 'web_link_code',

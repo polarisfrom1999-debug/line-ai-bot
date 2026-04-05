@@ -8,7 +8,8 @@ const lineMediaService = require('./line_media_service');
 const imageIngestService = require('./image_ingest_service');
 const imageClassificationService = require('./image_classification_service');
 const mealAnalysisService = require('./meal_analysis_service');
-const labImageAnalysisService = require('./lab_image_analysis_service');
+const labDocumentIngestService = require('./lab_document_ingest_service');
+const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
 const sportsConsultationService = require('./sports_consultation_service');
 const profileService = require('./profile_service');
@@ -30,7 +31,6 @@ const { textMessageWithQuickReplies } = require('./line_service');
 const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
-const lineEntryGatewayService = require('./line_entry_gateway_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -491,7 +491,7 @@ function buildLabImageReply(lab) {
 
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
-  const panel = shortMemory?.followUpContext?.labPanel || null;
+  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
   if (!panel) return null;
 
   if (labFollowupService.shouldHandleTrendQuestion(safe)) {
@@ -507,7 +507,7 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
 async function maybeHandleLabDateSelection(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || null;
+  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
   if (!panel) return null;
 
   const selectedDate = labFollowupService.extractRequestedDate(safe);
@@ -530,7 +530,7 @@ async function maybeHandleLabDateSelection(input, shortMemory) {
 
 async function maybeHandleLabSaveAll(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || null;
+  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
   if (!panel) return null;
   if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
 
@@ -720,7 +720,8 @@ async function maybeHandleLabImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
 
   try {
-    const lab = await labImageAnalysisService.analyzeLabImage(imagePayload);
+    const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
+    const lab = ingest?.panel || null;
     const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
     if (!lab?.isLabImage && !lab?.labLike) {
       return { handled: false, analysis: lab || null };
@@ -742,7 +743,7 @@ async function maybeHandleLabImage(input, imagePayload) {
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」のように聞いてもらえれば、この画像を優先して見ます。'
+        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識しましたが、まだ表の位置が安定していません。phase12 では同じ画像を何度も揺らさないよう固定保存する設計に切り替えています。まずは「2025-03-24」や「TGは？」のように 1項目ずつ聞いてください。'
       };
     }
 
@@ -948,17 +949,6 @@ async function orchestrateConversation(input) {
 
     const intent = detectIntent(input);
     const text = normalizeText(input.rawText || '');
-
-    const entryHandled = await lineEntryGatewayService.tryHandleLineEntry(input);
-    if (entryHandled?.handled) {
-      await appendTurn(input.userId, input.rawText || '', entryHandled.replyText);
-      return {
-        ok: true,
-        replyMessages: entryHandled.replyMessages,
-        internal: entryHandled.internal
-      };
-    }
-
 
     const nextState = {
       nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),
