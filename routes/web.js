@@ -52,6 +52,10 @@ async function requireSession(req, res, next) {
   }
 }
 
+router.get('/version', (_req, res) => {
+  res.json({ ok: true, version: 'phase12-root-rebuild', authMode: 'signed-prefixed' });
+});
+
 router.post('/link/request', async (req, res) => {
   try {
     const { lineUserId, userId } = req.body || {};
@@ -85,7 +89,7 @@ router.post('/link/confirm', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(400).json({ ok: false, error: 'confirm_failed', message: error?.message || '接続コードを確認できませんでした。' });
+    res.status(400).json({ ok: false, error: 'confirm_failed', message: error?.message || '接続コードを確認できませんでした。phase12 のコードか、自動接続URLをそのまま貼り付けてください。' });
   }
 });
 
