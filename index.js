@@ -171,6 +171,13 @@ async function handleEvent(event) {
       ? { ok: true, replyMessages: gatewayResult.replyMessages, internal: gatewayResult.internal || {} }
       : await conversationRouter.routeConversation({ ...input, entryLane: gatewayResult?.lane || '' });
 
+    if (result?.ok && result?.internal?.suppressReply) {
+      await chatLogService.logConversationOutcome({ input, result });
+      await conversationSummaryService.recordTurn({ input, result });
+      refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, result));
+      return;
+    }
+
     if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
       await replyLineMessages(input.replyToken, result.replyMessages);
       await chatLogService.logConversationOutcome({ input, result });
