@@ -3,6 +3,7 @@
 const { supabase } = require('./supabase_service');
 const { buildDailySummary } = require('./daily_summary_service');
 const realtimeService = require('./web_portal_realtime_service');
+const authoritativeProfileService = require('./authoritative_profile_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -136,6 +137,46 @@ function buildWeightSummary(row) {
     summary: parts.join(' / ') || '体重記録あり',
     weight: row.weight_kg != null ? Number(row.weight_kg) : null,
     bodyFat: row.body_fat_pct != null ? Number(row.body_fat_pct) : null
+  };
+}
+
+async function getProfileEnvelope(user) {
+  const profile = await authoritativeProfileService.getAuthoritativeProfileByLineUser(user?.line_user_id || '');
+  return {
+    userId: user?.id || null,
+    lineUserId: user?.line_user_id || null,
+    displayName: authoritativeProfileService.buildDisplayName(profile || { displayName: user?.display_name || user?.preferred_name || '' }),
+    preferredName: profile?.preferredName || '',
+    height: profile?.height || '',
+    age: profile?.age || '',
+    goal: profile?.goal || '',
+    latestWeight: profile?.latestWeight || '',
+    latestBodyFat: profile?.latestBodyFat || ''
+  };
+}
+
+async function getLatestLabDocument(user) {
+  const safeLineUserId = normalizeText(user?.line_user_id || '');
+  if (!safeLineUserId) return null;
+  const { data, error } = await supabase
+    .from('lab_documents')
+    .select('latest_exam_date, panel_json, updated_at')
+    .eq('user_id', safeLineUserId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  const panel = data?.panel_json || null;
+  if (!panel) return null;
+
+  const items = Array.isArray(panel.items)
+    ? panel.items.slice(0, 10).map((item) => ({ itemName: item.itemName || item.label || item.normalized_key || '', value: item.value != null ? String(item.value) : '', unit: item.unit || '' })).filter((item) => item.itemName && item.value)
+    : Object.entries(panel?.measurements?.[0]?.values || {}).slice(0, 10).map(([key, value]) => ({ itemName: key, value: value?.normalized_value != null ? String(value.normalized_value) : String(value?.raw_value || ''), unit: value?.normalized_unit || value?.raw_unit || '' })).filter((item) => item.itemName && item.value);
+
+  return {
+    examDate: String(data.latest_exam_date || panel.latestExamDate || panel.examDate || '').slice(0, 10),
+    items,
+    summaryNote: items.length ? items.slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ') : '検査結果があります'
   };
 }
 
@@ -1586,23 +1627,37 @@ async function getWeightsSeries(user, range = '30d') {
 async function getLabsLatest(user) {
   const rows = await getRecentLabs(user.id, 1);
   const row = rows[0] || null;
-  if (!row) return null;
-  const items = buildLabItems(row);
-  return {
-    examDate: String(row.measured_at || '').slice(0, 10),
-    items,
-    summaryNote: items.length
-      ? `${items.slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ')}`
-      : '検査結果があります'
-  };
+  if (row) {
+    const items = buildLabItems(row);
+    return {
+      examDate: String(row.measured_at || '').slice(0, 10),
+      items,
+      summaryNote: items.length
+        ? `${items.slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ')}`
+        : '検査結果があります'
+    };
+  }
+  try {
+    return await getLatestLabDocument(user);
+  } catch (_error) {
+    return null;
+  }
 }
 
 async function getLabsList(user, limit = 10) {
   const rows = await getRecentLabs(user.id, limit);
-  return rows.map((row) => ({
-    examDate: String(row.measured_at || '').slice(0, 10),
-    items: buildLabItems(row)
-  }));
+  if (rows.length) {
+    return rows.map((row) => ({
+      examDate: String(row.measured_at || '').slice(0, 10),
+      items: buildLabItems(row)
+    }));
+  }
+  try {
+    const latest = await getLatestLabDocument(user);
+    return latest ? [{ examDate: latest.examDate, items: latest.items }] : [];
+  } catch (_error) {
+    return [];
+  }
 }
 
 async function getRecordsOverview(user, options = {}) {
@@ -1698,7 +1753,7 @@ async function getSyncStatus(user) {
       getLatestTimestamp(user.id, 'chat_logs', 'created_at'),
       getLatestTimestamp(user.id, 'meal_logs', 'eaten_at'),
       getLatestTimestamp(user.id, 'weight_logs', 'logged_at'),
-      getLatestTimestamp(user.id, 'lab_results', 'measured_at'),
+      Promise.all([getLatestTimestamp(user.id, 'lab_results', 'measured_at'), getLatestTimestamp(user.line_user_id, 'lab_documents', 'updated_at')]).then((vals) => latestIso(vals)),
       getLatestTimestamp(user.id, 'activity_logs', 'logged_at')
     ]);
 
@@ -1861,6 +1916,7 @@ module.exports = {
   buildMicroStep,
   buildConsultationCarry,
   buildReturnAnchor,
+  getProfileEnvelope,
   buildFallbackHomeData,
   buildFallbackSidebar,
   buildFallbackRecordsOverview

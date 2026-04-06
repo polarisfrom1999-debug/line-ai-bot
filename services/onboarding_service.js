@@ -36,6 +36,7 @@ function buildStartProfileMessage() {
     'まずは伴走の土台を合わせたいので、この形で分かる所だけ送ってください。',
     '名前：',
     '年齢：',
+    '身長：',
     '体重：',
     '体脂肪率：',
     '目標：'
@@ -48,6 +49,7 @@ function buildEditProfileMessage() {
     'この形で送ってください。',
     '名前：',
     '年齢：',
+    '身長：',
     '体重：',
     '体脂肪率：',
     '目標：'
@@ -112,7 +114,7 @@ function isProfileEditTrigger(text) {
 }
 
 function looksLikeProfilePayload(text) {
-  return /名前[:：]|年齢[:：]|体重[:：]|体脂肪率[:：]|目標[:：]/.test(normalizeText(text));
+  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]/.test(normalizeText(text));
 }
 
 function isOperationalMessage(text) {
@@ -147,7 +149,7 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
   return { handled: true, replyText: buildEditProfileMessage() };
 }
 
-async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory }) {
+async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
   if (!looksLikeProfilePayload(text)) {
     if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
@@ -163,6 +165,10 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
     onboardingCompleted: onboardingState.mode === 'profile_edit' ? Boolean(longMemory?.onboardingCompleted) : false,
     trialStartedAt: longMemory?.trialStartedAt || new Date().toISOString()
   });
+
+  if (typeof persistAuthoritativeProfile === 'function') {
+    await persistAuthoritativeProfile(input.userId, patch);
+  }
 
   if (onboardingState.mode === 'profile_edit') {
     await saveShortMemory(input.userId, {
@@ -253,7 +259,7 @@ async function handlePlanStep({ input, text, onboardingState, saveShortMemory, m
   return { handled: true, replyText: buildCompleteMessage({ ...onboardingState, answers: { ...(onboardingState.answers || {}), plan: selected } }, selected) };
 }
 
-async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShortMemory, mergeLongMemory }) {
+async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
   const text = normalizeText(input?.rawText || '');
   if (!text && input?.messageType !== 'text') return { handled: false };
 

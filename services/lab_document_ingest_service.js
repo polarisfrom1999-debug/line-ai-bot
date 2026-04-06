@@ -4,7 +4,7 @@ const labImageAnalysisService = require('./lab_image_analysis_service');
 const labDocumentStoreService = require('./lab_document_store_service');
 
 async function ingestLabDocument({ userId, imagePayload } = {}) {
-  const cached = labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
+  const cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
   if (cached) {
     return {
       ok: true,
@@ -15,7 +15,7 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
 
   const panel = await labImageAnalysisService.analyzeLabImage(imagePayload);
   if (panel?.isLabImage || panel?.labLike) {
-    labDocumentStoreService.storePanelForPayload(userId, imagePayload, panel);
+    await labDocumentStoreService.storePanelForPayload(userId, imagePayload, panel);
   }
 
   return {

@@ -48,6 +48,7 @@ function normalizeProfileValue(key, value) {
   if (key === 'preferredName') return sanitizePreferredName(safe);
   if (key === 'weight') return normalizeWeightLike(safe, 'kg');
   if (key === 'bodyFat') return normalizeWeightLike(safe, '%');
+  if (key === 'height') return normalizeWeightLike(safe, 'cm');
   return safe;
 }
 
@@ -60,6 +61,7 @@ function extractProfilePatchFromText(text) {
     const age = extractLineValue(line, '年齢');
     const weight = extractLineValue(line, '体重');
     const bodyFat = extractLineValue(line, '体脂肪率');
+    const height = extractLineValue(line, '身長');
     const goal = extractLineValue(line, '目標');
 
     if (name) {
@@ -69,6 +71,7 @@ function extractProfilePatchFromText(text) {
     if (age) patch.age = normalizeProfileValue('age', age);
     if (weight) patch.weight = normalizeProfileValue('weight', weight);
     if (bodyFat) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFat);
+    if (height) patch.height = normalizeProfileValue('height', height);
     if (goal) patch.goal = normalizeProfileValue('goal', goal);
   }
 
@@ -81,6 +84,7 @@ function buildProfileSummary(longMemory) {
   const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
   if (preferredName) lines.push(`名前: ${preferredName}`);
   if (longMemory?.age) lines.push(`年齢: ${longMemory.age}`);
+  if (longMemory?.height) lines.push(`身長: ${longMemory.height}`);
   if (longMemory?.weight) lines.push(`体重: ${longMemory.weight}`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率: ${longMemory.bodyFat}`);
   if (longMemory?.goal) lines.push(`目標: ${longMemory.goal}`);
@@ -106,6 +110,7 @@ function buildProfileUpdatedReply(patch) {
   const preferredName = sanitizePreferredName(patch?.preferredName || '');
   if (preferredName) lines.push(`名前: ${preferredName}`);
   if (patch?.age) lines.push(`年齢: ${patch.age}`);
+  if (patch?.height) lines.push(`身長: ${patch.height}`);
   if (patch?.weight) lines.push(`体重: ${patch.weight}`);
   if (patch?.bodyFat) lines.push(`体脂肪率: ${patch.bodyFat}`);
   if (patch?.goal) lines.push(`目標: ${patch.goal}`);
@@ -118,6 +123,7 @@ function buildMemoryAnswer(longMemory) {
 
   const preferredName = sanitizePreferredName(longMemory?.preferredName || '');
   if (preferredName) lines.push(`名前は「${preferredName}」として覚えています。`);
+  if (longMemory?.height) lines.push(`身長は ${longMemory.height} として見ています。`);
   if (longMemory?.weight) lines.push(`体重は ${longMemory.weight} として見ています。`);
   if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);

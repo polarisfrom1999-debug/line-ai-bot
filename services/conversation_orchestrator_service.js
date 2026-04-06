@@ -31,6 +31,8 @@ const { textMessageWithQuickReplies } = require('./line_service');
 const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
+const conversationFactResolverService = require('./conversation_fact_resolver_service');
+const labQueryService = require('./lab_query_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -491,7 +493,7 @@ function buildLabImageReply(lab) {
 
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
-  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
+  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(userId) || null;
   if (!panel) return null;
 
   if (labFollowupService.shouldHandleTrendQuestion(safe)) {
@@ -507,7 +509,7 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
 async function maybeHandleLabDateSelection(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
+  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
 
   const selectedDate = labFollowupService.extractRequestedDate(safe);
@@ -532,7 +534,7 @@ async function maybeHandleLabDateSelection(input, shortMemory) {
 
 async function maybeHandleLabSaveAll(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
+  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
   if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
 
@@ -692,7 +694,8 @@ async function maybeHandleOnboarding(input, shortMemory, longMemory) {
     shortMemory,
     longMemory,
     saveShortMemory: contextMemoryService.saveShortMemory,
-    mergeLongMemory: contextMemoryService.mergeLongMemory
+    mergeLongMemory: contextMemoryService.mergeLongMemory,
+    persistAuthoritativeProfile: conversationFactResolverService.persistInlineProfile
   });
 }
 
@@ -1056,7 +1059,7 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: labDateReply }], internal: { intentType: 'lab_date_select', responseMode: 'answer' } };
     }
 
-    const labFollowUpReply = await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
+    const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory) || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
     if (labFollowUpReply) {
       await appendTurn(input.userId, input.rawText || '', labFollowUpReply);
       return { ok: true, replyMessages: [{ type: 'text', text: labFollowUpReply }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
@@ -1085,19 +1088,19 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'weight_lookup') {
-      const replyText = await buildWeightLookupReply(input.userId);
+      const replyText = await conversationFactResolverService.buildWeightLookupReply(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weight_lookup', responseMode: 'answer' } };
     }
 
     if (intent === 'memory_question') {
-      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
+      const replyText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
 
     if (intent === 'profile_summary') {
-      const replyText = profileService.buildProfileSummary(await contextMemoryService.getLongMemory(input.userId));
+      const replyText = await conversationFactResolverService.buildProfileSummary(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_summary', responseMode: 'answer' } };
     }
@@ -1176,13 +1179,15 @@ async function orchestrateConversation(input) {
     const inlineProfile = parseInlineProfile(text);
     if (Object.keys(inlineProfile).length) {
       await contextMemoryService.mergeLongMemory(input.userId, inlineProfile);
-      const replyText = buildMemoryAnswer(await contextMemoryService.getLongMemory(input.userId));
+      await conversationFactResolverService.persistInlineProfile(input.userId, inlineProfile);
+      const replyText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
 
     if (/うっし〜って呼んで|うっし～って呼んで|うっし〜と呼んで|うっし～と呼んで/.test(text)) {
       await contextMemoryService.mergeLongMemory(input.userId, { preferredName: 'うっし〜' });
+      await conversationFactResolverService.persistInlineProfile(input.userId, { preferredName: 'うっし〜' });
       const replyText = 'いいですね。これからは「うっし〜」って呼びますね。';
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
