@@ -64,7 +64,9 @@ function collectTrendRows(panel, itemName) {
         itemName: safeName,
         value,
         unit: normalizeText(row?.unit || unit),
-        flag: normalizeText(row?.flag || '')
+        flag: normalizeText(row?.flag || ''),
+        referenceLow: row?.referenceLow ?? null,
+        referenceHigh: row?.referenceHigh ?? null
       });
     }
 
@@ -76,7 +78,9 @@ function collectTrendRows(panel, itemName) {
         itemName: safeName,
         value: currentValue,
         unit,
-        flag: normalizeText(item?.flag || item?.currentFlag || '')
+        flag: normalizeText(item?.flag || item?.currentFlag || ''),
+        referenceLow: item?.referenceLow ?? null,
+        referenceHigh: item?.referenceHigh ?? null
       });
     }
   }

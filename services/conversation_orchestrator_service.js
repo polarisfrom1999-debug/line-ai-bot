@@ -507,18 +507,20 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
 async function maybeHandleLabDateSelection(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
+  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
 
   const selectedDate = labFollowupService.extractRequestedDate(safe);
   if (!selectedDate) return null;
 
   const availableDates = labFollowupService.collectAvailableDates(panel);
-  if (!availableDates.includes(selectedDate)) return null;
+  if (!availableDates.includes(selectedDate)) {
+    return labFollowupService.buildUnavailableDateReply(panel, selectedDate);
+  }
 
   await contextMemoryService.saveShortMemory(input.userId, {
     followUpContext: {
-      ...shortMemory.followUpContext,
+      ...(shortMemory?.followUpContext || {}),
       selectedLabExamDate: selectedDate,
       availableLabDates: availableDates,
       labPanel: panel
@@ -530,7 +532,7 @@ async function maybeHandleLabDateSelection(input, shortMemory) {
 
 async function maybeHandleLabSaveAll(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(userId) || null;
+  const panel = shortMemory?.followUpContext?.labPanel || labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
   if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
 
@@ -736,14 +738,15 @@ async function maybeHandleLabImage(input, imagePayload) {
           extractedItems: [],
           examDate: lab?.examDate || '',
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
-          availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : []
+          availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+          labPanel: lab || null
         }
       });
 
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識しましたが、まだ表の位置が安定していません。phase12 では同じ画像を何度も揺らさないよう固定保存する設計に切り替えています。まずは「2025-03-24」や「TGは？」のように 1項目ずつ聞いてください。'
+        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識していますが、まだ構造化の途中です。まずは「TGは？」「HbA1cは？」「2025-03-22」のように1項目か1日付ずつ聞いてください。'
       };
     }
 
@@ -1022,7 +1025,7 @@ async function orchestrateConversation(input) {
             availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
           }
         });
-        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、数値の読み取りがまだ安定していません。「TGは？」「HbA1cは？」「今までの傾向は？」のように聞いてもらえれば、この画像を優先して見ます。';
+        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、まだ構造化の途中です。「TGは？」「HbA1cは？」「今までの傾向は？」「2025-03-22」のように聞いてもらえれば、この画像を優先して見ます。';
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,

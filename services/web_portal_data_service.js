@@ -1770,6 +1770,67 @@ async function getBootstrapData(user, options = {}) {
   });
 }
 
+function buildFallbackHomeData(user = {}, options = {}) {
+  const displayName = normalizeText(user?.display_name || user?.preferred_name || user?.line_user_id || 'ここから。ユーザー');
+  const message = normalizeText(options.message || '接続はできています。表示を整えながら使える状態に戻しています。');
+  return {
+    todayYmd: dateYmdInTokyo(),
+    todaySummary: '接続はできています。必要なところから少しずつ見ていけます。',
+    fullSummary: ['接続はできています。', message],
+    mealStatus: { breakfast: false, lunch: false, dinner: false },
+    weightStatus: { recordedToday: false, latestValue: null, latestBodyFat: null, latestDate: null },
+    alerts: [message],
+    aiNote: 'チャットや記録の入口は使えます。表示は順次整います。',
+    latestLab: null,
+    recentMeals: [],
+    recentMessagesCount: 0,
+    activityCountToday: 0,
+    careFocus: [{ title: 'いまは接続できています', body: 'ホームの細かい内容は整え直しています。まずは相談したいことを一つだけ送れば大丈夫です。', prompt: '今の状態を整理したい' }],
+    consultLanes: [{ title: '症状の相談', body: '痛み・違和感・不安をひとつだけ送れます。', prompt: '今いちばん気になる症状を整理したい' }],
+    recentTimeline: [],
+    progressSnapshot: { headline: `${displayName}さんの接続は完了しています`, body: '表示を安定させながら使える状態に戻しています。', streakDays: 0, touchDays7: 0, recentEvents: 0, badge: '接続済み' },
+    smallWins: ['WEB接続は完了しています。', 'チャット相談の入口は開いています。'],
+    reassuranceNote: 'いまはエラーを減らしながら、使える場所から安定させています。',
+    actionPlan: [{ slot: '今', title: '一つだけ相談を始める', body: '症状・食事・体重・検査のどれか一つだけで大丈夫です。', prompt: '今いちばん話しやすいことを一つ整理したい' }],
+    supportMode: { label: '整え中', headline: '接続はできています', body: message, tone: 'steady', signals: ['接続済み', 'チャット利用可'], prompt: '今の状態から相談したい', actionLabel: 'この状態で相談する' },
+    stuckPrompts: ['今いちばん困っていることを一つだけ整理したい'],
+    supportCompass: { headline: '今の相談の土台', body: '症状 / 食事 / 体重 / 検査 のうち一つだけ選べば十分です。', anchors: [{ label: 'つながり', value: 'WEB接続は完了しています' }, { label: '入り口', value: '一つだけ送れば相談を始められます' }], prompt: '今話しやすい入口を一つ決めたい' },
+    returnDigest: { badge: 'いま見えていること', headline: 'まずは相談の入口を確保できています', body: message, bullets: ['WEB接続は完了しています', '必要ならLINEとの併用もできます'], prompt: 'ここから何を話すとよいか決めたい', actionLabel: 'この流れで相談する' },
+    sinceDigest: { badge: '前回から', headline: '接続後の準備を進めています', body: message, bullets: ['細かい表示は再取得中です'], recent: [], prompt: 'いまの状態を相談したい', actionLabel: '今の状態を相談する' },
+    microStep: { label: '今できる一歩', headline: 'まずは一つだけ送る', body: '長文でなくても大丈夫です。今いちばん気になることを一つ送れば始められます。', steps: ['症状・食事・体重・検査のどれか一つだけ選ぶ'], prompt: '今いちばん気になることを一つ送る', actionLabel: 'この一歩から相談する' },
+    consultationCarry: { headline: 'いまはここからで大丈夫です', body: '全部まとまっていなくても、今の困りごとを一つ送れば十分です。', clarified: ['WEB接続はできています'], canWait: ['細かい表示の整備'], remember: ['一つずつ相談すれば大丈夫です'], prompt: '今の困りごとを一つ整理したい', actionLabel: 'この整理を相談する' },
+    returnAnchor: { badge: '戻りやすい形', headline: '一つだけ送れば戻れます', body: '今の状態を一言で送るだけでも相談は始められます。', anchors: ['痛い場所を一つ送る', '食べたものを一つ送る', '検査で気になる項目を一つ送る'], prompt: '戻りやすい形から相談したい', actionLabel: '戻りやすい形を相談する' },
+    resumePrompts: ['今の状態を一言で整理したい'],
+    conversationBridge: { badge: 'ここから始める', headline: '今の困りごとから相談できます', body: '以前の流れが少なくても、今の状態から始められます。', continuePrompt: '今の困りごとから相談したい' },
+    reentryGuide: { headline: '久しぶりでも大丈夫です', body: '今日の状態を一言だけ送れば、そこから一緒に整えられます。', steps: ['いま気になることを一つ送る'], prompt: '今日の状態を一言で伝えたい' },
+    engagement: { streakDays: 0, touchDays7: 0, touchDays14: 0, recentEvents: 0, activeToday: false }
+  };
+}
+
+function buildFallbackSidebar(user = {}, home = null) {
+  const safeHome = home || buildFallbackHomeData(user);
+  return {
+    todaySummary: safeHome.todaySummary,
+    recentMeals: safeHome.recentMeals || [],
+    latestWeight: { value: safeHome.weightStatus?.latestValue || null, bodyFat: safeHome.weightStatus?.latestBodyFat || null, recordedAt: safeHome.weightStatus?.latestDate || null },
+    latestLabNote: safeHome.latestLab ? `${safeHome.latestLab.examDate || ''} / ${(safeHome.latestLab.items || []).slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ')}` : '血液検査データはまだありません'
+  };
+}
+
+function buildFallbackRecordsOverview(user = {}, home = null) {
+  const safeHome = home || buildFallbackHomeData(user);
+  return {
+    mealsCount: Array.isArray(safeHome.recentMeals) ? safeHome.recentMeals.length : 0,
+    latestMealDate: null,
+    latestWeightValue: safeHome.weightStatus?.latestValue ?? null,
+    latestWeightDate: safeHome.weightStatus?.latestDate ?? null,
+    latestLabDate: safeHome.latestLab?.examDate || null,
+    latestLabNote: safeHome.latestLab ? '血液検査の表示を整えています' : null,
+    weightTrend: null,
+    mealDaySpan: null
+  };
+}
+
 module.exports = {
   dateYmdInTokyo,
   getHomeData,
@@ -1799,5 +1860,8 @@ module.exports = {
   buildSinceDigest,
   buildMicroStep,
   buildConsultationCarry,
-  buildReturnAnchor
+  buildReturnAnchor,
+  buildFallbackHomeData,
+  buildFallbackSidebar,
+  buildFallbackRecordsOverview
 };
