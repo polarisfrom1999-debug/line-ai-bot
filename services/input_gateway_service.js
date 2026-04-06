@@ -3,6 +3,7 @@
 const classifier = require('./input_classifier_service');
 const webLinkCommandService = require('./web_link_command_service');
 const movementAnalysisService = require('./movement_analysis_service');
+const movementSessionService = require('./movement_session_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -22,22 +23,37 @@ async function handleLineTopLevel(input = {}) {
   }
 
   if (lane === 'movement_video_media') {
+    const registered = await movementSessionService.registerMovementVideo(input.lineUserId || input.userId, input);
+    if (registered?.duplicate) {
+      return {
+        handled: true,
+        lane,
+        replyMessages: [],
+        internal: {
+          intentType: 'movement_video_duplicate',
+          responseMode: 'silent',
+          entryLane: lane,
+          suppressReply: true
+        }
+      };
+    }
+
     return {
       handled: true,
       lane,
       replyMessages: [{
         type: 'text',
         text: [
-          '動画は受け取りました。',
-          '本筋版では「動画を受け取る入口」と「動画を解析する入口」を分けています。',
-          '現段階では、まず 10〜15秒くらいの動画を 1本ずつ確認しやすい形に整えています。',
+          movementSessionService.buildMovementVideoReply(registered),
           movementAnalysisService.buildRunningVideoGuidance()
         ].join('\n')
       }],
       internal: {
         intentType: 'movement_video_received',
         responseMode: 'guided',
-        entryLane: lane
+        entryLane: lane,
+        movementSessionId: registered?.session?.sessionId || null,
+        movementClipCount: Array.isArray(registered?.session?.clips) ? registered.session.clips.length : 0
       }
     };
   }

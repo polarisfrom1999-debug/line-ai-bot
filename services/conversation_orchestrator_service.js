@@ -33,6 +33,8 @@ const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
+const activityCalorieService = require('./activity_calorie_service');
+const metabolismService = require('./metabolism_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -51,12 +53,12 @@ function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
     .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .replace(/\s+/g, '')
     .trim();
 
   if (!safe) return '';
-  if (safe.length > 12) return '';
+  if (safe.length > 16) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
-  if (/\s/.test(safe)) return '';
   return safe;
 }
 
@@ -106,8 +108,10 @@ function detectIntent(input) {
   const text = normalizeText(input?.rawText || '');
 
   if (/今何時|何時|何月何日|今日何日|何時何分/.test(text)) return 'time_question';
+  if (/私の名前は|名前なんだっけ|名前覚えてる/.test(text)) return 'name_question';
   if (/今日の体重.*(教えて|知りたい)|最新の体重|今日の体脂肪率.*(教えて|知りたい)|私の体重は|私の体脂肪率は/.test(text)) return 'weight_lookup';
   if (/プロフィール|プロフ/.test(text)) return 'profile_summary';
+  if (/(消費カロリー|カロリー.*消費|運動.*カロリー|走.*カロリー|筋トレ.*カロリー|1日.*消費|今日.*消費)/.test(text)) return 'activity_calorie_question';
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
@@ -365,15 +369,21 @@ function parseInlineProfile(text) {
 
   const nameMatch = safe.match(/名前[は：:]\s*([^\n]+)/);
   const ageMatch = safe.match(/年齢[は：:]\s*([^\n]+)/);
+  const heightMatch = safe.match(/身長[は：:]\s*([^\n]+)/);
   const weightMatch = safe.match(/体重[は：:]\s*([^\n]+)/);
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
+  const casualNameMatch = !nameMatch && safe.match(/^([ぁ-んァ-ヶ一-龠A-Za-z0-9〜～ー\-]{1,16})です$/u);
 
   if (nameMatch) {
     const preferredName = sanitizePreferredName(nameMatch[1]);
     if (preferredName) patch.preferredName = preferredName;
+  } else if (casualNameMatch) {
+    const preferredName = sanitizePreferredName(casualNameMatch[1]);
+    if (preferredName) patch.preferredName = preferredName;
   }
   if (ageMatch) patch.age = ageMatch[1].trim();
+  if (heightMatch) patch.height = heightMatch[1].trim();
   if (weightMatch) patch.weight = weightMatch[1].trim();
   if (bodyFatMatch) patch.bodyFat = bodyFatMatch[1].trim();
   if (goalMatch) patch.goal = goalMatch[1].trim();
@@ -382,8 +392,48 @@ function parseInlineProfile(text) {
 }
 
 function containsQuestionTone(text) {
-  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\?$|？$/.test(text);
+  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな|\?$|？$/.test(text);
 }
+
+
+function looksLikeMealCorrectionText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/疲れ|眠い|しんどい|だるい|痛い|不安/.test(safe)) return false;
+  if (/半分|全部|完食|残した|食べてない|食べていない|飲んでない|飲んでいない/.test(safe)) return true;
+  if (/(ご飯|ごはん|汁|スープ|納豆|卵|肉|魚|野菜|しらす|オキアミ|ブロッコリー|かぼちゃ).*(ではなく|じゃなく|ではない)/.test(safe)) return true;
+  if (/少し/.test(safe) && /(食べた|残した|ご飯|ごはん|汁|スープ|おかず|納豆|卵|肉|魚|野菜)/.test(safe)) return true;
+  return false;
+}
+
+function buildActivityCalorieReply(text, todayRecords = {}, longMemory = {}) {
+  const safe = normalizeText(text);
+  const exercises = Array.isArray(todayRecords?.exercises) ? todayRecords.exercises : [];
+  if (!exercises.length) {
+    return '今のところ今日の運動記録がまだ少ないので、走った時間や筋トレ内容が入るともう少し安定して見られます。';
+  }
+
+  const totalExerciseKcal = exercises.reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
+  const runningKcal = exercises.filter((item) => /ジョギング|ランニング/.test(normalizeText(item?.name || item?.summary || ''))).reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
+  const strengthKcal = exercises.filter((item) => /筋トレ|スクワット|腕立て|腹筋/.test(normalizeText(item?.name || item?.summary || ''))).reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
+  const snapshot = metabolismService.estimateEnergyBalance({ longMemory, todayRecords });
+  const totalDaily = Number(snapshot?.totalOutputEstimate || snapshot?.estimatedTdee || 0);
+
+  if (/ランニング|ジョギング|走/.test(safe) && runningKcal > 0) {
+    return `今日の走った分だけなら、ざっくり ${Math.round(runningKcal)}kcal 前後です。`; 
+  }
+  if (/筋トレ|スクワット|腕立て|腹筋/.test(safe) && strengthKcal > 0) {
+    return `今日の筋トレ分だけなら、ざっくり ${Math.round(strengthKcal)}kcal 前後です。`; 
+  }
+  if (/1日|今日全体|総消費|一日/.test(safe) && totalDaily > 0) {
+    return [
+      `今日の運動分だけだと、ざっくり ${Math.round(totalExerciseKcal)}kcal 前後です。`,
+      `基礎代謝なども含めた1日全体の消費目安は、ざっくり ${Math.round(totalDaily)}kcal 前後で見ています。`
+    ].join('\n');
+  }
+  return `今日の運動分だけだと、ざっくり ${Math.round(totalExerciseKcal)}kcal 前後です。1日全体の消費を見る時は、基礎代謝を含めて別で整理します。`;
+}
+
 
 function parseNumericValue(text, pattern) {
   const match = normalizeText(text).match(pattern);
@@ -495,6 +545,11 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
   const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(userId) || null;
   if (!panel) return null;
+  if (shortMemory?.followUpContext?.labPanelReady === false) {
+    const targetName = labFollowupService.normalizeTarget(safe);
+    if (!targetName && !labFollowupService.shouldHandleTrendQuestion(safe)) return null;
+    return '血液検査はまだ保存用の整理が終わっていないので、今は値を断定せず保持しています。保存が安定したら保存済みデータから返します。';
+  }
 
   if (labFollowupService.shouldHandleTrendQuestion(safe)) {
     return labFollowupService.buildTrendReply(panel, safe);
@@ -511,6 +566,7 @@ async function maybeHandleLabDateSelection(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
   const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
+  if (shortMemory?.followUpContext?.labPanelReady === false) return null;
 
   const selectedDate = labFollowupService.extractRequestedDate(safe);
   if (!selectedDate) return null;
@@ -536,6 +592,7 @@ async function maybeHandleLabSaveAll(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
   const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
   if (!panel) return null;
+  if (shortMemory?.followUpContext?.labPanelReady === false) return null;
   if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
 
   await contextMemoryService.upsertLabPanel(input.userId, panel);
@@ -742,7 +799,8 @@ async function maybeHandleLabImage(input, imagePayload) {
           examDate: lab?.examDate || '',
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
           availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
-          labPanel: lab || null
+          labPanel: lab || null,
+          labPanelReady: false
         }
       });
 
@@ -763,7 +821,8 @@ async function maybeHandleLabImage(input, imagePayload) {
         latestExamDate: lab.latestExamDate || lab.examDate || '',
         selectedLabExamDate: lab.latestExamDate || lab.examDate || '',
         availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
-        labPanel: lab
+        labPanel: lab,
+        labPanelReady: true
       }
     });
 
@@ -849,7 +908,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   const pending = shortMemory?.pendingRecordCandidate;
 
   if (!pending || pending?.recordType !== 'meal_record') return null;
-  if (!/半分|少し|全部|完食/.test(text)) return null;
+  if (!looksLikeMealCorrectionText(text)) return null;
 
   const meal = pending?.extracted || {};
   const base = meal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 };
@@ -891,7 +950,8 @@ async function maybeStoreSimpleRecords(userId, text) {
     await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed));
   }
 
-  const exercise = detectExerciseRecord(text);
+  const longMemory = await contextMemoryService.getLongMemory(userId);
+  const exercise = activityCalorieService.parseActivity(text, Number(String(longMemory?.weight || '').replace(/[^\d.]/g, '')) || 60) || detectExerciseRecord(text);
   if (exercise) await contextMemoryService.addDailyRecord(userId, exercise);
 
   const weight = detectWeightRecord(text);
@@ -1087,10 +1147,23 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'time_question', responseMode: 'answer' } };
     }
 
+    if (intent === 'name_question') {
+      const replyText = await conversationFactResolverService.buildNameReply(input.userId);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'name_question', responseMode: 'answer' } };
+    }
+
     if (intent === 'weight_lookup') {
       const replyText = await conversationFactResolverService.buildWeightLookupReply(input.userId);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weight_lookup', responseMode: 'answer' } };
+    }
+
+    if (intent === 'activity_calorie_question') {
+      const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+      const replyText = buildActivityCalorieReply(text, todayRecords, longMemory);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'activity_calorie_question', responseMode: 'answer' } };
     }
 
     if (intent === 'memory_question') {

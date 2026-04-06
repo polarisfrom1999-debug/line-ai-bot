@@ -8,6 +8,18 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+
+async function buildNameReply(lineUserId) {
+  const [profile, longMemory] = await Promise.all([
+    authoritativeProfileService.getAuthoritativeProfileByLineUser(lineUserId),
+    contextMemoryService.getLongMemory(lineUserId)
+  ]);
+
+  const preferredName = normalizeText(profile?.preferredName || longMemory?.preferredName || '');
+  if (preferredName) return `名前は「${preferredName}」として覚えています。`;
+  return '今は名前がまだはっきり固定できていないので、名前だけもう一度送ってもらえたら確定して以後そこを優先します。';
+}
+
 async function buildWeightLookupReply(lineUserId) {
   const profile = await authoritativeProfileService.getAuthoritativeProfileByLineUser(lineUserId);
   if (profile?.latestWeight || profile?.latestBodyFat) {
@@ -71,6 +83,7 @@ async function persistInlineProfile(lineUserId, patch = {}) {
 }
 
 module.exports = {
+  buildNameReply,
   buildWeightLookupReply,
   buildMemoryAnswer,
   buildProfileSummary,

@@ -158,9 +158,11 @@ function buildItemReply(panel, targetName, selectedDate) {
   if (!row) {
     const label = normalizeTarget(targetName) || targetName;
     const date = normalizeDateToken(selectedDate);
-    return date
-      ? `${label} は ${date} の値をまだ安定して拾い切れていません。読めた日付を変えるなら日付をそのまま送ってください。`
-      : `${label} は今回の画像ではまだ安定して拾い切れていません。`;
+    const availableDates = collectAvailableDates(panel);
+    if (date && availableDates.includes(date)) {
+      return `${label} は ${date} の値をまだ安定して拾い切れていません。保存が完了したら保存済みデータから返します。`;
+    }
+    return `${label} は今回の画像ではまだ安定して拾い切れていません。保存が完了したら保存済みデータから返します。`;
   }
 
   const unit = row.unit ? ` ${row.unit}` : '';

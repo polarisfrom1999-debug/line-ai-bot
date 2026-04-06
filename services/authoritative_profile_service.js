@@ -11,12 +11,12 @@ function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
     .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .replace(/\s+/g, '')
     .trim();
 
   if (!safe) return '';
-  if (safe.length > 12) return '';
+  if (safe.length > 16) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
-  if (/\s/.test(safe)) return '';
   return safe;
 }
 
@@ -127,18 +127,33 @@ async function getLatestWeightRow(userId) {
     .maybeSingle());
 }
 
+
+async function getLatestPatientName(userId) {
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return '';
+  return safeMaybeSingle(() => supabase
+    .from('lab_documents')
+    .select('patient_name, updated_at')
+    .eq('user_id', safeUserId)
+    .not('patient_name', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle(), null).then((row) => sanitizePreferredName(row?.patient_name || ''));
+}
+
 async function getAuthoritativeProfileByLineUser(lineUserId) {
   const user = await getUserByLineUserId(lineUserId);
   if (!user) return null;
 
-  const [factRows, latestWeight] = await Promise.all([
+  const [factRows, latestWeight, latestPatientName] = await Promise.all([
     getProfileFacts(user.id),
-    getLatestWeightRow(user.id)
+    getLatestWeightRow(user.id),
+    getLatestPatientName(user.id)
   ]);
 
   const factMap = rowsToFactMap(factRows);
-  const displayName = sanitizePreferredName(user.display_name || user.preferred_name || factMap.preferredName?.value || '') || '';
-  const preferredName = sanitizePreferredName(factMap.preferredName?.value || displayName || '');
+  const displayName = sanitizePreferredName(user.display_name || user.preferred_name || user.name || factMap.preferredName?.value || latestPatientName || '') || '';
+  const preferredName = sanitizePreferredName(factMap.preferredName?.value || displayName || latestPatientName || '');
 
   const weightFromFacts = normalizeProfileValue('weight', factMap.weight?.value || '');
   const bodyFatFromFacts = normalizeProfileValue('bodyFat', factMap.bodyFat?.value || '');

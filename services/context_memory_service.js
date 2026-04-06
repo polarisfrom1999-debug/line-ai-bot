@@ -20,6 +20,7 @@ const DEFAULT_SHORT_MEMORY = {
   recentSmallTalkTopic: null,
   followUpContext: null,
   activeHealthTheme: null,
+  movementVideoSession: null,
   onboardingState: {
     isActive: false,
     mode: null,
@@ -65,12 +66,12 @@ function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(名前[は：:]?\s*)/u, '')
     .replace(/(です|だよ|だよね|ですよ|になります|になりそう).*$/u, '')
+    .replace(/\s+/g, '')
     .trim();
 
   if (!safe) return '';
   if (safe.length > 12) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
-  if (/\s/.test(safe)) return '';
   return safe;
 }
 

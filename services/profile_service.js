@@ -32,12 +32,12 @@ function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
     .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .replace(/\s+/g, '')
     .trim();
 
   if (!safe) return '';
-  if (safe.length > 12) return '';
+  if (safe.length > 16) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
-  if (/\s/.test(safe)) return '';
   return safe;
 }
 
