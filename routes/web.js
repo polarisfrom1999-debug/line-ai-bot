@@ -34,6 +34,59 @@ function looksAuthFailure(error) {
   ].some((part) => safe.includes(part));
 }
 
+
+function buildDisplayName(user) {
+  return user?.display_name || user?.preferred_name || 'ここから。ユーザー';
+}
+
+function buildFallbackHomeResponse(user, message) {
+  const home = dataService.buildFallbackHomeData(user, { message });
+  const recordsOverview = dataService.buildFallbackRecordsOverview(user, home);
+  const starters = dataService.buildStarterPrompts(home, recordsOverview);
+  return { home, recordsOverview, starters };
+}
+
+function buildFallbackChatResponse(user, message) {
+  const home = dataService.buildFallbackHomeData(user, { message });
+  return {
+    messages: [{ role: 'assistant', text: '接続はできています。いまは表示を整えながら、相談はこのまま始められます。', sourceChannel: 'web', createdAt: new Date().toISOString() }],
+    sidebar: dataService.buildFallbackSidebar(user, home),
+    consultLanes: home.consultLanes || [],
+    recentTimeline: home.recentTimeline || [],
+    reflection: { headline: 'ここから始められます', body: '一つだけ相談したいことを送れば大丈夫です。' },
+    followups: ['今いちばん気になることを一つだけ整理したい'],
+    actionPlan: home.actionPlan || [],
+    supportMode: home.supportMode || {},
+    supportCompass: home.supportCompass || {},
+    returnDigest: home.returnDigest || {},
+    sinceDigest: home.sinceDigest || {},
+    microStep: home.microStep || {},
+    consultationCarry: home.consultationCarry || {},
+    returnAnchor: home.returnAnchor || {},
+    resumePrompts: home.resumePrompts || [],
+    reentryGuide: home.reentryGuide || {},
+    conversationBridge: home.conversationBridge || {},
+    homeSnapshot: home,
+    recordsOverview: dataService.buildFallbackRecordsOverview(user, home),
+    starters: dataService.buildStarterPrompts(home, dataService.buildFallbackRecordsOverview(user, home)),
+    sync: { version: new Date().toISOString(), scopeVersions: { chat: '', records: '', home: '' } }
+  };
+}
+
+function buildWebFallbackReply(message) {
+  const safe = String(message || '').trim();
+  if (/痛い|痛み|しんどい|つらい|違和感/.test(safe)) {
+    return `つらさがある中で送ってくれてありがとうございます。まずは「どこが」「いつから」「何をするとつらいか」を一つずつ整理すると、次の見方を作りやすいです。`;
+  }
+  if (/TG|HbA1c|LDL|HDL|血液|検査/.test(safe)) {
+    return '検査の相談を受け取りました。画像や項目を一つずつ見ながら、まずは気になる数値から整理していきましょう。';
+  }
+  if (/食事|ごはん|朝|昼|夜|カロリー/.test(safe)) {
+    return '食事の相談を受け取りました。全部を直そうとせず、まずは一食ぶんの見直しから一緒に整理していけます。';
+  }
+  return `「${safe.slice(0, 60)}${safe.length > 60 ? '…' : ''}」を受け取りました。今いちばん気になる一点から、一緒に整理していきましょう。`;
+}
+
 async function requireSession(req, res, next) {
   try {
     const token = getSessionToken(req);
@@ -153,7 +206,7 @@ router.get('/bootstrap', requireSession, async (req, res) => {
       profile: {
         userId: user.id,
         lineUserId: user.line_user_id,
-        displayName: user.display_name || user.preferred_name || 'ここから。ユーザー'
+        displayName: buildDisplayName(user)
       },
       session: {
         expiresAt: req.webSession.session.expires_at
@@ -162,7 +215,10 @@ router.get('/bootstrap', requireSession, async (req, res) => {
     });
   } catch (error) {
     console.error('[web] bootstrap error:', error?.message || error);
-    res.status(500).json({ ok: false, error: 'bootstrap_failed', message: '初期表示の準備でエラーが起きました。' });
+    const user = req.webSession.user;
+    const fallback = buildFallbackHomeResponse(user, '初期表示を整えながら接続しています。');
+    const sync = { version: new Date().toISOString(), scopeVersions: { chat: '', records: '', home: '' } };
+    res.json({ ok: true, fallback: true, profile: { userId: user.id, lineUserId: user.line_user_id, displayName: buildDisplayName(user) }, session: { expiresAt: req.webSession.session.expires_at }, home: fallback.home, sidebar: dataService.buildFallbackSidebar(user, fallback.home), recordsOverview: fallback.recordsOverview, starters: fallback.starters, sync, supportMode: fallback.home.supportMode, stuckPrompts: fallback.home.stuckPrompts, consultLanes: fallback.home.consultLanes, recentTimeline: fallback.home.recentTimeline, reflection: { headline: 'ここから始められます', body: '接続は通っています。まずは一つだけ相談を送れば大丈夫です。' }, followups: ['今いちばん気になることを一つだけ整理したい'], supportCompass: fallback.home.supportCompass, returnDigest: fallback.home.returnDigest, microStep: fallback.home.microStep, resumePrompts: fallback.home.resumePrompts, conversationBridge: fallback.home.conversationBridge, reentryGuide: fallback.home.reentryGuide, consultationCarry: fallback.home.consultationCarry, returnAnchor: fallback.home.returnAnchor, sinceDigest: fallback.home.sinceDigest });
   }
 });
 
@@ -175,7 +231,8 @@ router.get('/home', requireSession, async (req, res) => {
     res.json({ ok: true, ...home, starters, recordsOverview: overview });
   } catch (error) {
     console.error('[web] home error:', error?.message || error);
-    res.status(500).json({ ok: false, error: 'home_failed', message: 'ホーム情報を取得できませんでした。' });
+    const fallback = buildFallbackHomeResponse(req.webSession.user, 'ホームの一部を整えながら表示しています。');
+    res.json({ ok: true, fallback: true, ...fallback.home, starters: fallback.starters, recordsOverview: fallback.recordsOverview });
   }
 });
 
@@ -208,42 +265,55 @@ router.get('/chat/bundle', requireSession, async (req, res) => {
     res.json({ ok: true, ...payload });
   } catch (error) {
     console.error('[web] chat bundle error:', error?.message || error);
-    res.status(500).json({ ok: false, error: 'chat_bundle_failed', message: '相談画面の準備でエラーが起きました。' });
+    const fallback = buildFallbackChatResponse(req.webSession.user, '相談画面を整えながら表示しています。');
+    res.json({ ok: true, fallback: true, ...fallback });
   }
 });
 
 router.post('/chat/send', requireSession, async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ ok: false, error: 'empty_message', message: 'メッセージを入力してください。' });
+
+  const input = {
+    userId: req.webSession.lineUserId,
+    lineUserId: req.webSession.lineUserId,
+    sourceChannel: 'web',
+    sourceType: 'web',
+    messageType: 'text',
+    rawText: message,
+    timestamp: Date.now(),
+    replyToken: null,
+    originalEvent: null,
+    relatedEventId: null,
+    messageId: null,
+    traceId: chatLogService.buildTraceId()
+  };
+
+  let result = null;
+  let replyMessages = [];
+  let replyText = '';
   try {
-    const message = String(req.body?.message || '').trim();
-    if (!message) return res.status(400).json({ ok: false, error: 'empty_message', message: 'メッセージを入力してください。' });
+    result = await conversationRouter.routeConversation(input);
+    replyMessages = Array.isArray(result?.replyMessages) ? result.replyMessages : [];
+    replyText = chatLogService.joinReplyText(replyMessages) || buildWebFallbackReply(message);
+  } catch (error) {
+    console.error('[web] chat conversation error:', error?.message || error);
+    replyText = buildWebFallbackReply(message);
+    replyMessages = [{ type: 'text', text: replyText }];
+    result = { ok: true, replyMessages, internal: { intentType: 'web_fallback', responseMode: 'fallback' } };
+  }
 
-    const input = {
-      userId: req.webSession.lineUserId,
-      lineUserId: req.webSession.lineUserId,
-      sourceChannel: 'web',
-      sourceType: 'web',
-      messageType: 'text',
-      rawText: message,
-      timestamp: Date.now(),
-      replyToken: null,
-      originalEvent: null,
-      relatedEventId: null,
-      messageId: null,
-      traceId: chatLogService.buildTraceId()
-    };
+  try { await chatLogService.logConversationOutcome({ input, result }); } catch (error) { console.error('[web] chat log error:', error?.message || error); }
+  try { await conversationSummaryService.recordTurn({ input, result }); } catch (error) { console.error('[web] chat summary error:', error?.message || error); }
+  try { dataService.invalidateUserCache(req.webSession.user.id, { reason: 'web_chat', scopes: { chat: true, records: false, home: true } }); } catch (error) { console.error('[web] cache invalidate error:', error?.message || error); }
 
-    const result = await conversationRouter.routeConversation(input);
-    const replyMessages = Array.isArray(result?.replyMessages) ? result.replyMessages : [];
-    const replyText = chatLogService.joinReplyText(replyMessages) || '受け取りました。';
-
-    await chatLogService.logConversationOutcome({ input, result });
-    await conversationSummaryService.recordTurn({ input, result });
-
-    dataService.invalidateUserCache(req.webSession.user.id, { reason: 'web_chat', scopes: { chat: true, records: false, home: true } });
+  let payload = null;
+  try {
     const homeSnapshot = await dataService.getHomeData(req.webSession.user);
-    const [recordsOverview, supportCards] = await Promise.all([
+    const [recordsOverview, supportCards, chatHistory] = await Promise.all([
       dataService.getRecordsOverview(req.webSession.user),
-      dataService.getChatSidebar(req.webSession.user, { home: homeSnapshot })
+      dataService.getChatSidebar(req.webSession.user, { home: homeSnapshot }),
+      dataService.getChatHistory(req.webSession.user, 8)
     ]);
     const starters = dataService.buildStarterPrompts(homeSnapshot, recordsOverview);
     const reflection = dataService.buildChatReflection(homeSnapshot, recordsOverview, replyText);
@@ -257,44 +327,29 @@ router.post('/chat/send', requireSession, async (req, res) => {
     const consultationCarry = homeSnapshot.consultationCarry || dataService.buildConsultationCarry(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || [], replyText);
     const returnAnchor = homeSnapshot.returnAnchor || dataService.buildReturnAnchor(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
     const resumePrompts = homeSnapshot.resumePrompts || dataService.buildResumePrompts(homeSnapshot.recentTimeline || [], homeSnapshot, recordsOverview);
-    const conversationBridge = homeSnapshot.conversationBridge || dataService.buildConversationBridge(await dataService.getChatHistory(req.webSession.user, 8), homeSnapshot, recordsOverview);
+    const conversationBridge = homeSnapshot.conversationBridge || dataService.buildConversationBridge(chatHistory, homeSnapshot, recordsOverview);
     const reentryGuide = homeSnapshot.reentryGuide || dataService.buildReentryGuide(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
     const sync = await dataService.getSyncStatus(req.webSession.user);
-    realtimeService.notifyUser(req.webSession.user.id, { userId: req.webSession.user.id, sync, reason: 'web_chat' });
-
-    res.json({
-      ok: true,
-      reply: replyText,
-      replyMessages,
-      assistantMessage: {
-        text: replyText,
-        createdAt: new Date().toISOString(),
-        sourceChannel: 'web'
-      },
-      internal: result?.internal || {},
-      supportCards,
-      homeSnapshot,
-      recordsOverview,
-      starters,
-      reflection,
-      followups,
-      actionPlan,
-      supportMode,
-      stuckPrompts,
-      supportCompass,
-      returnDigest,
-      microStep,
-      consultationCarry,
-      returnAnchor,
-      resumePrompts,
-      conversationBridge,
-      reentryGuide,
-      sync
-    });
+    try { realtimeService.notifyUser(req.webSession.user.id, { userId: req.webSession.user.id, sync, reason: 'web_chat' }); } catch (error) { console.error('[web] notify error:', error?.message || error); }
+    payload = { supportCards, homeSnapshot, recordsOverview, starters, reflection, followups, actionPlan, supportMode, stuckPrompts, supportCompass, returnDigest, microStep, consultationCarry, returnAnchor, resumePrompts, conversationBridge, reentryGuide, sync };
   } catch (error) {
-    console.error('[web] chat send error:', error?.message || error);
-    res.status(500).json({ ok: false, error: 'chat_send_failed', message: 'チャット送信でエラーが起きました。' });
+    console.error('[web] chat payload error:', error?.message || error);
+    const fallback = buildFallbackChatResponse(req.webSession.user, 'チャットは続けられます。補助情報は整えながら表示しています。');
+    payload = { supportCards: fallback.sidebar, homeSnapshot: fallback.homeSnapshot, recordsOverview: fallback.recordsOverview, starters: fallback.starters, reflection: fallback.reflection, followups: fallback.followups, actionPlan: fallback.actionPlan, supportMode: fallback.supportMode, stuckPrompts: fallback.homeSnapshot?.stuckPrompts || [], supportCompass: fallback.supportCompass, returnDigest: fallback.returnDigest, microStep: fallback.microStep, consultationCarry: fallback.consultationCarry, returnAnchor: fallback.returnAnchor, resumePrompts: fallback.resumePrompts, conversationBridge: fallback.conversationBridge, reentryGuide: fallback.reentryGuide, sync: fallback.sync, fallback: true };
   }
+
+  res.json({
+    ok: true,
+    reply: replyText,
+    replyMessages,
+    assistantMessage: {
+      text: replyText,
+      createdAt: new Date().toISOString(),
+      sourceChannel: 'web'
+    },
+    internal: result?.internal || {},
+    ...payload
+  });
 });
 
 router.get('/records/overview', requireSession, async (req, res) => {
