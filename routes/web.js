@@ -36,7 +36,10 @@ function looksAuthFailure(error) {
 
 
 function buildDisplayName(user) {
-  return user?.display_name || user?.preferred_name || 'ここから。ユーザー';
+  const raw = String(user?.display_name || user?.preferred_name || '').trim();
+  if (!raw) return 'ここから。ユーザー';
+  if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(raw)) return 'ここから。ユーザー';
+  return raw;
 }
 
 function buildFallbackHomeResponse(user, message) {
@@ -131,15 +134,12 @@ router.post('/link/confirm', async (req, res) => {
       userAgent: req.headers['user-agent'] || '',
       ipAddress: req.ip || req.headers['x-forwarded-for'] || ''
     });
+    const profile = await dataService.getProfileEnvelope(result.user);
     res.json({
       ok: true,
       sessionToken: result.sessionToken,
       expiresAt: result.expiresAt,
-      profile: {
-        userId: result.user.id,
-        lineUserId: result.user.line_user_id,
-        displayName: result.user.display_name || result.user.preferred_name || 'ここから。ユーザー'
-      }
+      profile
     });
   } catch (error) {
     res.status(400).json({ ok: false, error: 'confirm_failed', message: error?.message || '接続コードを確認できませんでした。phase12 のコードか、自動接続URLをそのまま貼り付けてください。' });
@@ -157,13 +157,10 @@ router.post('/logout', requireSession, async (req, res) => {
 
 router.get('/me', requireSession, async (req, res) => {
   const user = req.webSession.user;
+  const profile = await dataService.getProfileEnvelope(user);
   res.json({
     ok: true,
-    profile: {
-      userId: user.id,
-      lineUserId: user.line_user_id,
-      displayName: user.display_name || user.preferred_name || 'ここから。ユーザー'
-    },
+    profile,
     session: {
       expiresAt: req.webSession.session.expires_at
     }
@@ -201,13 +198,10 @@ router.get('/bootstrap', requireSession, async (req, res) => {
     const user = req.webSession.user;
     const since = req.query.since ? String(req.query.since) : undefined;
     const payload = await dataService.getBootstrapData(user, { since });
+    const profile = await dataService.getProfileEnvelope(user);
     res.json({
       ok: true,
-      profile: {
-        userId: user.id,
-        lineUserId: user.line_user_id,
-        displayName: buildDisplayName(user)
-      },
+      profile,
       session: {
         expiresAt: req.webSession.session.expires_at
       },
@@ -218,7 +212,8 @@ router.get('/bootstrap', requireSession, async (req, res) => {
     const user = req.webSession.user;
     const fallback = buildFallbackHomeResponse(user, '初期表示を整えながら接続しています。');
     const sync = { version: new Date().toISOString(), scopeVersions: { chat: '', records: '', home: '' } };
-    res.json({ ok: true, fallback: true, profile: { userId: user.id, lineUserId: user.line_user_id, displayName: buildDisplayName(user) }, session: { expiresAt: req.webSession.session.expires_at }, home: fallback.home, sidebar: dataService.buildFallbackSidebar(user, fallback.home), recordsOverview: fallback.recordsOverview, starters: fallback.starters, sync, supportMode: fallback.home.supportMode, stuckPrompts: fallback.home.stuckPrompts, consultLanes: fallback.home.consultLanes, recentTimeline: fallback.home.recentTimeline, reflection: { headline: 'ここから始められます', body: '接続は通っています。まずは一つだけ相談を送れば大丈夫です。' }, followups: ['今いちばん気になることを一つだけ整理したい'], supportCompass: fallback.home.supportCompass, returnDigest: fallback.home.returnDigest, microStep: fallback.home.microStep, resumePrompts: fallback.home.resumePrompts, conversationBridge: fallback.home.conversationBridge, reentryGuide: fallback.home.reentryGuide, consultationCarry: fallback.home.consultationCarry, returnAnchor: fallback.home.returnAnchor, sinceDigest: fallback.home.sinceDigest });
+    const profile = await dataService.getProfileEnvelope(user);
+    res.json({ ok: true, fallback: true, profile, session: { expiresAt: req.webSession.session.expires_at }, home: fallback.home, sidebar: dataService.buildFallbackSidebar(user, fallback.home), recordsOverview: fallback.recordsOverview, starters: fallback.starters, sync, supportMode: fallback.home.supportMode, stuckPrompts: fallback.home.stuckPrompts, consultLanes: fallback.home.consultLanes, recentTimeline: fallback.home.recentTimeline, reflection: { headline: 'ここから始められます', body: '接続は通っています。まずは一つだけ相談を送れば大丈夫です。' }, followups: ['今いちばん気になることを一つだけ整理したい'], supportCompass: fallback.home.supportCompass, returnDigest: fallback.home.returnDigest, microStep: fallback.home.microStep, resumePrompts: fallback.home.resumePrompts, conversationBridge: fallback.home.conversationBridge, reentryGuide: fallback.home.reentryGuide, consultationCarry: fallback.home.consultationCarry, returnAnchor: fallback.home.returnAnchor, sinceDigest: fallback.home.sinceDigest });
   }
 });
 
@@ -371,7 +366,8 @@ router.get('/records/bundle', requireSession, async (req, res) => {
     res.json({ ok: true, ...payload });
   } catch (error) {
     console.error('[web] records bundle error:', error?.message || error);
-    res.status(500).json({ ok: false, error: 'records_bundle_failed', message: '記録画面の準備でエラーが起きました。' });
+    const fallback = buildFallbackHomeResponse(req.webSession.user, '記録画面を整えながら表示しています。');
+    res.json({ ok: true, fallback: true, overview: fallback.recordsOverview, meals: [], weights: { latest: null, series: [], trend: null }, labs: [], homeSnapshot: fallback.home, message: '記録画面を整えながら表示しています。' });
   }
 });
 
