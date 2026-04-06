@@ -30,13 +30,14 @@
         <p>LINEで <strong>WEB接続コード</strong> と送って表示されたコードを入力してください。</p>
         <p class="hint subtle">ハイフンが入っていても、そのまま入力して大丈夫です。</p>
         <p class="hint subtle">うまく出ない時は、LINEで <strong>WEB接続コード</strong> だけを1行で送ってください。</p>
+        <p class="hint subtle">LINEで返ってきた自動接続URLは、そのまま開くか、この入力欄にURL全体を貼っても大丈夫です。</p>
         <div class="connect-steps">
           <div class="step-card"><strong>1</strong><span>LINEでコード発行</span></div>
           <div class="step-card"><strong>2</strong><span>この画面で入力</span></div>
           <div class="step-card"><strong>3</strong><span>ホーム・記録・チャットへ</span></div>
         </div>
         <div class="connect-box">
-          <input id="codeInput" type="text" placeholder="接続コードを入力" maxlength="12" />
+          <input id="codeInput" type="text" placeholder="接続コードまたは自動接続URLを入力" maxlength="240" />
           <button id="connectBtn">接続する</button>
         </div>
         <p class="hint" id="connectMessage">まだ接続されていません。</p>

@@ -869,6 +869,29 @@ function renderLabs(payload) {
   qs('#tabLabs').innerHTML = `${latestBlock}${listBlock}`;
 }
 
+
+function buildFallbackChatPayloadFromCache() {
+  return {
+    messages: [{ role: 'assistant', text: '接続はできています。ここから相談を続けられます。', sourceChannel: 'web', createdAt: new Date().toISOString() }],
+    sidebar: state.cache.sidebar || { todaySummary: state.cache.home?.todaySummary || '', recentMeals: state.cache.home?.recentMeals || [], latestWeight: { value: state.cache.home?.weightStatus?.latestValue || null, bodyFat: state.cache.home?.weightStatus?.latestBodyFat || null, recordedAt: state.cache.home?.weightStatus?.latestDate || null }, latestLabNote: state.cache.home?.latestLab?.items?.length ? state.cache.home.latestLab.items.slice(0,3).map((item) => `${item.itemName} ${item.value}`).join(' / ') : '血液検査データはまだありません' },
+    consultLanes: state.cache.home?.consultLanes || [],
+    recentTimeline: state.cache.home?.recentTimeline || [],
+    reflection: { headline: 'ここから相談できます', body: '今いちばん気になることを一つだけ送れば大丈夫です。' },
+    followups: state.cache.starters || ['今いちばん気になることを一つだけ整理したい'],
+    actionPlan: state.cache.home?.actionPlan || [],
+    supportMode: state.cache.home?.supportMode || {},
+    supportCompass: state.cache.home?.supportCompass || {},
+    returnDigest: state.cache.home?.returnDigest || {},
+    sinceDigest: state.cache.home?.sinceDigest || {},
+    microStep: state.cache.home?.microStep || {},
+    consultationCarry: state.cache.home?.consultationCarry || {},
+    returnAnchor: state.cache.home?.returnAnchor || {},
+    resumePrompts: state.cache.home?.resumePrompts || [],
+    reentryGuide: state.cache.home?.reentryGuide || {},
+    conversationBridge: state.cache.home?.conversationBridge || {}
+  };
+}
+
 async function loadBootstrap(force = false, requestId = 0) {
   if (!state.token) return null;
   if (state.bootstrapped && !force) return null;
@@ -933,7 +956,17 @@ async function loadBootstrap(force = false, requestId = 0) {
 
 async function loadHome(requestId = 0) {
   const sinceQuery = visitSinceQuery();
-  const data = await api(`/home${sinceQuery ? `?${sinceQuery}` : ''}`);
+  let data;
+  try {
+    data = await api(`/home${sinceQuery ? `?${sinceQuery}` : ''}`);
+  } catch (error) {
+    if (state.cache.home) {
+      setStatus('ホームは直前の内容を表示しています。', 'success');
+      data = { ...state.cache.home, starters: state.cache.starters || [], recordsOverview: state.cache.recordsOverview || {} };
+    } else {
+      throw error;
+    }
+  }
   if (!isCurrentViewRequest(requestId)) return;
   renderHome(data);
   renderRecordsOverview(data.recordsOverview || state.cache.recordsOverview || {});
@@ -956,7 +989,17 @@ async function loadHome(requestId = 0) {
 
 async function loadChat(requestId = 0) {
   const sinceQuery = visitSinceQuery();
-  const payload = await api(`/chat/bundle${sinceQuery ? `?${sinceQuery}` : ''}`);
+  let payload;
+  try {
+    payload = await api(`/chat/bundle${sinceQuery ? `?${sinceQuery}` : ''}`);
+  } catch (error) {
+    if (state.cache.home) {
+      setStatus('相談画面は直前の内容を表示しています。', 'success');
+      payload = buildFallbackChatPayloadFromCache();
+    } else {
+      throw error;
+    }
+  }
   if (!isCurrentViewRequest(requestId)) return;
   renderChatHistory(payload.messages || []);
   renderSidebar(payload.sidebar || {});
