@@ -35,6 +35,7 @@ const conversationFactResolverService = require('./conversation_fact_resolver_se
 const labQueryService = require('./lab_query_service');
 const activityCalorieService = require('./activity_calorie_service');
 const metabolismService = require('./metabolism_service');
+const authoritativeProfileService = require('./authoritative_profile_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -111,7 +112,7 @@ function detectIntent(input) {
   if (/私の名前は|名前なんだっけ|名前覚えてる/.test(text)) return 'name_question';
   if (/今日の体重.*(教えて|知りたい)|最新の体重|今日の体脂肪率.*(教えて|知りたい)|私の体重は|私の体脂肪率は/.test(text)) return 'weight_lookup';
   if (/プロフィール|プロフ/.test(text)) return 'profile_summary';
-  if (/(消費カロリー|カロリー.*消費|運動.*カロリー|走.*カロリー|筋トレ.*カロリー|1日.*消費|今日.*消費)/.test(text)) return 'activity_calorie_question';
+  if (/(消費カロリー|カロリー.*消費|運動.*カロリー|走.*カロリー|筋トレ.*カロリー|1日.*消費|今日.*消費|内訳.*kcal|kcal.*内訳|どっちが正しい|どちらが正しい|正しい.*消費|正しい.*kcal|運動の内訳)/.test(text)) return 'activity_calorie_question';
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
@@ -406,36 +407,18 @@ function looksLikeMealCorrectionText(text) {
   return false;
 }
 
-function buildActivityCalorieReply(text, todayRecords = {}, longMemory = {}) {
+function buildActivityCalorieReply(text, todayRecords = {}, profile = {}) {
   const safe = normalizeText(text);
   const exercises = Array.isArray(todayRecords?.exercises) ? todayRecords.exercises : [];
-  if (!exercises.length) {
-    return '今のところ今日の運動記録がまだ少ないので、走った時間や筋トレ内容が入るともう少し安定して見られます。';
-  }
-
-  const totalExerciseKcal = exercises.reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
-  const runningKcal = exercises
-    .filter((item) => /ジョギング|ランニング|走/.test(normalizeText(item?.name || item?.summary || '')))
-    .reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
-  const strengthKcal = exercises
-    .filter((item) => /筋トレ|スクワット|腕立て|腹筋/.test(normalizeText(item?.name || item?.summary || '')))
-    .reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
-  const snapshot = metabolismService.estimateEnergyBalance({ longMemory, todayRecords });
+  const weightKg = activityCalorieService.extractProfileWeightKg(profile);
+  const snapshot = metabolismService.estimateEnergyBalance({ longMemory: profile, todayRecords });
   const totalDaily = Number(snapshot?.totalOutputEstimate || snapshot?.estimatedTdee || 0);
-
-  if (/ランニング|ジョギング|走/.test(safe) && runningKcal > 0) {
-    return `今日の走った分だけなら、ざっくり ${Math.round(runningKcal)}kcal 前後です。`;
-  }
-  if (/筋トレ|スクワット|腕立て|腹筋/.test(safe) && strengthKcal > 0) {
-    return `今日の筋トレ分だけなら、ざっくり ${Math.round(strengthKcal)}kcal 前後です。`;
-  }
-  if (/1日|今日全体|総消費|一日/.test(safe) && totalDaily > 0) {
-    return [
-      `今日の運動分だけだと、ざっくり ${Math.round(totalExerciseKcal)}kcal 前後です。`,
-      `基礎代謝なども含めた1日全体の消費目安は、ざっくり ${Math.round(totalDaily)}kcal 前後で見ています。`
-    ].join('\n');
-  }
-  return `今日の運動分だけだと、ざっくり ${Math.round(totalExerciseKcal)}kcal 前後です。1日全体の消費を見る時は、基礎代謝を含めて別で整理します。`;
+  return activityCalorieService.buildActivityReply({
+    text: safe,
+    exercises,
+    weightKg,
+    totalDaily
+  });
 }
 
 
@@ -954,13 +937,31 @@ async function maybeStoreSimpleRecords(userId, text) {
     await contextMemoryService.addDailyRecord(userId, buildMealRecordPayload(text, mealParsed));
   }
 
-  const longMemory = await contextMemoryService.getLongMemory(userId);
-  const exercise = activityCalorieService.parseActivity(text, Number(String(longMemory?.weight || '').replace(/[^\d.]/g, '')) || 60) || detectExerciseRecord(text);
-  if (exercise) await contextMemoryService.addDailyRecord(userId, exercise);
+  const [longMemory, authoritativeProfile] = await Promise.all([
+    contextMemoryService.getLongMemory(userId),
+    authoritativeProfileService.getAuthoritativeProfileByLineUser(userId).catch(() => null)
+  ]);
+
+  const profileWeightKg = activityCalorieService.extractProfileWeightKg({
+    latestWeight: authoritativeProfile?.latestWeight,
+    weight: longMemory?.weight
+  });
+
+  const parsedExercise = activityCalorieService.parseActivity(text, profileWeightKg);
+  const exercise = parsedExercise || detectExerciseRecord(text);
+  if (exercise) {
+    const enrichedExercise = {
+      ...exercise,
+      estimatedCalories: Number(exercise?.estimatedCalories || parsedExercise?.estimatedCalories || 0),
+      minutes: Number(exercise?.minutes || parsedExercise?.minutes || 0)
+    };
+    await contextMemoryService.addDailyRecord(userId, enrichedExercise);
+  }
 
   const weight = detectWeightRecord(text);
   if (weight) await contextMemoryService.addDailyRecord(userId, weight);
 }
+
 
 async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest) {
   const systemHint = [
@@ -1164,8 +1165,14 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'activity_calorie_question') {
-      const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
-      const replyText = buildActivityCalorieReply(text, todayRecords, longMemory);
+      const [todayRecords, authoritativeProfile] = await Promise.all([
+        contextMemoryService.getTodayRecords(input.userId),
+        authoritativeProfileService.getAuthoritativeProfileByLineUser(input.userId).catch(() => null)
+      ]);
+      const replyText = buildActivityCalorieReply(text, todayRecords, {
+        ...longMemory,
+        latestWeight: authoritativeProfile?.latestWeight || longMemory?.weight || ''
+      });
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'activity_calorie_question', responseMode: 'answer' } };
     }

@@ -81,7 +81,7 @@ async function registerMovementVideo(userId, input = {}) {
   };
   nextSession.status = nextSession.clips.length >= 2 ? 'ready_for_bundle' : 'collecting';
 
-  const replyMode = nextSession.clips.length >= 2 ? 'bundle' : 'first_clip';
+  const replyMode = nextSession.clips.length >= 2 ? 'bundle_compact' : 'first_clip_short';
   nextSession.lastReplyMode = replyMode;
 
   await contextMemoryService.saveShortMemory(safeUserId, {
@@ -112,21 +112,21 @@ function buildMovementVideoReply(registered = {}) {
   const roles = Array.isArray(session.clips) ? session.clips.map((clip) => roleLabel(clip.role)).filter(Boolean) : [];
   const roleSummary = roles.length ? `今ある角度: ${roles.join(' / ')}` : '';
 
-  if (registered?.replyMode === 'bundle' || clipCount >= 2) {
+  if (registered?.replyMode === 'bundle_compact' || clipCount >= 2) {
     return [
       `動画は受け取りました。今は同じチェック回の動画として ${clipCount} 本をひとまとめにしています。`,
-      '別々に断定せず、同じ回の素材として整理してから見ます。',
-      roleSummary || '角度が分かる一言があると精度が上がります。例: 横から / 前から / 後ろから',
-      'おすすめは「横から1本」と「正面か後方から1本」です。'
+      roleSummary || null,
+      '別々に断定せず、この回の素材として整理してから見ます。',
+      '必要なら、このまま「横からです」「前からです」のように一言だけ添えて大丈夫です。'
     ].filter(Boolean).join('\n');
   }
 
-  if (registered?.replyMode === 'first_clip') {
+  if (registered?.replyMode === 'first_clip_short') {
     const label = roleLabel(latestClip?.role);
     if (label) {
-      return `動画は受け取りました。今の回の1本目は「${label}」として預かっています。別角度があれば、このまま続けて送って大丈夫です。`;
+      return `動画は受け取りました。今の回の1本目は「${label}」として預かっています。別角度があれば続けて送って大丈夫です。`;
     }
-    return '動画は受け取りました。今の回としてまとめ始めています。別角度があれば、このまま続けて送って大丈夫です。';
+    return '動画は受け取りました。今の回の1本目として預かっています。別角度があれば続けて送って大丈夫です。';
   }
 
   return '動画は受け取りました。';
