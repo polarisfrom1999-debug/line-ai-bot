@@ -4,6 +4,37 @@ const authoritativeProfileService = require('./authoritative_profile_service');
 const contextMemoryService = require('./context_memory_service');
 const profileService = require('./profile_service');
 
+function sanitizePreferredName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
+    .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+async function inferNameFromRecentMessages(lineUserId) {
+  try {
+    const recent = await contextMemoryService.getRecentMessages(lineUserId, 40);
+    const rows = Array.isArray(recent) ? recent.filter((row) => row && row.role === 'user').slice().reverse() : [];
+    for (const row of rows) {
+      const safe = normalizeText(row.content || '');
+      if (!safe) continue;
+      const explicit = safe.match(/(?:^|\n)(?:私の名前は|名前は|名前[：:])\s*([^\n]+)/u);
+      if (explicit) {
+        const preferred = sanitizePreferredName(explicit[1]);
+        if (preferred) return preferred;
+      }
+      const casual = safe.match(/^(?:私は|ぼくは|僕は|俺は)?\s*([ぁ-んァ-ヶ一-龠A-Za-z0-9〜～ー\-]{1,16})(?:です|だよ|といいます)$/u);
+      if (casual) {
+        const preferred = sanitizePreferredName(casual[1]);
+        if (preferred) return preferred;
+      }
+    }
+  } catch (_error) {}
+  return '';
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -15,8 +46,15 @@ async function buildNameReply(lineUserId) {
     contextMemoryService.getLongMemory(lineUserId)
   ]);
 
-  const preferredName = normalizeText(profile?.preferredName || longMemory?.preferredName || '');
+  const preferredName = normalizeText(profile?.preferredName || profile?.displayName || longMemory?.preferredName || '');
   if (preferredName) return `名前は「${preferredName}」として覚えています。`;
+
+  const inferred = await inferNameFromRecentMessages(lineUserId);
+  if (inferred) {
+    await authoritativeProfileService.persistProfilePatchByLineUser(lineUserId, { preferredName: inferred }, { sourceKind: 'recent_message_backfill', confidence: 0.8 });
+    return `名前は「${inferred}」として覚えています。`;
+  }
+
   return '今は名前がまだはっきり固定できていないので、名前だけもう一度送ってもらえたら確定して以後そこを優先します。';
 }
 

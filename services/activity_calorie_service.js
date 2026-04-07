@@ -9,8 +9,8 @@ function round0(value) {
 }
 
 const ACTIVITY_LIBRARY = [
-  { name: 'ウォーキング', patterns: [/ウォーキング/, /歩いた/, /散歩/], met: 3.5, defaultMinutes: 20 },
-  { name: 'ジョギング', patterns: [/ジョギング/, /ランニング/, /走った/, /マラソン/], met: 7.0, defaultMinutes: 20 },
+  { name: 'ウォーキング', patterns: [/ウォーキング/, /歩いた/, /歩いてきた/, /歩いてる/, /歩いている/, /散歩/], met: 3.5, defaultMinutes: 20 },
+  { name: 'ジョギング', patterns: [/ジョギング/, /ランニング/, /走った/, /走ってきた/, /走ってる/, /走っている/, /マラソン/], met: 7.0, defaultMinutes: 20 },
   { name: 'ストレッチ', patterns: [/ストレッチ/, /ほぐし/, /体操/], met: 2.3, defaultMinutes: 10 },
   { name: '筋トレ', patterns: [/筋トレ/, /スクワット/, /腕立て/, /腹筋/], met: 5.0, defaultMinutes: 10 },
   { name: '階段', patterns: [/階段/], met: 8.0, defaultMinutes: 5 },

@@ -373,7 +373,7 @@ function parseInlineProfile(text) {
   const weightMatch = safe.match(/体重[は：:]\s*([^\n]+)/);
   const bodyFatMatch = safe.match(/体脂肪率[は：:]\s*([^\n]+)/);
   const goalMatch = safe.match(/目標[は：:]\s*([^\n]+)/);
-  const casualNameMatch = !nameMatch && safe.match(/^([ぁ-んァ-ヶ一-龠A-Za-z0-9〜～ー\-]{1,16})です$/u);
+  const casualNameMatch = !nameMatch && safe.match(/^(?:私は|ぼくは|僕は|俺は)?\s*([ぁ-んァ-ヶ一-龠A-Za-z0-9〜～ー\-]{1,16})(?:です|だよ|といいます)$/u);
 
   if (nameMatch) {
     const preferredName = sanitizePreferredName(nameMatch[1]);
@@ -414,16 +414,20 @@ function buildActivityCalorieReply(text, todayRecords = {}, longMemory = {}) {
   }
 
   const totalExerciseKcal = exercises.reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
-  const runningKcal = exercises.filter((item) => /ジョギング|ランニング/.test(normalizeText(item?.name || item?.summary || ''))).reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
-  const strengthKcal = exercises.filter((item) => /筋トレ|スクワット|腕立て|腹筋/.test(normalizeText(item?.name || item?.summary || ''))).reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
+  const runningKcal = exercises
+    .filter((item) => /ジョギング|ランニング|走/.test(normalizeText(item?.name || item?.summary || '')))
+    .reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
+  const strengthKcal = exercises
+    .filter((item) => /筋トレ|スクワット|腕立て|腹筋/.test(normalizeText(item?.name || item?.summary || '')))
+    .reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || 0), 0);
   const snapshot = metabolismService.estimateEnergyBalance({ longMemory, todayRecords });
   const totalDaily = Number(snapshot?.totalOutputEstimate || snapshot?.estimatedTdee || 0);
 
   if (/ランニング|ジョギング|走/.test(safe) && runningKcal > 0) {
-    return `今日の走った分だけなら、ざっくり ${Math.round(runningKcal)}kcal 前後です。`; 
+    return `今日の走った分だけなら、ざっくり ${Math.round(runningKcal)}kcal 前後です。`;
   }
   if (/筋トレ|スクワット|腕立て|腹筋/.test(safe) && strengthKcal > 0) {
-    return `今日の筋トレ分だけなら、ざっくり ${Math.round(strengthKcal)}kcal 前後です。`; 
+    return `今日の筋トレ分だけなら、ざっくり ${Math.round(strengthKcal)}kcal 前後です。`;
   }
   if (/1日|今日全体|総消費|一日/.test(safe) && totalDaily > 0) {
     return [
@@ -464,7 +468,7 @@ function detectExerciseRecord(text) {
   if (containsQuestionTone(safe)) return null;
 
   if (/スクワット/.test(safe)) return { type: 'exercise', summary: safe, name: 'スクワット' };
-  if (/ジョギング|ランニング|走りました|走った|歩走/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
+  if (/ジョギング|ランニング|走りました|走った|走ってきた|走ってる|走っている|歩走/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
   if (/歩いた|ウォーキング|散歩/.test(safe)) return { type: 'exercise', summary: safe, name: 'ウォーキング' };
   if (/腕立て/.test(safe)) return { type: 'exercise', summary: safe, name: '腕立て' };
   return null;

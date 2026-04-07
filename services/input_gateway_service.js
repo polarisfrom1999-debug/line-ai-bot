@@ -2,7 +2,6 @@
 
 const classifier = require('./input_classifier_service');
 const webLinkCommandService = require('./web_link_command_service');
-const movementAnalysisService = require('./movement_analysis_service');
 const movementSessionService = require('./movement_session_service');
 
 function normalizeText(value) {
@@ -43,10 +42,7 @@ async function handleLineTopLevel(input = {}) {
       lane,
       replyMessages: [{
         type: 'text',
-        text: [
-          movementSessionService.buildMovementVideoReply(registered),
-          movementAnalysisService.buildRunningVideoGuidance()
-        ].join('\n')
+        text: movementSessionService.buildMovementVideoReply(registered)
       }],
       internal: {
         intentType: 'movement_video_received',

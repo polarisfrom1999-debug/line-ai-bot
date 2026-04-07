@@ -2,6 +2,7 @@
 
 const { supabase } = require('./supabase_service');
 const { ensureUser } = require('./user_service');
+const contextMemoryService = require('./context_memory_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -128,6 +129,26 @@ async function getLatestWeightRow(userId) {
 }
 
 
+
+
+async function inferPreferredNameFromRecentMessages(lineUserId) {
+  const safeLineUserId = normalizeText(lineUserId);
+  if (!safeLineUserId) return '';
+  try {
+    const recent = await contextMemoryService.getRecentMessages(safeLineUserId, 40);
+    const userMessages = Array.isArray(recent) ? recent.filter((row) => row && row.role === 'user').slice().reverse() : [];
+    for (const row of userMessages) {
+      const safe = normalizeText(row.content || '');
+      if (!safe) continue;
+      const match = safe.match(/^(?:私は|ぼくは|僕は|俺は)?\s*([ぁ-んァ-ヶ一-龠A-Za-z0-9〜～ー\-]{1,16})(?:です|だよ|です！|だよ！|といいます)$/u);
+      if (!match) continue;
+      const inferred = sanitizePreferredName(match[1]);
+      if (inferred) return inferred;
+    }
+  } catch (_error) {}
+  return '';
+}
+
 async function getLatestPatientName(userId) {
   const safeUserId = normalizeText(userId);
   if (!safeUserId) return '';
@@ -145,15 +166,16 @@ async function getAuthoritativeProfileByLineUser(lineUserId) {
   const user = await getUserByLineUserId(lineUserId);
   if (!user) return null;
 
-  const [factRows, latestWeight, latestPatientName] = await Promise.all([
+  const [factRows, latestWeight, latestPatientName, recentPreferredName] = await Promise.all([
     getProfileFacts(user.id),
     getLatestWeightRow(user.id),
-    getLatestPatientName(user.id)
+    getLatestPatientName(user.id),
+    inferPreferredNameFromRecentMessages(lineUserId)
   ]);
 
   const factMap = rowsToFactMap(factRows);
-  const displayName = sanitizePreferredName(user.display_name || user.preferred_name || user.name || factMap.preferredName?.value || latestPatientName || '') || '';
-  const preferredName = sanitizePreferredName(factMap.preferredName?.value || displayName || latestPatientName || '');
+  const displayName = sanitizePreferredName(user.display_name || user.preferred_name || user.name || factMap.preferredName?.value || latestPatientName || recentPreferredName || '') || '';
+  const preferredName = sanitizePreferredName(factMap.preferredName?.value || displayName || latestPatientName || recentPreferredName || '');
 
   const weightFromFacts = normalizeProfileValue('weight', factMap.weight?.value || '');
   const bodyFatFromFacts = normalizeProfileValue('bodyFat', factMap.bodyFat?.value || '');
