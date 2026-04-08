@@ -94,17 +94,6 @@ async function storePanelForPayload(userId, payload = {}, panel = null) {
   return clone(stored);
 }
 
-
-async function storePanelForHash(userId, hash, panel = null) {
-  const safeHash = normalizeText(hash);
-  if (!safeHash || !panel) return null;
-  const stored = clone({ ...panel, documentHash: safeHash });
-  panelByHash.set(safeHash, stored);
-  if (userId) latestHashByUser.set(String(userId), safeHash);
-  await persistPanel(userId, safeHash, stored);
-  return clone(stored);
-}
-
 async function getLatestPanelForUser(userId) {
   const safeUserId = String(userId || '');
   const hash = latestHashByUser.get(safeUserId);
@@ -127,6 +116,16 @@ async function getLatestPanelForUser(userId) {
   } catch (_error) {
     return null;
   }
+}
+
+async function storePanelForHash(userId, documentHash, panel = null) {
+  const safeHash = normalizeText(documentHash);
+  if (!safeHash || !panel) return null;
+  const stored = clone({ ...panel, documentHash: safeHash });
+  panelByHash.set(safeHash, stored);
+  if (userId) latestHashByUser.set(String(userId), safeHash);
+  await persistPanel(userId, safeHash, stored);
+  return clone(stored);
 }
 
 module.exports = {

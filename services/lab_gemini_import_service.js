@@ -148,11 +148,18 @@ const thinNormalizer = {
       }
     }
 
+    const rawDates = [];
+    for (const table of tables) {
+      const dates = Array.isArray(table?.dates) ? table.dates.map(normalizeDateToken).filter(Boolean) : [];
+      rawDates.push(...dates);
+    }
+
     return {
       summary: raw?.session_summary || null,
       document_type: raw?.document_type || 'unknown',
       confidence: raw?.confidence ?? null,
       issues: Array.isArray(raw?.issues) ? raw.issues : [],
+      exam_dates: sortDatesAsc(rawDates),
       measurements,
     };
   },
@@ -160,7 +167,7 @@ const thinNormalizer = {
 
 function buildLabPanelFromNormalized(normalized = {}) {
   const measurements = Array.isArray(normalized?.measurements) ? normalized.measurements : [];
-  const examDates = sortDatesAsc(measurements.map((row) => row?.date));
+  const examDates = sortDatesAsc([...(normalized?.exam_dates || []), ...measurements.map((row) => row?.date)]);
   const latestExamDate = examDates[examDates.length - 1] || '';
   const itemsByKey = new Map();
 
@@ -200,10 +207,12 @@ function buildLabPanelFromNormalized(normalized = {}) {
     })
     .filter((item) => item.itemName && (item.value || item.history.length));
 
+  const hasSignal = items.length > 0 || examDates.length > 0 || normalizeText(normalized?.summary || '') || normalizeText(normalized?.document_type || '') !== 'unknown' || (Array.isArray(normalized?.issues) && normalized.issues.length);
+
   return {
     source: 'gemini_import',
-    isLabImage: items.length > 0,
-    labLike: items.length > 0,
+    isLabImage: Boolean(hasSignal),
+    labLike: Boolean(hasSignal),
     reportDate: latestExamDate,
     examDate: latestExamDate,
     latestExamDate,

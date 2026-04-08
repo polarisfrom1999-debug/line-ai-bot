@@ -1,80 +1,187 @@
 'use strict';
 
-const geminiDispatchService = require('./gemini_dispatch_service');
+let GoogleGenAI = null;
+try {
+  ({ GoogleGenAI } = require('@google/genai'));
+} catch (_) {
+  GoogleGenAI = null;
+}
 
-function buildSchemaForName(schemaName = 'generic_import_v1') {
-  switch (schemaName) {
-    case 'lab_import_v1':
-      return {
-        type: 'object',
-        properties: {
-          document_type: { type: 'string' },
-          session_summary: { type: 'string' },
-          tables: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                dates: { type: 'array', items: { type: 'string' } },
-                rows: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      label: { type: 'string' },
-                      unit: { type: 'string' },
-                      values_by_date: { type: 'object' }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          issues: { type: 'array', items: { type: 'string' } },
-          confidence: { type: 'number' }
-        }
-      };
-    case 'meal_import_v1':
-      return {
-        type: 'object',
-        properties: {
-          meal_summary: { type: 'string' },
-          items: { type: 'array', items: { type: 'object' } },
-          totals: { type: 'object' },
-          issues: { type: 'array', items: { type: 'string' } }
-        }
-      };
-    case 'movement_import_v1':
-      return {
-        type: 'object',
-        properties: {
-          clip_roles: { type: 'array', items: { type: 'string' } },
-          summary: { type: 'string' },
-          findings: { type: 'object' },
-          coach_cues: { type: 'array', items: { type: 'string' } },
-          drills: { type: 'array', items: { type: 'string' } },
-          needs_more_views: { type: 'array', items: { type: 'string' } },
-          confidence: { type: 'number' }
-        }
-      };
-    default:
-      return { type: 'object', properties: {} };
+function normalizeText(value) {
+  return String(value || '').trim();
+}
+
+function getClient() {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  if (!apiKey || !GoogleGenAI) return null;
+  try {
+    return new GoogleGenAI({ apiKey });
+  } catch (_error) {
+    return null;
   }
 }
 
-async function runStructured({ prompt, attachments, schemaName }) {
-  const mediaPayloads = Array.isArray(attachments) ? attachments.filter((a) => a?.buffer) : [];
-  const schema = buildSchemaForName(schemaName);
-  const result = await geminiDispatchService.generateStructuredMediaJson({
-    prompt,
-    schema,
-    mediaPayloads,
-    domain: schemaName || 'generic_import'
-  });
-  return result?.json || null;
+function candidateModels() {
+  const seen = new Set();
+  const list = [];
+  for (const model of [
+    process.env.GEMINI_IMPORT_MODEL,
+    process.env.GEMINI_MODEL,
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+  ]) {
+    const safe = normalizeText(model);
+    if (!safe || safe === 'gemini-2.0-flash' || seen.has(safe)) continue;
+    seen.add(safe);
+    list.push(safe);
+  }
+  return list.length ? list : ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
+}
+
+function buildParts(prompt, attachments) {
+  const parts = [{ text: prompt }];
+  for (const attachment of attachments || []) {
+    if (!attachment?.buffer) continue;
+    parts.push({
+      inlineData: {
+        data: attachment.buffer.toString('base64'),
+        mimeType: attachment.mimeType || 'image/jpeg',
+      },
+    });
+  }
+  return parts;
+}
+
+function stripCodeFence(text) {
+  return normalizeText(text).replace(/```json/gi, '').replace(/```/g, '').trim();
+}
+
+function removeTrailingCommas(text) {
+  return text.replace(/,\s*([}\]])/g, '$1');
+}
+
+function extractBalancedJsonCandidates(text) {
+  const safe = stripCodeFence(text);
+  const candidates = [];
+  for (let i = 0; i < safe.length; i += 1) {
+    const opener = safe[i];
+    if (opener !== '{' && opener !== '[') continue;
+    const closer = opener === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < safe.length; j += 1) {
+      const ch = safe[j];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === opener) depth += 1;
+      if (ch === closer) {
+        depth -= 1;
+        if (depth === 0) {
+          candidates.push(safe.slice(i, j + 1));
+          break;
+        }
+      }
+    }
+  }
+  return [...new Set(candidates)].sort((a, b) => b.length - a.length);
+}
+
+function tryParseJson(text) {
+  const safe = stripCodeFence(text);
+  if (!safe) return null;
+
+  const attempts = [safe, removeTrailingCommas(safe), ...extractBalancedJsonCandidates(safe).flatMap((v) => [v, removeTrailingCommas(v)])];
+  for (const candidate of attempts) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch (_error) {
+      // continue
+    }
+  }
+  return null;
+}
+
+function extractText(result) {
+  if (!result) return '';
+  if (typeof result.text === 'string') return normalizeText(result.text);
+  const parts = result?.candidates?.[0]?.content?.parts || [];
+  return parts.map((part) => normalizeText(part?.text || '')).filter(Boolean).join('\n');
+}
+
+function buildFallbackObject(reason, model, rawText) {
+  const excerpt = normalizeText(rawText).slice(0, 1500);
+  return {
+    document_type: 'unknown',
+    session_summary: '',
+    tables: [],
+    issues: [reason, model ? `model:${model}` : null, excerpt ? `raw_excerpt:${excerpt}` : null].filter(Boolean),
+    confidence: 0,
+  };
+}
+
+async function generateWithModel({ client, model, prompt, attachments, timeoutMs }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const result = await client.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: buildParts(prompt, attachments) }],
+      config: {
+        temperature: 0.1,
+        topP: 0.9,
+        maxOutputTokens: 3000,
+      },
+      signal: controller.signal,
+    });
+    const text = extractText(result);
+    return { ok: Boolean(text), text, model, reason: text ? null : 'empty_text' };
+  } catch (error) {
+    return { ok: false, text: '', model, reason: normalizeText(error?.message || 'analysis_error') || 'analysis_error' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runStructured({ prompt, attachments }) {
+  const client = getClient();
+  if (!client) {
+    return buildFallbackObject('client_unavailable', null, '');
+  }
+  const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 20000);
+  let lastText = '';
+  const reasons = [];
+
+  for (const model of candidateModels()) {
+    const result = await generateWithModel({ client, model, prompt, attachments, timeoutMs });
+    if (!result.ok) {
+      reasons.push(result.reason || `model_failed:${model}`);
+      continue;
+    }
+    lastText = result.text || '';
+    const parsed = tryParseJson(lastText);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+    reasons.push(`json_parse_failed:${model}`);
+  }
+
+  return buildFallbackObject(reasons.join(' | ') || 'all_models_failed', null, lastText);
 }
 
 module.exports = {
   runStructured,
-  buildSchemaForName,
 };
