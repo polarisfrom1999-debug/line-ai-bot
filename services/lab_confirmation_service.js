@@ -59,6 +59,11 @@ function isAcceptanceText(text) {
   return /^(はい|OK|ok|このまま保存|保存して|これで保存|合っています|合ってる)$/i.test(safe);
 }
 
+function hasSaveIntentText(text) {
+  const safe = normalizeText(text);
+  return /保存/.test(safe);
+}
+
 function isCorrectionStartText(text) {
   const safe = normalizeText(text);
   return /^(いいえ|修正|修正する|違う|違います|数値を修正する)$/i.test(safe);
@@ -175,16 +180,18 @@ function summarizeImportantLines(panel) {
 
 function buildDraftSummaryMessage(panel, options = {}) {
   const dates = sortDatesAsc(panel?.examDates || [panel?.latestExamDate || panel?.examDate || '']);
+  const importantLines = summarizeImportantLines(panel);
   const lines = [
-    '血液検査を読み取りました。まずは仮の読み取りを見やすくまとめます。',
-    dates.length ? `読み取れた日付: ${dates.join(' / ')}` : null,
-    ...summarizeImportantLines(panel),
+    '血液検査を読み取りました。まずは仮の読み取りとして確認してください。',
+    dates.length ? `読み取れた日付: ${dates.join(' / ')}` : '日付はまだ仮置きです。',
+    ...importantLines,
+    importantLines.length ? null : '今回は自動読み取りが弱めなので、合っている項目だけ「TGは50」「HbA1cは5.8」のように送ってください。',
     options?.hint || null,
     'この読み取りでよければ「はい、このまま保存」、違う時は「いいえ、修正する」を押してください。',
     'そのまま「TGは50」「HbA1cは5.8」のように直しても大丈夫です。',
   ].filter(Boolean).join('\n');
 
-  return textMessageWithQuickReplies(lines, ['はい、このまま保存', 'いいえ、修正する', '日付を修正する']);
+  return textMessageWithQuickReplies(lines, ['はい、このまま保存', 'いいえ、修正する', '日付は2025-03-22']);
 }
 
 function buildCorrectionGuideMessage() {
@@ -247,4 +254,5 @@ module.exports = {
   buildSavedReply,
   buildPendingItemReply,
   sortDatesAsc,
+  hasSaveIntentText,
 };
