@@ -2,6 +2,7 @@
 
 const classifier = require('./input_classifier_service');
 const webLinkCommandService = require('./web_link_command_service');
+const movementAnalysisService = require('./movement_analysis_service');
 const movementSessionService = require('./movement_session_service');
 
 function normalizeText(value) {
@@ -23,32 +24,22 @@ async function handleLineTopLevel(input = {}) {
 
   if (lane === 'movement_video_media') {
     const registered = await movementSessionService.registerMovementVideo(input.lineUserId || input.userId, input);
-    if (registered?.duplicate) {
-      return {
-        handled: true,
-        lane,
-        replyMessages: [],
-        internal: {
-          intentType: 'movement_video_duplicate',
-          responseMode: 'silent',
-          entryLane: lane,
-          suppressReply: true
-        }
-      };
-    }
-
+    const replyText = movementSessionService.buildMovementVideoReply(registered);
     return {
       handled: true,
       lane,
       replyMessages: [{
         type: 'text',
-        text: movementSessionService.buildMovementVideoReply(registered)
+        text: replyText || [
+          '動画は受け取りました。',
+          movementAnalysisService.buildRunningVideoGuidance()
+        ].filter(Boolean).join('\n')
       }],
       internal: {
         intentType: 'movement_video_received',
         responseMode: 'guided',
         entryLane: lane,
-        movementSessionId: registered?.session?.sessionId || null,
+        movementSessionId: registered?.session?.sessionId || '',
         movementClipCount: Array.isArray(registered?.session?.clips) ? registered.session.clips.length : 0
       }
     };

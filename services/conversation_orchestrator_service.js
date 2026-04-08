@@ -36,6 +36,7 @@ const labQueryService = require('./lab_query_service');
 const activityCalorieService = require('./activity_calorie_service');
 const metabolismService = require('./metabolism_service');
 const authoritativeProfileService = require('./authoritative_profile_service');
+const movementSessionService = require('./movement_session_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -765,10 +766,65 @@ async function maybeHandleSupportState(input) {
   return replyText;
 }
 
+
+const LAB_UPLOAD_SESSION_WINDOW_MS = 5 * 60 * 1000;
+
+function isRecentIsoWithin(iso, windowMs) {
+  const time = Date.parse(iso || '');
+  if (!Number.isFinite(time)) return false;
+  return (Date.now() - time) <= windowMs;
+}
+
+function buildNextLabUploadSession(shortMemory = {}, input = {}) {
+  const current = shortMemory?.labUploadSession || null;
+  const recent = current && isRecentIsoWithin(current.updatedAt, LAB_UPLOAD_SESSION_WINDOW_MS)
+    ? current
+    : { sessionId: `lab_${Date.now()}`, imageCount: 0, createdAt: new Date().toISOString() };
+
+  return {
+    ...recent,
+    updatedAt: new Date().toISOString(),
+    imageCount: Number(recent.imageCount || 0) + 1,
+    lastMessageId: normalizeText(input?.messageId || ''),
+  };
+}
+
+function buildPendingLabUploadReply(session = {}) {
+  const count = Number(session?.imageCount || 0);
+  if (count >= 2) {
+    return `血液検査の画像を追加で受け取りました。今回は同じ検査として ${count} 枚をまとめています。今は保存用の整理中なので、値は断定せず保持しています。`;
+  }
+  return '血液検査の画像は受け取りました。今回は検査画像として認識していますが、まだ構造化の途中です。まずは「TGは？」「HbA1cは？」「2025-03-22」のように1項目か1日付ずつ聞いてください。';
+}
+
+async function maybeHandleMovementSessionText(input, shortMemory) {
+  if (input?.messageType !== 'text') return null;
+  const text = normalizeText(input?.rawText || '');
+  if (!text) return null;
+
+  const roleUpdatedSession = await movementSessionService.applyRoleHintToActiveSession(input.userId, text).catch(() => null);
+  const session = roleUpdatedSession || movementSessionService.getActiveMovementSession(shortMemory);
+  if (!session) return null;
+
+  if (/横から|前から|後ろから|後方から/.test(text) && !/解析|判定|評価|見て|教えて|痛み|アキレス腱|接地|着地|足の運び|フォーム/.test(text)) {
+    const roles = (session.clips || []).map((clip) => clip.role).filter(Boolean);
+    const labels = roles.map((role) => role === 'side' ? '横' : role === 'front' ? '前' : role === 'rear' ? '後ろ' : '').filter(Boolean);
+    return `了解です。今の回は ${labels.length ? labels.join(' / ') : 'この素材'} としてまとめます。`;
+  }
+
+  if (!/解析|判定|評価|見て|見てもら|見てほしい|分析|フォーム|アキレス腱|足の運び|着地|接地|膝|体幹|骨盤|腕振り/.test(text)) {
+    return null;
+  }
+
+  return movementSessionService.buildMovementConsultationReply(session, text);
+}
+
 async function maybeHandleLabImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
 
   try {
+    const shortMemory = await contextMemoryService.getShortMemory(input.userId);
+    const labUploadSession = buildNextLabUploadSession(shortMemory, input);
     const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
     const lab = ingest?.panel || null;
     const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
@@ -779,6 +835,7 @@ async function maybeHandleLabImage(input, imagePayload) {
     if (!hasItems) {
       await contextMemoryService.saveShortMemory(input.userId, {
         lastImageType: 'lab_pending',
+        labUploadSession,
         followUpContext: {
           source: 'image',
           imageType: 'lab_pending',
@@ -794,12 +851,13 @@ async function maybeHandleLabImage(input, imagePayload) {
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識していますが、まだ構造化の途中です。まずは「TGは？」「HbA1cは？」「2025-03-22」のように1項目か1日付ずつ聞いてください。'
+        replyText: buildPendingLabUploadReply(labUploadSession)
       };
     }
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'lab',
+      labUploadSession,
       followUpContext: {
         source: 'image',
         imageType: 'lab',
@@ -1222,6 +1280,12 @@ async function orchestrateConversation(input) {
         replyMessages: [replyMessage],
         internal: { intentType: stageGuideIntent, responseMode: 'guided' }
       };
+    }
+
+    const movementSessionReply = await maybeHandleMovementSessionText(input, refreshedShortMemory);
+    if (movementSessionReply) {
+      await appendTurn(input.userId, input.rawText || '', movementSessionReply);
+      return { ok: true, replyMessages: [{ type: 'text', text: movementSessionReply }], internal: { intentType: 'movement_session', responseMode: 'guided' } };
     }
 
     const sportsHandled = await maybeHandleSportsConsultation(input);
