@@ -45,13 +45,13 @@ async function handleLineTopLevel(input = {}) {
     };
   }
 
-  if (lane === 'movement_image_media') {
+  if (lane === 'movement_image_media' || lane === 'shoe_wear_image_media') {
     return {
       handled: false,
       lane,
       internal: {
         entryLane: lane,
-        intentType: 'movement_image_media'
+        intentType: lane
       }
     };
   }

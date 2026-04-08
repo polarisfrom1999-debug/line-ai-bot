@@ -13,6 +13,8 @@ const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
 const sportsConsultationService = require('./sports_consultation_service');
 const profileService = require('./profile_service');
+const shoeWearAnalysisService = require('./shoe_wear_analysis_service');
+const movementStillAnalysisService = require('./movement_still_analysis_service');
 const featureFlags = require('../config/feature_flags');
 const { detectCaptureTypeFromImageAnalysis } = require('./capture_router_service');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
@@ -844,7 +846,9 @@ async function maybeHandleLabImage(input, imagePayload) {
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
           availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
           labPanel: lab || null,
-          labPanelReady: false
+          labPanelReady: false,
+          labRawPayload: lab?.rawPayload || null,
+          labPromptVersion: lab?.promptVersion || ''
         }
       });
 
@@ -867,7 +871,9 @@ async function maybeHandleLabImage(input, imagePayload) {
         selectedLabExamDate: lab.latestExamDate || lab.examDate || '',
         availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
         labPanel: lab,
-        labPanelReady: true
+        labPanelReady: true,
+        labRawPayload: lab?.rawPayload || null,
+        labPromptVersion: lab?.promptVersion || ''
       }
     });
 
@@ -923,6 +929,74 @@ async function maybeHandleMealImage(input, imagePayload) {
   } catch (error) {
     console.error('[conversation_orchestrator] meal image error:', error?.message || error);
     return { handled: false, analysis: { isMealImage: false }, error };
+  }
+}
+
+async function maybeHandleShoeWearImage(input, imagePayload) {
+  if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
+
+  const hint = normalizeText(input?.rawText || '');
+  if (!/靴|靴底|ソール|削れ|摩耗/.test(hint)) return { handled: false, analysis: null };
+
+  try {
+    const result = await shoeWearAnalysisService.analyzeShoeWearImage(imagePayload, { rawText: hint });
+    if (!result?.isShoeWearImage) return { handled: false, analysis: result || null };
+
+    const lines = [
+      '靴底の画像として受け取りました。',
+      result.side ? `見ている側: ${result.side}` : null,
+      result.wearRegions?.length ? `摩耗の見どころ: ${result.wearRegions.slice(0, 3).map((x) => `${x.region}${x.severity ? `(${x.severity})` : ''}`).join(' / ')}` : null,
+      result.movementHypotheses?.length ? `動きの癖の候補: ${result.movementHypotheses.slice(0, 2).join(' / ')}` : '断定はせず、動きの癖の候補として整理します。',
+      '必要なら「この靴底から走り方の癖は？」「アキレス腱の負担と関係ある？」のように続けてください。'
+    ].filter(Boolean);
+
+    await contextMemoryService.saveShortMemory(input.userId, {
+      lastImageType: 'shoe_wear',
+      followUpContext: {
+        source: 'image',
+        imageType: 'shoe_wear',
+        shoeWearAnalysis: result
+      }
+    });
+
+    return { handled: true, analysis: result, replyText: lines.join('\n') };
+  } catch (error) {
+    console.error('[conversation_orchestrator] shoe wear image error:', error?.message || error);
+    return { handled: false, analysis: null, error };
+  }
+}
+
+async function maybeHandleMovementStillImage(input, imagePayload) {
+  if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
+
+  const hint = normalizeText(input?.rawText || '');
+  if (!/フォーム|走り|アキレス腱|接地|足の運び|姿勢|膝|体幹|骨盤/.test(hint)) return { handled: false, analysis: null };
+
+  try {
+    const result = await movementStillAnalysisService.analyzeMovementStillImage(imagePayload, { rawText: hint });
+    if (!result?.isMovementImage) return { handled: false, analysis: result || null };
+
+    const lines = [
+      '動作の静止画として受け取りました。',
+      result.angle ? `角度ヒント: ${result.angle}` : null,
+      result.focusPoints?.length ? `優先して見る点: ${result.focusPoints.slice(0, 3).join(' / ')}` : '接地、体幹、膝の向き、左右差を優先して見ます。',
+      result.nextBestAngle ? `次にあると見やすい角度: ${result.nextBestAngle}` : null,
+      '必要なら、このまま「横からです」「特に右足です」のように一言だけ足してください。'
+    ].filter(Boolean);
+
+    await contextMemoryService.saveShortMemory(input.userId, {
+      lastImageType: 'movement_still',
+      followUpContext: {
+        source: 'image',
+        imageType: 'movement_still',
+        movementStillAnalysis: result
+      }
+    });
+
+    return { handled: true, analysis: result, replyText: lines.join('\n') };
+  } catch (error) {
+    console.error('[conversation_orchestrator] movement still image error:', error?.message || error);
+    return { handled: false, analysis: null, error };
   }
 }
 
@@ -1131,9 +1205,23 @@ async function orchestrateConversation(input) {
         return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
       }
 
+      const shoeWearImageHandled = await maybeHandleShoeWearImage(input, imagePayload);
+      if (shoeWearImageHandled?.handled) {
+        await appendTurn(input.userId, input.rawText || '[image]', shoeWearImageHandled.replyText);
+        return { ok: true, replyMessages: [{ type: 'text', text: shoeWearImageHandled.replyText }], internal: { intentType: 'shoe_wear_image', responseMode: 'answer' } };
+      }
+
+      const movementStillImageHandled = await maybeHandleMovementStillImage(input, imagePayload);
+      if (movementStillImageHandled?.handled) {
+        await appendTurn(input.userId, input.rawText || '[image]', movementStillImageHandled.replyText);
+        return { ok: true, replyMessages: [{ type: 'text', text: movementStillImageHandled.replyText }], internal: { intentType: 'movement_still_image', responseMode: 'answer' } };
+      }
+
       const imageKind = imageClassificationService.classifyImageByAnalysis({
         lab: labImageHandled?.analysis,
-        meal: mealImageHandled?.analysis
+        meal: mealImageHandled?.analysis,
+        shoeWear: shoeWearImageHandled?.analysis,
+        movement: movementStillImageHandled?.analysis
       });
       const fallbackKind = detectCaptureTypeFromImageAnalysis({
         lab: labImageHandled?.analysis,

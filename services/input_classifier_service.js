@@ -21,7 +21,8 @@ function classifyMediaLane(input = {}) {
   const rawText = normalizeText(input.rawText || '');
   if (messageType === 'video') return 'movement_video_media';
   if (messageType === 'image') {
-    if (/靴|靴底|フォーム|走り|動画|アキレス腱/i.test(rawText)) return 'movement_image_media';
+    if (/靴|靴底|ソール|削れ|摩耗/i.test(rawText)) return 'shoe_wear_image_media';
+    if (/フォーム|走り|動画|アキレス腱|接地|足の運び/i.test(rawText)) return 'movement_image_media';
     if (/血液検査|採血|LDL|HDL|HbA1c|中性脂肪|TG|AST|ALT|γ-GTP/i.test(rawText)) return 'lab_image_media';
     if (/食事|ごはん|朝食|昼食|夕食|カロリー/i.test(rawText)) return 'meal_image_media';
     return 'generic_image_media';

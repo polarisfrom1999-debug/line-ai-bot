@@ -36,6 +36,8 @@ function buildPendingPanel(classification, extraction) {
     confidence: Number(extraction?.confidence || classification?.confidence || 0) || 0.3,
     trendSummary: '',
     rawText: [classification?.rawText, extraction?.rawText].filter(Boolean).join('\n'),
+    rawPayload: extraction?.rawPayload || null,
+    promptVersion: extraction?.promptVersion || '',
     ignoredReason: '',
     labPending: true
   };
@@ -119,7 +121,9 @@ async function analyzeLabImage(imagePayload) {
     issues: extraction.issues || classification.issues || [],
     confidence: Number(extraction.confidence || classification.confidence || 0) || 0.85,
     trendSummary: buildTrendSummary({ items: extraction.items }),
-    rawText: [classification.rawText, extraction.rawText].filter(Boolean).join('\n')
+    rawText: [classification.rawText, extraction.rawText].filter(Boolean).join('\n'),
+    rawPayload: extraction?.rawPayload || null,
+    promptVersion: extraction?.promptVersion || ''
   };
 
   return panel;

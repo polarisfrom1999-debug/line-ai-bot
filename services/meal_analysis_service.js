@@ -1,6 +1,8 @@
 'use strict';
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
+const geminiDispatchService = require('./gemini_dispatch_service');
+const { buildMealExtractPrompt } = require('./meal_extract_prompt_builder_service');
 
 const FOOD_LIBRARY = [
   { keywords: ['ごはん', '白米'], kcal: 234, protein: 3.8, fat: 0.5, carbs: 55.2, unit: '1杯' },
@@ -240,6 +242,31 @@ function normalizeImageMeal(parsed) {
 }
 
 async function analyzeMealImage(imagePayload) {
+  const config = buildMealExtractPrompt({ rawText: '', previousMealSummary: '' });
+
+  try {
+    const dispatch = await geminiDispatchService.generateStructuredImageJson({
+      imagePayload,
+      prompt: config.prompt,
+      schema: config.schema,
+      domain: config.domain,
+      model: config.preferredModel,
+      temperature: config.temperature
+    });
+
+    const parsed = dispatch?.json || null;
+    if (parsed) {
+      const normalized = normalizeImageMeal(parsed);
+      if (normalized.isMealImage) {
+        normalized.rawGeminiPayload = parsed;
+        normalized.promptVersion = config.promptVersion;
+        return normalized;
+      }
+    }
+  } catch (error) {
+    console.error('[meal_analysis_service] builder dispatch failed:', error?.message || error);
+  }
+
   const prompt = [
     'この画像が食事関連なら、食事写真だけでなく、メニュー表、商品パッケージ、栄養成分表示、食品名ラベルも対象にしてください。',
     '画像の中の文字も必ず読み取って判断してください。',

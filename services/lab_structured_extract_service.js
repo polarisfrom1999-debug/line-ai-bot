@@ -2,6 +2,8 @@
 
 const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 const classifier = require('./lab_document_classifier_service');
+const geminiDispatchService = require('./gemini_dispatch_service');
+const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
 
 const KEY_TO_ITEM_NAME = {
   ast_got: 'AST',
@@ -226,57 +228,36 @@ function groupRowsToItems(rows, latestExamDate) {
   return out.sort((a, b) => a.itemName.localeCompare(b.itemName, 'ja'));
 }
 
-function buildPrompt(meta = {}) {
-  const examDates = Array.isArray(meta.examDates) ? meta.examDates.filter(Boolean) : [];
-  const documentType = normalizeText(meta.documentType || 'unknown') || 'unknown';
-  const reportDate = normalizeText(meta.reportDate || '');
-  const issuesNote = Array.isArray(meta.issues) && meta.issues.length ? `分類時に見えている注意点: ${meta.issues.join(' / ')}` : '分類時の注意点はありません。';
-  return [
-    'あなたは血液検査帳票を構造化する係です。説明文は禁止、JSONのみで返してください。',
-    `分類済みの document_type は ${documentType} です。`,
-    reportDate ? `分類済みの report_date は ${reportDate} です。` : 'report_date は画像から判断してください。',
-    examDates.length ? `分類済みの exam_dates 候補は ${examDates.join(', ')} です。` : 'exam_dates は画像から判断してください。',
-    issuesNote,
-    '重要: 推測で埋めず、読めない時は status="unclear" にしてください。',
-    '重要: 出力は JSON だけです。会話文は絶対に書かないでください。',
-    '単日票なら document_type は "single_day_report"、推移表なら "multi_date_timeseries" にしてください。',
-    '各行は次の正規化キーを優先してください: ast_got, alt_gpt, gamma_gtp, creatinine, uric_acid, bun, glucose, hba1c, triglycerides_tg, total_cholesterol, hdl_cholesterol, ldl_cholesterol, ldl_hdl_ratio, sodium, potassium, chloride, egfr, wbc, rbc, hemoglobin, hematocrit, mcv, mch, mchc, platelets, cpk, ldh.',
-    '{',
-    '  "document_type": "multi_date_timeseries",',
-    '  "patient_name": "",',
-    '  "report_date": "YYYY-MM-DD or empty",',
-    '  "exam_dates": ["YYYY-MM-DD"],',
-    '  "data": [',
-    '    {',
-    '      "normalized_key": "triglycerides_tg",',
-    '      "label_in_image": "中性脂肪",',
-    '      "date": "2025-03-22",',
-    '      "value": 61,',
-    '      "unit": "mg/dL",',
-    '      "reference_low": 30,',
-    '      "reference_high": 149,',
-    '      "flag": "normal",',
-    '      "confidence": 0.98,',
-    '      "status": "readable",',
-    '      "source_text": "61",',
-    '      "row_label_raw": "中性脂肪",',
-    '      "column_header_raw": "25/03/22"',
-    '    }',
-    '  ],',
-    '  "issues": [""],',
-    '  "confidence": 0.0',
-    '}'
-  ].join('\n');
-}
-
 async function extractStructuredLab(imagePayload, meta = {}) {
-  const result = await geminiImageAnalysisService.analyzeImage({
-    imagePayload,
-    prompt: buildPrompt(meta),
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
-  });
+  const builder = buildLabExtractPrompt(meta);
+  let payload = {};
+  let rawText = '';
+  let ok = false;
 
-  const payload = extractJson(result?.text || '') || {};
+  try {
+    const dispatch = await geminiDispatchService.generateStructuredImageJson({
+      imagePayload,
+      prompt: builder.prompt,
+      schema: builder.schema,
+      domain: builder.domain,
+      model: builder.preferredModel,
+      temperature: builder.temperature
+    });
+    ok = Boolean(dispatch?.ok);
+    payload = dispatch?.json || {};
+    rawText = sanitizeGeminiText(dispatch?.text || '');
+  } catch (dispatchError) {
+    console.error('[lab_structured_extract_service] builder dispatch failed:', dispatchError?.message || dispatchError);
+    const result = await geminiImageAnalysisService.analyzeImage({
+      imagePayload,
+      prompt: builder.prompt,
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    });
+    ok = Boolean(result?.ok);
+    rawText = sanitizeGeminiText(result?.text || '');
+    payload = extractJson(result?.text || '') || {};
+  }
+
   const reports = flattenReports(payload);
   const report = reports[0] || payload || {};
   const documentType = classifier.normalizeDocumentType(report.document_type || report.documentType || meta.documentType || '');
@@ -299,7 +280,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     : (Number(report.confidence || payload.confidence || meta.confidence || 0) || 0);
 
   return {
-    ok: Boolean(result?.ok),
+    ok,
     documentType,
     reportDate,
     latestExamDate,
@@ -309,7 +290,9 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     items,
     issues,
     confidence,
-    rawText: sanitizeGeminiText(result?.text || '')
+    rawText,
+    rawPayload: payload,
+    promptVersion: builder.promptVersion
   };
 }
 
