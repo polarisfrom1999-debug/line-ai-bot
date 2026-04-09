@@ -397,6 +397,41 @@ function buildTodayRecordsAnswer(records) {
   return lines.join('\n');
 }
 
+function buildTodayMealTotalsAnswer(records) {
+  const totals = sumMealNutrition(records);
+  const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
+  if (!mealCount) {
+    return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえればそこから合計を見ていけます。';
+  }
+  return [
+    `今日の食事は ${mealCount}件です。`,
+    `総カロリーは 約${round1(totals.kcal)}kcal です。`,
+    buildMealNutritionLine(totals),
+  ].join('\n');
+}
+
+function buildTodayMealBalanceAnswer(records) {
+  const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
+  if (!mealCount) {
+    return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえれば栄養バランスも見ていけます。';
+  }
+  const totals = sumMealNutrition(records);
+  const lines = [
+    `今日ここまでの栄養バランスです。`,
+    buildMealNutritionLine(totals),
+  ];
+
+  if (totals.protein < 20) {
+    lines.push('たんぱく質は少なめなので、卵・肉・魚・ヨーグルトなどを少し足せると整えやすいです。');
+  } else if (totals.fat > totals.protein * 2) {
+    lines.push('脂質がやや多めなので、次はあっさりしたものを選べるとバランスを戻しやすいです。');
+  } else {
+    lines.push('大きく崩れすぎてはいないので、このまま次の食事で軽く整えれば大丈夫です。');
+  }
+
+  return lines.join('\n');
+}
+
 function parseInlineProfile(text) {
   const safe = normalizeText(text);
   const patch = {};
@@ -466,6 +501,74 @@ function looksLikeMealText(text) {
   if (/^(朝|昼|夜|夕)(ごはん|ご飯|食)(です|でした)?$/.test(safe)) return false;
   if (/^(ごはん|ご飯)(です|でした)?$/.test(safe)) return false;
   return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|ご飯|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当/.test(safe);
+}
+
+function isMealAnnouncementText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/何キロカロリー|カロリー|たんぱく質|脂質|糖質/.test(safe)) return false;
+  return /(朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食).*(送る|送ります|あとで|これから)/.test(safe);
+}
+
+function buildMealAnnouncementReply(text) {
+  const safe = normalizeText(text);
+  const mealType = /朝/.test(safe) ? '朝ごはん' : /昼/.test(safe) ? '昼ごはん' : /夜|夕/.test(safe) ? '夜ごはん' : '食事';
+  return `${mealType}ですね。写真が来たらすぐ見ます。`;
+}
+
+function sumMealNutrition(records) {
+  const meals = Array.isArray(records?.meals) ? records.meals : [];
+  return meals.reduce((acc, meal) => {
+    acc.kcal += Number(meal?.kcal || meal?.estimatedNutrition?.kcal || 0);
+    acc.protein += Number(meal?.protein || meal?.estimatedNutrition?.protein || 0);
+    acc.fat += Number(meal?.fat || meal?.estimatedNutrition?.fat || 0);
+    acc.carbs += Number(meal?.carbs || meal?.estimatedNutrition?.carbs || 0);
+    return acc;
+  }, { kcal: 0, protein: 0, fat: 0, carbs: 0 });
+}
+
+function buildMealNutritionLine(nutrition) {
+  return `たんぱく質 ${round1(nutrition?.protein || 0)}g / 脂質 ${round1(nutrition?.fat || 0)}g / 糖質 ${round1(nutrition?.carbs || 0)}g`;
+}
+
+function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
+  const kcal = round1(meal?.estimatedNutrition?.kcal || 0);
+  const mealType = meal?.mealType || 'unknown';
+  const lines = [];
+
+  if (/たんぱく質|脂質|糖質/.test(questionText)) {
+    lines.push(buildMealNutritionLine(meal?.estimatedNutrition || {}));
+  } else {
+    lines.push(`この食事はざっくり ${kcal}kcal くらいです。`);
+    lines.push(buildMealNutritionLine(meal?.estimatedNutrition || {}));
+  }
+
+  if (/今日ここまで|今日の合計|総カロリー/.test(questionText) || mealType === 'lunch' || mealType === 'dinner') {
+    lines.push(`今日ここまでで 約${round1(todayTotals?.kcal || 0)}kcal です。`);
+  }
+
+  return lines.join('\n');
+}
+
+async function maybeHandleMealDraftQuestion(input, shortMemory) {
+  if (input?.messageType !== 'text') return null;
+  const text = normalizeText(input?.rawText || '');
+  if (!/何キロカロリー|カロリー|たんぱく質|脂質|糖質|今日ここまで|今日の合計|総カロリー/.test(text)) return null;
+
+  const meal = shortMemory?.followUpContext?.imageType === 'meal'
+    ? shortMemory?.followUpContext?.extractedMeal
+    : shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
+      ? shortMemory?.pendingRecordCandidate?.extracted
+      : null;
+  if (!meal) return null;
+
+  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+  const todayTotals = sumMealNutrition(todayRecords);
+  return {
+    replyText: buildMealDraftFollowUpReply(meal, todayTotals, text),
+    meal,
+    todayTotals
+  };
 }
 
 function looksLikeDistress(text) {
@@ -839,7 +942,13 @@ async function maybeHandleMealImage(input, imagePayload) {
       return { handled: false, analysis: meal || null };
     }
 
-    const replyText = await buildMealReply(input.userId, meal, normalizeText(input?.rawText || ''));
+    const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+    const todayTotals = sumMealNutrition(todayRecords);
+    todayTotals.kcal += Number(meal?.estimatedNutrition?.kcal || 0);
+    todayTotals.protein += Number(meal?.estimatedNutrition?.protein || 0);
+    todayTotals.fat += Number(meal?.estimatedNutrition?.fat || 0);
+    todayTotals.carbs += Number(meal?.estimatedNutrition?.carbs || 0);
+    const replyText = buildMealReply(meal, { todayTotals });
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'meal',
@@ -873,7 +982,13 @@ async function maybeHandleMealText(input) {
   const parsedMeal = mealAnalysisService.parseMealText(text);
   if (Number(parsedMeal?.confidence || 0) < 0.4) return null;
 
-  const replyText = await buildMealReply(input.userId, parsedMeal, text);
+  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+  const todayTotals = sumMealNutrition(todayRecords);
+  todayTotals.kcal += Number(parsedMeal?.estimatedNutrition?.kcal || 0);
+  todayTotals.protein += Number(parsedMeal?.estimatedNutrition?.protein || 0);
+  todayTotals.fat += Number(parsedMeal?.estimatedNutrition?.fat || 0);
+  todayTotals.carbs += Number(parsedMeal?.estimatedNutrition?.carbs || 0);
+  const replyText = buildMealReply(parsedMeal, { todayTotals });
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -924,7 +1039,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   return {
     replyText: [
       `了解です。${text}として見直すと、ざっくり 約${round1(adjusted.estimatedNutrition.kcal)}kcal くらいです。`,
-      `たんぱく質 ${round1(adjusted.estimatedNutrition.protein)}g / 脂質 ${round1(adjusted.estimatedNutrition.fat)}g / 糖質 ${round1(adjusted.estimatedNutrition.carbs)}g`
+      buildMealNutritionLine(adjusted.estimatedNutrition || {})
     ].join('\n'),
     adjusted
   };
@@ -1013,6 +1128,17 @@ function inferExpectedImageRoute(shortMemory, recentMessages = []) {
   const recentAssistant = recent.find((item) => item?.role === 'assistant' && normalizeText(item?.content || ''));
   const merged = [recentUser?.content || '', recentAssistant?.content || ''].join('\n');
   return imageClassificationService.classifyImageByHint(merged);
+}
+
+function buildConversationFallbackReply(input) {
+  const text = normalizeText(input?.rawText || '');
+  if (/画像|写真/.test(text)) {
+    return '今ちょっとうまく受け取れなかったので、同じ画像をもう一度送ってもらえたら大丈夫です。';
+  }
+  if (/無料体験|AIタイプ|使い方|プラン/.test(text)) {
+    return '今ちょっとうまく案内がつながらなかったので、もう一度同じ言葉を送ってもらえれば続きから整えます。';
+  }
+  return '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。';
 }
 
 async function orchestrateConversation(input) {
@@ -1186,6 +1312,12 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: mealFollowUpHandled.replyText }], internal: { intentType: 'meal_followup', responseMode: 'record' } };
     }
 
+    const mealDraftQuestion = await maybeHandleMealDraftQuestion(input, refreshedShortMemory);
+    if (mealDraftQuestion) {
+      await appendTurn(input.userId, input.rawText || '', mealDraftQuestion.replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealDraftQuestion.replyText }], internal: { intentType: 'meal_draft_followup', responseMode: 'answer' } };
+    }
+
     if (intent === 'time_question') {
       const replyText = buildTimeAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
@@ -1290,6 +1422,30 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'help') {
+      if (/^無料体験$/u.test(text)) {
+        const replyMessage = buildGuideReplyMessage('trial', { conversationState: getConversationState(input.userId) });
+        const replyText = replyMessage?.text || buildHelpAnswer();
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'trial', responseMode: 'guided' } };
+      }
+      if (/^AIタイプ$/u.test(text)) {
+        const replyMessage = buildGuideReplyMessage('type', { conversationState: getConversationState(input.userId) });
+        const replyText = replyMessage?.text || buildHelpAnswer();
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'type', responseMode: 'guided' } };
+      }
+      if (/^プラン案内$/u.test(text)) {
+        const replyMessage = buildGuideReplyMessage('plan', { conversationState: getConversationState(input.userId) });
+        const replyText = replyMessage?.text || buildHelpAnswer();
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'plan', responseMode: 'guided' } };
+      }
+      if (/^食事の送り方$/u.test(text)) {
+        const replyMessage = buildGuideReplyMessage('meal_input_help', { conversationState: getConversationState(input.userId) });
+        const replyText = replyMessage?.text || buildHelpAnswer();
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'meal_input_help', responseMode: 'guided' } };
+      }
       const replyText = buildHelpAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'help', responseMode: 'answer' } };
@@ -1310,6 +1466,20 @@ async function orchestrateConversation(input) {
       const replyText = 'いいですね。これからは「うっし〜」って呼びますね。';
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
+    }
+
+    if (/^(やさしく伴走|理屈で整理|背中を押す|バランス型)$/u.test(text)) {
+      await contextMemoryService.mergeLongMemory(input.userId, { aiType: text });
+      const replyText = `AIタイプを「${text}」に更新しました。`;
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'ai_type_update', responseMode: 'answer' } };
+    }
+
+    if (/^(ライト|スタンダード|プレミアム)$/u.test(text)) {
+      await contextMemoryService.mergeLongMemory(input.userId, { selectedPlan: text });
+      const replyText = `プラン候補を「${text}」として見ています。必要ならこのまま詳しい案内につなげます。`;
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
     }
 
     const mealTextHandled = await maybeHandleMealText(input);
