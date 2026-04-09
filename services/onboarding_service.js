@@ -147,13 +147,14 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
   return { handled: true, replyText: buildEditProfileMessage() };
 }
 
-async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory }) {
-  if (!looksLikeProfilePayload(text)) {
-    if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
+async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
+  const patch = profileService.extractProfilePatchFromText(text);
+  const looksLikePayload = looksLikeProfilePayload(text) || Object.keys(patch).length > 0;
+  if (!looksLikePayload) {
+    if (shouldBypassOnboarding(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
 
-  const patch = profileService.extractProfilePatchFromText(text);
   if (!Object.keys(patch).length) {
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
@@ -163,6 +164,9 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
     onboardingCompleted: onboardingState.mode === 'profile_edit' ? Boolean(longMemory?.onboardingCompleted) : false,
     trialStartedAt: longMemory?.trialStartedAt || new Date().toISOString()
   });
+  if (typeof persistAuthoritativeProfile === 'function') {
+    await persistAuthoritativeProfile(input.userId, patch);
+  }
 
   if (onboardingState.mode === 'profile_edit') {
     await saveShortMemory(input.userId, {
