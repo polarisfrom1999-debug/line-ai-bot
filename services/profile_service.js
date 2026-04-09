@@ -32,12 +32,12 @@ function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
     .replace(/(です|だよ|ですよ|と呼んでください|って呼んで|と呼んで).*$/u, '')
-    .replace(/\s+/g, '')
     .trim();
 
   if (!safe) return '';
-  if (safe.length > 16) return '';
+  if (safe.length > 12) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
+  if (/\s/.test(safe)) return '';
   return safe;
 }
 
@@ -57,12 +57,14 @@ function extractProfilePatchFromText(text) {
   const patch = {};
 
   for (const line of lines) {
-    const name = extractLineValue(line, '名前');
-    const age = extractLineValue(line, '年齢');
-    const weight = extractLineValue(line, '体重');
-    const bodyFat = extractLineValue(line, '体脂肪率');
-    const height = extractLineValue(line, '身長');
-    const goal = extractLineValue(line, '目標');
+    if (lineLooksLikeQuestion(line)) continue;
+
+    const name = extractLineValue(line, '名前') || extractLooseValue(line, '名前', /^(?:私の名前は|名前\s*[は：:]?)\s*(.+)$/u);
+    const age = extractLineValue(line, '年齢') || extractLooseValue(line, '年齢', /^年齢\s*[は：:]?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)$/u);
+    const weight = extractLineValue(line, '体重') || extractLooseValue(line, '体重', /^体重\s*[は：:]?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
+    const bodyFat = extractLineValue(line, '体脂肪率') || extractLooseValue(line, '体脂肪率', /^体脂肪率\s*[は：:]?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
+    const height = extractLineValue(line, '身長') || extractLooseValue(line, '身長', /^身長\s*[は：:]?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
+    const goal = extractLineValue(line, '目標') || extractLooseValue(line, '目標', /^目標\s*[は：:]?\s*(.+)$/u);
 
     if (name) {
       const preferredName = normalizeProfileValue('preferredName', name);

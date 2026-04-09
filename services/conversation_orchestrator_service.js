@@ -10,7 +10,6 @@ const imageClassificationService = require('./image_classification_service');
 const mealAnalysisService = require('./meal_analysis_service');
 const labDocumentIngestService = require('./lab_document_ingest_service');
 const labDocumentStoreService = require('./lab_document_store_service');
-const labDocumentClassifierService = require('./lab_document_classifier_service');
 const labFollowupService = require('./lab_followup_service');
 const sportsConsultationService = require('./sports_consultation_service');
 const profileService = require('./profile_service');
@@ -34,13 +33,6 @@ const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
-const { importLabWithGemini, buildLabPanelFromNormalized } = require('./lab_gemini_import_service');
-const labConfirmationService = require('./lab_confirmation_service');
-const geminiImportRunnerService = require('./gemini_import_runner_service');
-const { createSupabaseImportStore } = require('./supabase_import_store_service');
-const { supabase } = require('./supabase_service');
-
-const geminiImportStore = createSupabaseImportStore(supabase);
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -119,7 +111,9 @@ function detectIntent(input) {
   if (/私の名前|何を覚えてる|覚えてる|覚えていますか/.test(text)) return 'memory_question';
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
-  if (/使い方教えて|使い方/.test(text)) return 'help';
+  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計/.test(text)) return 'today_meal_totals';
+  if (/栄養バランス|1日の食事の総括|今日の食事の総括|今日の栄養/.test(text)) return 'today_meal_balance';
+  if (/使い方教えて|使い方|ヘルプ|メニュー|コマンド|無料体験|プラン案内|AIタイプ/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
   return 'normal';
 }
@@ -244,6 +238,9 @@ function buildGuideReplyMessage(guidanceType, options = {}) {
     homecare_entry_help: ['腰です', '立ち上がりがつらい', '軽めで'],
     sports_entry_help: ['800mです', 'フォーム相談です', '横から送れます'],
     competition_entry_help: ['800mです', '10時です', 'おにぎりなら食べやすい'],
+    trial: ['無料体験開始', 'プラン案内', '使い方'],
+    plan: ['ライト', 'スタンダード', 'プレミアム'],
+    type: ['やさしく伴走', '理屈で整理', '背中を押す'],
   };
 
   let text = '';
@@ -263,6 +260,39 @@ function buildGuideReplyMessage(guidanceType, options = {}) {
       break;
     case 'persona_change_help':
       text = 'タイプ変更はそのまま「タイプ変更したい」や、希望のタイプ名を送ってもらえれば大丈夫です。';
+      break;
+    case 'type':
+      text = [
+        '【AIタイプ】',
+        '・やさしく伴走',
+        '・理屈で整理',
+        '・背中を押す',
+        '・バランス型',
+        '',
+        '変えたい時は「AIタイプ変更」やタイプ名をそのまま送ってください。',
+      ].join('\n');
+      break;
+    case 'trial':
+      text = [
+        '【無料体験】',
+        '無料体験では、プロフィールを整えて、食事・運動・体重・相談・血液検査の流れを試せます。',
+        '',
+        '始める時は「無料体験開始」で大丈夫です。',
+        '使い方だけ見たい時は「使い方」でも確認できます。',
+      ].join('\n');
+      break;
+    case 'plan':
+      text = [
+        '【プラン案内】',
+        'ここから。では、無料体験のあとに合うプランを選べる流れです。',
+        '',
+        '・無料体験',
+        '・ライト',
+        '・スタンダード',
+        '・プレミアム',
+        '',
+        '詳しく見たい時は「プラン案内」と送ってください。',
+      ].join('\n');
       break;
     case 'symptom_entry_help':
       text = [
@@ -429,7 +459,13 @@ function detectExerciseRecord(text) {
 }
 
 function looksLikeMealText(text) {
-  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当/.test(normalizeText(text));
+  const safe = normalizeText(text);
+  if (!safe || containsQuestionTone(safe)) return false;
+  if (isMealAnnouncementText(safe)) return false;
+  if (/使い方|送り方|メニュー|コマンド/.test(safe)) return false;
+  if (/^(朝|昼|夜|夕)(ごはん|ご飯|食)(です|でした)?$/.test(safe)) return false;
+  if (/^(ごはん|ご飯)(です|でした)?$/.test(safe)) return false;
+  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|ご飯|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当/.test(safe);
 }
 
 function looksLikeDistress(text) {
@@ -497,188 +533,6 @@ function buildImageMealRecordPayload(parsedMeal) {
 
 function buildLabImageReply(lab) {
   return labFollowupService.buildLabImageReply(lab);
-}
-
-function buildPendingNormalizedFromPanel(panel = {}) {
-  const measurements = [];
-  for (const item of Array.isArray(panel?.items) ? panel.items : []) {
-    const history = Array.isArray(item?.history) && item.history.length
-      ? item.history
-      : [{ date: panel?.latestExamDate || panel?.examDate || '', value: item?.value, unit: item?.unit || '', flag: item?.flag || '' }];
-    for (const row of history) {
-      if (row?.value == null || row?.value === '') continue;
-      measurements.push({
-        date: row?.date || panel?.latestExamDate || panel?.examDate || '',
-        label: item?.itemName || '',
-        normalized_key: item?.normalized_key || item?.itemName || '',
-        unit: row?.unit || item?.unit || '',
-        value: row?.value,
-        flag: row?.flag || item?.flag || '',
-      });
-    }
-  }
-  return {
-    summary: panel?.trendSummary || '',
-    document_type: panel?.documentKind || 'unknown',
-    confidence: Number(panel?.confidence || 0) || null,
-    issues: Array.isArray(panel?.issues) ? panel.issues : [],
-    exam_dates: Array.isArray(panel?.examDates) ? panel.examDates : [],
-    measurements,
-  };
-}
-
-function buildPendingPanelFallback(normalized = {}, preflight = null) {
-  const panel = buildLabPanelFromNormalized(normalized || {});
-  const fallbackDates = Array.isArray(preflight?.examDates) ? preflight.examDates : [];
-  const fallbackLatest = preflight?.latestExamDate || preflight?.examDate || fallbackDates[fallbackDates.length - 1] || '';
-  return {
-    ...preflight,
-    ...panel,
-    isLabImage: true,
-    labLike: true,
-    examDates: panel.examDates?.length ? panel.examDates : fallbackDates,
-    availableDates: panel.examDates?.length ? panel.examDates : fallbackDates,
-    latestExamDate: panel.latestExamDate || fallbackLatest,
-    examDate: panel.examDate || fallbackLatest,
-    documentKind: panel.documentKind || preflight?.documentKind || normalized?.document_type || 'unknown',
-    issues: [...new Set([...(Array.isArray(preflight?.issues) ? preflight.issues : []), ...(Array.isArray(panel?.issues) ? panel.issues : [])].filter(Boolean))],
-    labPending: true,
-  };
-}
-
-async function maybeHandlePendingLabConfirmation(input, shortMemory) {
-  const safe = normalizeText(input?.rawText || '');
-  const pending = shortMemory?.followUpContext?.pendingLabConfirmation || null;
-  if (!pending) return null;
-
-  const pendingNormalized = pending?.normalized || buildPendingNormalizedFromPanel(shortMemory?.followUpContext?.labPanel || {});
-  const panel = buildPendingPanelFallback(pendingNormalized, shortMemory?.followUpContext?.labPanel || null);
-  const selectedLabExamDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
-
-  if (labConfirmationService.isAcceptanceText(safe)) {
-    if (pending?.documentHash) {
-      await labDocumentStoreService.storePanelForHash(input.userId, pending.documentHash, panel);
-    }
-
-    await contextMemoryService.upsertLabPanel(input.userId, panel);
-    await contextMemoryService.addDailyRecord(input.userId, {
-      type: 'lab',
-      summary: '血液検査画像',
-      examDate: panel.examDate || '',
-      items: panel.items
-    });
-
-    await contextMemoryService.saveShortMemory(input.userId, {
-      lastImageType: 'lab',
-      followUpContext: {
-        ...(shortMemory?.followUpContext || {}),
-        imageType: 'lab',
-        labPanel: panel,
-        extractedItems: panel.items,
-        examDate: panel.examDate || '',
-        latestExamDate: panel.latestExamDate || panel.examDate || '',
-        selectedLabExamDate: selectedLabExamDate || panel.latestExamDate || panel.examDate || '',
-        availableLabDates: Array.isArray(panel.examDates) ? panel.examDates : [],
-        pendingLabConfirmation: null,
-      }
-    });
-
-    return {
-      replyText: labConfirmationService.buildSavedReply(panel),
-      replyMessage: textMessageWithQuickReplies(labConfirmationService.buildSavedReply(panel), ['TGは？', 'HbA1cは？', '今までの傾向は？'])
-    };
-  }
-
-  if (labConfirmationService.isCorrectionStartText(safe)) {
-    const replyMessage = labConfirmationService.buildCorrectionGuideMessage();
-    return { replyText: replyMessage.text, replyMessage };
-  }
-
-  if (labConfirmationService.isDateCorrectionStartText(safe)) {
-    const replyMessage = labConfirmationService.buildDateCorrectionGuideMessage();
-    return { replyText: replyMessage.text, replyMessage };
-  }
-
-  const patched = labConfirmationService.applyCorrectionsToNormalized(pendingNormalized, safe);
-  if (patched?.dateOverride || (patched?.appliedCorrections || []).length) {
-    const nextPanel = buildPendingPanelFallback(patched.normalized, shortMemory?.followUpContext?.labPanel || null);
-    const saveAfterPatch = labConfirmationService.hasSaveIntentText(safe);
-
-    if (saveAfterPatch) {
-      if (pending?.documentHash) {
-        await labDocumentStoreService.storePanelForHash(input.userId, pending.documentHash, nextPanel);
-      }
-      await contextMemoryService.upsertLabPanel(input.userId, nextPanel);
-      await contextMemoryService.addDailyRecord(input.userId, {
-        type: 'lab',
-        summary: '血液検査画像',
-        examDate: nextPanel.examDate || '',
-        items: nextPanel.items
-      });
-      await contextMemoryService.saveShortMemory(input.userId, {
-        lastImageType: 'lab',
-        followUpContext: {
-          ...(shortMemory?.followUpContext || {}),
-          imageType: 'lab',
-          labPanel: nextPanel,
-          extractedItems: nextPanel.items,
-          examDate: nextPanel.examDate || '',
-          latestExamDate: nextPanel.latestExamDate || nextPanel.examDate || '',
-          selectedLabExamDate: nextPanel.latestExamDate || nextPanel.examDate || '',
-          availableLabDates: Array.isArray(nextPanel.examDates) ? nextPanel.examDates : [],
-          pendingLabConfirmation: null,
-        }
-      });
-      const savedText = labConfirmationService.buildSavedReply(nextPanel);
-      return {
-        replyText: savedText,
-        replyMessage: textMessageWithQuickReplies(savedText, ['TGは？', 'HbA1cは？', '今までの傾向は？'])
-      };
-    }
-
-    await contextMemoryService.saveShortMemory(input.userId, {
-      lastImageType: 'lab_draft',
-      followUpContext: {
-        ...(shortMemory?.followUpContext || {}),
-        imageType: 'lab_draft',
-        labPanel: nextPanel,
-        selectedLabExamDate: nextPanel.latestExamDate || nextPanel.examDate || '',
-        availableLabDates: Array.isArray(nextPanel.examDates) ? nextPanel.examDates : [],
-        pendingLabConfirmation: {
-          ...(pending || {}),
-          normalized: patched.normalized,
-        }
-      }
-    });
-
-    const hint = patched.dateOverride
-      ? `日付を ${patched.dateOverride} に修正しました。`
-      : '修正を反映しました。';
-    const replyMessage = labConfirmationService.buildDraftSummaryMessage(nextPanel, { hint });
-    return { replyText: replyMessage.text, replyMessage };
-  }
-
-  if (labConfirmationService.isPendingLabQuestion(safe)) {
-    const itemReply = labConfirmationService.buildPendingItemReply(panel, safe, selectedLabExamDate);
-    if (itemReply) {
-      return {
-        replyText: itemReply,
-        replyMessage: textMessageWithQuickReplies(itemReply, ['はい、このまま保存', 'いいえ、修正する'])
-      };
-    }
-
-    if (labFollowupService.shouldHandleTrendQuestion(safe)) {
-      const trend = labFollowupService.buildTrendReply(panel, safe);
-      const replyText = `${trend}
-仮読み取りの段階なので、合っていれば「はい、このまま保存」を押してください。`;
-      return {
-        replyText,
-        replyMessage: textMessageWithQuickReplies(replyText, ['はい、このまま保存', 'いいえ、修正する'])
-      };
-    }
-  }
-
-  return null;
 }
 
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
@@ -915,123 +769,64 @@ async function maybeHandleLabImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
 
   try {
-    const cached = await labDocumentStoreService.getCachedPanelByPayload(input.userId, imagePayload);
-    if (cached?.isLabImage && Array.isArray(cached?.items) && cached.items.length) {
+    const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
+    const lab = ingest?.panel || null;
+    const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
+    if (!lab?.isLabImage && !lab?.labLike) {
+      return { handled: false, analysis: lab || null };
+    }
+
+    if (!hasItems) {
       await contextMemoryService.saveShortMemory(input.userId, {
-        lastImageType: 'lab',
+        lastImageType: 'lab_pending',
         followUpContext: {
           source: 'image',
-          imageType: 'lab',
-          extractedItems: cached.items,
-          examDate: cached.examDate || '',
-          latestExamDate: cached.latestExamDate || cached.examDate || '',
-          selectedLabExamDate: cached.latestExamDate || cached.examDate || '',
-          availableLabDates: Array.isArray(cached?.examDates) ? cached.examDates : [],
-          labPanel: cached,
-          pendingLabConfirmation: null,
+          imageType: 'lab_pending',
+          extractedItems: [],
+          examDate: lab?.examDate || '',
+          latestExamDate: lab?.latestExamDate || lab?.examDate || '',
+          availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+          labPanel: lab || null
         }
       });
+
       return {
         handled: true,
-        analysis: cached,
-        replyText: buildLabImageReply(cached),
+        analysis: lab,
+        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識していますが、まだ構造化の途中です。まずは「TGは？」「HbA1cは？」「2025-03-22」のように1項目か1日付ずつ聞いてください。'
       };
     }
 
-    let classification = null;
-    try {
-      classification = await labDocumentClassifierService.classifyLabDocument(imagePayload);
-    } catch (classificationError) {
-      console.error('[conversation_orchestrator] lab classify failed:', classificationError?.message || classificationError);
-    }
-
-    const documentKind = normalizeText(classification?.documentType || 'unknown');
-    const looksLikeLab = Boolean(classification?.isLabDocument || documentKind === 'single_day_report' || documentKind === 'multi_date_timeseries');
-    if (!looksLikeLab) {
-      return { handled: false, analysis: { isLabImage: false, labLike: false, documentKind } };
-    }
-
-    const examDates = Array.isArray(classification?.examDates) ? classification.examDates : [];
-    const latestExamDate = classification?.latestExamDate || examDates[examDates.length - 1] || classification?.reportDate || '';
-    const preflight = {
-      source: 'gemini_import',
-      isLabImage: true,
-      labLike: true,
-      reportDate: classification?.reportDate || '',
-      examDate: latestExamDate,
-      latestExamDate,
-      examDates,
-      availableDates: examDates,
-      documentKind: documentKind || 'unknown',
-      patientName: classification?.patientName || '',
-      items: [],
-      structuredRows: [],
-      issues: Array.isArray(classification?.issues) ? classification.issues : [],
-      confidence: Number(classification?.confidence || 0) || 0,
-      trendSummary: '',
-      rawText: classification?.rawText || '',
-      labPending: true,
-    };
-
-    const documentHash = typeof labDocumentStoreService.hashImagePayload === 'function'
-      ? labDocumentStoreService.hashImagePayload(imagePayload)
-      : '';
-
-    let normalized = buildPendingNormalizedFromPanel(preflight);
-    let panel = buildPendingPanelFallback(normalized, preflight);
-    let importError = null;
-    let imported = null;
-
-    try {
-      imported = await importLabWithGemini({
-        userId: input.userId,
-        attachments: [imagePayload],
-        geminiRunner: geminiImportRunnerService,
-        store: geminiImportStore,
-        sessionMeta: { source: 'line_image', messageType: input?.messageType || 'image' },
-      });
-      if (imported?.normalized) {
-        normalized = imported.normalized;
-        panel = buildPendingPanelFallback(normalized, preflight);
-      }
-    } catch (geminiError) {
-      importError = geminiError;
-      console.error('[conversation_orchestrator] lab gemini import failed:', geminiError?.message || geminiError);
-    }
-
     await contextMemoryService.saveShortMemory(input.userId, {
-      lastImageType: 'lab_draft',
+      lastImageType: 'lab',
       followUpContext: {
         source: 'image',
-        imageType: 'lab_draft',
-        extractedItems: panel.items || [],
-        examDate: panel.examDate || '',
-        latestExamDate: panel.latestExamDate || panel.examDate || '',
-        selectedLabExamDate: panel.latestExamDate || panel.examDate || '',
-        availableLabDates: Array.isArray(panel?.examDates) ? panel.examDates : [],
-        labPanel: panel,
-        pendingLabConfirmation: {
-          sessionId: imported?.sessionId || '',
-          rawId: imported?.rawId || '',
-          documentHash,
-          normalized,
-        }
+        imageType: 'lab',
+        extractedItems: lab.items,
+        examDate: lab.examDate || '',
+        latestExamDate: lab.latestExamDate || lab.examDate || '',
+        selectedLabExamDate: lab.latestExamDate || lab.examDate || '',
+        availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+        labPanel: lab
       }
     });
 
-    const hint = importError
-      ? '今回は自動読み取りが不安定でした。合っている項目だけでも「TGは50」「HbA1cは5.6」のように送れば、そのまま保存確認へ進めます。'
-      : null;
-    const replyMessage = labConfirmationService.buildDraftSummaryMessage(panel, { hint });
+    await contextMemoryService.upsertLabPanel(input.userId, lab);
+    await contextMemoryService.addDailyRecord(input.userId, {
+      type: 'lab',
+      summary: '血液検査画像',
+      examDate: lab.examDate || '',
+      items: lab.items
+    });
+
     return {
       handled: true,
-      analysis: panel,
-      replyText: replyMessage.text,
-      replyMessage,
+      analysis: lab,
+      replyText: buildLabImageReply(lab)
     };
   } catch (error) {
     console.error('[conversation_orchestrator] lab image error:', error?.message || error);
-    return { handled: false, analysis: null, error };
+    return { handled: false, analysis: { isLabImage: false, labLike: false }, error };
   }
 }
 
@@ -1044,7 +839,7 @@ async function maybeHandleMealImage(input, imagePayload) {
       return { handled: false, analysis: meal || null };
     }
 
-    const replyText = buildMealReply(meal);
+    const replyText = await buildMealReply(input.userId, meal, normalizeText(input?.rawText || ''));
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'meal',
@@ -1078,7 +873,7 @@ async function maybeHandleMealText(input) {
   const parsedMeal = mealAnalysisService.parseMealText(text);
   if (Number(parsedMeal?.confidence || 0) < 0.4) return null;
 
-  const replyText = buildMealReply(parsedMeal);
+  const replyText = await buildMealReply(input.userId, parsedMeal, text);
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -1127,13 +922,27 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   });
 
   return {
-    replyText: `了解です。${text}として見直すと、ざっくり 約${round1(adjusted.estimatedNutrition.kcal)}kcal くらいです。`,
+    replyText: [
+      `了解です。${text}として見直すと、ざっくり 約${round1(adjusted.estimatedNutrition.kcal)}kcal くらいです。`,
+      `たんぱく質 ${round1(adjusted.estimatedNutrition.protein)}g / 脂質 ${round1(adjusted.estimatedNutrition.fat)}g / 糖質 ${round1(adjusted.estimatedNutrition.carbs)}g`
+    ].join('\n'),
     adjusted
   };
 }
 
+
+function maybeHandleMealAnnouncement(input) {
+  if (input?.messageType !== 'text') return null;
+  const text = normalizeText(input?.rawText || '');
+  if (!isMealAnnouncementText(text)) return null;
+  return {
+    replyText: buildMealAnnouncementReply(text),
+    internal: { intentType: 'meal_announcement', responseMode: 'guided' }
+  };
+}
+
 async function maybeStoreSimpleRecords(userId, text) {
-  const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text)
+  const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text) && !isMealAnnouncementText(text)
     ? mealAnalysisService.parseMealText(text)
     : null;
   if (mealParsed && Number(mealParsed.confidence || 0) >= 0.4) {
@@ -1194,6 +1003,18 @@ async function buildWeightLookupReply(userId) {
   return `${latest.date} の最新は ${parts.join(' / ')} です。`;
 }
 
+function inferExpectedImageRoute(shortMemory, recentMessages = []) {
+  const followUpType = shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '';
+  if (followUpType === 'meal') return 'meal';
+  if (followUpType === 'lab' || followUpType === 'lab_pending') return 'lab';
+
+  const recent = [...(Array.isArray(recentMessages) ? recentMessages : [])].reverse();
+  const recentUser = recent.find((item) => item?.role === 'user' && normalizeText(item?.content || ''));
+  const recentAssistant = recent.find((item) => item?.role === 'assistant' && normalizeText(item?.content || ''));
+  const merged = [recentUser?.content || '', recentAssistant?.content || ''].join('\n');
+  return imageClassificationService.classifyImageByHint(merged);
+}
+
 async function orchestrateConversation(input) {
   try {
     const shortMemory = await contextMemoryService.getShortMemory(input.userId);
@@ -1228,6 +1049,22 @@ async function orchestrateConversation(input) {
       }
     }
 
+    const directGuideIntent = detectGuideIntent(text);
+    if (directGuideIntent) {
+      const replyMessage = buildGuideReplyMessage(directGuideIntent, {
+        conversationState: getConversationState(input.userId),
+      });
+      const replyText = replyMessage?.text || buildHelpAnswer();
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [replyMessage], internal: { intentType: directGuideIntent, responseMode: 'guided' } };
+    }
+
+    const mealAnnouncementHandled = maybeHandleMealAnnouncement(input);
+    if (mealAnnouncementHandled) {
+      await appendTurn(input.userId, input.rawText || '', mealAnnouncementHandled.replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealAnnouncementHandled.replyText }], internal: mealAnnouncementHandled.internal };
+    }
+
     let imagePayload = null;
     if (input?.messageType === 'image') {
       const ingested = await imageIngestService.ingestLineImage(input);
@@ -1242,19 +1079,38 @@ async function orchestrateConversation(input) {
       }
       imagePayload = ingested.payload;
 
-      const labImageHandled = await maybeHandleLabImage(input, imagePayload);
-      if (labImageHandled?.handled) {
-        await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-        return { ok: true, replyMessages: [labImageHandled.replyMessage || { type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
-      }
+      const expectedRoute = inferExpectedImageRoute(shortMemory, recentMessages);
+      let labImageHandled = null;
+      let mealImageHandled = null;
 
-      const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
-      if (mealImageHandled?.handled) {
-        if (mealImageHandled.meal?.recordReady) {
-          await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+      if (expectedRoute === 'meal') {
+        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+        if (mealImageHandled?.handled) {
+          if (mealImageHandled.meal?.recordReady) {
+            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+          }
+          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
         }
-        await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-        return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+        labImageHandled = await maybeHandleLabImage(input, imagePayload);
+        if (labImageHandled?.handled) {
+          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        }
+      } else {
+        labImageHandled = await maybeHandleLabImage(input, imagePayload);
+        if (labImageHandled?.handled) {
+          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        }
+        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+        if (mealImageHandled?.handled) {
+          if (mealImageHandled.meal?.recordReady) {
+            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+          }
+          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+        }
       }
 
       const imageKind = imageClassificationService.classifyImageByAnalysis({
@@ -1295,12 +1151,6 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
-
-    const labPendingReply = await maybeHandlePendingLabConfirmation(input, refreshedShortMemory);
-    if (labPendingReply) {
-      await appendTurn(input.userId, input.rawText || '', labPendingReply.replyText);
-      return { ok: true, replyMessages: [labPendingReply.replyMessage || { type: 'text', text: labPendingReply.replyText }], internal: { intentType: 'lab_confirmation', responseMode: 'answer' } };
-    }
 
     const labSaveReply = await maybeHandleLabSaveAll(input, refreshedShortMemory);
     if (labSaveReply) {
@@ -1376,6 +1226,20 @@ async function orchestrateConversation(input) {
       const replyText = buildTodayRecordsAnswer(records);
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_records', responseMode: 'answer' } };
+    }
+
+    if (intent === 'today_meal_totals') {
+      const records = await contextMemoryService.getTodayRecords(input.userId);
+      const replyText = buildTodayMealTotalsAnswer(records);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_meal_totals', responseMode: 'answer' } };
+    }
+
+    if (intent === 'today_meal_balance') {
+      const records = await contextMemoryService.getTodayRecords(input.userId);
+      const replyText = buildTodayMealBalanceAnswer(records);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_meal_balance', responseMode: 'answer' } };
     }
 
     const stageGuideIntent = hasSpecificConsultationDetails(text)

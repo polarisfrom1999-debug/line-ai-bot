@@ -30,6 +30,13 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function normalizeLoose(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[！!？?。.,，、]/g, '')
+    .replace(/\s+/g, '');
+}
+
 function buildStartProfileMessage() {
   return [
     'ここから。の無料体験を始めますね。',
@@ -113,13 +120,32 @@ function isProfileEditTrigger(text) {
   return /プロフィール変更|プロフィール修正|プロフィール入力/.test(normalizeText(text));
 }
 
+function isOnboardingExitTrigger(text) {
+  const n = normalizeLoose(text);
+  return [
+    '終わり', '終了', 'やめる', 'いったん終了', 'いったん終わり',
+    'プロフィール終了', 'プロフィール終わり', 'プロフィールやめる',
+    'プロフィール終わりです', 'プロフィール終了です'
+  ].includes(n);
+}
+
+function buildOnboardingExitMessage(mode = '') {
+  if (mode === 'profile_edit') {
+    return 'プロフィール変更はいったん終わりにしました。必要な時だけ、また「プロフィール変更」で大丈夫です。';
+  }
+  return '無料体験の入力はいったんここで止めました。続けたくなったら、また「無料体験開始」で再開できます。';
+}
+
 function looksLikeProfilePayload(text) {
-  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]/.test(normalizeText(text));
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/教えて|知りたい|わかる|覚えてる|\?|？/.test(safe)) return false;
+  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]|^名前\s*[^\n]+$|^年齢\s*[0-9０-９]+$|^身長\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:cm|ＣＭ|センチ)?$|^体重\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:kg|ＫＧ|キロ)?$|^体脂肪率\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:%|％|パーセント)?$|^目標\s*[^\n]+$/.test(safe);
 }
 
 function isOperationalMessage(text) {
   const safe = normalizeText(text);
-  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日/.test(safe);
+  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?/.test(safe);
 }
 
 function buildDefaultState(mode) {
@@ -151,6 +177,17 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
 
 async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
   if (!looksLikeProfilePayload(text)) {
+    if (onboardingState.mode === 'profile_edit' && (input?.messageType !== 'text' || isOperationalMessage(text))) {
+      await saveShortMemory(input.userId, {
+        onboardingState: {
+          ...onboardingState,
+          isActive: false,
+          mode: null,
+          currentStep: STEPS.COMPLETE,
+        }
+      });
+      return { handled: false };
+    }
     if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
@@ -261,13 +298,38 @@ async function handlePlanStep({ input, text, onboardingState, saveShortMemory, m
 
 async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
   const text = normalizeText(input?.rawText || '');
-  if (!text && input?.messageType !== 'text') return { handled: false };
+  const onboardingState = shortMemory?.onboardingState || buildDefaultState('start');
+
+  if (!text && input?.messageType !== 'text') {
+    if (onboardingState?.isActive && onboardingState.mode === 'profile_edit') {
+      await saveShortMemory(input.userId, {
+        onboardingState: {
+          ...onboardingState,
+          isActive: false,
+          mode: null,
+          currentStep: STEPS.COMPLETE,
+        }
+      });
+    }
+    return { handled: false };
+  }
 
   if (isStartTrigger(text)) return startOnboarding(input, saveShortMemory);
   if (isProfileEditTrigger(text)) return startProfileEdit(input, shortMemory, saveShortMemory);
 
-  const onboardingState = shortMemory?.onboardingState || buildDefaultState('start');
   if (!onboardingState?.isActive) return { handled: false };
+
+  if (isOnboardingExitTrigger(text)) {
+    await saveShortMemory(input.userId, {
+      onboardingState: {
+        ...onboardingState,
+        isActive: false,
+        mode: null,
+        currentStep: STEPS.COMPLETE,
+      }
+    });
+    return { handled: true, replyText: buildOnboardingExitMessage(onboardingState.mode) };
+  }
 
   if (onboardingState.currentStep === STEPS.PROFILE) {
     return handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory });
@@ -297,6 +359,7 @@ module.exports = {
   buildCompleteMessage,
   isStartTrigger,
   isProfileEditTrigger,
+  isOnboardingExitTrigger,
   looksLikeProfilePayload,
   maybeHandleOnboarding
 };
