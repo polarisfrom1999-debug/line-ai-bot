@@ -1,0 +1,31 @@
+WEB安全統合メモ
+
+このZIPは public/web の3ファイルだけを変更します。
+
+含まれるファイル:
+- public/web/index.html
+- public/web/app.css
+- public/web/app.js
+
+統合方針:
+- index.html / app.css は A案テーマを採用
+- app.js は A案UI対応をベースに、現行本流で消したくない次を戻したマージ版
+  - /me によるセッション妥当性確認
+  - home/chat のキャッシュfallback
+  - コードURLの code= 取り込み
+  - clearCodeFromLocation()
+
+このZIPは以下を含みません:
+- index.js
+- routes/web.js
+- services/web_portal_data_service.js
+- services/chatgpt_conversation_router.js
+- services/conversation_orchestrator_service.js
+
+つまり、LINE本流や画像解析側に直接触れません。
+
+反映方法:
+- public/web/index.html
+- public/web/app.css
+- public/web/app.js
+を上書き
