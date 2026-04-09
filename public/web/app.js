@@ -1,10 +1,10 @@
 
-const APP_VERSION = 'phase12-root-rebuild';
+const APP_VERSION = 'phase12-root-rebuild+atheme-merge';
 
 const state = {
   token: localStorage.getItem('kokokara_web_token') || '',
   profile: null,
-  currentView: localStorage.getItem('kokokara_web_view') || 'home',
+  currentView: localStorage.getItem('kokokara_web_view') || 'chat',
   currentTab: localStorage.getItem('kokokara_web_tab') || 'meals',
   recordRange: localStorage.getItem('kokokara_web_range') || '30d',
   chatDraft: localStorage.getItem('kokokara_web_draft') || '',
@@ -27,13 +27,53 @@ const state = {
   pendingSync: null,
   pendingSyncCount: 0,
   syncHintShownAt: 0,
-  realtime: { source: null, status: 'off' }
+  realtime: { source: null, status: 'off' },
+  theme: localStorage.getItem('kokokara_web_theme') || 'a-basic'
 };
 
 function qs(sel) { return document.querySelector(sel); }
 function qsa(sel) { return Array.from(document.querySelectorAll(sel)); }
-function escapeHtml(text) {
-  return String(text || '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+const ALLOWED_THEMES = ['a-basic', 'a-rose', 'a-beige', 'a-soft'];
+const THEME_LABELS = {
+  'a-basic': 'やさしい標準',
+  'a-rose': 'ほんのり華やか',
+  'a-beige': '落ち着いた見やすさ',
+  'a-soft': '夕方もやさしい色'
+};
+
+function getSafeTheme(themeId) {
+  return ALLOWED_THEMES.includes(themeId) ? themeId : 'a-basic';
+}
+
+function applyTheme(themeId, options = {}) {
+  const safeTheme = getSafeTheme(themeId);
+  state.theme = safeTheme;
+  document.documentElement.setAttribute('data-theme', safeTheme);
+  try { localStorage.setItem('kokokara_web_theme', safeTheme); } catch (_error) {}
+  qsa('[data-theme-choice]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.themeChoice === safeTheme);
+    button.setAttribute('aria-pressed', button.dataset.themeChoice === safeTheme ? 'true' : 'false');
+  });
+  const current = qs('#themeCurrentLabel');
+  if (current) current.textContent = THEME_LABELS[safeTheme] || 'やさしい標準';
+  if (!options.silent) setStatus(`画面の雰囲気を「${THEME_LABELS[safeTheme] || 'やさしい標準'}」にしました。`, 'success');
+  return safeTheme;
+}
+
+function initTheme() {
+  let stored = 'a-basic';
+  try { stored = localStorage.getItem('kokokara_web_theme') || state.theme || 'a-basic'; } catch (_error) {}
+  applyTheme(stored, { silent: true });
+}
+
+function bindThemePicker() {
+  qsa('[data-theme-choice]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextTheme = button.dataset.themeChoice || 'a-basic';
+      applyTheme(nextTheme);
+    });
+  });
 }
 
 function extractCodeCandidate(value) {
@@ -65,6 +105,10 @@ function clearCodeFromLocation() {
     url.searchParams.delete('code');
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   } catch (_error) {}
+}
+
+function escapeHtml(text) {
+  return String(text || '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
 function normalizeSyncPayload(sync = {}) {
@@ -295,6 +339,7 @@ async function api(path, options = {}) {
   }
   return data;
 }
+
 
 async function validateSessionToken() {
   if (!state.token) return null;
@@ -873,7 +918,16 @@ function renderLabs(payload) {
 function buildFallbackChatPayloadFromCache() {
   return {
     messages: [{ role: 'assistant', text: '接続はできています。ここから相談を続けられます。', sourceChannel: 'web', createdAt: new Date().toISOString() }],
-    sidebar: state.cache.sidebar || { todaySummary: state.cache.home?.todaySummary || '', recentMeals: state.cache.home?.recentMeals || [], latestWeight: { value: state.cache.home?.weightStatus?.latestValue || null, bodyFat: state.cache.home?.weightStatus?.latestBodyFat || null, recordedAt: state.cache.home?.weightStatus?.latestDate || null }, latestLabNote: state.cache.home?.latestLab?.items?.length ? state.cache.home.latestLab.items.slice(0,3).map((item) => `${item.itemName} ${item.value}`).join(' / ') : '血液検査データはまだありません' },
+    sidebar: state.cache.sidebar || {
+      todaySummary: state.cache.home?.todaySummary || '',
+      recentMeals: state.cache.home?.recentMeals || [],
+      latestWeight: {
+        value: state.cache.home?.weightStatus?.latestValue || null,
+        bodyFat: state.cache.home?.weightStatus?.latestBodyFat || null,
+        recordedAt: state.cache.home?.weightStatus?.latestDate || null
+      },
+      latestLabNote: state.cache.home?.latestLab?.items?.length ? state.cache.home.latestLab.items.slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ') : '血液検査データはまだありません'
+    },
     consultLanes: state.cache.home?.consultLanes || [],
     recentTimeline: state.cache.home?.recentTimeline || [],
     reflection: { headline: 'ここから相談できます', body: '今いちばん気になることを一つだけ送れば大丈夫です。' },
@@ -972,7 +1026,7 @@ async function loadHome(requestId = 0) {
   renderRecordsOverview(data.recordsOverview || state.cache.recordsOverview || {});
   renderStarterChips(data.starters || state.cache.starters || []);
   renderSupportMode('supportModeHome', data.supportMode || state.cache.home?.supportMode || {});
-  renderStuckPrompts('stuckPromptsHome', data.stuckPrompts || state.cache.home?.stuckPrompts || []);
+  renderStuckPrompts('stuckPromptsHome', data.stuckPrompts || state.cache.home?.stuckPrompts || {});
   renderReturnDigest('returnDigestHome', data.returnDigest || state.cache.home?.returnDigest || {});
   renderSinceDigest('sinceDigestHome', data.sinceDigest || state.cache.home?.sinceDigest || {});
   renderMicroStep('microStepHome', data.microStep || state.cache.home?.microStep || {});
@@ -1005,7 +1059,7 @@ async function loadChat(requestId = 0) {
   renderSidebar(payload.sidebar || {});
   renderConsultLanes('consultLanesChat', payload.consultLanes || []);
   renderSupportMode('supportModeChat', payload.supportMode || state.cache.home?.supportMode || {});
-  renderStuckPrompts('stuckPromptsChat', payload.stuckPrompts || state.cache.home?.stuckPrompts || []);
+  renderStuckPrompts('stuckPromptsChat', payload.stuckPrompts || state.cache.home?.stuckPrompts || {});
   renderSupportCompass('supportCompassChat', payload.supportCompass || state.cache.home?.supportCompass || {});
   renderReturnDigest('returnDigestChat', payload.returnDigest || state.cache.home?.returnDigest || {});
   renderSinceDigest('sinceDigestChat', payload.sinceDigest || state.cache.home?.sinceDigest || {});
@@ -1195,7 +1249,7 @@ async function initializeSession(force = false) {
     closeRealtime();
     showView('home');
     renderProfile();
-    setStatus(`LINEで接続コードを発行してから、ここで入力してください。 (${APP_VERSION})`);
+    setStatus('LINEで接続コードを発行してから、ここで入力してください。');
     syncSendButton();
     return;
   }
@@ -1219,7 +1273,6 @@ async function initializeSession(force = false) {
     setStatus('最新状態を読み込みました。', 'success');
   } catch (error) {
     if (error.isAuthError) return resetAuthState(error.message);
-    if (error.isAuthError) { resetAuthState(error.message); return; }
     setMessage(error.message, true);
     setStatus(error.message, 'error');
   } finally {
@@ -1245,7 +1298,6 @@ async function connect() {
     qs('#codeInput').value = '';
     clearCodeFromLocation();
   } catch (error) {
-    if (error.isAuthError) { resetAuthState(error.message); return; }
     setMessage(error.message, true);
     setStatus(error.message, 'error');
   } finally {
@@ -1428,20 +1480,21 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('focus', () => refreshIfStale());
 
+initTheme();
+bindThemePicker();
+const locationCode = readCodeFromLocation();
+if (locationCode && !state.token) {
+  const codeInput = qs('#codeInput');
+  if (codeInput) codeInput.value = locationCode;
+}
 switchTab(state.currentTab);
 switchRange(state.recordRange);
 qs('#chatInput').value = state.chatDraft || '';
 autoResizeChatInput();
 syncSendButton();
 startSyncPolling();
+initializeSession();
 
-const initialCode = readCodeFromLocation();
-if (initialCode && !state.token) {
-  qs('#codeInput').value = initialCode;
-  connect();
-} else {
-  initializeSession();
-}
 
 window.addEventListener('pagehide', () => { if (state.token) rememberVisitNow(); });
 window.addEventListener('beforeunload', () => { if (state.token) rememberVisitNow(); });
