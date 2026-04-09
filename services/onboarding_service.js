@@ -34,7 +34,7 @@ function normalizeLoose(value) {
   return normalizeText(value)
     .toLowerCase()
     .replace(/[！!？?。.,，、]/g, '')
-    .replace(/\s+/g, '');
+    .replace(/\\s+/g, '');
 }
 
 function buildStartProfileMessage() {
@@ -47,7 +47,7 @@ function buildStartProfileMessage() {
     '体重：',
     '体脂肪率：',
     '目標：'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function buildEditProfileMessage() {
@@ -60,7 +60,7 @@ function buildEditProfileMessage() {
     '体重：',
     '体脂肪率：',
     '目標：'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function buildAiTypeQuestion() {
@@ -70,7 +70,7 @@ function buildAiTypeQuestion() {
     '2. 理屈で整理',
     '3. 背中を押す',
     '4. バランス型'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function buildConstitutionQuestion() {
@@ -81,7 +81,7 @@ function buildConstitutionQuestion() {
     '3. むくみやすい',
     '4. ストレス食いしやすい',
     '5. まだ分からない'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function buildPlanQuestion() {
@@ -91,7 +91,7 @@ function buildPlanQuestion() {
     '2. ライト',
     '3. スタンダード',
     '4. プレミアム'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function buildCompleteMessage(onboardingState, selectedPlan) {
@@ -102,7 +102,7 @@ function buildCompleteMessage(onboardingState, selectedPlan) {
     `体質タイプ: ${answers.constitutionType || '未設定'}`,
     `プラン: ${selectedPlan || '未設定'}`,
     'ここからは、記録だけでなく今の生活やしんどさも含めて一緒に見ていきます。'
-  ].join('\n');
+  ].join('\\n');
 }
 
 function pickFromNumeric(text, options) {
@@ -110,6 +110,13 @@ function pickFromNumeric(text, options) {
   const index = Number(safe) - 1;
   if (Number.isInteger(index) && options[index]) return options[index];
   return options.find((item) => safe.includes(item)) || null;
+}
+
+function looksLikeSelectionAttempt(text, options, maxNumber) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (new RegExp(`^[1-${maxNumber}]$`).test(safe)) return true;
+  return options.some((item) => safe.includes(item));
 }
 
 function isStartTrigger(text) {
@@ -139,13 +146,13 @@ function buildOnboardingExitMessage(mode = '') {
 function looksLikeProfilePayload(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
-  if (/教えて|知りたい|わかる|覚えてる|\?|？/.test(safe)) return false;
-  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]|^名前\s*[^\n]+$|^年齢\s*[0-9０-９]+$|^身長\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:cm|ＣＭ|センチ)?$|^体重\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:kg|ＫＧ|キロ)?$|^体脂肪率\s*[0-9０-９]+(?:\.[0-9０-９]+)?(?:%|％|パーセント)?$|^目標\s*[^\n]+$/.test(safe);
+  if (/教えて|知りたい|わかる|覚えてる|\\?|？/.test(safe)) return false;
+  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]|^名前\\s*[^\\n]+$|^年齢\\s*[0-9０-９]+$|^身長\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:cm|ＣＭ|センチ)?$|^体重\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:kg|ＫＧ|キロ)?$|^体脂肪率\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:%|％|パーセント)?$|^目標\\s*[^\\n]+$/.test(safe);
 }
 
 function isOperationalMessage(text) {
   const safe = normalizeText(text);
-  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?/.test(safe);
+  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\\?|体脂肪率は\\?/.test(safe);
 }
 
 function buildDefaultState(mode) {
@@ -188,7 +195,8 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
       });
       return { handled: false };
     }
-    if (isOperationalMessage(text) && onboardingState.mode !== 'profile_edit') return { handled: false };
+    if (onboardingState.mode === 'start') return { handled: false };
+    if (isOperationalMessage(text)) return { handled: false };
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
 
@@ -236,7 +244,10 @@ async function handleAiTypeStep({ input, text, onboardingState, saveShortMemory,
   if (isOperationalMessage(text)) return { handled: false };
 
   const selected = pickFromNumeric(text, AI_TYPES);
-  if (!selected) return { handled: true, replyText: buildAiTypeQuestion() };
+  if (!selected) {
+    if (!looksLikeSelectionAttempt(text, AI_TYPES, 4)) return { handled: false };
+    return { handled: true, replyText: buildAiTypeQuestion() };
+  }
 
   await mergeLongMemory(input.userId, { aiType: selected });
   await saveShortMemory(input.userId, {
@@ -255,7 +266,10 @@ async function handleConstitutionStep({ input, text, onboardingState, saveShortM
   if (isOperationalMessage(text)) return { handled: false };
 
   const selected = pickFromNumeric(text, CONSTITUTION_TYPES);
-  if (!selected) return { handled: true, replyText: buildConstitutionQuestion() };
+  if (!selected) {
+    if (!looksLikeSelectionAttempt(text, CONSTITUTION_TYPES, 5)) return { handled: false };
+    return { handled: true, replyText: buildConstitutionQuestion() };
+  }
 
   await mergeLongMemory(input.userId, { constitutionType: selected });
   await saveShortMemory(input.userId, {
@@ -274,7 +288,10 @@ async function handlePlanStep({ input, text, onboardingState, saveShortMemory, m
   if (isOperationalMessage(text)) return { handled: false };
 
   const selected = planService.pickPlanFromText(text);
-  if (!selected) return { handled: true, replyText: buildPlanQuestion() };
+  if (!selected) {
+    if (!looksLikeSelectionAttempt(text, ['無料体験', 'ライト', 'スタンダード', 'プレミアム'], 4)) return { handled: false };
+    return { handled: true, replyText: buildPlanQuestion() };
+  }
 
   await mergeLongMemory(input.userId, {
     plan: selected,
@@ -332,7 +349,7 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
   }
 
   if (onboardingState.currentStep === STEPS.PROFILE) {
-    return handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory });
+    return handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile });
   }
   if (onboardingState.currentStep === STEPS.AI_TYPE) {
     return handleAiTypeStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
