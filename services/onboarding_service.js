@@ -34,7 +34,7 @@ function normalizeLoose(value) {
   return normalizeText(value)
     .toLowerCase()
     .replace(/[！!？?。.,，、]/g, '')
-    .replace(/\\s+/g, '');
+    .replace(/\s+/g, '');
 }
 
 function buildStartProfileMessage() {
@@ -47,7 +47,7 @@ function buildStartProfileMessage() {
     '体重：',
     '体脂肪率：',
     '目標：'
-  ].join('\\n');
+  ].join('\n');
 }
 
 function buildEditProfileMessage() {
@@ -60,7 +60,11 @@ function buildEditProfileMessage() {
     '体重：',
     '体脂肪率：',
     '目標：'
-  ].join('\\n');
+  ].join('\n');
+}
+
+function buildGoalPrompt() {
+  return 'ありがとうございます。目標が決まっていれば「目標55kg」のように送ってください。まだ未定なら「まだ決まっていない」でも大丈夫です。';
 }
 
 function buildAiTypeQuestion() {
@@ -70,7 +74,7 @@ function buildAiTypeQuestion() {
     '2. 理屈で整理',
     '3. 背中を押す',
     '4. バランス型'
-  ].join('\\n');
+  ].join('\n');
 }
 
 function buildConstitutionQuestion() {
@@ -81,7 +85,7 @@ function buildConstitutionQuestion() {
     '3. むくみやすい',
     '4. ストレス食いしやすい',
     '5. まだ分からない'
-  ].join('\\n');
+  ].join('\n');
 }
 
 function buildPlanQuestion() {
@@ -91,7 +95,7 @@ function buildPlanQuestion() {
     '2. ライト',
     '3. スタンダード',
     '4. プレミアム'
-  ].join('\\n');
+  ].join('\n');
 }
 
 function buildCompleteMessage(onboardingState, selectedPlan) {
@@ -102,7 +106,7 @@ function buildCompleteMessage(onboardingState, selectedPlan) {
     `体質タイプ: ${answers.constitutionType || '未設定'}`,
     `プラン: ${selectedPlan || '未設定'}`,
     'ここからは、記録だけでなく今の生活やしんどさも含めて一緒に見ていきます。'
-  ].join('\\n');
+  ].join('\n');
 }
 
 function pickFromNumeric(text, options) {
@@ -144,15 +148,12 @@ function buildOnboardingExitMessage(mode = '') {
 }
 
 function looksLikeProfilePayload(text) {
-  const safe = normalizeText(text);
-  if (!safe) return false;
-  if (/教えて|知りたい|わかる|覚えてる|\\?|？/.test(safe)) return false;
-  return /名前[:：]|年齢[:：]|身長[:：]|体重[:：]|体脂肪率[:：]|目標[:：]|^名前\\s*[^\\n]+$|^年齢\\s*[0-9０-９]+$|^身長\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:cm|ＣＭ|センチ)?$|^体重\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:kg|ＫＧ|キロ)?$|^体脂肪率\\s*[0-9０-９]+(?:\\.[0-9０-９]+)?(?:%|％|パーセント)?$|^目標\\s*[^\\n]+$/.test(safe);
+  return Object.keys(profileService.extractProfilePatchFromText(text)).length > 0;
 }
 
 function isOperationalMessage(text) {
   const safe = normalizeText(text);
-  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\\?|体脂肪率は\\?/.test(safe);
+  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?|ストレッチ教えて/.test(safe);
 }
 
 function buildDefaultState(mode) {
@@ -183,7 +184,9 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
 }
 
 async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
-  if (!looksLikeProfilePayload(text)) {
+  const patch = profileService.extractProfilePatchFromText(text);
+
+  if (!Object.keys(patch).length) {
     if (onboardingState.mode === 'profile_edit' && (input?.messageType !== 'text' || isOperationalMessage(text))) {
       await saveShortMemory(input.userId, {
         onboardingState: {
@@ -195,19 +198,23 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
       });
       return { handled: false };
     }
-    if (onboardingState.mode === 'start') return { handled: false };
+    if (onboardingState.mode === 'start' && isOperationalMessage(text)) return { handled: false };
     if (isOperationalMessage(text)) return { handled: false };
     return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
   }
 
-  const patch = profileService.extractProfilePatchFromText(text);
-  if (!Object.keys(patch).length) {
-    return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
-  }
+  const nextProfile = {
+    preferredName: patch.preferredName || longMemory?.preferredName || onboardingState?.answers?.profile?.preferredName || '',
+    age: patch.age || longMemory?.age || onboardingState?.answers?.profile?.age || '',
+    height: patch.height || longMemory?.height || onboardingState?.answers?.profile?.height || '',
+    weight: patch.weight || longMemory?.weight || onboardingState?.answers?.profile?.weight || '',
+    bodyFat: patch.bodyFat || longMemory?.bodyFat || onboardingState?.answers?.profile?.bodyFat || '',
+    goal: patch.goal || longMemory?.goal || onboardingState?.answers?.profile?.goal || ''
+  };
 
   await mergeLongMemory(input.userId, {
     ...patch,
-    onboardingCompleted: onboardingState.mode === 'profile_edit' ? Boolean(longMemory?.onboardingCompleted) : false,
+    onboardingCompleted: onboardingState.mode === 'profile_edit' ? Boolean(longMemory?.onboardingCompleted) : Boolean(longMemory?.onboardingCompleted),
     trialStartedAt: longMemory?.trialStartedAt || new Date().toISOString()
   });
 
@@ -222,10 +229,33 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
         isActive: false,
         mode: null,
         currentStep: STEPS.COMPLETE,
-        answers: { ...(onboardingState.answers || {}), profile: patch }
+        answers: { ...(onboardingState.answers || {}), profile: nextProfile }
       }
     });
     return { handled: true, replyText: profileService.buildProfileUpdatedReply(patch) };
+  }
+
+  if (!nextProfile.goal) {
+    await saveShortMemory(input.userId, {
+      onboardingState: {
+        ...onboardingState,
+        currentStep: STEPS.PROFILE,
+        completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.PROFILE])],
+        answers: { ...(onboardingState.answers || {}), profile: nextProfile }
+      }
+    });
+    const replyLines = [
+      'ありがとうございます。プロフィールをいったんまとめると、',
+      '',
+      ...(nextProfile.preferredName ? [`名前: ${nextProfile.preferredName}`] : []),
+      ...(nextProfile.age ? [`年齢: ${nextProfile.age}`] : []),
+      ...(nextProfile.height ? [`身長: ${nextProfile.height}`] : []),
+      ...(nextProfile.weight ? [`体重: ${nextProfile.weight}`] : []),
+      ...(nextProfile.bodyFat ? [`体脂肪率: ${nextProfile.bodyFat}`] : []),
+      '',
+      buildGoalPrompt()
+    ].filter(Boolean);
+    return { handled: true, replyText: replyLines.join('\n') };
   }
 
   await saveShortMemory(input.userId, {
@@ -233,7 +263,7 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
       ...onboardingState,
       currentStep: STEPS.AI_TYPE,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.PROFILE])],
-      answers: { ...(onboardingState.answers || {}), profile: patch }
+      answers: { ...(onboardingState.answers || {}), profile: nextProfile }
     }
   });
 
@@ -295,6 +325,7 @@ async function handlePlanStep({ input, text, onboardingState, saveShortMemory, m
 
   await mergeLongMemory(input.userId, {
     plan: selected,
+    selectedPlan: selected,
     onboardingCompleted: true,
     planFeatures: planService.getPlanFeatures(selected)
   });

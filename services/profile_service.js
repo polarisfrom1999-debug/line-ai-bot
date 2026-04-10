@@ -8,34 +8,22 @@ function toHalfWidth(text) {
   return normalizeText(text).replace(/[０-９．％]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
 }
 
-function extractLineValue(line, label) {
-  const regex = new RegExp(`^${label}[：:]\\s*(.+)$`);
-  const match = normalizeText(line).match(regex);
-  return match ? normalizeText(match[1]) : '';
-}
-
 function splitLines(text) {
   return normalizeText(text)
-    .split(/\\n+/)
+    .split(/\n+/)
     .map((line) => normalizeText(line))
     .filter(Boolean);
 }
 
 function normalizeWeightLike(value, unit) {
-  const safe = toHalfWidth(value).replace(/[^\\d.]/g, '');
+  const safe = toHalfWidth(value).replace(/[^\d.]/g, '');
   if (!safe) return normalizeText(value);
   return unit ? `${safe}${unit}` : safe;
 }
 
 function lineLooksLikeQuestion(line) {
-  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\\?$|？$/.test(normalizeText(line));
+  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\?$|？$/.test(normalizeText(line));
 }
-
-function extractLooseValue(line, _label, regex) {
-  const match = normalizeText(line).match(regex);
-  return match ? normalizeText(match[1]) : '';
-}
-
 
 function sanitizePreferredName(value) {
   const safe = normalizeText(value)
@@ -46,7 +34,7 @@ function sanitizePreferredName(value) {
   if (!safe) return '';
   if (safe.length > 12) return '';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(safe)) return '';
-  if (/\\s/.test(safe)) return '';
+  if (/\s/.test(safe)) return '';
   return safe;
 }
 
@@ -61,29 +49,38 @@ function normalizeProfileValue(key, value) {
   return safe;
 }
 
+function extractProfilePatchFromLine(line) {
+  const safe = normalizeText(line);
+  if (!safe || lineLooksLikeQuestion(safe)) return {};
+
+  const patch = {};
+
+  const nameMatch = safe.match(/^(?:私の名前は|名前(?:は|[：:])?)\s*(.+)$/u);
+  const ageMatch = safe.match(/^年齢(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)$/u);
+  const heightMatch = safe.match(/^身長(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
+  const weightMatch = safe.match(/^体重(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
+  const bodyFatMatch = safe.match(/^体脂肪率(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
+  const goalMatch = safe.match(/^目標(?:は|[：:])?\s*(.+)$/u);
+
+  if (nameMatch) {
+    const preferredName = normalizeProfileValue('preferredName', nameMatch[1]);
+    if (preferredName) patch.preferredName = preferredName;
+  }
+  if (ageMatch) patch.age = normalizeProfileValue('age', ageMatch[1]);
+  if (heightMatch) patch.height = normalizeProfileValue('height', heightMatch[1]);
+  if (weightMatch) patch.weight = normalizeProfileValue('weight', weightMatch[1]);
+  if (bodyFatMatch) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFatMatch[1]);
+  if (goalMatch) patch.goal = normalizeProfileValue('goal', goalMatch[1]);
+
+  return patch;
+}
+
 function extractProfilePatchFromText(text) {
   const lines = splitLines(text);
   const patch = {};
 
   for (const line of lines) {
-    if (lineLooksLikeQuestion(line)) continue;
-
-    const name = extractLineValue(line, '名前') || extractLooseValue(line, '名前', /^(?:私の名前は|名前\\s*[は：:]?)\\s*(.+)$/u);
-    const age = extractLineValue(line, '年齢') || extractLooseValue(line, '年齢', /^年齢\\s*[は：:]?\\s*([0-9０-９]+(?:\\.[0-9０-９]+)?)$/u);
-    const weight = extractLineValue(line, '体重') || extractLooseValue(line, '体重', /^体重\\s*[は：:]?\\s*([0-9０-９]+(?:\\.[0-9０-９]+)?)\\s*(?:kg|ＫＧ|キロ)?$/iu);
-    const bodyFat = extractLineValue(line, '体脂肪率') || extractLooseValue(line, '体脂肪率', /^体脂肪率\\s*[は：:]?\\s*([0-9０-９]+(?:\\.[0-9０-９]+)?)\\s*(?:%|％|パーセント)?$/iu);
-    const height = extractLineValue(line, '身長') || extractLooseValue(line, '身長', /^身長\\s*[は：:]?\\s*([0-9０-９]+(?:\\.[0-9０-９]+)?)\\s*(?:cm|ＣＭ|センチ)?$/iu);
-    const goal = extractLineValue(line, '目標') || extractLooseValue(line, '目標', /^目標\\s*[は：:]?\\s*(.+)$/u);
-
-    if (name) {
-      const preferredName = normalizeProfileValue('preferredName', name);
-      if (preferredName) patch.preferredName = preferredName;
-    }
-    if (age) patch.age = normalizeProfileValue('age', age);
-    if (weight) patch.weight = normalizeProfileValue('weight', weight);
-    if (bodyFat) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFat);
-    if (height) patch.height = normalizeProfileValue('height', height);
-    if (goal) patch.goal = normalizeProfileValue('goal', goal);
+    Object.assign(patch, extractProfilePatchFromLine(line));
   }
 
   return patch;
@@ -101,7 +98,7 @@ function buildProfileSummary(longMemory) {
   if (longMemory?.goal) lines.push(`目標: ${longMemory.goal}`);
   if (longMemory?.aiType) lines.push(`AIタイプ: ${longMemory.aiType}`);
   if (longMemory?.constitutionType) lines.push(`体質タイプ: ${longMemory.constitutionType}`);
-  if (longMemory?.selectedPlan) lines.push(`プラン: ${longMemory.selectedPlan}`);
+  if (longMemory?.selectedPlan || longMemory?.plan) lines.push(`プラン: ${longMemory?.selectedPlan || longMemory?.plan}`);
 
   const narrative = longMemory?.narrativeMemory || {};
   if (Array.isArray(narrative?.supportStyleNotes) && narrative.supportStyleNotes.length) {
@@ -112,7 +109,7 @@ function buildProfileSummary(longMemory) {
     return 'プロフィールはまだ強く残っていません。これから少しずつ整えていきましょう。';
   }
 
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 
 function buildProfileUpdatedReply(patch) {
@@ -126,7 +123,7 @@ function buildProfileUpdatedReply(patch) {
   if (patch?.bodyFat) lines.push(`体脂肪率: ${patch.bodyFat}`);
   if (patch?.goal) lines.push(`目標: ${patch.goal}`);
 
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 
 function buildMemoryAnswer(longMemory) {
@@ -139,9 +136,9 @@ function buildMemoryAnswer(longMemory) {
   if (longMemory?.bodyFat) lines.push(`体脂肪率は ${longMemory.bodyFat} として見ています。`);
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
   if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
-  if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
-  if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
-  if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
+  if (longMemory?.aiType) lines.push(`AIタイプは ${longMemory.aiType} です。`);
+  if (longMemory?.constitutionType) lines.push(`体質タイプは ${longMemory.constitutionType} です。`);
+  if (longMemory?.selectedPlan || longMemory?.plan) lines.push(`プランは ${longMemory?.selectedPlan || longMemory?.plan} です。`);
 
   const narrative = longMemory?.narrativeMemory || {};
   if (Array.isArray(narrative?.strugglePatterns) && narrative.strugglePatterns.length) {
@@ -155,7 +152,7 @@ function buildMemoryAnswer(longMemory) {
     return '今はまだ強く残っていることは多くないので、これから少しずつ覚えていきますね。';
   }
 
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 
 module.exports = {
