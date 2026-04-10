@@ -359,7 +359,7 @@ textarea { resize: vertical; }
 }
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 10px;
 }
 .chat-layout > * { min-width: 0; }
@@ -375,7 +375,7 @@ textarea { resize: vertical; }
   box-shadow: var(--card-shadow);
 }
 .chat-card {
-  min-height: min(82vh, 980px);
+  min-height: min(80vh, 920px);
   display: grid;
   grid-template-rows: 1fr auto;
   overflow: hidden;
@@ -386,28 +386,72 @@ textarea { resize: vertical; }
   min-height: 0;
   background: linear-gradient(180deg, var(--surface-soft), var(--surface));
 }
-.message-row > div {
-  max-width: min(72ch, 100%);
-}
 .message-row {
   display: flex;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.message-row.user { justify-content: flex-end; }
 .message-row.assistant { justify-content: flex-start; }
+.message-row.user { justify-content: flex-end; }
+.message-row.assistant > div {
+  width: clamp(22rem, 62%, 46rem);
+  max-width: 100%;
+}
+.message-row.user > div {
+  width: clamp(11rem, 30%, 20rem);
+  max-width: 100%;
+}
 .message-bubble {
-  width: fit-content;
-  max-width: min(58ch, 82%);
-  min-width: 12ch;
+  display: block;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 16px;
   border: 1px solid var(--border);
-  word-break: normal;
-  overflow-wrap: anywhere;
-  line-break: strict;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-break: auto;
+  writing-mode: horizontal-tb;
   white-space: pre-wrap;
   font-size: 13px;
-  line-height: 1.65;
+  line-height: 1.68;
+}
+.message-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.message-attachment {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  text-decoration: none;
+  color: inherit;
+}
+.message-attachment img {
+  display: block;
+  width: 100%;
+  height: 116px;
+  object-fit: cover;
+  background: var(--surface-soft);
+}
+.message-attachment-file {
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.message-attachment-name {
+  display: block;
+  font-weight: 700;
+}
+.message-attachment-meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
 }
 .message-row.user .message-bubble {
   background: var(--message-self);

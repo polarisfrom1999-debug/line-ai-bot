@@ -327,7 +327,15 @@
   function getFilteredRows(rows) {
     const list = sortByDateAsc(rows);
     if (!list.length) return [];
-    return list.slice(-state.rangeDays);
+    const latest = parseMaybeDate(list[list.length - 1].date) || new Date();
+    const start = new Date(latest);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - Math.max(0, state.rangeDays - 1));
+    const filtered = list.filter((row) => {
+      const date = parseMaybeDate(row.date);
+      return date ? date >= start : true;
+    });
+    return filtered.length ? filtered : list.slice(-state.rangeDays);
   }
 
   function getLabelStep(length, width) {
@@ -651,6 +659,42 @@
     els.composerInput.scrollIntoView({ block: 'nearest' });
   }
 
+function buildAttachmentPreview(files) {
+  return safeArray(files).map((file, index) => ({
+    id: `local-att-${Date.now()}-${index}`,
+    name: file.name || '添付ファイル',
+    type: file.type || '',
+    isImage: /^image\//.test(String(file.type || '')),
+    url: /^image\//.test(String(file.type || '')) ? URL.createObjectURL(file) : ''
+  }));
+}
+
+function renderMessageAttachments(item) {
+  const files = safeArray(item.attachments);
+  if (!files.length) return '';
+  return `
+    <div class="message-attachments">
+      ${files.map((file) => {
+        if (file.isImage && file.url) {
+          return `
+            <a class="message-attachment" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">
+              <img src="${escapeHtml(file.url)}" alt="${escapeHtml(file.name || '画像')}" loading="lazy">
+            </a>
+          `;
+        }
+        return `
+          <a class="message-attachment" href="${escapeHtml(file.url || '#')}" ${file.url ? 'target="_blank" rel="noopener noreferrer"' : ''}>
+            <span class="message-attachment-file">
+              <span class="message-attachment-name">${escapeHtml(file.name || '添付ファイル')}</span>
+              <span class="message-attachment-meta">${escapeHtml(file.type || 'ファイル')}</span>
+            </span>
+          </a>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
   function sortMessages(messages) {
     return safeArray(messages).map((item, index) => ({ ...item, _index: index })).sort((a, b) => {
       const ta = parseMaybeDate(a.createdAt || a.dateTime || a.date || '')?.getTime();
@@ -727,12 +771,20 @@
 
   function normalizeMessage(item) {
     if (!item) return null;
-    const text = normalizeText(item.text || item.content || item.message || '');
-    if (!text) return null;
+    const text = normalizeText(item.text || item.content || item.message || item.caption || '');
+    const attachments = safeArray(item.attachments || item.files || item.images).map((file, index) => ({
+      id: file.id || `${item.id || 'msg'}-att-${index}`,
+      name: normalizeText(file.name || file.fileName || file.filename || file.title || '添付ファイル'),
+      url: file.url || file.href || file.src || file.downloadUrl || '',
+      type: normalizeText(file.type || file.mimeType || ''),
+      isImage: Boolean(file.isImage || /^image\//.test(String(file.type || file.mimeType || '')) || /\.(png|jpe?g|gif|webp)$/i.test(String(file.url || file.href || file.src || '')))
+    })).filter((file) => file.url || file.name);
+    if (!text && !attachments.length) return null;
     return {
-      id: item.id || item.messageId || `${item.role || item.sender || 'assistant'}-${item.time || item.createdAt || text}`,
+      id: item.id || item.messageId || `${item.role || item.sender || 'assistant'}-${item.time || item.createdAt || text || 'file'}`,
       role: item.role === 'user' || item.sender === 'user' || item.isUser ? 'user' : 'assistant',
       text,
+      attachments,
       time: item.time || item.createdAt || item.created_at || item.date || '',
       createdAt: item.createdAt || item.created_at || item.date || ''
     };
@@ -969,11 +1021,12 @@
     state.data = base;
   }
 
-  function addLocalMessage(role, text) {
+  function addLocalMessage(role, text, attachments) {
     const entry = {
       id: `local-${Date.now()}`,
       role,
       text,
+      attachments: safeArray(attachments),
       time: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }),
       createdAt: new Date().toISOString()
     };
@@ -1094,11 +1147,30 @@
 
   async function sendText(text, files) {
     const safe = normalizeText(text);
-    if (!safe) return;
-    addLocalMessage('user', safe);
+    const pickedFiles = Array.from(files || []);
+    if (!safe && !pickedFiles.length) return;
+
+    const previewFiles = buildAttachmentPreview(pickedFiles);
+    const localLabel = safe || (pickedFiles.length ? (previewFiles.some((file) => file.isImage) ? '写真を送信' : `${pickedFiles.length}件のファイルを送信`) : '');
+    addLocalMessage('user', localLabel, previewFiles);
+
     state.pendingQuickAction = '';
     renderQuickActions();
-    window.dispatchEvent(new CustomEvent('kokokara:web-send', { detail: { text: safe } }));
+    window.dispatchEvent(new CustomEvent('kokokara:web-send', { detail: { text: safe, files: pickedFiles.length } }));
+
+    let delivered = false;
+    if (pickedFiles.length) {
+      delivered = await tryUploadFiles(pickedFiles, safe);
+      if (!delivered) {
+        addLocalMessage('assistant', '添付の送信がうまくいかなかったので、もう一度お願いします。');
+      }
+    }
+    if (safe && !delivered) {
+      const sent = await trySendTextToServer(safe);
+      if (!sent) {
+        addLocalMessage('assistant', '今は送信確認が取れなかったので、接続を更新してもう一度お願いします。');
+      }
+    }
   }
 
   function saveMemo() {
