@@ -359,9 +359,10 @@ textarea { resize: vertical; }
 }
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(0, 2.35fr) minmax(280px, 0.78fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 10px;
 }
+.chat-layout > * { min-width: 0; }
 .chat-card,
 .mini-card,
 .chart-card,
@@ -374,16 +375,19 @@ textarea { resize: vertical; }
   box-shadow: var(--card-shadow);
 }
 .chat-card {
-  min-height: var(--chat-height);
+  min-height: min(82vh, 980px);
   display: grid;
   grid-template-rows: 1fr auto;
   overflow: hidden;
 }
 .chat-log {
-  padding: 14px;
+  padding: 12px;
   overflow: auto;
   min-height: 0;
   background: linear-gradient(180deg, var(--surface-soft), var(--surface));
+}
+.message-row > div {
+  max-width: min(72ch, 100%);
 }
 .message-row {
   display: flex;
@@ -392,13 +396,18 @@ textarea { resize: vertical; }
 .message-row.user { justify-content: flex-end; }
 .message-row.assistant { justify-content: flex-start; }
 .message-bubble {
-  max-width: min(72%, 920px);
-  padding: 11px 13px;
+  width: fit-content;
+  max-width: min(58ch, 82%);
+  min-width: 12ch;
+  padding: 10px 12px;
   border-radius: 16px;
   border: 1px solid var(--border);
-  word-break: break-word;
-  font-size: 14px;
-  line-height: 1.55;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-break: strict;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.65;
 }
 .message-row.user .message-bubble {
   background: var(--message-self);
@@ -536,7 +545,9 @@ textarea { resize: vertical; }
   font-weight: 700;
 }
 .chart-card canvas {
+  display: block;
   width: 100%;
+  max-width: 100%;
   height: auto;
   border-radius: 14px;
   background: linear-gradient(180deg, var(--surface-soft), var(--surface));
@@ -563,6 +574,7 @@ textarea { resize: vertical; }
   justify-content: space-between;
   gap: 12px;
   align-items: start;
+  flex-wrap: wrap;
 }
 .simple-row-main { font-weight: 800; font-size: 16px; }
 .simple-row-sub { color: var(--muted); font-size: 12px; }
@@ -599,6 +611,7 @@ textarea { resize: vertical; }
   .lab-grid,
   .theme-grid { grid-template-columns: 1fr; }
   .side-stack { grid-template-columns: 1fr 1fr; grid-template-rows: none; }
+  .message-row > div { max-width: 100%; }
 }
 
 @media (max-width: 760px) {
@@ -621,7 +634,7 @@ textarea { resize: vertical; }
   .chat-layout,
   .side-stack { display: grid; grid-template-columns: 1fr; }
   .chat-card { min-height: min(72vh, 760px); }
-  .message-bubble { max-width: 88%; }
+  .message-bubble { max-width: 92%; min-width: 0; }
   .composer-bar { grid-template-columns: auto minmax(0, 1fr); }
   .send-btn { grid-column: 1 / -1; }
   .meal-total-box { min-width: 0; text-align: left; margin-top: 8px; }

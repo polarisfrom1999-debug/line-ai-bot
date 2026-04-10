@@ -82,7 +82,7 @@
     rangeDays: Number(localStorage.getItem('kokokara-web-range')) || 7,
     theme: localStorage.getItem('kokokara-web-theme') || 'soft-default',
     data: null,
-    chatVisibleCount: 60,
+    chatVisibleCount: 400,
     cacheByRange: {},
     pendingQuickAction: ''
   };
@@ -330,6 +330,12 @@
     return list.slice(-state.rangeDays);
   }
 
+  function getLabelStep(length, width) {
+    if (length <= 8) return 1;
+    const approx = Math.max(1, Math.ceil(length / Math.max(3, Math.floor(width / 90))));
+    return approx;
+  }
+
   function summarizeWeightRows(rows) {
     const list = getFilteredRows(rows);
     if (!list.length) return { latest: '–', note: 'まだありません', sub: '体重記録なし' };
@@ -391,8 +397,9 @@
   }
 
   function resetCanvas(canvas) {
-    const logicalWidth = Number(canvas.getAttribute('width') || canvas.clientWidth || 980);
-    const logicalHeight = Number(canvas.getAttribute('height') || canvas.clientHeight || 320);
+    const parentWidth = canvas.parentElement ? Math.max(320, Math.floor(canvas.parentElement.clientWidth - 4)) : 980;
+    const logicalWidth = parentWidth;
+    const logicalHeight = Number(canvas.getAttribute('height') || 320);
     const ratio = window.devicePixelRatio || 1;
     canvas.width = logicalWidth * ratio;
     canvas.height = logicalHeight * ratio;
@@ -414,13 +421,14 @@
       return;
     }
 
-    const pad = { top: 18, right: 20, bottom: 36, left: 50 };
-    const innerW = width - pad.left - pad.right;
-    const innerH = height - pad.top - pad.bottom;
+    const pad = { top: 18, right: 18, bottom: 40, left: 48 };
+    const innerW = Math.max(40, width - pad.left - pad.right);
+    const innerH = Math.max(40, height - pad.top - pad.bottom);
     const values = list.map((row) => Number(row.value || 0));
     const min = Math.min(...values);
     const max = Math.max(...values);
     const gap = Math.max(max - min, 0.4);
+    const labelStep = getLabelStep(list.length, innerW);
 
     ctx.strokeStyle = getVar('--chart-grid', 'rgba(0,0,0,.1)');
     ctx.lineWidth = 1;
@@ -433,7 +441,7 @@
     }
 
     ctx.strokeStyle = getVar('--primary', '#875d88');
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     list.forEach((row, index) => {
       const x = list.length === 1 ? pad.left + innerW / 2 : pad.left + (innerW / (list.length - 1)) * index;
@@ -447,7 +455,7 @@
       const x = list.length === 1 ? pad.left + innerW / 2 : pad.left + (innerW / (list.length - 1)) * index;
       const y = height - pad.bottom - ((Number(row.value || 0) - min) / gap) * innerH;
       ctx.beginPath();
-      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = getVar('--primary', '#875d88');
       ctx.lineWidth = 2;
@@ -457,10 +465,11 @@
     ctx.fillStyle = getVar('--muted', '#666');
     ctx.font = '12px sans-serif';
     ctx.fillText(String(max.toFixed(1)), 8, pad.top + 6);
-    ctx.fillText(String(min.toFixed(1)), 8, height - pad.bottom);
+    ctx.fillText(String(min.toFixed(1)), 8, height - pad.bottom + 2);
     list.forEach((row, index) => {
+      if (index % labelStep !== 0 && index !== list.length - 1) return;
       const x = list.length === 1 ? pad.left + innerW / 2 : pad.left + (innerW / (list.length - 1)) * index;
-      ctx.fillText(formatDate(row.date), x - 14, height - 12);
+      ctx.fillText(formatDate(row.date), x - 16, height - 12);
     });
   }
 
@@ -474,12 +483,13 @@
       return;
     }
 
-    const pad = { top: 18, right: 20, bottom: 42, left: 46 };
-    const innerW = width - pad.left - pad.right;
-    const innerH = height - pad.top - pad.bottom;
+    const pad = { top: 18, right: 18, bottom: 44, left: 44 };
+    const innerW = Math.max(40, width - pad.left - pad.right);
+    const innerH = Math.max(40, height - pad.top - pad.bottom);
     const maxKcal = Math.max(...list.map((row) => Number(row.kcal || 0)), 600);
-    const step = innerW / list.length;
-    const barW = Math.max(18, step * 0.55);
+    const step = innerW / Math.max(1, list.length);
+    const barW = Math.max(14, Math.min(54, step * 0.56));
+    const labelStep = getLabelStep(list.length, innerW);
 
     ctx.strokeStyle = getVar('--chart-grid', 'rgba(0,0,0,.1)');
     ctx.lineWidth = 1;
@@ -499,8 +509,10 @@
       ctx.fillRect(x, y, barW, h);
       ctx.fillStyle = getVar('--text', '#222');
       ctx.font = '11px sans-serif';
-      ctx.fillText(String(Math.round(Number(row.kcal || 0))), x - 2, y - 6);
-      ctx.fillText(formatDate(row.date), x - 2, height - 10);
+      if (index % labelStep === 0 || index === list.length - 1) {
+        ctx.fillText(String(Math.round(Number(row.kcal || 0))), x - 2, y - 6);
+        ctx.fillText(formatDate(row.date), x - 8, height - 10);
+      }
       ctx.fillStyle = getVar('--accent', '#ceb0d0');
     });
   }
@@ -583,23 +595,21 @@
       btn.className = `quick-action${state.pendingQuickAction === action.text ? ' pending' : ''}`;
       btn.innerHTML = `<span class="quick-action-label">${action.label}</span><span class="quick-action-sub">${action.sub}</span>`;
       btn.addEventListener('click', () => {
-        if (state.pendingQuickAction === action.text) {
-          state.pendingQuickAction = '';
-          sendText(action.text);
-        } else {
-          state.pendingQuickAction = action.text;
-          fillComposer(action.text);
-          renderQuickActions();
-        }
+        state.pendingQuickAction = '';
+        fillComposer(action.text);
+        sendText(action.text);
       });
       els.quickActions.appendChild(btn);
     });
   }
 
-  function renderChat() {
+  function renderChat(options = {}) {
     const data = state.data || MOCK_DATA;
     const allMessages = safeArray(data.chat);
     const visible = allMessages.slice(-state.chatVisibleCount);
+    const shouldStickBottom = options.stickBottom !== false;
+    const previousHeight = els.chatLog.scrollHeight;
+    const previousTop = els.chatLog.scrollTop;
     els.chatLog.innerHTML = visible.map((item) => `
       <div class="message-row ${item.role === 'user' ? 'user' : 'assistant'}">
         <div>
@@ -608,7 +618,11 @@
         </div>
       </div>
     `).join('');
-    els.chatLog.scrollTop = els.chatLog.scrollHeight;
+    if (shouldStickBottom) {
+      els.chatLog.scrollTop = els.chatLog.scrollHeight;
+    } else {
+      els.chatLog.scrollTop = els.chatLog.scrollHeight - previousHeight + previousTop;
+    }
     els.chatHeadStatus.textContent = data.syncStatus || '同期中';
     if (!els.contextMemoInput.value.trim()) {
       els.contextMemoInput.value = localStorage.getItem(MEMO_KEY) || buildContextMemo(data);
@@ -998,7 +1012,87 @@
     renderRecords();
   }
 
-  function sendText(text) {
+  async function postJson(url, payload) {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const contentType = res.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? res.json() : {};
+  }
+
+  async function postForm(url, formData) {
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const contentType = res.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? res.json() : {};
+  }
+
+  function applyServerReply(json) {
+    const message = normalizeText(json.reply || json.message || json.text || json.assistantMessage || '');
+    if (message) addLocalMessage('assistant', message);
+    const portalLike = json.portalData || json.data || json.portal || null;
+    if (portalLike && typeof portalLike === 'object') {
+      const normalized = normalizePortalData(portalLike, false);
+      normalized.chat = mergeMessages(state.data.chat, normalized.chat);
+      state.data = normalized;
+      state.cacheByRange[state.rangeDays] = normalized;
+      renderAll();
+    }
+  }
+
+  async function trySendTextToServer(text) {
+    const urls = [
+      '/api/web/chat',
+      '/web/api/chat',
+      '/api/web/message',
+      '/web/api/message',
+      '/api/web/messages'
+    ];
+    for (const url of urls) {
+      try {
+        const json = await postJson(url, { text, message: text, days: state.rangeDays });
+        applyServerReply(json);
+        return true;
+      } catch (_error) {}
+    }
+    return false;
+  }
+
+  async function tryUploadFiles(files, text) {
+    const urls = [
+      '/api/web/chat',
+      '/web/api/chat',
+      '/api/web/upload',
+      '/web/api/upload',
+      '/api/web/message'
+    ];
+    for (const url of urls) {
+      try {
+        const form = new FormData();
+        form.append('text', text || '');
+        form.append('message', text || '');
+        Array.from(files || []).forEach((file, index) => {
+          form.append('files', file);
+          form.append(`file${index + 1}`, file);
+          if (index === 0) form.append('file', file);
+        });
+        const json = await postForm(url, form);
+        applyServerReply(json);
+        return true;
+      } catch (_error) {}
+    }
+    return false;
+  }
+
+  async function sendText(text, files) {
     const safe = normalizeText(text);
     if (!safe) return;
     addLocalMessage('user', safe);
@@ -1027,16 +1121,20 @@
     els.plusBtn.addEventListener('click', () => els.filePicker.click());
     els.filePicker.addEventListener('change', () => {
       const count = els.filePicker.files?.length || 0;
-      els.composerHelp.textContent = count ? `${count}件のファイルを選びました` : '写真・画像・ファイルを送れます';
+      const names = Array.from(els.filePicker.files || []).map((file) => file.name).slice(0, 2).join(' / ');
+      els.composerHelp.textContent = count ? `${count}件のファイルを選びました ${names}`.trim() : '写真・画像・ファイルを送れます';
     });
     els.composerInput.addEventListener('input', autosizeComposer);
 
-    els.composerForm.addEventListener('submit', (event) => {
+    els.composerForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = els.composerInput.value.trim();
-      if (!text) return;
-      sendText(text);
+      const files = Array.from(els.filePicker.files || []);
+      if (!text && !files.length) return;
+      await sendText(text, files);
       els.composerInput.value = '';
+      els.filePicker.value = '';
+      els.composerHelp.textContent = '写真・画像・ファイルを送れます';
       autosizeComposer();
     });
 
@@ -1064,10 +1162,10 @@
     });
 
     els.loadOlderBtn.addEventListener('click', async () => {
-      state.chatVisibleCount += 40;
+      state.chatVisibleCount += 120;
       const extra = await tryFetchChatHistory(365);
       if (extra.length) state.data.chat = mergeMessages(state.data.chat, extra);
-      renderChat();
+      renderChat({ stickBottom: false });
     });
 
     els.saveMemoBtn.addEventListener('click', saveMemo);
