@@ -11,19 +11,19 @@
   <div class="app-shell" id="appShell">
     <header class="topbar">
       <div class="brand-block">
-        <div class="brand-title-row">
+        <div class="brand-row">
           <h1 class="brand-title">ここから。WEB</h1>
-          <span class="brand-badge">相談室</span>
         </div>
         <p class="brand-subtitle">落ち着いて見返せて、ゆっくり相談できる場所</p>
       </div>
 
       <div class="topbar-right">
-        <div class="session-meta" id="sessionMeta">
+        <div class="session-meta">
           <div class="session-pill" id="sessionPill">未接続</div>
-          <div class="session-detail" id="sessionDetail">接続するとチャットが上に表示されます</div>
+          <div class="session-detail" id="sessionDetail">接続後はチャットを上にまとめます</div>
         </div>
         <div class="header-actions">
+          <button class="ghost-btn small" id="toggleThemePanelBtn" type="button">見やすい色</button>
           <button class="ghost-btn small" id="refreshBtn" type="button">最新にする</button>
           <button class="ghost-btn small" id="disconnectBtn" type="button">接続解除</button>
         </div>
@@ -34,7 +34,7 @@
       <div class="connect-banner-inner">
         <div>
           <h2>ここから。WEBへようこそ。</h2>
-          <p>LINEで発行した接続コードを入れると、チャットと記録をこの画面で見やすく使えます。</p>
+          <p>LINEで発行した接続コードを入れると、この画面で見やすく使えます。</p>
         </div>
         <form class="connect-form" id="connectForm">
           <input id="connectInput" type="text" autocomplete="off" placeholder="接続コードを入力">
@@ -43,15 +43,23 @@
       </div>
     </section>
 
+    <section class="theme-panel collapsed" id="themePanel">
+      <div class="panel-head compact">
+        <div>
+          <h2>見やすい色を選べます</h2>
+          <p>選ぶと閉じます。次に変えたい時は右上の「見やすい色」から開けます。</p>
+        </div>
+      </div>
+      <div class="theme-grid" id="themeGrid"></div>
+    </section>
+
     <nav class="compact-nav" aria-label="主要タブ">
       <div class="tab-group">
         <button class="tab-btn active" data-tab="chat" type="button">チャット</button>
         <button class="tab-btn" data-tab="records" type="button">記録</button>
       </div>
-
       <div class="toolbar-group">
-        <button class="ghost-btn" id="toggleThemePanelBtn" type="button">見やすい色</button>
-        <div class="range-chip-group mobile-hide" id="quickRangeGroup">
+        <div class="range-chip-group js-range-group" id="globalRangeGroup">
           <button class="range-chip active" data-range="7" type="button">7日</button>
           <button class="range-chip" data-range="30" type="button">30日</button>
           <button class="range-chip" data-range="90" type="button">90日</button>
@@ -59,24 +67,17 @@
       </div>
     </nav>
 
-    <section class="theme-panel collapsed" id="themePanel">
-      <div class="panel-head compact">
-        <div>
-          <h2>見やすい色を選べます</h2>
-          <p>目の状態や時間帯に合わせて切り替えられます。会話や記録はそのままです。</p>
-        </div>
-      </div>
-      <div class="theme-grid" id="themeGrid"></div>
-    </section>
-
     <main class="main-grid">
       <section class="tab-panel active" id="chatPanel">
-        <div class="panel-head chat-head">
+        <div class="panel-head compact chat-panel-head">
           <div>
             <h2>チャット</h2>
-            <p>いちばんよく使う場所を上にまとめています。</p>
+            <p>接続後はいちばん使う場所を先頭にしています。古い会話も上へさかのぼって見られます。</p>
           </div>
-          <div class="chat-head-status" id="chatHeadStatus">ライブ同期待機中</div>
+          <div class="chat-head-tools">
+            <span class="chat-head-status" id="chatHeadStatus">ライブ同期待機中</span>
+            <button class="ghost-btn small" id="loadOlderBtn" type="button">前の会話をもっと見る</button>
+          </div>
         </div>
 
         <div class="chat-layout">
@@ -96,12 +97,22 @@
 
           <aside class="side-stack">
             <section class="mini-card" id="contextCard">
-              <h3>今の見守りメモ</h3>
-              <div id="contextCardBody">必要な時だけ、直近の流れをここにまとめます。</div>
+              <div class="mini-card-head">
+                <h3>見守りメモ</h3>
+                <div class="mini-card-actions">
+                  <button class="inline-link" id="saveMemoBtn" type="button">保存</button>
+                  <button class="inline-link" id="sendMemoBtn" type="button">送る</button>
+                </div>
+              </div>
+              <textarea class="context-memo-input" id="contextMemoInput" rows="6" placeholder="流れのメモや見返したいことを書けます"></textarea>
             </section>
 
             <section class="mini-card" id="quickActionCard">
-              <h3>よく使う動き</h3>
+              <div class="mini-card-head">
+                <h3>よく使う動き</h3>
+                <button class="inline-link" id="quickActionFocusBtn" type="button">入力へ戻る</button>
+              </div>
+              <p class="mini-card-note">押すと入力欄に入ります。もう一度押すとそのまま送れます。</p>
               <div class="quick-actions" id="quickActions"></div>
             </section>
           </aside>
@@ -112,12 +123,15 @@
         <div class="panel-head compact">
           <div>
             <h2>記録</h2>
-            <p>基本は 7 日表示。必要な時だけ 30 日、90 日に切り替えられます。</p>
+            <p>基本は 7 日表示です。必要な時だけ 30 日、90 日に広げます。</p>
           </div>
-          <div class="range-chip-group desktop-only" id="recordRangeGroup">
-            <button class="range-chip active" data-range="7" type="button">7日</button>
-            <button class="range-chip" data-range="30" type="button">30日</button>
-            <button class="range-chip" data-range="90" type="button">90日</button>
+          <div class="record-head-side">
+            <div class="record-head-meta" id="recordHeadMeta">表示期間 7日</div>
+            <div class="range-chip-group js-range-group compact-range" id="recordRangeGroup">
+              <button class="range-chip active" data-range="7" type="button">7日</button>
+              <button class="range-chip" data-range="30" type="button">30日</button>
+              <button class="range-chip" data-range="90" type="button">90日</button>
+            </div>
           </div>
         </div>
 
@@ -135,25 +149,30 @@
               <div class="chart-head">
                 <div>
                   <h3>体重の流れ</h3>
-                  <p>7日を基本に、必要時だけ期間を広げます。</p>
+                  <p>最新を右端に寄せて見やすく出します。期間を変えると古い記録も広げて見ます。</p>
                 </div>
                 <div class="chart-meta" id="weightChartMeta">データ待機中</div>
               </div>
-              <canvas id="weightChartCanvas" width="960" height="320"></canvas>
+              <canvas id="weightChartCanvas" width="980" height="320"></canvas>
             </div>
             <div class="simple-list" id="weightList"></div>
           </section>
 
           <section class="record-panel" id="recordMealPanel">
             <div class="chart-card">
-              <div class="chart-head">
+              <div class="chart-head chart-head-split">
                 <div>
                   <h3>食事の流れ</h3>
-                  <p>記録件数と最近の傾向を見やすくまとめます。</p>
+                  <p>総カロリーを大きく、日ごとの朝・昼・夜も下に見やすく出します。</p>
                 </div>
-                <div class="chart-meta" id="mealChartMeta">データ待機中</div>
+                <div class="meal-total-box">
+                  <div class="meal-total-label">総カロリー</div>
+                  <div class="meal-total-value" id="mealTotalValue">-- kcal</div>
+                  <div class="meal-total-sub" id="mealTotalSub">表示期間の合計</div>
+                </div>
               </div>
-              <canvas id="mealChartCanvas" width="960" height="320"></canvas>
+              <canvas id="mealChartCanvas" width="980" height="320"></canvas>
+              <div class="meal-footer-meta" id="mealChartMeta">データ待機中</div>
             </div>
             <div class="simple-list" id="mealList"></div>
           </section>
@@ -163,7 +182,7 @@
               <div class="chart-head">
                 <div>
                   <h3>血液検査</h3>
-                  <p>最新日付と最近の見返し用メモをまとめます。</p>
+                  <p>最新日付と見返し用の情報をまとめます。</p>
                 </div>
                 <div class="chart-meta" id="labMeta">まだありません</div>
               </div>
