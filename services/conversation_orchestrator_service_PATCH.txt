@@ -1,0 +1,108 @@
+services/conversation_orchestrator_service.js 用 PATCH
+
+目的
+- 「今の私のプランは？」を plan のガイド表示ではなく現在値照会へ流す
+- 「私の目標体重は？」を goal lookup に流す
+- 「私のプロフィールは？」を profile summary に流す
+- plan 保存時に selectedPlan と plan の両方へ保存する
+
+────────────────
+1. detectIntent(input) の先頭側に以下を追加
+
+if (/今の私のプラン|私のプランは|現在のプラン|選んだプラン/.test(text)) return 'plan_lookup';
+if (/目標体重|私の目標|今の目標|目標は？|目標は\?$/.test(text)) return 'goal_lookup';
+
+そしてプロフィール判定は以下に置き換え
+
+if (/私のプロフィールは|プロフィール教えて|プロフ教えて|プロフィール|プロフ/.test(text)) return 'profile_summary';
+
+メモ:
+weight_lookup より前に plan_lookup / goal_lookup を入れると整理しやすいです。
+
+────────────────
+2. orchestrateConversation(input) の intent 分岐に以下を追加
+
+if (intent === 'goal_lookup') {
+  const memoryText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
+  const goalLine = String(memoryText || '')
+    .split('\n')
+    .find((line) => line.includes('目標は'));
+  const replyText = goalLine || '今は目標がまだ固定されていないので、決まったら「目標55kg」のように送ってもらえればそのまま反映します。';
+  await appendTurn(input.userId, input.rawText || '', replyText);
+  return {
+    ok: true,
+    replyMessages: [{ type: 'text', text: replyText }],
+    internal: { intentType: 'goal_lookup', responseMode: 'answer' }
+  };
+}
+
+if (intent === 'plan_lookup') {
+  const memoryText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
+  const planLine = String(memoryText || '')
+    .split('\n')
+    .find((line) => line.includes('プランは'));
+  const replyText = planLine || '今はまだプランが固定されていないので、必要なら「プラン案内」で候補を見ながら決められます。';
+  await appendTurn(input.userId, input.rawText || '', replyText);
+  return {
+    ok: true,
+    replyMessages: [{ type: 'text', text: replyText }],
+    internal: { intentType: 'plan_lookup', responseMode: 'answer' }
+  };
+}
+
+配置位置:
+if (intent === 'weight_lookup') { ... }
+の前後にまとめて置くと見通しが良いです。
+
+────────────────
+3. plan 選択保存を以下に置き換え
+
+置換前:
+await contextMemoryService.mergeLongMemory(input.userId, { selectedPlan: text });
+
+置換後:
+await contextMemoryService.mergeLongMemory(input.userId, {
+  selectedPlan: text,
+  plan: text
+});
+
+replyText も以下へ変更可:
+const replyText = `今のプラン候補は「${text}」です。`;
+
+────────────────
+4. profile summary は既存のままでOK
+ただし conversation_fact_resolver_service.js を今回同梱版へ全文差し替えしてください。
+それで最新 longMemory 優先になります。
+
+────────────────
+5. 確認会話
+
+A.
+- プラン案内
+- プレミアム
+- 今の私のプランは？
+
+期待:
+- 「プランは「プレミアム」です。」のように返る
+
+B.
+- プロフィール変更
+- 目標55キロ
+- 私の目標体重は？
+
+期待:
+- 「目標は「55kg」...」または近い現在値返答になる
+
+C.
+- プロフィール変更
+- 体重60キロ
+- 私のプロフィールは？
+
+期待:
+- 古い値ではなく最新の 60kg 側が見える
+
+────────────────
+6. 注意
+- public/web 側は今回触らない
+- index.js は今回触らない
+- services/conversation_orchestrator_service.js は巨大なので全文差し替えではなくピンポイント更新推奨

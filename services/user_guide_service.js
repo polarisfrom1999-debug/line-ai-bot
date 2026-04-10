@@ -2,6 +2,10 @@
 
 /**
  * services/user_guide_service.js
+ *
+ * 目的:
+ * - 「使い方」「送り方」系の案内を担当
+ * - ただし「今の私のプランは？」のような現在値照会はガイド扱いしない
  */
 
 const { buildTypeSelectionGuide } = require('./type_recommendation_service');
@@ -27,6 +31,13 @@ function looksLikeHowToRequest(text = '') {
   if (n === 'ヘルプ' || n === 'help' || n === 'メニュー' || n === '使い方') return true;
   if (n.includes('送り方') || n.includes('使い方') || n.includes('教えて') || n.includes('知りたい')) return true;
   return false;
+}
+
+function looksLikeCurrentStateQuestion(text = '') {
+  const raw = safeText(text);
+  if (!raw) return false;
+  if (!/[？?]/.test(raw)) return false;
+  return /(今|現在|私の).*(プラン|目標|体重|体脂肪率|プロフィール|プロフ)/.test(raw);
 }
 
 function buildFirstGuideMessage(opts = {}) {
@@ -178,6 +189,11 @@ function detectGuideIntent(text) {
   const raw = safeText(text);
   const n = normalizeLoose(raw);
   if (!n) return '';
+
+  // 重要:
+  // 「今の私のプランは？」「私の目標体重は？」などの現在値照会は
+  // ガイド導線に吸い込まない
+  if (looksLikeCurrentStateQuestion(raw)) return '';
 
   const howTo = looksLikeHowToRequest(raw);
   const exactShort = n.length <= 8;
