@@ -1,5 +1,7 @@
 'use strict';
 
+const pointsService = require('./points_service');
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -20,14 +22,16 @@ function sumNutrition(meals) {
 
 function flattenRecentRecords(recentDailyRecords) {
   const days = Array.isArray(recentDailyRecords) ? recentDailyRecords : [];
-  const merged = { meals: [], exercises: [], weights: [], labs: [] };
+  const merged = { meals: [], exercises: [], weights: [], labs: [], activeDays: 0 };
 
   for (const day of days) {
     const records = day?.records || {};
-    merged.meals.push(...(Array.isArray(records.meals) ? records.meals : []));
-    merged.exercises.push(...(Array.isArray(records.exercises) ? records.exercises : []));
-    merged.weights.push(...(Array.isArray(records.weights) ? records.weights : []));
-    merged.labs.push(...(Array.isArray(records.labs) ? records.labs : []));
+    const hasAny = ['meals', 'exercises', 'weights', 'labs'].some((key) => Array.isArray(records[key]) && records[key].length);
+    if (hasAny) merged.activeDays += 1;
+    merged.meals.push(...(Array.isArray(records.meals) ? records.meals.map((item) => ({ ...item, date: day.date })) : []));
+    merged.exercises.push(...(Array.isArray(records.exercises) ? records.exercises.map((item) => ({ ...item, date: day.date })) : []));
+    merged.weights.push(...(Array.isArray(records.weights) ? records.weights.map((item) => ({ ...item, date: day.date })) : []));
+    merged.labs.push(...(Array.isArray(records.labs) ? records.labs.map((item) => ({ ...item, date: day.date })) : []));
   }
 
   return merged;
@@ -56,7 +60,20 @@ function buildMealsLine(allRecords) {
   }
 
   const totals = sumNutrition(meals);
-  return `食事: ${meals.length}件 / 約${round1(totals.kcal)}kcal / たんぱく質 ${round1(totals.protein)}g / 脂質 ${round1(totals.fat)}g / 糖質 ${round1(totals.carbs)}g`;
+  const mealTypeMap = { breakfast: 0, lunch: 0, dinner: 0, snack: 0 };
+  meals.forEach((meal) => {
+    const mealType = normalizeText(meal?.mealType || '');
+    if (mealTypeMap[mealType] != null) mealTypeMap[mealType] += 1;
+  });
+
+  const slotText = [
+    mealTypeMap.breakfast ? `朝 ${mealTypeMap.breakfast}` : '',
+    mealTypeMap.lunch ? `昼 ${mealTypeMap.lunch}` : '',
+    mealTypeMap.dinner ? `夜 ${mealTypeMap.dinner}` : '',
+    mealTypeMap.snack ? `間食 ${mealTypeMap.snack}` : ''
+  ].filter(Boolean).join(' / ');
+
+  return `食事: ${meals.length}件${slotText ? ` (${slotText})` : ''} / 約${round1(totals.kcal)}kcal / たんぱく質 ${round1(totals.protein)}g / 脂質 ${round1(totals.fat)}g / 糖質 ${round1(totals.carbs)}g`;
 }
 
 function buildExerciseLine(allRecords) {
@@ -65,15 +82,22 @@ function buildExerciseLine(allRecords) {
     return '運動: 今週は量が少なくても大丈夫です。無理なく戻れる形を優先で見ていきましょう。';
   }
 
-  const kcal = exercises.reduce((sum, item) => sum + Number(item?.kcal || item?.estimatedKcal || 0), 0);
-  return `運動: ${exercises.length}件 / 推定消費 ${round1(kcal)}kcal`;
+  const minutes = exercises.reduce((sum, item) => sum + Number(item?.minutes || 0), 0);
+  const kcal = exercises.reduce((sum, item) => sum + Number(item?.estimatedCalories || item?.kcal || item?.estimatedKcal || 0), 0);
+  return `運動: ${exercises.length}件 / 合計 ${round1(minutes)}分 / 推定消費 ${round1(kcal)}kcal`;
 }
 
 function buildWeightLine(allRecords, longMemory) {
   const weights = Array.isArray(allRecords?.weights) ? allRecords.weights : [];
   if (weights.length) {
+    const first = weights[0];
     const latest = weights[weights.length - 1];
-    return `体重: ${latest?.summary || latest?.value || '今週の記録あり'}`;
+    const diff = first?.weight != null && latest?.weight != null ? round1(Number(latest.weight) - Number(first.weight)) : null;
+    const parts = [];
+    if (latest?.weight != null) parts.push(`最新 ${latest.weight}kg`);
+    if (latest?.bodyFat != null) parts.push(`体脂肪率 ${latest.bodyFat}%`);
+    if (diff != null) parts.push(`週内変化 ${diff > 0 ? '+' : ''}${diff}kg`);
+    return `体重: ${parts.join(' / ')}`;
   }
 
   if (longMemory?.weight) {
@@ -128,6 +152,7 @@ async function buildWeeklyReport(params) {
   const recentMessages = Array.isArray(params?.recentMessages) ? params.recentMessages : [];
   const recentDailyRecords = Array.isArray(params?.recentDailyRecords) ? params.recentDailyRecords : [];
   const todayRecords = params?.todayRecords || {};
+  const totalPoints = Number(params?.totalPoints || 0);
 
   const allRecords = recentDailyRecords.length
     ? flattenRecentRecords(recentDailyRecords)
@@ -135,12 +160,14 @@ async function buildWeeklyReport(params) {
         meals: Array.isArray(todayRecords?.meals) ? todayRecords.meals : [],
         exercises: Array.isArray(todayRecords?.exercises) ? todayRecords.exercises : [],
         weights: Array.isArray(todayRecords?.weights) ? todayRecords.weights : [],
-        labs: Array.isArray(todayRecords?.labs) ? todayRecords.labs : []
+        labs: Array.isArray(todayRecords?.labs) ? todayRecords.labs : [],
+        activeDays: ['meals', 'exercises', 'weights', 'labs'].some((key) => Array.isArray(todayRecords?.[key]) && todayRecords[key].length) ? 1 : 0
       };
 
   const signals = collectMessageSignals(recentMessages);
   const lines = [
     '今週のまとめです。',
+    `継続: ${allRecords.activeDays || 0}日 動けています。`,
     buildMealsLine(allRecords),
     buildExerciseLine(allRecords)
   ];
@@ -151,6 +178,7 @@ async function buildWeeklyReport(params) {
   const labLine = buildLabLine(allRecords);
   if (labLine) lines.push(labLine);
 
+  if (totalPoints > 0) lines.push(pointsService.buildPointSummary(totalPoints));
   lines.push(inferWeeklyMeaning(allRecords, signals, longMemory));
   lines.push(buildNextStep(signals, longMemory));
 

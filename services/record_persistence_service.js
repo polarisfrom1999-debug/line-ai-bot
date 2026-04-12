@@ -131,13 +131,13 @@ async function persistOneRecord(userId, record) {
     };
   }
 
-  await contextMemoryService.addDailyRecord(userId, normalized);
+  const persistedBucket = await contextMemoryService.addDailyRecord(userId, normalized);
 
   const earnedPoints = pointsService.getPointValueByRecordType(normalized.type);
-  const totalPoints = await contextMemoryService.addPoints(userId, earnedPoints);
+  const totalPoints = Number(persistedBucket?.points || 0);
 
   return {
-    record: normalized,
+    record: persistedBucket?.savedRecord || normalized,
     earnedPoints,
     totalPoints,
     pointMessage: pointsService.buildEarnedPointMessage(normalized.type, earnedPoints, totalPoints),

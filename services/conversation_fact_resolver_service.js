@@ -22,6 +22,14 @@ function withUnitIfMissing(value, unit) {
   return new RegExp(`${unit}$`, 'i').test(safe) ? safe : `${safe}${unit}`;
 }
 
+function pickLatestValue(...values) {
+  for (const value of values) {
+    const safe = normalizeText(value);
+    if (safe) return safe;
+  }
+  return '';
+}
+
 async function inferNameFromRecentMessages(lineUserId) {
   try {
     const recent = await contextMemoryService.getRecentMessages(lineUserId, 40);
@@ -47,63 +55,46 @@ async function inferNameFromRecentMessages(lineUserId) {
 }
 
 async function buildMergedProfile(lineUserId) {
-  const [profile, longMemory] = await Promise.all([
+  const [profile, longMemory, latestWeight] = await Promise.all([
     authoritativeProfileService.getAuthoritativeProfileByLineUser(lineUserId),
-    contextMemoryService.getLongMemory(lineUserId)
+    contextMemoryService.getLongMemory(lineUserId),
+    contextMemoryService.getLatestWeightEntry(lineUserId)
   ]);
 
   const factMap = profile?.factMap || {};
+  const latestWeightValue = latestWeight?.weight != null ? String(latestWeight.weight) : '';
+  const latestBodyFatValue = latestWeight?.bodyFat != null ? String(latestWeight.bodyFat) : '';
 
-  // 重要:
-  // ここでは「直近に更新された longMemory 側」を優先して採用する。
-  // authoritative は補完用途に回す。
   const merged = {
     preferredName: sanitizePreferredName(
-      longMemory?.preferredName ||
-      factMap.preferredName?.value ||
-      profile?.preferredName ||
-      profile?.displayName ||
-      ''
+      pickLatestValue(
+        longMemory?.preferredName,
+        factMap.preferredName?.value,
+        profile?.preferredName,
+        profile?.displayName
+      )
     ),
-    age: normalizeText(
-      longMemory?.age ||
-      factMap.age?.value ||
-      profile?.age ||
-      ''
-    ),
+    age: pickLatestValue(longMemory?.age, factMap.age?.value, profile?.age),
     height: withUnitIfMissing(
-      longMemory?.height ||
-      factMap.height?.value ||
-      profile?.height ||
-      '',
+      pickLatestValue(longMemory?.height, factMap.height?.value, profile?.height),
       'cm'
     ),
     weight: withUnitIfMissing(
-      longMemory?.weight ||
-      factMap.weight?.value ||
-      profile?.latestWeight ||
-      '',
+      pickLatestValue(latestWeightValue, longMemory?.weight, factMap.weight?.value, profile?.latestWeight),
       'kg'
     ),
     bodyFat: withUnitIfMissing(
-      longMemory?.bodyFat ||
-      factMap.bodyFat?.value ||
-      profile?.latestBodyFat ||
-      '',
+      pickLatestValue(latestBodyFatValue, longMemory?.bodyFat, factMap.bodyFat?.value, profile?.latestBodyFat),
       '%'
     ),
-    goal: normalizeText(
-      longMemory?.goal ||
-      factMap.goal?.value ||
-      profile?.goal ||
-      ''
-    ),
-    aiType: normalizeText(longMemory?.aiType || ''),
-    constitutionType: normalizeText(longMemory?.constitutionType || ''),
-    selectedPlan: normalizeText(longMemory?.selectedPlan || longMemory?.plan || '')
+    goal: pickLatestValue(longMemory?.goal, factMap.goal?.value, profile?.goal),
+    aiType: pickLatestValue(longMemory?.aiType),
+    constitutionType: pickLatestValue(longMemory?.constitutionType),
+    selectedPlan: pickLatestValue(longMemory?.selectedPlan, longMemory?.plan),
+    latestWeightDate: latestWeight?.date || profile?.latestWeightDate || null
   };
 
-  return { merged, profile, longMemory };
+  return { merged, profile, longMemory, latestWeight };
 }
 
 async function buildNameReply(lineUserId) {
@@ -132,18 +123,11 @@ async function buildWeightLookupReply(lineUserId) {
   if (merged.weight) parts.push(`体重 ${merged.weight}`);
   if (merged.bodyFat) parts.push(`体脂肪率 ${merged.bodyFat}`);
   if (parts.length) {
-    return `今は ${parts.join(' / ')} として見ています。`;
+    const prefix = merged.latestWeightDate ? `${merged.latestWeightDate} の最新は ` : '今の最新は ';
+    return `${prefix}${parts.join(' / ')} です。`;
   }
 
-  const latest = await contextMemoryService.getLatestWeightEntry(lineUserId);
-  if (!latest) {
-    return 'まだ体重の記録がはっきり残っていないので、分かる数値を送ってもらえたらそこから見ていけます。';
-  }
-
-  const latestParts = [];
-  if (latest.weight != null) latestParts.push(`体重 ${latest.weight}`);
-  if (latest.bodyFat != null) latestParts.push(`体脂肪率 ${latest.bodyFat}`);
-  return `${latest.date} の最新は ${latestParts.join(' / ')} です。`;
+  return 'まだ体重の記録がはっきり残っていないので、分かる数値を送ってもらえたらそこから見ていけます。';
 }
 
 async function buildMemoryAnswer(lineUserId) {
@@ -180,6 +164,7 @@ async function persistInlineProfile(lineUserId, patch = {}) {
 }
 
 module.exports = {
+  buildMergedProfile,
   buildNameReply,
   buildWeightLookupReply,
   buildMemoryAnswer,

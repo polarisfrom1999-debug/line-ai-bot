@@ -142,6 +142,17 @@ function getMonthKey() {
   return `${map.year}-${map.month}`;
 }
 
+function buildRecordId() {
+  return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeDateKey(value) {
+  const safe = normalizeString(value);
+  if (!safe) return '';
+  const normalized = safe.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
+}
+
 function buildDailyRecordBucket() {
   return {
     meals: [],
@@ -343,22 +354,58 @@ async function buildRecentSummary(userId, _days = 3) {
 }
 
 async function addDailyRecord(userId, record) {
-  const key = `${userId}:${getTodayKey()}`;
+  const recordDate = normalizeDateKey(record?.eventDate || record?.date) || getTodayKey();
+  const key = `${userId}:${recordDate}`;
   const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
   const next = clone(current);
+  const savedRecord = {
+    ...record,
+    recordId: normalizeString(record?.recordId) || buildRecordId(),
+    createdAt: nowIso()
+  };
 
-  if (record?.type === 'meal') next.meals.push({ ...record, createdAt: nowIso() });
-  if (record?.type === 'exercise') next.exercises.push({ ...record, createdAt: nowIso() });
-  if (record?.type === 'weight') next.weights.push({ ...record, createdAt: nowIso() });
-  if (record?.type === 'lab') next.labs.push({ ...record, createdAt: nowIso() });
+  if (savedRecord?.type === 'meal') next.meals.push(savedRecord);
+  if (savedRecord?.type === 'exercise') next.exercises.push(savedRecord);
+  if (savedRecord?.type === 'weight') next.weights.push(savedRecord);
+  if (savedRecord?.type === 'lab') next.labs.push(savedRecord);
 
   dailyRecordStore.set(key, next);
 
-  const points = await addPoints(userId, inferPointsFromRecord(record));
+  const points = await addPoints(userId, inferPointsFromRecord(savedRecord));
   return {
     ...clone(next),
-    points
+    points,
+    savedRecord: clone(savedRecord),
+    recordDate
   };
+}
+
+async function updateDailyRecord(userId, recordId, patch = {}) {
+  const safeRecordId = normalizeString(recordId);
+  if (!userId || !safeRecordId) return null;
+
+  const keys = await getAllDailyRecordKeysForUser(userId);
+  for (const key of keys.slice().reverse()) {
+    const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
+    const next = clone(current);
+    let updated = null;
+
+    for (const bucketName of ['meals', 'exercises', 'weights', 'labs']) {
+      const bucket = Array.isArray(next[bucketName]) ? next[bucketName] : [];
+      const index = bucket.findIndex((item) => normalizeString(item?.recordId) === safeRecordId);
+      if (index === -1) continue;
+      bucket[index] = { ...bucket[index], ...clone(patch), updatedAt: nowIso() };
+      updated = bucket[index];
+      break;
+    }
+
+    if (updated) {
+      dailyRecordStore.set(key, next);
+      return clone(updated);
+    }
+  }
+
+  return null;
 }
 
 function inferPointsFromRecord(record) {
@@ -583,6 +630,7 @@ module.exports = {
   appendRecentMessage,
   buildRecentSummary,
   addDailyRecord,
+  updateDailyRecord,
   getTodayRecords,
   getRecentDailyRecords,
   getLatestWeightEntry,

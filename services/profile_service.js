@@ -22,7 +22,7 @@ function normalizeWeightLike(value, unit) {
 }
 
 function lineLooksLikeQuestion(line) {
-  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\?$|？$/.test(normalizeText(line));
+  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな\?|かな？|\?$|？$/.test(normalizeText(line));
 }
 
 function sanitizePreferredName(value) {
@@ -55,12 +55,13 @@ function extractProfilePatchFromLine(line) {
 
   const patch = {};
 
-  const nameMatch = safe.match(/^(?:私の名前は|名前(?:は|[：:])?)\s*(.+)$/u);
-  const ageMatch = safe.match(/^年齢(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)$/u);
-  const heightMatch = safe.match(/^身長(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
-  const weightMatch = safe.match(/^体重(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
-  const bodyFatMatch = safe.match(/^体脂肪率(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
-  const goalMatch = safe.match(/^目標(?:は|[：:])?\s*(.+)$/u);
+  const nameMatch = safe.match(/^(?:私の名前は|名前(?:は|[：:]?)?)\s*(.+)$/u);
+  const ageMatch = safe.match(/^年齢(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*歳?$/u);
+  const heightMatch = safe.match(/^身長(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
+  const weightMatch = safe.match(/^体重(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
+  const bodyFatMatch = safe.match(/^体脂肪率(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
+  const goalWeightMatch = safe.match(/^目標(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
+  const goalMatch = safe.match(/^目標(?:は|[：:]?)?\s*(.+)$/u);
 
   if (nameMatch) {
     const preferredName = normalizeProfileValue('preferredName', nameMatch[1]);
@@ -70,7 +71,8 @@ function extractProfilePatchFromLine(line) {
   if (heightMatch) patch.height = normalizeProfileValue('height', heightMatch[1]);
   if (weightMatch) patch.weight = normalizeProfileValue('weight', weightMatch[1]);
   if (bodyFatMatch) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFatMatch[1]);
-  if (goalMatch) patch.goal = normalizeProfileValue('goal', goalMatch[1]);
+  if (goalWeightMatch) patch.goal = normalizeProfileValue('weight', goalWeightMatch[1]);
+  else if (goalMatch) patch.goal = normalizeProfileValue('goal', goalMatch[1]);
 
   return patch;
 }
@@ -81,6 +83,10 @@ function extractProfilePatchFromText(text) {
 
   for (const line of lines) {
     Object.assign(patch, extractProfilePatchFromLine(line));
+  }
+
+  if (!Object.keys(patch).length) {
+    Object.assign(patch, extractProfilePatchFromLine(normalizeText(text)));
   }
 
   return patch;
