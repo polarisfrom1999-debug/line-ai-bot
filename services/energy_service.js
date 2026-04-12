@@ -12,6 +12,19 @@ function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
 
+function hashText(value) {
+  const safe = normalizeText(value);
+  let h = 0;
+  for (let i = 0; i < safe.length; i += 1) h = ((h << 5) - h) + safe.charCodeAt(i);
+  return Math.abs(h || 0);
+}
+
+function pickVariant(seed, variants) {
+  const rows = Array.isArray(variants) ? variants.filter(Boolean) : [];
+  if (!rows.length) return '';
+  return rows[seed % rows.length];
+}
+
 function extractMinutes(text) {
   const safe = toHalfWidth(text);
   const match = safe.match(/([0-9]+(?:\.[0-9]+)?)\s*分/);
@@ -89,7 +102,7 @@ function estimateExerciseCalories(text, options = {}) {
 
   if (type === 'pushup') {
     const count = extractCount(safe, '回');
-    if (count) return Math.round(count * 0.5);
+    if (count) return Math.round(count * 0.35);
     return Math.round((minutes || 10) * 5.5);
   }
 
@@ -127,17 +140,49 @@ function buildExerciseRecord(text, options = {}) {
 }
 
 function buildExerciseReply(record) {
-  const lines = [];
+  const safeRecord = record || {};
+  const name = safeRecord.name || '運動';
+  const minutes = safeRecord.minutes != null ? Number(safeRecord.minutes) : null;
+  const distanceKm = safeRecord.distanceKm != null ? Number(safeRecord.distanceKm) : null;
+  const steps = safeRecord.steps != null ? Number(safeRecord.steps) : null;
+  const kcal = safeRecord.estimatedCalories != null ? Number(safeRecord.estimatedCalories) : null;
+  const seed = hashText(`${safeRecord.summary || ''}|${name}|${minutes || ''}|${distanceKm || ''}|${steps || ''}`);
 
-  lines.push(`${record?.name || '運動'}として受け取りました。`);
+  const effortLabel = minutes != null
+    ? `${name}${minutes ? `を${minutes}分` : ''}`
+    : distanceKm != null
+      ? `${name}${distanceKm ? `で${distanceKm}km` : ''}`
+      : steps != null
+        ? `${name}${steps ? `で${steps}歩` : ''}`
+        : name;
 
-  if (record?.minutes != null) lines.push(`時間は ${record.minutes}分 として見ています。`);
-  if (record?.distanceKm != null) lines.push(`距離は ${record.distanceKm}km として見ています。`);
-  if (record?.steps != null) lines.push(`歩数は ${record.steps}歩 として見ています。`);
-  if (record?.estimatedCalories != null) lines.push(`消費の目安は 約${record.estimatedCalories}kcal です。`);
+  const intro = pickVariant(seed, [
+    `${effortLabel}、いい流れです。`,
+    `今日は${effortLabel}ですね。`,
+    `${effortLabel}できたの、ちゃんと積み上がっています。`,
+    `${effortLabel}まで持っていけたのは大きいです。`
+  ]);
 
-  lines.push('量の大小より、動けた流れ自体に意味があります。');
-  return lines.join('\n');
+  const detail = kcal != null
+    ? pickVariant(seed + 1, [
+        `体重やペース差はあるけれど、目安にすると ${kcal}kcal 前後です。`,
+        `ざっくり見ると ${kcal}kcal くらいの動きです。`,
+        `この1回でみると、消費はだいたい ${kcal}kcal 前後です。`
+      ])
+    : pickVariant(seed + 1, [
+        '数字は細かく置いておいても、体を動かせた事実がちゃんと残ります。',
+        '厳密な数字より、動けた流れが今日は十分価値あります。',
+        '量よりも、止まらず続けられていることを大事にして大丈夫です。',
+      ]);
+
+  const close = pickVariant(seed + 2, [
+    'このまま続けやすい形を残していきましょう。',
+    '今日はここを一つの前進として置いておけば十分です。',
+    '次も完璧じゃなくていいので、続けやすいところでいきましょう。',
+    '無理に上乗せしなくても、今の一歩はちゃんと効いてきます。',
+  ]);
+
+  return [intro, detail, close].filter(Boolean).join('\n');
 }
 
 function buildEnergySummaryText(params = {}) {

@@ -1,5 +1,21 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+let supabase = null;
+let ensureUser = null;
+try {
+  ({ supabase } = require('./supabase_service'));
+  ({ ensureUser } = require('./user_service'));
+} catch (_error) {
+  supabase = null;
+  ensureUser = null;
+}
+
+const SNAPSHOT_PATH = process.env.CONTEXT_MEMORY_SNAPSHOT_PATH || path.join(process.cwd(), '.kokokara_context_snapshot.json');
+let snapshotLoaded = false;
+let flushTimer = null;
+
 const shortMemoryStore = new Map();
 const longMemoryStore = new Map();
 const userStateStore = new Map();
@@ -79,6 +95,350 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+
+function serializeMap(map) {
+  return Object.fromEntries(map.entries());
+}
+
+function deserializeMap(obj) {
+  return new Map(Object.entries(obj || {}));
+}
+
+function ensureSnapshotLoaded() {
+  if (snapshotLoaded) return;
+  snapshotLoaded = true;
+  try {
+    if (!fs.existsSync(SNAPSHOT_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+    for (const [target, source] of [
+      [shortMemoryStore, raw.shortMemoryStore],
+      [longMemoryStore, raw.longMemoryStore],
+      [userStateStore, raw.userStateStore],
+      [recentMessageStore, raw.recentMessageStore],
+      [dailyRecordStore, raw.dailyRecordStore],
+      [weeklySurveyStore, raw.weeklySurveyStore],
+      [monthlySurveyStore, raw.monthlySurveyStore],
+      [pointsStore, raw.pointsStore],
+      [labHistoryStore, raw.labHistoryStore]
+    ]) {
+      const restored = deserializeMap(source);
+      for (const [k, v] of restored.entries()) target.set(k, v);
+    }
+  } catch (_error) {}
+}
+
+function flushSnapshotNow() {
+  try {
+    fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify({
+      shortMemoryStore: serializeMap(shortMemoryStore),
+      longMemoryStore: serializeMap(longMemoryStore),
+      userStateStore: serializeMap(userStateStore),
+      recentMessageStore: serializeMap(recentMessageStore),
+      dailyRecordStore: serializeMap(dailyRecordStore),
+      weeklySurveyStore: serializeMap(weeklySurveyStore),
+      monthlySurveyStore: serializeMap(monthlySurveyStore),
+      pointsStore: serializeMap(pointsStore),
+      labHistoryStore: serializeMap(labHistoryStore)
+    }, null, 2));
+  } catch (_error) {}
+}
+
+function scheduleSnapshotFlush() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushSnapshotNow();
+  }, 150);
+}
+
+function formatTokyoDate(value) {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+}
+
+function getTokyoDayRangeIso(dayOffset = 0) {
+  const now = new Date();
+  const tokyoNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  tokyoNow.setHours(0, 0, 0, 0);
+  tokyoNow.setDate(tokyoNow.getDate() + Number(dayOffset || 0));
+  const start = new Date(tokyoNow.getTime() - (9 * 60 * 60 * 1000));
+  const end = new Date(start.getTime() + (24 * 60 * 60 * 1000));
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+async function resolvePersistentUser(lineUserId) {
+  if (!supabase || !ensureUser) return null;
+  const safe = normalizeString(lineUserId);
+  if (!safe) return null;
+  try {
+    return await ensureUser(supabase, safe, 'Asia/Tokyo');
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function safeRows(builder, fallback = []) {
+  try {
+    const { data, error } = await builder();
+    if (error) throw error;
+    return Array.isArray(data) ? data : fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+async function safeMaybeSingle(builder, fallback = null) {
+  try {
+    const { data, error } = await builder();
+    if (error) throw error;
+    return data || fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+async function persistLongMemoryToDb(lineUserId, next) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return false;
+
+  const rows = [];
+  const pushFact = (fieldKey, value, fieldUnit = '') => {
+    const safeValue = normalizeString(value);
+    if (!safeValue) return;
+    rows.push({
+      user_id: user.id,
+      field_key: fieldKey,
+      field_value: safeValue,
+      field_unit: fieldUnit,
+      source_kind: 'context_memory',
+      confidence: 0.98,
+      updated_at: nowIso()
+    });
+  };
+
+  pushFact('preferredName', next.preferredName);
+  pushFact('age', next.age);
+  pushFact('height', next.height, 'cm');
+  pushFact('weight', next.weight, 'kg');
+  pushFact('bodyFat', next.bodyFat, '%');
+  pushFact('goal', next.goal);
+  pushFact('aiType', next.aiType);
+  pushFact('constitutionType', next.constitutionType);
+  pushFact('selectedPlan', next.selectedPlan);
+  pushFact('onboardingCompleted', String(Boolean(next.onboardingCompleted)));
+  pushFact('trialStartedAt', next.trialStartedAt);
+
+  if (rows.length) {
+    try {
+      await supabase.from('user_profile_facts').upsert(rows, { onConflict: 'user_id,field_key' });
+    } catch (_error) {}
+  }
+
+  const userPatch = {};
+  if (normalizeString(next.preferredName)) userPatch.display_name = normalizeString(next.preferredName);
+  if (normalizeString(next.aiType)) userPatch.ai_type = normalizeString(next.aiType);
+  if (normalizeString(next.selectedPlan)) userPatch.selected_plan = normalizeString(next.selectedPlan);
+  if (Object.keys(userPatch).length) {
+    try {
+      await supabase.from('users').update(userPatch).eq('id', user.id);
+    } catch (_error) {}
+  }
+
+  return true;
+}
+
+async function hydrateLongMemoryFromDb(lineUserId) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return null;
+
+  const [factRows, latestWeight] = await Promise.all([
+    safeRows(() => supabase
+      .from('user_profile_facts')
+      .select('field_key, field_value, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })),
+    safeMaybeSingle(() => supabase
+      .from('weight_logs')
+      .select('logged_at, weight_kg, body_fat_pct')
+      .eq('user_id', user.id)
+      .order('logged_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(), null)
+  ]);
+
+  const factMap = {};
+  for (const row of factRows) {
+    const key = normalizeString(row.field_key);
+    if (!key || factMap[key] != null) continue;
+    factMap[key] = normalizeString(row.field_value);
+  }
+
+  return {
+    preferredName: factMap.preferredName || normalizeString(user.display_name || ''),
+    goal: factMap.goal || '',
+    age: factMap.age || '',
+    height: factMap.height || '',
+    weight: latestWeight?.weight_kg != null ? String(latestWeight.weight_kg) : (factMap.weight || ''),
+    bodyFat: latestWeight?.body_fat_pct != null ? String(latestWeight.body_fat_pct) : (factMap.bodyFat || ''),
+    aiType: factMap.aiType || normalizeString(user.ai_type || ''),
+    constitutionType: factMap.constitutionType || '',
+    trialStartedAt: factMap.trialStartedAt || '',
+    selectedPlan: factMap.selectedPlan || normalizeString(user.selected_plan || ''),
+    onboardingCompleted: factMap.onboardingCompleted === 'true'
+  };
+}
+
+async function persistDailyRecordToDb(lineUserId, record) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase || !record?.type) return false;
+  const now = nowIso();
+  try {
+    if (record.type === 'meal') {
+      await supabase.from('meal_logs').insert({
+        user_id: user.id,
+        eaten_at: now,
+        meal_label: normalizeString(record.summary || record.name || '食事'),
+        food_items: Array.isArray(record.items) ? record.items : (normalizeString(record.name) ? [normalizeString(record.name)] : []),
+        estimated_kcal: Number(record.kcal || record.estimatedNutrition?.kcal || 0) || null,
+        protein_g: Number(record.protein || record.estimatedNutrition?.protein || 0) || null,
+        fat_g: Number(record.fat || record.estimatedNutrition?.fat || 0) || null,
+        carbs_g: Number(record.carbs || record.estimatedNutrition?.carbs || 0) || null,
+        confidence: record.confidence != null ? Number(record.confidence) : null,
+        ai_comment: normalizeString(record.comment || record.amountNote || '食事記録'),
+        raw_model_json: record
+      });
+      return true;
+    }
+    if (record.type === 'exercise') {
+      await supabase.from('activity_logs').insert({
+        user_id: user.id,
+        logged_at: now,
+        steps: record.steps != null ? Number(record.steps) : null,
+        walking_minutes: record.minutes != null ? Number(record.minutes) : null,
+        estimated_activity_kcal: record.estimatedCalories != null ? Number(record.estimatedCalories) : null,
+        exercise_summary: normalizeString(record.summary || record.name || '運動'),
+        raw_detail_json: record
+      });
+      return true;
+    }
+    if (record.type === 'weight') {
+      await supabase.from('weight_logs').insert({
+        user_id: user.id,
+        logged_at: now,
+        weight_kg: record.weight != null ? Number(record.weight) : null,
+        body_fat_pct: record.bodyFat != null ? Number(record.bodyFat) : null
+      });
+      return true;
+    }
+  } catch (_error) {}
+  return false;
+}
+
+async function readDailyRecordsFromDb(lineUserId, days = 1) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return null;
+  const range = getTokyoDayRangeIso(-(Math.max(1, Number(days || 1)) - 1));
+  const todayEnd = getTokyoDayRangeIso(1).startIso;
+
+  const [meals, exercises, weights] = await Promise.all([
+    safeRows(() => supabase.from('meal_logs').select('eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g').eq('user_id', user.id).gte('eaten_at', range.startIso).lt('eaten_at', todayEnd).order('eaten_at', { ascending: true })),
+    safeRows(() => supabase.from('activity_logs').select('logged_at, steps, walking_minutes, estimated_activity_kcal, exercise_summary, raw_detail_json').eq('user_id', user.id).gte('logged_at', range.startIso).lt('logged_at', todayEnd).order('logged_at', { ascending: true })),
+    safeRows(() => supabase.from('weight_logs').select('logged_at, weight_kg, body_fat_pct').eq('user_id', user.id).gte('logged_at', range.startIso).lt('logged_at', todayEnd).order('logged_at', { ascending: true }))
+  ]);
+
+  const grouped = new Map();
+  const ensureBucket = (dateKey) => {
+    if (!grouped.has(dateKey)) grouped.set(dateKey, buildDailyRecordBucket());
+    return grouped.get(dateKey);
+  };
+
+  for (const row of meals) {
+    const dateKey = formatTokyoDate(row.eaten_at);
+    ensureBucket(dateKey).meals.push({
+      type: 'meal',
+      summary: normalizeString(row.meal_label || '食事'),
+      name: normalizeString(row.meal_label || '食事'),
+      items: Array.isArray(row.food_items) ? row.food_items : [],
+      kcal: Number(row.estimated_kcal || 0),
+      protein: Number(row.protein_g || 0),
+      fat: Number(row.fat_g || 0),
+      carbs: Number(row.carbs_g || 0),
+      estimatedNutrition: {
+        kcal: Number(row.estimated_kcal || 0),
+        protein: Number(row.protein_g || 0),
+        fat: Number(row.fat_g || 0),
+        carbs: Number(row.carbs_g || 0)
+      },
+      createdAt: row.eaten_at
+    });
+  }
+  for (const row of exercises) {
+    const dateKey = formatTokyoDate(row.logged_at);
+    ensureBucket(dateKey).exercises.push({
+      type: 'exercise',
+      name: normalizeString(row.raw_detail_json?.name || row.exercise_summary || '運動'),
+      summary: normalizeString(row.exercise_summary || row.raw_detail_json?.summary || '運動'),
+      minutes: row.walking_minutes != null ? Number(row.walking_minutes) : null,
+      steps: row.steps != null ? Number(row.steps) : null,
+      estimatedCalories: row.estimated_activity_kcal != null ? Number(row.estimated_activity_kcal) : null,
+      createdAt: row.logged_at
+    });
+  }
+  for (const row of weights) {
+    const dateKey = formatTokyoDate(row.logged_at);
+    ensureBucket(dateKey).weights.push({
+      type: 'weight',
+      summary: '体重記録',
+      weight: row.weight_kg != null ? Number(row.weight_kg) : null,
+      bodyFat: row.body_fat_pct != null ? Number(row.body_fat_pct) : null,
+      createdAt: row.logged_at
+    });
+  }
+
+  return grouped;
+}
+
+async function getPersistedPoints(lineUserId) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return null;
+  const row = await safeMaybeSingle(() => supabase
+    .from('user_profile_facts')
+    .select('field_value, updated_at')
+    .eq('user_id', user.id)
+    .eq('field_key', 'points_balance')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle(), null);
+  if (!row) return null;
+  const num = Number(row.field_value || 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
+async function persistPointsToDb(lineUserId, totalPoints) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return false;
+  try {
+    await supabase.from('user_profile_facts').upsert({
+      user_id: user.id,
+      field_key: 'points_balance',
+      field_value: String(Number(totalPoints || 0)),
+      field_unit: 'pt',
+      source_kind: 'context_memory',
+      confidence: 0.99,
+      updated_at: nowIso()
+    }, { onConflict: 'user_id,field_key' });
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -140,17 +500,6 @@ function getMonthKey() {
     map[part.type] = part.value;
   }
   return `${map.year}-${map.month}`;
-}
-
-function buildRecordId() {
-  return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function normalizeDateKey(value) {
-  const safe = normalizeString(value);
-  if (!safe) return '';
-  const normalized = safe.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
 }
 
 function buildDailyRecordBucket() {
@@ -237,25 +586,39 @@ function sortByDateAsc(items) {
 }
 
 async function getShortMemory(userId) {
+  ensureSnapshotLoaded();
   const value = shortMemoryStore.get(userId);
   return clone(value || DEFAULT_SHORT_MEMORY);
 }
 
 async function saveShortMemory(userId, payload) {
+  ensureSnapshotLoaded();
   const current = await getShortMemory(userId);
   const next = mergeDeep(current, payload || {});
   shortMemoryStore.set(userId, next);
+  scheduleSnapshotFlush();
   return clone(next);
 }
 
 async function clearShortMemory(userId) {
+  ensureSnapshotLoaded();
   shortMemoryStore.set(userId, clone(DEFAULT_SHORT_MEMORY));
+  scheduleSnapshotFlush();
   return clone(DEFAULT_SHORT_MEMORY);
 }
 
 async function getLongMemory(userId) {
-  const value = longMemoryStore.get(userId);
-  return clone(value || DEFAULT_LONG_MEMORY);
+  ensureSnapshotLoaded();
+  const cached = longMemoryStore.get(userId);
+  if (cached) return clone(cached);
+  const hydrated = await hydrateLongMemoryFromDb(userId);
+  if (hydrated) {
+    const next = mergeDeep(DEFAULT_LONG_MEMORY, hydrated);
+    longMemoryStore.set(userId, next);
+    scheduleSnapshotFlush();
+    return clone(next);
+  }
+  return clone(DEFAULT_LONG_MEMORY);
 }
 
 async function mergeLongMemory(userId, patch) {
@@ -302,10 +665,13 @@ async function mergeLongMemory(userId, patch) {
   }
 
   longMemoryStore.set(userId, next);
+  scheduleSnapshotFlush();
+  await persistLongMemoryToDb(userId, next);
   return clone(next);
 }
 
 async function getUserState(userId) {
+  ensureSnapshotLoaded();
   const value = userStateStore.get(userId);
   return clone(value || DEFAULT_USER_STATE);
 }
@@ -314,10 +680,12 @@ async function updateUserState(userId, nextState) {
   const current = await getUserState(userId);
   const merged = mergeDeep(current, nextState || {});
   userStateStore.set(userId, merged);
+  scheduleSnapshotFlush();
   return clone(merged);
 }
 
 async function getRecentMessages(userId, limit = 20) {
+  ensureSnapshotLoaded();
   const arr = recentMessageStore.get(userId) || [];
   return clone(arr.slice(-limit));
 }
@@ -334,6 +702,7 @@ async function appendRecentMessage(userId, role, content) {
   });
 
   recentMessageStore.set(userId, arr.slice(-120));
+  scheduleSnapshotFlush();
 }
 
 async function buildRecentSummary(userId, _days = 3) {
@@ -354,58 +723,25 @@ async function buildRecentSummary(userId, _days = 3) {
 }
 
 async function addDailyRecord(userId, record) {
-  const recordDate = normalizeDateKey(record?.eventDate || record?.date) || getTodayKey();
-  const key = `${userId}:${recordDate}`;
+  ensureSnapshotLoaded();
+  const key = `${userId}:${getTodayKey()}`;
   const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
   const next = clone(current);
-  const savedRecord = {
-    ...record,
-    recordId: normalizeString(record?.recordId) || buildRecordId(),
-    createdAt: nowIso()
-  };
 
-  if (savedRecord?.type === 'meal') next.meals.push(savedRecord);
-  if (savedRecord?.type === 'exercise') next.exercises.push(savedRecord);
-  if (savedRecord?.type === 'weight') next.weights.push(savedRecord);
-  if (savedRecord?.type === 'lab') next.labs.push(savedRecord);
+  if (record?.type === 'meal') next.meals.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'exercise') next.exercises.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'weight') next.weights.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'lab') next.labs.push({ ...record, createdAt: nowIso() });
 
   dailyRecordStore.set(key, next);
+  scheduleSnapshotFlush();
+  await persistDailyRecordToDb(userId, record);
 
-  const points = await addPoints(userId, inferPointsFromRecord(savedRecord));
+  const points = await addPoints(userId, inferPointsFromRecord(record));
   return {
     ...clone(next),
-    points,
-    savedRecord: clone(savedRecord),
-    recordDate
+    points
   };
-}
-
-async function updateDailyRecord(userId, recordId, patch = {}) {
-  const safeRecordId = normalizeString(recordId);
-  if (!userId || !safeRecordId) return null;
-
-  const keys = await getAllDailyRecordKeysForUser(userId);
-  for (const key of keys.slice().reverse()) {
-    const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
-    const next = clone(current);
-    let updated = null;
-
-    for (const bucketName of ['meals', 'exercises', 'weights', 'labs']) {
-      const bucket = Array.isArray(next[bucketName]) ? next[bucketName] : [];
-      const index = bucket.findIndex((item) => normalizeString(item?.recordId) === safeRecordId);
-      if (index === -1) continue;
-      bucket[index] = { ...bucket[index], ...clone(patch), updatedAt: nowIso() };
-      updated = bucket[index];
-      break;
-    }
-
-    if (updated) {
-      dailyRecordStore.set(key, next);
-      return clone(updated);
-    }
-  }
-
-  return null;
 }
 
 function inferPointsFromRecord(record) {
@@ -418,6 +754,9 @@ function inferPointsFromRecord(record) {
 }
 
 async function getTodayRecords(userId) {
+  ensureSnapshotLoaded();
+  const persisted = await readDailyRecordsFromDb(userId, 1);
+  if (persisted && persisted.size) return clone(persisted.get(getTodayKey()) || buildDailyRecordBucket());
   const key = `${userId}:${getTodayKey()}`;
   return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
 }
@@ -432,6 +771,11 @@ async function getAllDailyRecordKeysForUser(userId) {
 }
 
 async function getRecentDailyRecords(userId, limit = 7) {
+  ensureSnapshotLoaded();
+  const persisted = await readDailyRecordsFromDb(userId, limit);
+  if (persisted && persisted.size) {
+    return [...persisted.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).slice(-limit).map(([date, records]) => ({ date, records: clone(records) }));
+  }
   const keys = await getAllDailyRecordKeysForUser(userId);
   const selected = keys.slice(-limit);
   return selected.map((key) => ({
@@ -441,6 +785,15 @@ async function getRecentDailyRecords(userId, limit = 7) {
 }
 
 async function getLatestWeightEntry(userId) {
+  ensureSnapshotLoaded();
+  const persisted = await readDailyRecordsFromDb(userId, 14);
+  if (persisted && persisted.size) {
+    const weights = [];
+    for (const [date, bucket] of [...persisted.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
+      for (const item of bucket.weights || []) weights.push({ ...item, date });
+    }
+    if (weights.length) return clone(weights[weights.length - 1]);
+  }
   const days = await getRecentDailyRecords(userId, 14);
   const weights = [];
   for (const day of days) {
@@ -588,13 +941,23 @@ async function saveMonthlySurvey(userId, patch) {
 }
 
 async function getPoints(userId) {
+  ensureSnapshotLoaded();
+  const persisted = await getPersistedPoints(userId);
+  if (persisted != null) {
+    pointsStore.set(userId, persisted);
+    scheduleSnapshotFlush();
+    return Number(persisted || 0);
+  }
   return Number(pointsStore.get(userId) || 0);
 }
 
 async function addPoints(userId, amount) {
+  ensureSnapshotLoaded();
   const current = await getPoints(userId);
   const next = current + Number(amount || 0);
   pointsStore.set(userId, next);
+  scheduleSnapshotFlush();
+  await persistPointsToDb(userId, next);
   return next;
 }
 
@@ -616,6 +979,7 @@ async function resetAllMemory(userId) {
   }
 
   pointsStore.delete(userId);
+  scheduleSnapshotFlush();
 }
 
 module.exports = {
@@ -630,7 +994,6 @@ module.exports = {
   appendRecentMessage,
   buildRecentSummary,
   addDailyRecord,
-  updateDailyRecord,
   getTodayRecords,
   getRecentDailyRecords,
   getLatestWeightEntry,

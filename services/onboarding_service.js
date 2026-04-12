@@ -98,15 +98,62 @@ function buildPlanQuestion() {
   ].join('\n');
 }
 
+function buildConstitutionInsightMessage(type, profile = {}, aiType = '') {
+  const goal = normalizeText(profile?.goal || '');
+  const aiTone = normalizeText(aiType || '');
+
+  if (type === '糖質で太りやすい') {
+    return [
+      'なるほど、糖質で太りやすい感覚が近いんですね。',
+      'このタイプは、パン・麺・ごはんが重なる日が続くと体重が動きやすい一方で、食べ方の波が整い始めると変化も見えやすいです。',
+      '弱いところは「気づかないうちに糖質が重なりやすい」ところ。逆に強いところは、食べる順番や量の置き方が合うと流れを立て直しやすいところです。',
+      goal ? `ここから。では、${goal}に向けて我慢で押し切るより、続けられる配分を一緒に作っていきます。` : 'ここから。では、我慢で押し切るより、続けられる配分を一緒に作っていきます。'
+    ].join('\n');
+  }
+
+  if (type === '脂質で太りやすい') {
+    return [
+      '脂質で太りやすい感覚が近いんですね。',
+      'このタイプは、揚げ物やチーズ系が続くと数字に出やすい一方で、選び方を少し変えるだけでも戻しやすいです。',
+      '弱いところは、量が少なくても重なりやすいところ。強いところは、選択を少し変えただけでも差が出やすいところです。',
+      'ここから。では、我慢だけでなく「何を残して何を軽くするか」を一緒に決めていきます。',
+    ].join('\n');
+  }
+
+  if (type === 'むくみやすい') {
+    return [
+      'むくみやすいタイプの感覚が近いんですね。',
+      'このタイプは体重の数字だけで落ち込みやすいけれど、水分や塩分、巡りで見え方がかなり変わります。',
+      '弱いところは数字に振られやすいこと。強いところは、整った時の軽さが体感として分かりやすいことです。',
+      'ここから。では、体重だけで責めずに、巡りや軽さの感覚も一緒に拾っていきます。',
+    ].join('\n');
+  }
+
+  if (type === 'ストレス食いしやすい') {
+    return [
+      'ストレス食いしやすい感覚が近いんですね。',
+      'このタイプは意思の弱さではなく、疲れや緊張が食べ方に出やすいだけという見方が大事です。',
+      '弱いところは、しんどい日に崩れやすいこと。強いところは、安心できる流れができると一気に整いやすいことです。',
+      'ここから。では、食事だけを責めずに、しんどさの波ごと一緒に見ていきます。',
+    ].join('\n');
+  }
+
+  return aiTone.includes('理屈')
+    ? '体質は途中で見直しても大丈夫です。まずは記録を増やしながら、どこで流れが崩れやすいかを一緒に見ていきましょう。'
+    : '体質はあとから見直しても大丈夫です。まずは今の生活の流れを一緒に見ながら、合う整え方を探していきましょう。';
+}
+
 function buildCompleteMessage(onboardingState, selectedPlan) {
   const answers = onboardingState?.answers || {};
+  const profile = answers.profile || {};
   return [
-    'ありがとうございます。開始準備が整いました。',
+    'ここまでで伴走の土台はそろいました。',
     `AIタイプ: ${answers.aiType || '未設定'}`,
     `体質タイプ: ${answers.constitutionType || '未設定'}`,
     `プラン: ${selectedPlan || '未設定'}`,
-    'ここからは、記録だけでなく今の生活やしんどさも含めて一緒に見ていきます。'
-  ].join('\n');
+    buildConstitutionInsightMessage(answers.constitutionType || '', profile, answers.aiType || ''),
+    'ここからは、食事・運動・体重を積み上げながら、今の生活やしんどさも一緒に見ていきます。'
+  ].filter(Boolean).join('\n');
 }
 
 function pickFromNumeric(text, options) {
@@ -311,8 +358,17 @@ async function handleConstitutionStep({ input, text, onboardingState, saveShortM
     }
   });
 
-  return { handled: true, replyText: buildPlanQuestion() };
+  const profile = onboardingState?.answers?.profile || {};
+  return {
+    handled: true,
+    replyText: [
+      buildConstitutionInsightMessage(selected, profile, onboardingState?.answers?.aiType || ''),
+      '',
+      buildPlanQuestion()
+    ].join('\n')
+  };
 }
+
 
 async function handlePlanStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
   if (isOperationalMessage(text)) return { handled: false };

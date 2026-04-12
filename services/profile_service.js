@@ -22,7 +22,7 @@ function normalizeWeightLike(value, unit) {
 }
 
 function lineLooksLikeQuestion(line) {
-  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな\?|かな？|\?$|？$/.test(normalizeText(line));
+  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\?$|？$/.test(normalizeText(line));
 }
 
 function sanitizePreferredName(value) {
@@ -55,13 +55,12 @@ function extractProfilePatchFromLine(line) {
 
   const patch = {};
 
-  const nameMatch = safe.match(/^(?:私の名前は|名前(?:は|[：:]?)?)\s*(.+)$/u);
-  const ageMatch = safe.match(/^年齢(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*歳?$/u);
-  const heightMatch = safe.match(/^身長(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
-  const weightMatch = safe.match(/^体重(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
-  const bodyFatMatch = safe.match(/^体脂肪率(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
-  const goalWeightMatch = safe.match(/^目標(?:は|[：:]?)?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
-  const goalMatch = safe.match(/^目標(?:は|[：:]?)?\s*(.+)$/u);
+  const nameMatch = safe.match(/^(?:私の名前は|名前(?:は|[：:])?)\s*(.+)$/u);
+  const ageMatch = safe.match(/^年齢(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)$/u);
+  const heightMatch = safe.match(/^身長(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:cm|ＣＭ|センチ)?$/iu);
+  const weightMatch = safe.match(/^体重(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)?$/iu);
+  const bodyFatMatch = safe.match(/^体脂肪率(?:は|[：:])?\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:%|％|パーセント)?$/iu);
+  const goalMatch = safe.match(/^目標(?:は|[：:])?\s*(.+)$/u);
 
   if (nameMatch) {
     const preferredName = normalizeProfileValue('preferredName', nameMatch[1]);
@@ -71,8 +70,7 @@ function extractProfilePatchFromLine(line) {
   if (heightMatch) patch.height = normalizeProfileValue('height', heightMatch[1]);
   if (weightMatch) patch.weight = normalizeProfileValue('weight', weightMatch[1]);
   if (bodyFatMatch) patch.bodyFat = normalizeProfileValue('bodyFat', bodyFatMatch[1]);
-  if (goalWeightMatch) patch.goal = normalizeProfileValue('weight', goalWeightMatch[1]);
-  else if (goalMatch) patch.goal = normalizeProfileValue('goal', goalMatch[1]);
+  if (goalMatch) patch.goal = normalizeProfileValue('goal', goalMatch[1]);
 
   return patch;
 }
@@ -83,10 +81,6 @@ function extractProfilePatchFromText(text) {
 
   for (const line of lines) {
     Object.assign(patch, extractProfilePatchFromLine(line));
-  }
-
-  if (!Object.keys(patch).length) {
-    Object.assign(patch, extractProfilePatchFromLine(normalizeText(text)));
   }
 
   return patch;
@@ -119,17 +113,19 @@ function buildProfileSummary(longMemory) {
 }
 
 function buildProfileUpdatedReply(patch) {
-  const lines = ['プロフィールを更新しました。'];
+  const updates = [];
 
   const preferredName = sanitizePreferredName(patch?.preferredName || '');
-  if (preferredName) lines.push(`名前: ${preferredName}`);
-  if (patch?.age) lines.push(`年齢: ${patch.age}`);
-  if (patch?.height) lines.push(`身長: ${patch.height}`);
-  if (patch?.weight) lines.push(`体重: ${patch.weight}`);
-  if (patch?.bodyFat) lines.push(`体脂肪率: ${patch.bodyFat}`);
-  if (patch?.goal) lines.push(`目標: ${patch.goal}`);
+  if (preferredName) updates.push(`名前は ${preferredName}`);
+  if (patch?.age) updates.push(`年齢は ${patch.age}`);
+  if (patch?.height) updates.push(`身長は ${patch.height}`);
+  if (patch?.weight) updates.push(`体重は ${patch.weight}`);
+  if (patch?.bodyFat) updates.push(`体脂肪率は ${patch.bodyFat}`);
+  if (patch?.goal) updates.push(`目標は ${patch.goal}`);
 
-  return lines.join('\n');
+  if (!updates.length) return '更新したい項目があれば、そのまま一言ずつでも大丈夫です。';
+  return `プロフィールを整えました。
+${updates.join(' / ')}`;
 }
 
 function buildMemoryAnswer(longMemory) {

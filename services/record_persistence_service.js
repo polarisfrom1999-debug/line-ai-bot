@@ -137,7 +137,7 @@ async function persistOneRecord(userId, record) {
   const totalPoints = Number(persistedBucket?.points || 0);
 
   return {
-    record: persistedBucket?.savedRecord || normalized,
+    record: normalized,
     earnedPoints,
     totalPoints,
     pointMessage: pointsService.buildEarnedPointMessage(normalized.type, earnedPoints, totalPoints),

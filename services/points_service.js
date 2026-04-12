@@ -25,10 +25,10 @@ function getPointValueByRecordType(type) {
 
 function buildPointSummary(totalPoints) {
   const safePoints = clampNumber(totalPoints);
-  if (safePoints >= 200) return `現在のポイントは ${safePoints}pt です。かなりしっかり積み上がっています。`;
-  if (safePoints >= 100) return `現在のポイントは ${safePoints}pt です。継続の流れがちゃんと形になっています。`;
-  if (safePoints >= 30) return `現在のポイントは ${safePoints}pt です。少しずつ積み上がってきています。`;
-  return `現在のポイントは ${safePoints}pt です。ここから少しずつ積み上げていければ十分です。`;
+  if (safePoints >= 200) return `今は ${safePoints}pt です。かなり土台ができてきています。`;
+  if (safePoints >= 100) return `今は ${safePoints}pt。継続の流れがちゃんと形になっています。`;
+  if (safePoints >= 30) return `今は ${safePoints}pt まで積み上がっています。`;
+  return `今は ${safePoints}pt です。ここから少しずつ増えていけば十分です。`;
 }
 
 function buildEarnedPointMessage(recordType, earnedPoints, totalPoints) {
@@ -46,7 +46,7 @@ function buildEarnedPointMessage(recordType, earnedPoints, totalPoints) {
   };
 
   const label = labels[normalizeText(recordType)] || '記録';
-  return `${label}で ${safeEarned}pt 加算しました。現在 ${safeTotal}pt です。`;
+  return `${label}ぶんで ${safeEarned}pt 加わって、今は ${safeTotal}pt です。`;
 }
 
 function calculatePointsFromRecords(records) {
