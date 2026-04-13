@@ -5,44 +5,28 @@ const { buildMealExtractPrompt } = require('./meal_extract_prompt_builder_servic
 const { buildFullMealReport } = require('./meal_report_service');
 const { supabase } = require('./supabase_service');
 
-/**
- * 巨大な orchestrator から呼び出される食事画像解析の主機能
- */
 async function analyzeMealImage(imagePayload, userId, rawText = '') {
   try {
-    // 1. プロンプト組み立て
     const { prompt } = buildMealExtractPrompt({ rawText });
-
-    // 2. 画像解析 (dispatch/修復機能内蔵)
     const result = await geminiImageAnalysisService.analyzeImage(imagePayload, prompt);
     const mealData = result.data;
 
-    // 3. Supabase保存ロジック（既存のカラム構造を維持）
     if (mealData.isMealImage && userId) {
-      try {
-        await supabase.from('meals').insert({
-          user_id: userId,
-          meal_label: (mealData.items || []).join('、'),
-          estimated_kcal: mealData.estimated_nutrition?.kcal || 0,
-          protein_g: mealData.estimated_nutrition?.protein || 0,
-          fat_g: mealData.estimated_nutrition?.fat || 0,
-          carbs_g: mealData.estimated_nutrition?.carbs || 0,
-          ai_comment: mealData.comment,
-          created_at: new Date().toISOString()
-        });
-      } catch (dbError) {
-        console.error('[meal_analysis_service] Supabase Save Error:', dbError);
-        // 保存失敗してもレポート表示は継続
-      }
+      await supabase.from('meals').insert({
+        user_id: userId,
+        meal_label: (mealData.items || []).join('、'),
+        estimated_kcal: mealData.estimated_nutrition?.kcal || 0,
+        protein_g: mealData.estimated_nutrition?.protein || 0,
+        fat_g: mealData.estimated_nutrition?.fat || 0,
+        carbs_g: mealData.estimated_nutrition?.carbs || 0,
+        ai_comment: mealData.comment,
+        created_at: new Date().toISOString()
+      });
     }
 
-    // 4. 積算値を含む最終レポート作成
-    // meal_report_service 内の getDailyTotal などを通じて既存の積算機能が動きます
     return await buildFullMealReport({ result: mealData, userId });
-
-  } catch (fatalError) {
-    console.error('[meal_analysis_service] Fatal Error:', fatalError);
-    return "申し訳ありません。食事の解析中に予期せぬエラーが発生しました。しばらく時間を置いてから再度お試しください。";
+  } catch (error) {
+    return "申し訳ありません、画像を受け取れませんでした。もう一度お試しください。";
   }
 }
 
