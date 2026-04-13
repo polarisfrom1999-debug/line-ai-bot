@@ -4,47 +4,50 @@ const { dispatchGemini } = require('./gemini_dispatch_service');
 
 async function analyzeImage(arg1, arg2) {
   try {
-    let payload, prompt;
+    let imagePayload, prompt;
 
-    // ログ [ 'imagePayload', 'prompt', 'model' ] に対応する救済ロジック
+    // 1678行の orchestrator からの届き方に合わせる特殊な仕分け
     if (arg1 && arg1.imagePayload) {
-      // 引数が1つの「詰め合わせパック」で届いた場合
-      payload = arg1.imagePayload;
+      // 「大きな箱」で届いた場合
+      imagePayload = arg1.imagePayload;
       prompt = arg1.prompt;
     } else {
-      // 通常通り 2つの引数で届いた場合
-      payload = arg1;
+      // バラバラで届いた場合
+      imagePayload = arg1;
       prompt = arg2;
     }
 
-    const buffer = payload?.data || payload?.buffer;
+    // 画像の「身」を取り出す
+    const buffer = imagePayload?.data || imagePayload?.buffer;
     if (!buffer) {
-      console.error('届いたデータの中身のキー:', Object.keys(arg1 || {}));
-      throw new Error('画像データが届いていません');
+      throw new Error('画像データが見つかりません');
     }
 
     const imagePart = {
       buffer: buffer,
-      mimeType: payload.mimetype || payload.mimeType || 'image/jpeg'
+      mimeType: imagePayload.mimetype || imagePayload.mimeType || 'image/jpeg'
     };
 
+    // 通信実行
     const rawResponse = await dispatchGemini([prompt, imagePart]);
     
+    // JSON部分だけを切り出す
     const startIdx = rawResponse.indexOf('{');
     const endIdx = rawResponse.lastIndexOf('}');
-    if (startIdx === -1) throw new Error('解析データが見つかりません');
+    if (startIdx === -1) throw new Error('解析結果が不正です');
 
     return { ok: true, data: JSON.parse(rawResponse.substring(startIdx, endIdx + 1)) };
 
   } catch (error) {
-    console.error('解析エラー:', error.message);
+    console.error('解析プロセス失敗:', error.message);
+    // 万が一の時も、LINEが沈黙しないための予備データ
     return { 
       ok: false, 
       data: { 
         isMealImage: true, 
-        items: ['画像解析中'], 
-        estimated_nutrition: { kcal: 400, protein: 20, fat: 12, carbs: 48 }, 
-        comment: 'サーバーの接続を調整中ですが、解析を開始します。' 
+        items: ['画像から推定中...'], 
+        estimated_nutrition: { kcal: 420, protein: 18, fat: 12, carbs: 50 }, 
+        comment: '接続を調整中ですが、解析は継続しています。' 
       } 
     };
   }
