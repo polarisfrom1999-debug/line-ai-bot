@@ -9,11 +9,9 @@ async function analyzeMealImage(imagePayload, userId, rawText = '') {
   try {
     const { prompt } = buildMealExtractPrompt({ rawText });
     
-    // 画像解析を実行
     const result = await geminiImageAnalysisService.analyzeImage(imagePayload, prompt);
     const mealData = result.data;
 
-    // データベースに食事記録を保存
     if (mealData.isMealImage && userId) {
       try {
         await supabase.from('meals').insert({
@@ -26,15 +24,11 @@ async function analyzeMealImage(imagePayload, userId, rawText = '') {
           ai_comment: mealData.comment,
           created_at: new Date().toISOString()
         });
-      } catch (dbErr) {
-        console.warn('DB保存に失敗しましたが、返信を優先します:', dbErr.message);
-      }
+      } catch (dbErr) { console.error('DB保存スキップ'); }
     }
 
-    // 最終的な返信レポートを生成
     return await buildFullMealReport({ result: mealData, userId });
   } catch (error) {
-    console.error('MealAnalysis致命的エラー:', error.message);
     return "画像を読み取れませんでした。もう一度お試しください。";
   }
 }
