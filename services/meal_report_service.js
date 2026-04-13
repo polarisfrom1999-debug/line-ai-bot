@@ -1,78 +1,58 @@
 'use strict';
 
-const { supabase } = require('./supabase_service');
-
 /**
- * 今日の合計摂取量をSupabaseから計算して取得する
- */
-async function getDailyTotal(userId) {
-  if (!userId) return null;
-
-  const now = new Date();
-  // 今日の0時0分0秒から23時59分59秒までを指定
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
-
-  const { data, error } = await supabase
-    .from('meals')
-    .select('estimated_kcal, protein_g, fat_g, carbs_g')
-    .eq('user_id', userId)
-    .gte('created_at', todayStart)
-    .lte('created_at', todayEnd);
-
-  if (error || !data) {
-    console.error('積算データの取得失敗:', error);
-    return null;
-  }
-
-  return data.reduce((acc, cur) => ({
-    kcal: acc.kcal + (Number(cur.estimated_kcal) || 0),
-    protein: acc.protein + (Number(cur.protein_g) || 0),
-    fat: acc.fat + (Number(cur.fat_g) || 0),
-    carbs: acc.carbs + (Number(cur.carbs_g) || 0)
-  }), { kcal: 0, protein: 0, fat: 0, carbs: 0 });
-}
-
-/**
- * LINEに送るメッセージを組み立てる
+ * AIの解析結果（JSON）を、LINE用の賑やかでやさしい文章に整えます
  */
 async function buildFullMealReport({ result, userId }) {
-  const current = {
-    items: Array.isArray(result.items) ? result.items.join('、') : '解析中',
-    kcal: Math.round(result.estimated_nutrition?.kcal || 0),
-    protein: Math.round(result.estimated_nutrition?.protein || 0),
-    fat: Math.round(result.estimated_nutrition?.fat || 0),
-    carbs: Math.round(result.estimated_nutrition?.carbs || 0),
-    comment: result.comment || '今日も一歩、健康に近づきましたね。'
-  };
+  const lines = [];
 
-  const lines = [
-    '【食事分析レポート】',
-    '━━━━━━━━━━━━━',
-    `🥗 メニュー: ${current.items}`,
-    `🔥 エネルギー: ${current.kcal} kcal`,
-    `💪 たんぱく質: ${current.protein}g`,
-    `🍳 脂質: ${current.fat}g`,
-    `🍞 糖質: ${current.carbs}g`,
-    '━━━━━━━━━━━━━',
-    '牛込先生のアドバイス:',
-    `「${current.comment}」`,
-    ''
-  ];
+  // 1. 食事として判定された場合
+  if (result.isMealImage) {
+    lines.push('📸 お食事の解析が終わりました！✨');
+    lines.push('');
 
-  const dailyTotal = await getDailyTotal(userId);
-  if (dailyTotal) {
-    lines.push('📈 本日の合計（積算）');
-    lines.push('┈┈┈┈┈┈┈┈┈┈┈┈┈');
-    lines.push(`  エネルギー: ${Math.round(dailyTotal.kcal)} kcal`);
-    lines.push(`  たんぱく質: ${Math.round(dailyTotal.protein)}g`);
-    lines.push(`  脂質: ${Math.round(dailyTotal.fat)}g`);
-    lines.push(`  糖質: ${Math.round(dailyTotal.carbs)}g`);
-    lines.push('━━━━━━━━━━━━━');
+    // メニューを表示
+    if (result.items && result.items.length > 0) {
+      lines.push('【メニュー 🥗】');
+      lines.push(result.items.join('、'));
+      lines.push('');
+    }
+
+    // 栄養素を表示（ご指定の絵文字をすべて配置しました）
+    if (result.estimatedNutrition) {
+      const nut = result.estimatedNutrition;
+      lines.push('【推定栄養素 ✨】');
+      lines.push(`エネルギー 🔥: ${nut.kcal || 0} kcal`);
+      lines.push(`タンパク質 💪: ${nut.protein || 0} g`);
+      lines.push(`脂質 🍳: ${nut.fat || 0} g`);
+      lines.push(`糖質 🍞: ${nut.carbs || 0} g`);
+      lines.push('');
+    }
+
+    // 牛込先生らしいアドバイス
+    if (result.comment) {
+      lines.push(`💬 ${result.comment}`);
+    } else {
+      lines.push('💬 今日もバランスを意識して、素敵な一日を過ごしましょう！🌈');
+    }
+
+    // 自信がないときだけ、そっと補足
+    if (result.confidence < 0.6) {
+      lines.push('');
+      lines.push('⚠️ 写真の関係で少し推計が難しい部分もありましたが、目安にしてみてくださいね。🙏');
+    }
+
+  } else {
+    // 2. 食事ではないと判断されたとき
+    lines.push('すみません、この画像からはお食事の内容がうまく読み取れませんでした 💦');
+    if (result.comment) {
+      lines.push(`(AIの判定: ${result.comment})`);
+    }
+    lines.push('');
+    lines.push('お料理や食品ラベルの写真を送っていただければ、また全力で解析しますね！😊');
   }
 
   return lines.join('\n');
 }
 
-// export ではなく module.exports を使います
-module.exports = { buildFullMealReport, getDailyTotal };
+module.exports = { buildFullMealReport };
