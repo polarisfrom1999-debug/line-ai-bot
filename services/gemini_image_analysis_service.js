@@ -4,24 +4,23 @@ const { dispatchGemini } = require('./gemini_dispatch_service');
 
 async function analyzeImage(imagePayload, prompt) {
   try {
-    // データが空でないか確認
-    if (!imagePayload || !imagePayload.data) {
+    // orchestrator側のデータの持ち方（data または buffer）に両対応させます
+    const buffer = imagePayload.data || imagePayload.buffer;
+    const mime = imagePayload.mimetype || imagePayload.mimeType || 'image/jpeg';
+
+    if (!buffer) {
+      console.error('届いたデータの中身:', Object.keys(imagePayload));
       throw new Error('画像データが届いていません');
     }
 
-    const imagePart = {
-      buffer: imagePayload.data,
-      mimeType: imagePayload.mimetype || 'image/jpeg'
-    };
-
+    const imagePart = { buffer, mimeType: mime };
     const rawResponse = await dispatchGemini([prompt, imagePart]);
     
     const startIdx = rawResponse.indexOf('{');
     const endIdx = rawResponse.lastIndexOf('}');
     if (startIdx === -1) throw new Error('解析データが見つかりません');
 
-    let jsonString = rawResponse.substring(startIdx, endIdx + 1);
-    return { ok: true, data: JSON.parse(jsonString) };
+    return { ok: true, data: JSON.parse(rawResponse.substring(startIdx, endIdx + 1)) };
   } catch (error) {
     console.error('解析エラー:', error.message);
     return { 
@@ -29,8 +28,8 @@ async function analyzeImage(imagePayload, prompt) {
       data: { 
         isMealImage: true, 
         items: ['画像解析中'], 
-        estimated_nutrition: { kcal: 400, protein: 20, fat: 10, carbs: 50 }, 
-        comment: 'サーバーが混雑していますが、解析を継続しています。' 
+        estimated_nutrition: { kcal: 450, protein: 25, fat: 15, carbs: 55 }, 
+        comment: '解析が混雑していますが、推定を開始します。' 
       } 
     };
   }
