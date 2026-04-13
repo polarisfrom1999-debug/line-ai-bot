@@ -29,26 +29,16 @@ async function buildFullMealReport({ result, userId }) {
       lines.push('');
     }
 
-    // 牛込先生らしいアドバイス
+    // アドバイス
     if (result.comment) {
       lines.push(`💬 ${result.comment}`);
     } else {
       lines.push('💬 今日もバランスを意識して、素敵な一日を過ごしましょう！🌈');
     }
 
-    // 自信がないときだけ補足
-    if (result.confidence < 0.6) {
-      lines.push('');
-      lines.push('⚠️ 写真の関係で少し推計が難しい部分もありましたが、目安にしてみてくださいね。🙏');
-    }
-
   } else {
     // 食事ではないと判断されたとき
     lines.push('すみません、この画像からはお食事の内容がうまく読み取れませんでした 💦');
-    if (result.comment) {
-      lines.push(`(AIの判定: ${result.comment})`);
-    }
-    lines.push('');
     lines.push('お料理や食品ラベルの写真を送っていただければ、また全力で解析しますね！😊');
   }
 
