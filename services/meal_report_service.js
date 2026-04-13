@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * AIの解析結果（JSON）を、LINE用の賑やかでやさしい文章に整えます
+ * AIの解析結果を、LINE用の賑やかでやさしい文章に整えます
  */
 async function buildFullMealReport({ result, userId }) {
   const lines = [];
 
-  // 1. 食事として判定された場合
+  // 食事として判定された場合
   if (result.isMealImage) {
     lines.push('📸 お食事の解析が終わりました！✨');
     lines.push('');
@@ -18,7 +18,7 @@ async function buildFullMealReport({ result, userId }) {
       lines.push('');
     }
 
-    // 栄養素を表示（ご指定の絵文字をすべて配置しました）
+    // 栄養素を表示（ご指定の絵文字をすべて配置）
     if (result.estimatedNutrition) {
       const nut = result.estimatedNutrition;
       lines.push('【推定栄養素 ✨】');
@@ -36,14 +36,14 @@ async function buildFullMealReport({ result, userId }) {
       lines.push('💬 今日もバランスを意識して、素敵な一日を過ごしましょう！🌈');
     }
 
-    // 自信がないときだけ、そっと補足
+    // 自信がないときだけ補足
     if (result.confidence < 0.6) {
       lines.push('');
       lines.push('⚠️ 写真の関係で少し推計が難しい部分もありましたが、目安にしてみてくださいね。🙏');
     }
 
   } else {
-    // 2. 食事ではないと判断されたとき
+    // 食事ではないと判断されたとき
     lines.push('すみません、この画像からはお食事の内容がうまく読み取れませんでした 💦');
     if (result.comment) {
       lines.push(`(AIの判定: ${result.comment})`);
