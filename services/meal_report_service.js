@@ -3,17 +3,16 @@
 const { supabase } = require('./supabase_service');
 
 /**
- * 今日の合計摂取量を計算して取得する
+ * 今日の合計摂取量をデータベースから取得する関数
  */
 async function getDailyTotal(userId) {
   if (!userId) return null;
 
-  // 今日の「開始時刻(00:00)」と「終了時刻(23:59)」を設定
+  // 日本時間の「今日 0:00」から「今日 23:59」の範囲を設定
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
-  // Supabaseから今日の食事データを取得
   const { data, error } = await supabase
     .from('meals')
     .select('estimated_kcal, protein_g, fat_g, carbs_g')
@@ -22,11 +21,11 @@ async function getDailyTotal(userId) {
     .lte('created_at', todayEnd);
 
   if (error || !data) {
-    console.error('積算データの取得失敗:', error);
+    console.error('データ取得エラー:', error);
     return null;
   }
 
-  // 合計を計算
+  // 取得したデータを全て足し合わせる
   return data.reduce((acc, cur) => ({
     kcal: acc.kcal + (Number(cur.estimated_kcal) || 0),
     protein: acc.protein + (Number(cur.protein_g) || 0),
@@ -36,10 +35,10 @@ async function getDailyTotal(userId) {
 }
 
 /**
- * LINE送信用の「食事分析レポート」テキストを組み立てる
+ * LINEに送る「🥗 形式」のメッセージを組み立てる関数
  */
 async function buildFullMealReport({ result, userId }) {
-  // 今回の解析結果（Geminiが返してきた値）
+  // 今回の解析結果
   const current = {
     items: Array.isArray(result.items) ? result.items.join('、') : '解析中',
     kcal: Math.round(result.estimatedNutrition?.kcal || 0),
@@ -49,7 +48,7 @@ async function buildFullMealReport({ result, userId }) {
     comment: result.comment || '今日も一歩、健康に近づきましたね。'
   };
 
-  // 1. 今回の食事レポート部分
+  // レポートの作成
   const lines = [
     '【食事分析レポート】',
     '━━━━━━━━━━━━━',
@@ -64,7 +63,7 @@ async function buildFullMealReport({ result, userId }) {
     ''
   ];
 
-  // 2. 積算データの取得と追加
+  // 今日の合計（積算）を計算して追加
   const dailyTotal = await getDailyTotal(userId);
   if (dailyTotal) {
     lines.push('📈 本日の合計（積算）');
