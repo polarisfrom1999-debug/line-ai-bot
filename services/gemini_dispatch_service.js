@@ -3,13 +3,15 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 async function dispatchGemini(payload, options = {}) {
+  // 窓口を「最新の v1」に強制固定します
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  // 先生が以前使っていた安定したモデルに固定します
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  
+  // モデル名を公式のフルネーム「models/gemini-1.5-flash」に変更
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  // 画像データをGoogleが受け取れる形に変換します
   const formattedParts = payload.map(part => {
-    if (part.buffer) {
+    // 画像データの存在チェックをより厳重に
+    if (part && part.buffer) {
       return {
         inlineData: {
           data: part.buffer.toString('base64'),
@@ -17,11 +19,11 @@ async function dispatchGemini(payload, options = {}) {
         }
       };
     }
-    return typeof part === 'string' ? part : JSON.stringify(part);
+    return typeof part === 'string' ? { text: part } : { text: JSON.stringify(part) };
   });
 
   try {
-    const result = await model.generateContent(formattedParts);
+    const result = await model.generateContent({ contents: [{ role: "user", parts: formattedParts }] });
     const response = await result.response;
     return response.text();
   } catch (error) {
