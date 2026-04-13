@@ -5,38 +5,37 @@ const { buildMealExtractPrompt } = require('./meal_extract_prompt_builder_servic
 const { supabase } = require('./supabase_service');
 
 /**
- * 【決定版】
- * 外側のorchestratorが「analyzeMealImage」という名前で呼び出すため、
- * 関数名とエクスポート名を完全にその名前に統一しました。
+ * 食事解析の全プロセス（解析・保存・レポート作成）をこの1つの関数で完結させます。
+ * 外側（orchestrator）が呼ぶ「analyzeMealImage」という名前に完全準拠しています。
  */
 async function analyzeMealImage(imagePayload, userId, rawText = '') {
-  // 1. プロンプト作成
+  // 1. 命令書の組み立て
   const { prompt } = buildMealExtractPrompt({ rawText });
 
-  // 2. Geminiで画像解析
+  // 2. Geminiによる画像解析
   const result = await geminiImageAnalysisService.analyzeImage({
     imagePayload,
     prompt: prompt
   });
 
-  if (!result.ok) throw new Error('Gemini通信失敗');
+  if (!result.ok) throw new Error('AI解析に失敗しました。');
 
-  // 3. 解析データの読み取り（JSON抽出）
+  // 3. データの抽出（JSONクリーニング）
   let mealData;
   try {
     const cleanText = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
     const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('JSONなし');
+    if (!jsonMatch) throw new Error('JSONが見つかりません');
     mealData = JSON.parse(jsonMatch[0]);
   } catch (e) {
-    console.error('解析エラー:', result.text);
-    throw new Error('解析データの読み取りに失敗しました。');
+    console.error('JSON解析エラー:', result.text);
+    throw new Error('データの形式を読み取れませんでした。');
   }
 
-  // 4. Supabaseへの保存と「今日の合計」計算
+  // 4. データベース保存と今日の積算計算
   let dailyTotalText = '';
   if (mealData.isMealImage && userId) {
-    // 保存
+    // データを保存
     await supabase.from('meals').insert({
       user_id: userId,
       meal_label: (mealData.items || []).join('、'),
@@ -47,24 +46,25 @@ async function analyzeMealImage(imagePayload, userId, rawText = '') {
       ai_comment: mealData.comment
     });
 
-    // 今日の合計を取得
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const { data } = await supabase
-      .from('meals')
-      .select('estimated_kcal, protein_g, fat_g, carbs_g')
-      .eq('user_id', userId)
-      .gte('created_at', todayStart);
+    // 今日の合計を取得（積算）
+    try {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const { data } = await supabase
+        .from('meals')
+        .select('estimated_kcal, protein_g, fat_g, carbs_g')
+        .eq('user_id', userId)
+        .gte('created_at', todayStart);
 
-    if (data && data.length > 0) {
-      const total = data.reduce((acc, cur) => ({
-        kcal: acc.kcal + (Number(cur.estimated_kcal) || 0),
-        protein: acc.protein + (Number(cur.protein_g) || 0),
-        fat: acc.fat + (Number(cur.fat_g) || 0),
-        carbs: acc.carbs + (Number(cur.carbs_g) || 0)
-      }), { kcal: 0, protein: 0, fat: 0, carbs: 0 });
+      if (data && data.length > 0) {
+        const total = data.reduce((acc, cur) => ({
+          kcal: acc.kcal + (Number(cur.estimated_kcal) || 0),
+          protein: acc.protein + (Number(cur.protein_g) || 0),
+          fat: acc.fat + (Number(cur.fat_g) || 0),
+          carbs: acc.carbs + (Number(cur.carbs_g) || 0)
+        }), { kcal: 0, protein: 0, fat: 0, carbs: 0 });
 
-      dailyTotalText = `
+        dailyTotalText = `
 📈 本日の合計（積算）
 ┈┈┈┈┈┈┈┈┈┈┈┈┈
   エネルギー 🔥: ${Math.round(total.kcal)} kcal
@@ -72,10 +72,13 @@ async function analyzeMealImage(imagePayload, userId, rawText = '') {
   脂質 🍳: ${Math.round(total.fat)} g
   糖質 🍞: ${Math.round(total.carbs)} g
 ━━━━━━━━━━━━━`;
+      }
+    } catch (dbErr) {
+      console.error('積算エラー:', dbErr);
     }
   }
 
-  // 5. レポートの組み立て（絵文字入り）
+  // 5. レポートの組み立て（絵文字をすべて配置）
   const nut = mealData.estimated_nutrition || {};
   const report = [
     '📸 お食事の解析が終わりました！✨',
@@ -93,7 +96,7 @@ async function analyzeMealImage(imagePayload, userId, rawText = '') {
   return report;
 }
 
-// 呼び出し側の期待に100%応えるためのエクスポート設定
+// 外側から見えるようにエクスポート。名前の不一致を完全に防ぎます。
 module.exports = {
   analyzeMealImage: analyzeMealImage,
   analyzeMealImageAndCreateReport: analyzeMealImage
