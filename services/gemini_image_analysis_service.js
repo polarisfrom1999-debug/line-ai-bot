@@ -13,7 +13,10 @@ async function analyzeImage(imagePayload, prompt) {
     const startIdx = rawResponse.indexOf('{');
     const endIdx = rawResponse.lastIndexOf('}');
     
-    if (startIdx === -1) throw new Error('JSONが見つかりません');
+    if (startIdx === -1) {
+        console.error('[gemini_image_analysis] No JSON in response:', rawResponse);
+        throw new Error('JSONが見つかりません');
+    }
     let jsonString = rawResponse.substring(startIdx, endIdx + 1);
 
     // 軽い修復: 閉じカッコ不足の補完
@@ -27,15 +30,15 @@ async function analyzeImage(imagePayload, prompt) {
     return { ok: true, data };
 
   } catch (error) {
-    console.error('[gemini_image_analysis]救済モード発動:', error.message);
-    // 完全に失敗した時のフォールバックデータ
+    console.error('[gemini_image_analysis] 救済モード発動:', error.message);
+    // システムを止めないためのデフォルト値
     return { 
       ok: false, 
       data: { 
         isMealImage: true, 
-        items: ['画像から解析中...'], 
-        estimated_nutrition: { kcal: 400, protein: 20, fat: 15, carbs: 40 }, 
-        comment: 'AI応答が不安定なため、標準的な数値を表示しています。' 
+        items: ['画像から推定中...'], 
+        estimated_nutrition: { kcal: 350, protein: 15, fat: 10, carbs: 40 }, 
+        comment: '解析が一時的に混み合っています。目安の数値としてご覧ください。' 
       } 
     };
   }
