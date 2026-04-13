@@ -6,21 +6,19 @@ const { buildFullMealReport } = require('./meal_report_service');
 const { supabase } = require('./supabase_service');
 
 /**
- * 画像を受け取り、AIで解析し、保存し、レポートを返す一連の流れ
+ * 画像を解析してレポートを作成するメイン関数
  */
 async function analyzeMealImageAndCreateReport({ imagePayload, userId, rawText = '' }) {
-  // 1. 命令文を作成
-  const { prompt, schema } = buildMealExtractPrompt({ rawText });
+  const { prompt } = buildMealExtractPrompt({ rawText });
 
-  // 2. AIで画像を解析
   const result = await geminiImageAnalysisService.analyzeImage({
     imagePayload,
-    prompt: prompt + "\n※JSON形式で回答してください。"
+    prompt: prompt + "\n必ずJSON形式で回答してください。"
   });
 
-  if (!result.ok) throw new Error('AIの解析に失敗しました。');
+  if (!result.ok) throw new Error('解析に失敗しました。');
 
-  // AIの回答をプログラムで読める形に変換
+  // Geminiの回答からJSON部分を抽出
   let mealData;
   try {
     const jsonMatch = result.text.match(/\{[\s\S]*\}/);
@@ -29,25 +27,21 @@ async function analyzeMealImageAndCreateReport({ imagePayload, userId, rawText =
     throw new Error('データの読み取りに失敗しました。');
   }
 
-  // 3. データベースへ保存（これで「積算」ができるようになります）
+  // Supabaseに保存（これで「積算」ができるようになります）
   if (mealData.isMealImage && userId) {
     await supabase.from('meals').insert({
       user_id: userId,
       meal_label: mealData.items.join('、'),
-      estimated_kcal: mealData.estimatedNutrition.kcal,
-      protein_g: mealData.estimatedNutrition.protein,
-      fat_g: mealData.estimatedNutrition.fat,
-      carbs_g: mealData.estimatedNutrition.carbs,
-      ai_comment: mealData.comment,
-      created_at: new Date().toISOString()
+      estimated_kcal: mealData.estimated_nutrition.kcal,
+      protein_g: mealData.estimated_nutrition.protein,
+      fat_g: mealData.estimated_nutrition.fat,
+      carbs_g: mealData.estimated_nutrition.carbs,
+      ai_comment: mealData.comment
     });
   }
 
-  // 4. 完成したレポートテキストを作成して返す
-  return await buildFullMealReport({
-    result: mealData,
-    userId: userId
-  });
+  // レポート作成
+  return await buildFullMealReport({ result: mealData, userId });
 }
 
 module.exports = { analyzeMealImageAndCreateReport };
