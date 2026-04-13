@@ -1,4 +1,4 @@
+google-generativeai
 line-bot-sdk
 flask
-google-generativeai
-python-dotenv
+Pillow
