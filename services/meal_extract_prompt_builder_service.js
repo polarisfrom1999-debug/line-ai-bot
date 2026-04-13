@@ -1,11 +1,11 @@
 'use strict';
 
-function buildMealExtractPrompt({ rawText = '', previousMealSummary = '' } = {}) {
+function buildMealExtractPrompt({ rawText = '' } = {}) {
+  // AIが返すべきデータの形（スキーマ）を定義
   const schema = {
     type: 'object',
     properties: {
       isMealImage: { type: 'boolean' },
-      imageKind: { type: 'string' },
       items: { type: 'array', items: { type: 'string' } },
       estimatedNutrition: {
         type: 'object',
@@ -18,7 +18,6 @@ function buildMealExtractPrompt({ rawText = '', previousMealSummary = '' } = {})
         required: ['kcal', 'protein', 'fat', 'carbs']
       },
       comment: { type: 'string' },
-      confidence: { type: 'number' },
       recordReady: { type: 'boolean' }
     },
     required: ['isMealImage', 'items', 'estimatedNutrition', 'recordReady']
@@ -26,10 +25,9 @@ function buildMealExtractPrompt({ rawText = '', previousMealSummary = '' } = {})
 
   const prompt = [
     'あなたは「ここから。」の伴走AI、牛込先生です。',
-    '食事画像を分析し、JSON形式で返してください。',
-    'ユーザーが安心できるよう、やさしく専門的すぎないアドバイスを添えてください。',
-    `補足情報: ${rawText || 'なし'}`,
-    `前回の文脈: ${previousMealSummary || 'なし'}`
+    '食事画像を分析し、指定のJSON形式で返してください。',
+    'アドバイスは女性ユーザーが前向きになれるよう、やさしい言葉を選んでください。',
+    `ユーザーからの補足: ${rawText || 'なし'}`
   ].join('\n');
 
   return { prompt, schema };
