@@ -3,13 +3,13 @@
 const { supabase } = require('./supabase_service');
 
 /**
- * 今日の合計摂取量をデータベースから取得する関数
+ * 今日の合計摂取量をSupabaseから計算して取得する
  */
 async function getDailyTotal(userId) {
   if (!userId) return null;
 
-  // 日本時間の「今日 0:00」から「今日 23:59」の範囲を設定
   const now = new Date();
+  // 今日の0時0分0秒から23時59分59秒までを指定
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
@@ -21,11 +21,10 @@ async function getDailyTotal(userId) {
     .lte('created_at', todayEnd);
 
   if (error || !data) {
-    console.error('データ取得エラー:', error);
+    console.error('積算データの取得失敗:', error);
     return null;
   }
 
-  // 取得したデータを全て足し合わせる
   return data.reduce((acc, cur) => ({
     kcal: acc.kcal + (Number(cur.estimated_kcal) || 0),
     protein: acc.protein + (Number(cur.protein_g) || 0),
@@ -35,20 +34,18 @@ async function getDailyTotal(userId) {
 }
 
 /**
- * LINEに送る「🥗 形式」のメッセージを組み立てる関数
+ * LINEに送るメッセージを組み立てる
  */
 async function buildFullMealReport({ result, userId }) {
-  // 今回の解析結果
   const current = {
     items: Array.isArray(result.items) ? result.items.join('、') : '解析中',
-    kcal: Math.round(result.estimatedNutrition?.kcal || 0),
-    protein: Math.round(result.estimatedNutrition?.protein || 0),
-    fat: Math.round(result.estimatedNutrition?.fat || 0),
-    carbs: Math.round(result.estimatedNutrition?.carbs || 0),
+    kcal: Math.round(result.estimated_nutrition?.kcal || 0),
+    protein: Math.round(result.estimated_nutrition?.protein || 0),
+    fat: Math.round(result.estimated_nutrition?.fat || 0),
+    carbs: Math.round(result.estimated_nutrition?.carbs || 0),
     comment: result.comment || '今日も一歩、健康に近づきましたね。'
   };
 
-  // レポートの作成
   const lines = [
     '【食事分析レポート】',
     '━━━━━━━━━━━━━',
@@ -63,7 +60,6 @@ async function buildFullMealReport({ result, userId }) {
     ''
   ];
 
-  // 今日の合計（積算）を計算して追加
   const dailyTotal = await getDailyTotal(userId);
   if (dailyTotal) {
     lines.push('📈 本日の合計（積算）');
@@ -78,4 +74,5 @@ async function buildFullMealReport({ result, userId }) {
   return lines.join('\n');
 }
 
+// export ではなく module.exports を使います
 module.exports = { buildFullMealReport, getDailyTotal };
