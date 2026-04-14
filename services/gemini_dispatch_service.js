@@ -7,7 +7,12 @@ try {
   GoogleGenAI = null;
 }
 
-const geminiCore = require('./gemini_service');
+let geminiCore = {};
+try {
+  geminiCore = require('./gemini_service');
+} catch (_err) {
+  geminiCore = {};
+}
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -77,12 +82,8 @@ async function generateTextFromImage({ prompt, imagePayload, model, temperature 
   const client = getGeminiClient();
   const imagePart = buildImagePart(imagePayload);
 
-  if (!client) {
-    throw new Error('Gemini client unavailable');
-  }
-  if (!prompt || !imagePart) {
-    throw new Error('Missing prompt or image payload');
-  }
+  if (!client) throw new Error('Gemini client unavailable');
+  if (!prompt || !imagePart) throw new Error('Missing prompt or image payload');
 
   let lastError;
   for (const candidate of buildModelCandidates(model)) {
@@ -97,6 +98,8 @@ async function generateTextFromImage({ prompt, imagePayload, model, temperature 
       }), 2, 700);
 
       return {
+        ok: true,
+        mode: 'image_text',
         model: candidate,
         text: geminiCore.extractGeminiText(response),
         raw: response,
@@ -114,12 +117,8 @@ async function generateJsonFromImage({ prompt, imagePayload, schema, model, temp
   const client = getGeminiClient();
   const imagePart = buildImagePart(imagePayload);
 
-  if (!client) {
-    throw new Error('Gemini client unavailable');
-  }
-  if (!prompt || !imagePart) {
-    throw new Error('Missing prompt or image payload');
-  }
+  if (!client) throw new Error('Gemini client unavailable');
+  if (!prompt || !imagePart) throw new Error('Missing prompt or image payload');
 
   let lastError;
   for (const candidate of buildModelCandidates(model)) {
@@ -136,11 +135,11 @@ async function generateJsonFromImage({ prompt, imagePayload, schema, model, temp
       }), 2, 700);
 
       const parsed = geminiCore.safeJsonParse(geminiCore.extractGeminiText(response));
-      if (parsed === null) {
-        throw new Error('Gemini image JSON parse failed');
-      }
+      if (parsed === null) throw new Error('Gemini image JSON parse failed');
 
       return {
+        ok: true,
+        mode: 'image_json',
         model: candidate,
         parsed,
         raw: response,
@@ -152,6 +151,37 @@ async function generateJsonFromImage({ prompt, imagePayload, schema, model, temp
   }
 
   throw lastError || new Error('Gemini image JSON generation failed');
+}
+
+async function dispatchGemini(options = {}) {
+  const {
+    prompt,
+    imagePayload = null,
+    schema = null,
+    model,
+    temperature,
+    maxOutputTokens,
+  } = options || {};
+
+  if (imagePayload && schema) {
+    return generateJsonFromImage({ prompt, imagePayload, schema, model, temperature, maxOutputTokens });
+  }
+
+  if (imagePayload) {
+    return generateTextFromImage({ prompt, imagePayload, model, temperature, maxOutputTokens });
+  }
+
+  if (schema && typeof geminiCore.generateJsonOnly === 'function') {
+    const parsed = await geminiCore.generateJsonOnly(prompt, schema, typeof temperature === 'number' ? temperature : 0.3);
+    return { ok: true, mode: 'text_json', parsed };
+  }
+
+  if (typeof geminiCore.generateTextOnly === 'function') {
+    const text = await geminiCore.generateTextOnly(prompt, typeof temperature === 'number' ? temperature : 0.7);
+    return { ok: true, mode: 'text', text };
+  }
+
+  throw new Error('Gemini core functions unavailable');
 }
 
 module.exports = {
@@ -166,4 +196,6 @@ module.exports = {
   generateJsonOnly: geminiCore.generateJsonOnly,
   generateTextFromImage,
   generateJsonFromImage,
+  dispatchGemini,
+  default: dispatchGemini,
 };

@@ -7,28 +7,37 @@ try {
   GoogleGenAI = null;
 }
 
+const { getEnv } = require('../config/env');
+
+function safeEnv() {
+  try {
+    return getEnv();
+  } catch (_err) {
+    return process.env || {};
+  }
+}
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function getGeminiApiKey() {
-  return normalizeText(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
+function getApiKey() {
+  const env = safeEnv();
+  return normalizeText(env.GEMINI_API_KEY || env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 }
 
 function getPrimaryModel() {
-  return normalizeText(process.env.GEMINI_MODEL || 'gemini-2.5-flash') || 'gemini-2.5-flash';
+  const env = safeEnv();
+  return normalizeText(env.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
 function getFallbackModel() {
-  return normalizeText(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash') || 'gemini-2.0-flash';
-}
-
-function isGeminiSdkAvailable() {
-  return Boolean(GoogleGenAI);
+  const env = safeEnv();
+  return normalizeText(env.GEMINI_FALLBACK_MODEL || process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash');
 }
 
 function buildClient() {
-  const apiKey = getGeminiApiKey();
+  const apiKey = getApiKey();
   if (!apiKey || !GoogleGenAI) return null;
 
   try {
@@ -40,24 +49,6 @@ function buildClient() {
 }
 
 const genAI = buildClient();
-
-function ensureGeminiReady() {
-  if (!GoogleGenAI) {
-    throw new Error('Gemini SDK unavailable: @google/genai is not installed');
-  }
-
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini API key unavailable: GEMINI_API_KEY is missing');
-  }
-
-  const client = genAI || buildClient();
-  if (!client) {
-    throw new Error('Gemini client initialization failed');
-  }
-
-  return client;
-}
 
 function extractGeminiText(response) {
   const text = response?.text;
@@ -76,7 +67,7 @@ function extractGeminiText(response) {
   return candidateText;
 }
 
-function safeJsonParse(text, fallback = null) {
+function safeJsonParse(text) {
   try {
     return JSON.parse(text);
   } catch (_err) {
@@ -87,10 +78,9 @@ function safeJsonParse(text, fallback = null) {
         .replace(/^```\s*/i, '')
         .replace(/```$/i, '')
         .trim();
-
       return JSON.parse(cleaned);
     } catch (_err2) {
-      return fallback;
+      return null;
     }
   }
 }
@@ -111,23 +101,11 @@ async function retry(fn, retries = 2, delayMs = 500) {
   throw lastError;
 }
 
-function buildModelCandidates() {
-  const seen = new Set();
-  const list = [];
-
-  for (const value of [getPrimaryModel(), getFallbackModel()]) {
-    const safe = normalizeText(value);
-    if (!safe || seen.has(safe)) continue;
-    seen.add(safe);
-    list.push(safe);
-  }
-
-  return list.length ? list : ['gemini-2.5-flash'];
-}
-
 async function generateTextOnly(prompt, temperature = 0.7) {
-  const client = ensureGeminiReady();
-  const tryModels = buildModelCandidates();
+  const client = buildClient();
+  if (!client) throw new Error('Gemini client unavailable');
+
+  const tryModels = [getPrimaryModel(), getFallbackModel()].filter(Boolean);
   let lastError;
 
   for (const model of tryModels) {
@@ -149,8 +127,10 @@ async function generateTextOnly(prompt, temperature = 0.7) {
 }
 
 async function generateJsonOnly(prompt, schema, temperature = 0.3) {
-  const client = ensureGeminiReady();
-  const tryModels = buildModelCandidates();
+  const client = buildClient();
+  if (!client) throw new Error('Gemini client unavailable');
+
+  const tryModels = [getPrimaryModel(), getFallbackModel()].filter(Boolean);
   let lastError;
 
   for (const model of tryModels) {
@@ -166,8 +146,8 @@ async function generateJsonOnly(prompt, schema, temperature = 0.3) {
       }), 2, 700);
 
       const parsed = safeJsonParse(extractGeminiText(response));
-      if (parsed !== null) return parsed;
-      throw new Error('Gemini JSON parse failed');
+      if (parsed === null) throw new Error('Gemini JSON parse failed');
+      return parsed;
     } catch (error) {
       lastError = error;
       console.error(`⚠️ generateJsonOnly failed on ${model}:`, error?.message || error);
@@ -178,13 +158,12 @@ async function generateJsonOnly(prompt, schema, temperature = 0.3) {
 }
 
 module.exports = {
-  genAI,
   GoogleGenAI,
-  isGeminiSdkAvailable,
-  getGeminiApiKey,
+  genAI,
+  buildClient,
   getPrimaryModel,
   getFallbackModel,
-  buildClient,
+  getApiKey,
   extractGeminiText,
   safeJsonParse,
   retry,
