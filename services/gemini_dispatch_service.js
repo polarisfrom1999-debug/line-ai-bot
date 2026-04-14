@@ -14,18 +14,45 @@ function getGeminiClient() {
 
 function buildImagePayload(imagePayload) {
   if (!imagePayload) return null;
-  if (imagePayload.inlineData?.data) return imagePayload;
-  if (Buffer.isBuffer(imagePayload.buffer)) return imagePayload;
+
+  if (imagePayload.inlineData?.data) {
+    return {
+      inlineData: imagePayload.inlineData,
+      mimeType: imagePayload.inlineData.mimeType || imagePayload.mimeType || 'image/jpeg',
+    };
+  }
+
+  if (Buffer.isBuffer(imagePayload.buffer)) {
+    return {
+      buffer: imagePayload.buffer,
+      mimeType: imagePayload.mimeType || imagePayload.mimetype || 'image/jpeg',
+    };
+  }
+
   if (Buffer.isBuffer(imagePayload.data)) {
     return {
       buffer: imagePayload.data,
       mimeType: imagePayload.mimeType || imagePayload.mimetype || 'image/jpeg',
     };
   }
+
+  if (typeof imagePayload.base64 === 'string' && imagePayload.base64) {
+    return {
+      base64: imagePayload.base64,
+      mimeType: imagePayload.mimeType || imagePayload.mimetype || 'image/jpeg',
+    };
+  }
+
   return null;
 }
 
-async function generateTextFromImage({ prompt, imagePayload, model, temperature = 0.2, maxOutputTokens = 1200 } = {}) {
+async function generateTextFromImage({
+  prompt,
+  imagePayload,
+  model,
+  temperature = 0.2,
+  maxOutputTokens = 1200,
+} = {}) {
   const payload = buildImagePayload(imagePayload);
   if (!payload) throw new Error('Missing image payload');
 
@@ -46,7 +73,14 @@ async function generateTextFromImage({ prompt, imagePayload, model, temperature 
   };
 }
 
-async function generateJsonFromImage({ prompt, imagePayload, schema, model, temperature = 0.2, maxOutputTokens = 1200 } = {}) {
+async function generateJsonFromImage({
+  prompt,
+  imagePayload,
+  schema,
+  model,
+  temperature = 0.2,
+  maxOutputTokens = 1200,
+} = {}) {
   const payload = buildImagePayload(imagePayload);
   if (!payload) throw new Error('Missing image payload');
 
@@ -87,11 +121,24 @@ async function dispatchGemini(input = {}, maybeImagePart = null) {
   } = options;
 
   if (imagePayload && schema) {
-    return generateJsonFromImage({ prompt, imagePayload, schema, model, temperature, maxOutputTokens });
+    return generateJsonFromImage({
+      prompt,
+      imagePayload,
+      schema,
+      model,
+      temperature,
+      maxOutputTokens,
+    });
   }
 
   if (imagePayload) {
-    return generateTextFromImage({ prompt, imagePayload, model, temperature, maxOutputTokens });
+    return generateTextFromImage({
+      prompt,
+      imagePayload,
+      model,
+      temperature,
+      maxOutputTokens,
+    });
   }
 
   if (schema) {

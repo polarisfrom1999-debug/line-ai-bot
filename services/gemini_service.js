@@ -1,71 +1,44 @@
 'use strict';
 
-let GoogleGenAI = null;
-let GoogleGenerativeAI = null;
+const axios = require('axios');
 
-try {
-  ({ GoogleGenAI } = require('@google/genai'));
-} catch (_err) {
-  GoogleGenAI = null;
-}
-
-try {
-  ({ GoogleGenerativeAI } = require('@google/generative-ai'));
-} catch (_err) {
-  GoogleGenerativeAI = null;
-}
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const DEFAULT_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 45000);
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
 function getGeminiApiKey() {
-  return normalizeText(
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    ''
-  );
+  return normalizeText(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 }
 
 function getPrimaryModel() {
-  return normalizeText(process.env.GEMINI_MODEL || 'gemini-2.5-flash') || 'gemini-2.5-flash';
+  return normalizeText(process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite') || 'gemini-2.5-flash-lite';
 }
 
 function getFallbackModel() {
-  return normalizeText(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite') || 'gemini-2.5-flash-lite';
+  return normalizeText(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash') || 'gemini-2.5-flash';
 }
 
 function getThirdModel() {
-  return normalizeText(process.env.GEMINI_SECOND_FALLBACK_MODEL || 'gemini-1.5-flash') || 'gemini-1.5-flash';
+  return normalizeText(process.env.GEMINI_SECOND_FALLBACK_MODEL || '');
 }
 
 function isGeminiSdkAvailable() {
-  return Boolean(GoogleGenAI || GoogleGenerativeAI);
+  return true;
 }
 
 function buildClient() {
   const apiKey = getGeminiApiKey();
   if (!apiKey) return null;
 
-  try {
-    if (GoogleGenAI) {
-      return {
-        sdk: 'genai',
-        client: new GoogleGenAI({ apiKey }),
-      };
-    }
-
-    if (GoogleGenerativeAI) {
-      return {
-        sdk: 'generative-ai',
-        client: new GoogleGenerativeAI(apiKey),
-      };
-    }
-  } catch (error) {
-    console.error('[gemini_service] buildClient error:', error?.message || error);
-  }
-
-  return null;
+  return {
+    transport: 'rest',
+    apiKey,
+    baseUrl: GEMINI_BASE_URL,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  };
 }
 
 function buildImagePart(imagePayload) {
@@ -74,7 +47,7 @@ function buildImagePart(imagePayload) {
   if (imagePayload.inlineData?.data) {
     return {
       inlineData: {
-        data: imagePayload.inlineData.data,
+        data: String(imagePayload.inlineData.data),
         mimeType: imagePayload.inlineData.mimeType || imagePayload.mimeType || 'image/jpeg',
       },
     };
@@ -84,7 +57,7 @@ function buildImagePart(imagePayload) {
     return {
       inlineData: {
         data: imagePayload.buffer.toString('base64'),
-        mimeType: imagePayload.mimeType || 'image/jpeg',
+        mimeType: imagePayload.mimeType || imagePayload.mimetype || 'image/jpeg',
       },
     };
   }
@@ -102,7 +75,7 @@ function buildImagePart(imagePayload) {
     return {
       inlineData: {
         data: imagePayload.base64,
-        mimeType: imagePayload.mimeType || 'image/jpeg',
+        mimeType: imagePayload.mimeType || imagePayload.mimetype || 'image/jpeg',
       },
     };
   }
@@ -113,20 +86,17 @@ function buildImagePart(imagePayload) {
 function extractGeminiText(response) {
   if (!response) return '';
 
-  if (typeof response.text === 'function') {
-    return normalizeText(response.text());
+  if (typeof response === 'string') {
+    return normalizeText(response);
   }
 
   if (typeof response.text === 'string') {
     return normalizeText(response.text);
   }
 
-  if (typeof response.response?.text === 'function') {
-    return normalizeText(response.response.text());
-  }
-
-  const candidateParts = response?.candidates?.[0]?.content?.parts || response?.response?.candidates?.[0]?.content?.parts || [];
-  const joined = candidateParts
+  const body = response.data || response;
+  const parts = body?.candidates?.[0]?.content?.parts || [];
+  const joined = parts
     .map((part) => normalizeText(part?.text || ''))
     .filter(Boolean)
     .join('\n');
@@ -134,30 +104,22 @@ function extractGeminiText(response) {
   return normalizeText(joined);
 }
 
-function safeJsonParse(text, fallback = null) {
-  const raw = String(text || '').trim();
-  if (!raw) return fallback;
+function stripCodeFence(text) {
+  return normalizeText(text)
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+}
 
-  const attempts = [];
-  attempts.push(raw);
-  attempts.push(raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim());
+function extractBalancedJsonCandidates(text) {
+  const safe = stripCodeFence(text);
+  const candidates = [];
 
-  const cleaned = attempts[1].replace(/,\s*([}\]])/g, '$1');
-  attempts.push(cleaned);
-
-  for (const candidate of attempts) {
-    try {
-      return JSON.parse(candidate);
-    } catch (_err) {
-      // continue
-    }
-  }
-
-  const safe = attempts[1];
-  const openers = ['{', '['];
   for (let i = 0; i < safe.length; i += 1) {
     const opener = safe[i];
-    if (!openers.includes(opener)) continue;
+    if (opener !== '{' && opener !== '[') continue;
+
     const closer = opener === '{' ? '}' : ']';
     let depth = 0;
     let inString = false;
@@ -165,6 +127,7 @@ function safeJsonParse(text, fallback = null) {
 
     for (let j = i; j < safe.length; j += 1) {
       const ch = safe[j];
+
       if (inString) {
         if (escaped) {
           escaped = false;
@@ -185,21 +148,69 @@ function safeJsonParse(text, fallback = null) {
       if (ch === closer) {
         depth -= 1;
         if (depth === 0) {
-          const candidate = safe.slice(i, j + 1).replace(/,\s*([}\]])/g, '$1');
-          try {
-            return JSON.parse(candidate);
-          } catch (_err) {
-            break;
-          }
+          candidates.push(safe.slice(i, j + 1));
+          break;
         }
       }
+    }
+  }
+
+  return [...new Set(candidates)].sort((a, b) => b.length - a.length);
+}
+
+function safeJsonParse(text, fallback = null) {
+  const raw = normalizeText(text);
+  if (!raw) return fallback;
+
+  const attempts = [
+    raw,
+    stripCodeFence(raw),
+    stripCodeFence(raw).replace(/,\s*([}\]])/g, '$1'),
+    ...extractBalancedJsonCandidates(raw),
+    ...extractBalancedJsonCandidates(raw).map((candidate) => candidate.replace(/,\s*([}\]])/g, '$1')),
+  ];
+
+  for (const candidate of attempts) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch (_err) {
+      // continue
     }
   }
 
   return fallback;
 }
 
-async function retry(fn, retries = 2, delayMs = 800) {
+function extractStatusCode(error) {
+  return Number(error?.response?.status || 0);
+}
+
+function extractApiErrorMessage(error) {
+  const status = extractStatusCode(error);
+  const detail =
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    'Gemini request failed';
+
+  return status ? `[${status}] ${detail}` : String(detail);
+}
+
+function isRetryableError(error) {
+  const status = extractStatusCode(error);
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+
+  const message = normalizeText(error?.message || '').toLowerCase();
+  return (
+    message.includes('timeout') ||
+    message.includes('econnreset') ||
+    message.includes('socket hang up') ||
+    message.includes('temporarily unavailable')
+  );
+}
+
+async function retry(fn, retries = 2, delayMs = 1200) {
   let lastError;
 
   for (let i = 0; i <= retries; i += 1) {
@@ -207,7 +218,7 @@ async function retry(fn, retries = 2, delayMs = 800) {
       return await fn();
     } catch (error) {
       lastError = error;
-      if (i === retries) break;
+      if (i === retries || !isRetryableError(error)) break;
       await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
     }
   }
@@ -215,9 +226,18 @@ async function retry(fn, retries = 2, delayMs = 800) {
   throw lastError;
 }
 
+function normalizeModelName(modelName) {
+  return normalizeText(modelName).replace(/^models\//i, '');
+}
+
 function isRetiredModel(modelName) {
-  const safe = normalizeText(modelName).toLowerCase();
-  return safe === 'gemini-2.0-flash' || safe === 'models/gemini-2.0-flash';
+  const safe = normalizeModelName(modelName).toLowerCase();
+  return [
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite-001',
+  ].includes(safe);
 }
 
 function buildModelCandidates(model) {
@@ -225,116 +245,160 @@ function buildModelCandidates(model) {
   const list = [];
 
   for (const candidate of [model, getPrimaryModel(), getFallbackModel(), getThirdModel()]) {
-    const safe = normalizeText(candidate);
-    if (!safe || seen.has(safe)) continue;
-    if (isRetiredModel(safe)) continue;
+    const safe = normalizeModelName(candidate);
+    if (!safe || seen.has(safe) || isRetiredModel(safe)) continue;
     seen.add(safe);
     list.push(safe);
   }
 
-  return list.length ? list : ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+  return list.length ? list : ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
 }
 
-async function callGenerateContent({ clientWrapper, model, parts, config = {} }) {
-  if (!clientWrapper?.client) {
-    throw new Error('Gemini client unavailable');
-  }
-
-  if (clientWrapper.sdk === 'genai') {
-    return clientWrapper.client.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config,
-    });
-  }
-
-  if (clientWrapper.sdk === 'generative-ai') {
-    const generationConfig = {
-      temperature: config.temperature,
-      topP: config.topP,
-      maxOutputTokens: config.maxOutputTokens,
-      responseMimeType: config.responseMimeType,
-    };
-
-    const modelClient = clientWrapper.client.getGenerativeModel({
-      model,
-      generationConfig,
-    });
-
-    return modelClient.generateContent(parts);
-  }
-
-  throw new Error('No supported Gemini SDK found');
-}
-
-async function generateContentText({ prompt, imagePayloads = [], model, temperature = 0.2, maxOutputTokens = 1200 } = {}) {
-  const clientWrapper = buildClient();
-  if (!clientWrapper) {
-    throw new Error('Gemini client unavailable');
-  }
-
+function buildParts(prompt, imagePayloads = []) {
   const parts = [{ text: String(prompt || '') }];
+
   for (const payload of imagePayloads || []) {
     const imagePart = buildImagePart(payload);
     if (imagePart) parts.push(imagePart);
   }
 
-  let lastError;
+  return parts;
+}
+
+async function callGenerateContent({ clientWrapper, model, parts, generationConfig = {} }) {
+  if (!clientWrapper?.apiKey) {
+    throw new Error('Gemini client unavailable');
+  }
+
+  const targetModel = normalizeModelName(model);
+  const url = `${clientWrapper.baseUrl}/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(clientWrapper.apiKey)}`;
+
+  const body = {
+    contents: [{ role: 'user', parts }],
+    generationConfig,
+  };
+
+  const response = await axios.post(url, body, {
+    timeout: clientWrapper.timeoutMs,
+    headers: { 'Content-Type': 'application/json' },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+
+  return response.data;
+}
+
+async function generateContentText({
+  prompt,
+  imagePayloads = [],
+  model,
+  temperature = 0.2,
+  maxOutputTokens = 1200,
+} = {}) {
+  const clientWrapper = buildClient();
+  if (!clientWrapper) {
+    throw new Error('Gemini client unavailable');
+  }
+
+  const parts = buildParts(prompt, imagePayloads);
+  let lastError = null;
+
   for (const candidate of buildModelCandidates(model)) {
     try {
-      const response = await retry(async () => callGenerateContent({
-        clientWrapper,
-        model: candidate,
-        parts,
-        config: { temperature, maxOutputTokens },
-      }), 2, 900);
+      const response = await retry(
+        () =>
+          callGenerateContent({
+            clientWrapper,
+            model: candidate,
+            parts,
+            generationConfig: {
+              temperature,
+              maxOutputTokens,
+            },
+          }),
+        2,
+        1500
+      );
+
+      const text = extractGeminiText(response);
+      if (!text) {
+        throw new Error(`Empty Gemini text response on ${candidate}`);
+      }
 
       return {
         model: candidate,
-        text: extractGeminiText(response),
+        text,
         raw: response,
       };
     } catch (error) {
       lastError = error;
-      console.warn(`⚠️ generateContentText failed on ${candidate}:`, error?.message || error);
+      console.warn(`⚠️ generateContentText failed on ${candidate}:`, extractApiErrorMessage(error));
+      continue;
     }
   }
 
   throw lastError || new Error('Gemini content text generation failed');
 }
 
-async function generateContentJson({ prompt, imagePayloads = [], schema = null, model, temperature = 0.2, maxOutputTokens = 1200 } = {}) {
+async function generateContentJson({
+  prompt,
+  imagePayloads = [],
+  schema = null,
+  model,
+  temperature = 0.2,
+  maxOutputTokens = 1200,
+} = {}) {
   const clientWrapper = buildClient();
   if (!clientWrapper) {
     throw new Error('Gemini client unavailable');
   }
 
-  const parts = [{ text: String(prompt || '') }];
-  for (const payload of imagePayloads || []) {
-    const imagePart = buildImagePart(payload);
-    if (imagePart) parts.push(imagePart);
-  }
+  const parts = buildParts(prompt, imagePayloads);
+  let lastError = null;
 
-  let lastError;
   for (const candidate of buildModelCandidates(model)) {
     try {
-      const response = await retry(async () => callGenerateContent({
-        clientWrapper,
-        model: candidate,
-        parts,
-        config: clientWrapper.sdk === 'genai'
-          ? {
-              responseMimeType: 'application/json',
-              responseJsonSchema: schema || undefined,
-              temperature,
-              maxOutputTokens,
-            }
-          : {
-              responseMimeType: 'application/json',
-              temperature,
-              maxOutputTokens,
-            },
-      }), 2, 900);
+      let response;
+
+      try {
+        response = await retry(
+          () =>
+            callGenerateContent({
+              clientWrapper,
+              model: candidate,
+              parts,
+              generationConfig: {
+                responseMimeType: 'application/json',
+                responseSchema: schema || undefined,
+                temperature,
+                maxOutputTokens,
+              },
+            }),
+          2,
+          1500
+        );
+      } catch (error) {
+        if (extractStatusCode(error) === 400 && schema) {
+          response = await retry(
+            () =>
+              callGenerateContent({
+                clientWrapper,
+                model: candidate,
+                parts,
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  temperature,
+                  maxOutputTokens,
+                },
+              }),
+            1,
+            1000
+          );
+        } else {
+          throw error;
+        }
+      }
 
       const parsed = safeJsonParse(extractGeminiText(response), null);
       if (parsed !== null) {
@@ -344,10 +408,12 @@ async function generateContentJson({ prompt, imagePayloads = [], schema = null, 
           raw: response,
         };
       }
-      throw new Error('Gemini JSON parse failed');
+
+      throw new Error(`Gemini JSON parse failed on ${candidate}`);
     } catch (error) {
       lastError = error;
-      console.warn(`⚠️ generateContentJson failed on ${candidate}:`, error?.message || error);
+      console.warn(`⚠️ generateContentJson failed on ${candidate}:`, extractApiErrorMessage(error));
+      continue;
     }
   }
 
@@ -365,8 +431,6 @@ async function generateJsonOnly(prompt, schema, temperature = 0.3) {
 }
 
 module.exports = {
-  GoogleGenAI,
-  GoogleGenerativeAI,
   isGeminiSdkAvailable,
   getGeminiApiKey,
   getPrimaryModel,
