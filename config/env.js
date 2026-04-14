@@ -1,3 +1,4 @@
+'use strict';
 require('dotenv').config();
 
 const REQUIRED_ENV = [
@@ -23,8 +24,9 @@ function getEnv() {
     LINE_CHANNEL_SECRET: process.env.LINE_CHANNEL_SECRET,
 
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-    GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-    GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash',
+    GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
+    GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash',
+    GEMINI_SECOND_FALLBACK_MODEL: process.env.GEMINI_SECOND_FALLBACK_MODEL || '',
 
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
     OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-5.4-mini',
