@@ -423,11 +423,16 @@ function buildTodayMealTotalsAnswer(records) {
   if (!mealCount) {
     return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえればそこから合計を見ていけます。';
   }
+
   return [
-    `今日の食事は ${mealCount}件です。`,
-    `総カロリーは 約${round1(totals.kcal)}kcal です。`,
+    '📈 本日の合計（積算）',
+    '━━━━━━━━━━━━━',
+    `🍽️ 食事件数: ${mealCount}件`,
+    `🔥 エネルギー: 約${round1(totals.kcal)} kcal`,
     buildMealNutritionLine(totals),
-  ].join('\n');
+    '━━━━━━━━━━━━━',
+  ].join('
+');
 }
 
 function buildTodayMealBalanceAnswer(records) {
@@ -548,7 +553,12 @@ function sumMealNutrition(records) {
 }
 
 function buildMealNutritionLine(nutrition) {
-  return `たんぱく質 ${round1(nutrition?.protein || 0)}g / 脂質 ${round1(nutrition?.fat || 0)}g / 糖質 ${round1(nutrition?.carbs || 0)}g`;
+  return [
+    `💪 タンパク質: ${round1(nutrition?.protein || 0)} g`,
+    `🍳 脂質: ${round1(nutrition?.fat || 0)} g`,
+    `🍞 糖質: ${round1(nutrition?.carbs || 0)} g`,
+  ].join('
+');
 }
 
 function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
@@ -563,11 +573,15 @@ function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
     lines.push(buildMealNutritionLine(meal?.estimatedNutrition || {}));
   }
 
-  if (/今日ここまで|今日の合計|総カロリー/.test(questionText) || mealType === 'lunch' || mealType === 'dinner') {
-    lines.push(`今日ここまでで 約${round1(todayTotals?.kcal || 0)}kcal です。`);
+  if (/今日ここまで|今日の合計|総カロリー|積算/.test(questionText) || mealType === 'lunch' || mealType === 'dinner') {
+    lines.push('');
+    lines.push('📈 今日ここまでの合計');
+    lines.push(`🔥 エネルギー: 約${round1(todayTotals?.kcal || 0)} kcal`);
+    lines.push(buildMealNutritionLine(todayTotals || {}));
   }
 
-  return lines.join('\n');
+  return lines.join('
+');
 }
 
 async function maybeHandleMealDraftQuestion(input, shortMemory) {
