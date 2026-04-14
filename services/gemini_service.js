@@ -1,4 +1,4 @@
-use strict';
+'use strict';
 
 let GoogleGenAI = null;
 let GoogleGenerativeAI = null;
