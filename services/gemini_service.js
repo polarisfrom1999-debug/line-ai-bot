@@ -32,7 +32,11 @@ function getPrimaryModel() {
 }
 
 function getFallbackModel() {
-  return normalizeText(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash') || 'gemini-2.0-flash';
+  return normalizeText(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite') || 'gemini-2.5-flash-lite';
+}
+
+function getThirdModel() {
+  return normalizeText(process.env.GEMINI_SECOND_FALLBACK_MODEL || 'gemini-1.5-flash') || 'gemini-1.5-flash';
 }
 
 function isGeminiSdkAvailable() {
@@ -135,12 +139,11 @@ function safeJsonParse(text, fallback = null) {
   if (!raw) return fallback;
 
   const attempts = [];
-  attempts.append = attempts.push;
-  attempts.append(raw);
-  attempts.append(raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim());
+  attempts.push(raw);
+  attempts.push(raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim());
 
   const cleaned = attempts[1].replace(/,\s*([}\]])/g, '$1');
-  attempts.append(cleaned);
+  attempts.push(cleaned);
 
   for (const candidate of attempts) {
     try {
@@ -196,7 +199,7 @@ function safeJsonParse(text, fallback = null) {
   return fallback;
 }
 
-async function retry(fn, retries = 2, delayMs = 500) {
+async function retry(fn, retries = 2, delayMs = 800) {
   let lastError;
 
   for (let i = 0; i <= retries; i += 1) {
@@ -212,16 +215,24 @@ async function retry(fn, retries = 2, delayMs = 500) {
   throw lastError;
 }
 
+function isRetiredModel(modelName) {
+  const safe = normalizeText(modelName).toLowerCase();
+  return safe === 'gemini-2.0-flash' || safe === 'models/gemini-2.0-flash';
+}
+
 function buildModelCandidates(model) {
   const seen = new Set();
   const list = [];
-  for (const candidate of [model, getPrimaryModel(), getFallbackModel()]) {
+
+  for (const candidate of [model, getPrimaryModel(), getFallbackModel(), getThirdModel()]) {
     const safe = normalizeText(candidate);
     if (!safe || seen.has(safe)) continue;
+    if (isRetiredModel(safe)) continue;
     seen.add(safe);
     list.push(safe);
   }
-  return list.length ? list : ['gemini-2.5-flash'];
+
+  return list.length ? list : ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 }
 
 async function callGenerateContent({ clientWrapper, model, parts, config = {} }) {
@@ -276,7 +287,7 @@ async function generateContentText({ prompt, imagePayloads = [], model, temperat
         model: candidate,
         parts,
         config: { temperature, maxOutputTokens },
-      }), 2, 700);
+      }), 2, 900);
 
       return {
         model: candidate,
@@ -285,7 +296,7 @@ async function generateContentText({ prompt, imagePayloads = [], model, temperat
       };
     } catch (error) {
       lastError = error;
-      console.error(`⚠️ generateContentText failed on ${candidate}:`, error?.message || error);
+      console.warn(`⚠️ generateContentText failed on ${candidate}:`, error?.message || error);
     }
   }
 
@@ -323,7 +334,7 @@ async function generateContentJson({ prompt, imagePayloads = [], schema = null, 
               temperature,
               maxOutputTokens,
             },
-      }), 2, 700);
+      }), 2, 900);
 
       const parsed = safeJsonParse(extractGeminiText(response), null);
       if (parsed !== null) {
@@ -336,7 +347,7 @@ async function generateContentJson({ prompt, imagePayloads = [], schema = null, 
       throw new Error('Gemini JSON parse failed');
     } catch (error) {
       lastError = error;
-      console.error(`⚠️ generateContentJson failed on ${candidate}:`, error?.message || error);
+      console.warn(`⚠️ generateContentJson failed on ${candidate}:`, error?.message || error);
     }
   }
 
@@ -360,6 +371,7 @@ module.exports = {
   getGeminiApiKey,
   getPrimaryModel,
   getFallbackModel,
+  getThirdModel,
   buildClient,
   buildImagePart,
   extractGeminiText,
