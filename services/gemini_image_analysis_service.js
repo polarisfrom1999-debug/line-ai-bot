@@ -1,4 +1,4 @@
-use strict';
+'use strict';
 
 const { dispatchGemini } = require('./gemini_dispatch_service');
 const { safeJsonParse } = require('./gemini_service');
