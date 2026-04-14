@@ -602,48 +602,41 @@ function looksLikePain(text) {
 }
 
 function buildMealReply(parsedMeal, options = {}) {
-  const mealLabel = summarizeMealItems(parsedMeal);
-  const kcal = round1(parsedMeal?.estimatedNutrition?.kcal || 0);
-  const imageKind = parsedMeal?.imageKind || '';
+  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
+  const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
   const todayTotals = options?.todayTotals || null;
-  const seed = hashText(`${mealLabel}|${kcal}|${parsedMeal?.comment || ''}|${parsedMeal?.ocrText || ''}`);
 
-  if ((imageKind === 'menu_text' || imageKind === 'food_package') && !kcal) {
-    return [
-      pickVariant(seed, [
-        `今回は ${mealLabel} の候補として見ています。`,
-        `${mealLabel}として読める部分がありました。`,
-        `${mealLabel}っぽい情報は拾えています。`
-      ]),
-      parsedMeal?.ocrText ? `読めた文字: ${parsedMeal.ocrText.slice(0, 80)}` : null,
-      '実際に食べた内容が分かれば、そこからかなり寄せて見られます。'
-    ].filter(Boolean).join('\n');
+  const mealLabel = items.length ? items.join('、') : '内容を確認中';
+  const kcal = round1(nut.kcal || 0);
+  const protein = round1(nut.protein || 0);
+  const fat = round1(nut.fat || 0);
+  const carbs = round1(nut.carbs || 0);
+  const comment = normalizeText(parsedMeal?.comment || '') || '今日もひとつ整っていますね😊';
+
+  const lines = [
+    '📸 お食事の解析が終わりました！✨',
+    '━━━━━━━━━━━━━',
+    `🍽️ 【メニュー 🥗】: ${mealLabel}`,
+    `🔥 エネルギー: ${kcal} kcal`,
+    `💪 タンパク質: ${protein} g`,
+    `🍳 脂質: ${fat} g`,
+    `🍞 糖質: ${carbs} g`,
+    '━━━━━━━━━━━━━',
+    `💬 アドバイス: ${comment}`,
+  ];
+
+  if (todayTotals && Number(todayTotals.kcal || 0) > 0) {
+    lines.push('');
+    lines.push('📈 本日の合計（積算）');
+    lines.push('┈┈┈┈┈┈┈┈┈┈┈┈┈');
+    lines.push(`🔥 エネルギー: ${round1(todayTotals.kcal)} kcal`);
+    lines.push(`💪 タンパク質: ${round1(todayTotals.protein)} g`);
+    lines.push(`🍳 脂質: ${round1(todayTotals.fat)} g`);
+    lines.push(`🍞 糖質: ${round1(todayTotals.carbs)} g`);
+    lines.push('━━━━━━━━━━━━━');
   }
 
-  const intro = pickVariant(seed, [
-    `${mealLabel}で見ています。`,
-    `今回は ${mealLabel} として受け止めています。`,
-    `${mealLabel}としていったん整理しました。`,
-    `${mealLabel}でひとまず見立てています。`
-  ]);
-
-  const kcalText = kcal
-    ? pickVariant(seed + 1, [
-        `カロリーは ${kcal}kcal 前後で見ています。`,
-        `目安にすると ${kcal}kcal くらいです。`,
-        `ざっくり ${kcal}kcal 前後の食事です。`
-      ])
-    : null;
-
-  const totalText = todayTotals && Number(todayTotals.kcal || 0) > 0
-    ? pickVariant(seed + 2, [
-        `今日ここまでの合計は ${round1(todayTotals.kcal)}kcal くらいです。`,
-        `これを入れると、今日の合計は ${round1(todayTotals.kcal)}kcal 前後になります。`,
-        `今日ぶんはここまでで ${round1(todayTotals.kcal)}kcal くらいです。`
-      ])
-    : null;
-
-  return [intro, kcalText, parsedMeal?.comment || totalText || '必要ならこのまま今日の合計にもつなげていきます。'].filter(Boolean).join('\n');
+  return lines.join('\n');
 }
 
 function buildMealRecordPayload(text, parsedMeal) {
