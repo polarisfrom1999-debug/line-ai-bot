@@ -47,6 +47,11 @@ const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
+const constitutionSurveyConfig = require('../config/constitution_survey_config');
+const aiPersonaConfig = require('../config/ai_persona_config');
+
+const pendingImageClarificationStore = new Map();
+const PENDING_IMAGE_TTL_MS = 5 * 60 * 1000;
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -141,6 +146,7 @@ function detectIntent(input) {
   if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計/.test(text)) return 'today_meal_totals';
   if (/積算|今日ここまで|ここまでの合計/.test(text)) return 'today_meal_totals';
   if (/栄養バランス|1日の食事の総括|今日の食事の総括|今日の栄養/.test(text)) return 'today_meal_balance';
+  if (/最近の食事バランス|2週間の食事バランス|二週間の食事バランス|直近2週間/.test(text)) return 'biweekly_meal_balance';
   if (/今何ポイント|今ポイント|ポイント教えて|ポイントは\??/.test(text)) return 'point_summary';
   if (/管理確認|管理メモ|管理用まとめ/.test(text)) return 'admin_check';
   if (/使い方教えて|使い方|ヘルプ|メニュー|コマンド|無料体験|プラン案内|AIタイプ/.test(text)) return 'help';
@@ -158,6 +164,7 @@ function buildMemoryAnswer(longMemory) {
   if (longMemory?.age) lines.push(`年齢は ${longMemory.age} として見ています。`);
   if (longMemory?.goal) lines.push(`目標は「${longMemory.goal}」です。`);
   if (longMemory?.aiType) lines.push(`AIタイプは「${longMemory.aiType}」です。`);
+  if (longMemory?.voiceStyle) lines.push(`雰囲気は「${longMemory.voiceStyle}」です。`);
   if (longMemory?.constitutionType) lines.push(`体質タイプは「${longMemory.constitutionType}」です。`);
   if (longMemory?.selectedPlan) lines.push(`プランは「${longMemory.selectedPlan}」です。`);
 
@@ -269,7 +276,7 @@ function buildGuideReplyMessage(guidanceType, options = {}) {
     competition_entry_help: ['800mです', '10時です', 'おにぎりなら食べやすい'],
     trial: ['無料体験開始', 'プラン案内', '使い方'],
     plan: ['ライト', 'スタンダード', 'プレミアム'],
-    type: ['やさしく伴走', '理屈で整理', '背中を押す'],
+    type: ['そっと寄り添う', '明るく後押し', '頼もしく導く', '力強く支える'],
   };
 
   let text = '';
@@ -293,10 +300,10 @@ function buildGuideReplyMessage(guidanceType, options = {}) {
     case 'type':
       text = [
         '【AIタイプ】',
-        '・やさしく伴走',
-        '・理屈で整理',
-        '・背中を押す',
-        '・バランス型',
+        '・そっと寄り添う',
+        '・明るく後押し',
+        '・頼もしく導く',
+        '・力強く支える',
         '',
         '変えたい時は「AIタイプ変更」やタイプ名をそのまま送ってください。',
       ].join('\n');
@@ -468,6 +475,108 @@ function buildTodayMealBalanceAnswer(records) {
   }
 
   return lines.join('\n');
+}
+
+function sumNutritionFromDailyRecords(recentDailyRecords = []) {
+  const totals = { kcal: 0, protein: 0, fat: 0, carbs: 0, mealCount: 0 };
+  for (const day of recentDailyRecords) {
+    const records = day?.records || {};
+    const dayTotals = sumMealNutrition(records);
+    totals.kcal += Number(dayTotals.kcal || 0);
+    totals.protein += Number(dayTotals.protein || 0);
+    totals.fat += Number(dayTotals.fat || 0);
+    totals.carbs += Number(dayTotals.carbs || 0);
+    totals.mealCount += Array.isArray(records?.meals) ? records.meals.length : 0;
+  }
+  return totals;
+}
+
+function buildBiweeklyMealBalanceAnswer(recentDailyRecords = []) {
+  const safeRows = Array.isArray(recentDailyRecords) ? recentDailyRecords : [];
+  if (!safeRows.length) {
+    return '比較できる食事記録がまだ少ないので、まずは食事記録を少し増やしてから一緒に見ていきましょう。';
+  }
+
+  const current = safeRows.slice(-14);
+  const previous = safeRows.slice(-28, -14);
+  if (!current.length) {
+    return '直近2週間の食事記録がまだ不足しています。食事を送ってもらえれば比較を返せます。';
+  }
+
+  const currentTotals = sumNutritionFromDailyRecords(current);
+  const previousTotals = sumNutritionFromDailyRecords(previous);
+  const currentDays = Math.max(current.length, 1);
+  const previousDays = Math.max(previous.length, 1);
+  const kcalDiff = round1(currentTotals.kcal - previousTotals.kcal);
+  const proteinDiff = round1(currentTotals.protein - previousTotals.protein);
+  const fatDiff = round1(currentTotals.fat - previousTotals.fat);
+  const carbsDiff = round1(currentTotals.carbs - previousTotals.carbs);
+
+  const lines = [
+    '📊 食事バランス比較（直近2週間 vs その前2週間）',
+    '━━━━━━━━━━━━━',
+    `🍽️ 直近2週間: ${currentTotals.mealCount}件`,
+    `🔥 kcal: ${round1(currentTotals.kcal)}（差分 ${kcalDiff >= 0 ? '+' : ''}${kcalDiff}）`,
+    `💪 たんぱく質: ${round1(currentTotals.protein)}g（差分 ${proteinDiff >= 0 ? '+' : ''}${proteinDiff}）`,
+    `🍳 脂質: ${round1(currentTotals.fat)}g（差分 ${fatDiff >= 0 ? '+' : ''}${fatDiff}）`,
+    `🍞 糖質: ${round1(currentTotals.carbs)}g（差分 ${carbsDiff >= 0 ? '+' : ''}${carbsDiff}）`,
+    `📉 1日平均kcal: ${round1(currentTotals.kcal / currentDays)}（前期 ${round1(previousTotals.kcal / previousDays)}）`,
+    '━━━━━━━━━━━━━',
+  ];
+
+  if (!previousTotals.mealCount) {
+    lines.push('💬 比較元の記録がまだ少ないため、今回は直近2週間の基準値として見ていきましょう。');
+  } else if (proteinDiff > 10) {
+    lines.push('💬 たんぱく質は前期より積めています。良い流れなので、このまま続けて大丈夫です。');
+  } else if (proteinDiff < -10) {
+    lines.push('💬 たんぱく質がやや下がっているので、卵・魚・肉・大豆を1品足せると戻しやすいです。');
+  } else if (fatDiff > 20) {
+    lines.push('💬 脂質が上がり気味なので、次の1〜2食を軽めにして整えるのが合いやすいです。');
+  } else {
+    lines.push('💬 大きく崩れすぎてはいないので、次の食事で1点だけ整える進め方で十分です。');
+  }
+
+  return lines.join('\n');
+}
+
+function buildPersonaTypeQuickReplyMessage() {
+  const labels = Object.values(aiPersonaConfig.AI_TYPES || {}).map((item) => item?.label).filter(Boolean);
+  const text = [
+    'AIタイプを選べます。今の自分に合うものを選んでください。',
+    '',
+    ...labels.map((label) => `・${label}`),
+  ].join('\n');
+  return textMessageWithQuickReplies(text, labels);
+}
+
+function buildVoiceStyleQuickReplyMessage() {
+  const labels = Object.values(aiPersonaConfig.VOICE_STYLES || {}).map((item) => item?.label).filter(Boolean);
+  const text = [
+    '雰囲気を選べます。話しやすい温度を選んでください。',
+    '',
+    ...labels.map((label) => `・${label}`),
+  ].join('\n');
+  return textMessageWithQuickReplies(text, labels);
+}
+
+function maybeParsePersonaType(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  const configMatch = aiPersonaConfig.findAiTypeByLabel(safe);
+  if (configMatch?.label) return configMatch.label;
+
+  if (/やさしく伴走/.test(safe)) return 'そっと寄り添う';
+  if (/理屈で整理|バランス型/.test(safe)) return '頼もしく導く';
+  if (/背中を押す/.test(safe)) return '明るく後押し';
+  if (/力強く支える/.test(safe)) return '力強く支える';
+  return null;
+}
+
+function maybeParseVoiceStyle(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  const configMatch = aiPersonaConfig.findVoiceStyleByLabel(safe);
+  return configMatch?.label || null;
 }
 
 function parseInlineProfile(text) {
@@ -1005,19 +1114,127 @@ function maybeHandleSymptomCore(input) {
   };
 }
 
-function looksLikeMotionContext(shortMemory, recentMessages) {
+function looksLikeMotionContext(shortMemory, recentMessages, currentText = '') {
   const followUpType = normalizeText(shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '');
   if (followUpType === 'motion') return true;
+  if (followUpType === 'meal' || followUpType === 'lab' || followUpType === 'lab_pending') return false;
 
-  const recentText = (Array.isArray(recentMessages) ? recentMessages : [])
-    .slice(-8)
+  const safeCurrent = normalizeText(currentText);
+  if (/食べた|ごはん|ご飯|朝食|昼食|夕食|おかず|ラーメン|カレー|寿司|弁当|間食/.test(safeCurrent)) return false;
+  if (/動作解析|フォーム|ランニングフォーム|姿勢|投球|スイング|歩き方/.test(safeCurrent)) return true;
+
+  const recentUserText = (Array.isArray(recentMessages) ? recentMessages : [])
+    .filter((m) => m?.role === 'user')
+    .slice(-4)
     .map((m) => normalizeText(m?.content || ''))
     .join('\n');
 
   const topicText = normalizeText(shortMemory?.recentSmallTalkTopic || '');
-  const merged = [topicText, recentText].join('\n');
+  const merged = [safeCurrent, topicText, recentUserText].join('\n');
+
+  if (/食べた|ごはん|ご飯|朝食|昼食|夕食|おかず|ラーメン|カレー|寿司|弁当|間食/.test(merged)) return false;
 
   return /動作解析|フォーム|走り|ランニングフォーム|ランフォーム|歩き方|姿勢|投球|ピッチング|サーブ|スイング|スクワット|片脚立ち|立ち姿|正面|側面|後面/.test(merged);
+}
+
+function looksLikeShoeContext(shortMemory, recentMessages, currentText = '') {
+  const followUpType = normalizeText(shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '');
+  if (followUpType === 'shoe_wear') return true;
+  const recentUserText = (Array.isArray(recentMessages) ? recentMessages : [])
+    .filter((m) => m?.role === 'user')
+    .slice(-4)
+    .map((m) => normalizeText(m?.content || ''))
+    .join('\n');
+  const merged = [normalizeText(currentText), normalizeText(shortMemory?.recentSmallTalkTopic || ''), recentUserText].join('\n');
+  return /靴|靴底|ソール|摩耗|削れ|シューズ/.test(merged);
+}
+
+function buildImageRouteClarifyMessage() {
+  return textMessageWithQuickReplies(
+    [
+      '画像の種類をもう一度だけ合わせたいです。',
+      'この画像はどれに近いですか？',
+      '（選んだあと、同じ画像をもう一度送ってください）'
+    ].join('\n'),
+    ['食事の写真', '血液検査の画像', '動作・フォーム解析', '靴底の摩耗確認']
+  );
+}
+
+function resolveImageRouteSelection(text) {
+  const safe = normalizeText(text);
+  if (/食事/.test(safe)) return 'meal';
+  if (/血液|検査/.test(safe)) return 'lab';
+  if (/動作|フォーム|歩き方|走り/.test(safe)) return 'motion';
+  if (/靴|靴底|摩耗|ソール/.test(safe)) return 'shoe_wear';
+  return '';
+}
+
+function setPendingImageForClarification(userId, imagePayload, textHint = '') {
+  if (!userId || !imagePayload?.buffer) return;
+  pendingImageClarificationStore.set(userId, {
+    imagePayload,
+    textHint: normalizeText(textHint),
+    expiresAt: Date.now() + PENDING_IMAGE_TTL_MS
+  });
+}
+
+function consumePendingImageForClarification(userId) {
+  if (!userId) return null;
+  const row = pendingImageClarificationStore.get(userId);
+  if (!row) return null;
+  pendingImageClarificationStore.delete(userId);
+  if (Number(row.expiresAt || 0) < Date.now()) return null;
+  return row;
+}
+
+async function handleImageByExplicitRoute({ route, input, shortMemory, textHint, imagePayload }) {
+  if (route === 'meal') {
+    const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+    if (mealImageHandled?.handled) {
+      if (mealImageHandled.meal?.recordReady) {
+        await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+      }
+      return {
+        ok: true,
+        replyText: mealImageHandled.replyText,
+        internal: { intentType: 'meal_image', responseMode: 'record' }
+      };
+    }
+  }
+
+  if (route === 'lab') {
+    const labImageHandled = await maybeHandleLabImage(input, imagePayload);
+    if (labImageHandled?.handled) {
+      return {
+        ok: true,
+        replyText: labImageHandled.replyText,
+        internal: { intentType: 'lab_image', responseMode: 'answer' }
+      };
+    }
+  }
+
+  const motionHint = route === 'shoe_wear'
+    ? `${textHint}\n靴底・ソール摩耗の観点で、歩き方や走り方の癖につながる所見を優先してください。`
+    : textHint;
+  const { motionResult, replyText } = await analyzeMotionFromFrames({
+    input,
+    shortMemory,
+    textHint: motionHint,
+    frames: [{
+      buffer: imagePayload.buffer,
+      mimeType: imagePayload.mimeType || 'image/jpeg',
+    }],
+    sourceType: 'image',
+  });
+  return {
+    ok: true,
+    replyText,
+    internal: {
+      intentType: route === 'shoe_wear' ? 'shoe_motion_image' : 'motion_image',
+      responseMode: 'answer',
+      motionModel: motionResult?.usedModel || ''
+    }
+  };
 }
 
 async function appendTurn(userId, userText, replyText) {
@@ -1360,6 +1577,10 @@ function buildAdminCheckReply({ longMemory, records, points }) {
 }
 
 async function maybeStoreSimpleRecords(userId, text) {
+  if (looksLikeDistress(text) || looksLikePain(text) || looksLikeAnnyui(text)) {
+    // 人の状態ケアを優先し、低余力時は自動記録を急がない
+    return;
+  }
   const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text) && !isMealAnnouncementText(text)
     ? mealAnalysisService.parseMealText(text)
     : null;
@@ -1368,7 +1589,17 @@ async function maybeStoreSimpleRecords(userId, text) {
   }
 }
 
-async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest) {
+function inferEnergyLevelForNormalReply(inputText, shortMemory) {
+  const safe = normalizeText(inputText);
+  const tone = normalizeText(shortMemory?.lastEmotionTone || '');
+  if (/眠い|寝不足|疲れ|しんどい|だるい|限界|無理/.test(safe)) return 'low';
+  if (/元気|いけそう|調子いい/.test(safe)) return 'high';
+  if (tone === 'tired' || tone === 'heavy_negative' || tone === 'anxious') return 'low';
+  return 'middle';
+}
+
+async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, shortMemory) {
+  const energyLevel = inferEnergyLevelForNormalReply(input?.rawText || '', shortMemory);
   const systemHint = [
     '[伴走OSルール]',
     '- 受け止めを先に置く',
@@ -1381,8 +1612,13 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     `- 体重: ${longMemoryLatest?.weight || '未設定'}`,
     `- 体脂肪率: ${longMemoryLatest?.bodyFat || '未設定'}`,
     `- AIタイプ: ${longMemoryLatest?.aiType || '未設定'}`,
+    `- 雰囲気: ${longMemoryLatest?.voiceStyle || '未設定'}`,
+    `- energy_level推定: ${energyLevel}`,
     `- 体質タイプ: ${longMemoryLatest?.constitutionType || '未設定'}`,
     `- プラン: ${longMemoryLatest?.selectedPlan || '未設定'}`,
+    Array.isArray(longMemoryLatest?.supportPreference) && longMemoryLatest.supportPreference.length
+      ? `- 支え方の好み: ${longMemoryLatest.supportPreference.slice(0, 4).join(' / ')}`
+      : null,
     recentSummary ? `- 最近の流れ: ${recentSummary}` : null,
     recentMessages.filter((m) => m.role === 'assistant').slice(-4).length ? `- 直近で避けたい言い回し: ${recentMessages.filter((m) => m.role === 'assistant').slice(-4).map((m) => m.content).join(' / ')}` : null
   ].filter(Boolean).join('\n');
@@ -1393,6 +1629,7 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     recentMessages,
     intentType: 'normal',
     responseMode: 'empathy_plus_one_hint',
+    energyLevel,
     hiddenContext: systemHint,
     longMemory: longMemoryLatest
   });
@@ -1429,6 +1666,23 @@ function inferExpectedImageRoute(shortMemory, recentMessages = []) {
   return imageClassificationService.classifyImageByHint(merged);
 }
 
+function resolveImageRouteDecision({ shortMemory, recentMessages, imageAnalysis, textHint }) {
+  const followUpType = shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '';
+  const recent = [...(Array.isArray(recentMessages) ? recentMessages : [])].reverse();
+  const recentUser = recent.find((item) => item?.role === 'user' && normalizeText(item?.content || ''));
+  const recentAssistant = recent.find((item) => item?.role === 'assistant' && normalizeText(item?.content || ''));
+  const mergedHint = [textHint, recentUser?.content || '', recentAssistant?.content || ''].filter(Boolean).join('\n');
+  const scores = imageClassificationService.scoreImageRoutes({
+    lab: imageAnalysis?.lab || null,
+    meal: imageAnalysis?.meal || null,
+    shoeWear: imageAnalysis?.shoeWear || null,
+    movement: imageAnalysis?.movement || null,
+    hintText: mergedHint,
+    followUpType
+  });
+  return imageClassificationService.resolveImageRouteByScore(scores);
+}
+
 function buildConversationFallbackReply(input) {
   const text = normalizeText(input?.rawText || '');
   if (/画像|写真/.test(text)) {
@@ -1438,6 +1692,167 @@ function buildConversationFallbackReply(input) {
     return '今ちょっとうまく案内がつながらなかったので、もう一度同じ言葉を送ってもらえれば続きから整えます。';
   }
   return '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。';
+}
+
+function isInitialConstitutionSurveyTrigger(text) {
+  const safe = normalizeText(text);
+  return /体質アンケート開始|初回体質アンケート|体質アンケート/.test(safe);
+}
+
+function isPeriodicConstitutionSurveyTrigger(text) {
+  const safe = normalizeText(text);
+  return /体質チェック|定期体質チェック|今の調子チェック/.test(safe);
+}
+
+function buildConstitutionQuestionMessage(state) {
+  const survey = constitutionSurveyConfig.getSurveyByType(state?.surveyType);
+  const question = constitutionSurveyConfig.getCurrentQuestion(state);
+  if (!survey || !question) return null;
+  const progress = `${Number(state.currentIndex || 0) + 1}/${survey.questions.length}`;
+  const lines = [
+    `【${survey.title} ${progress}】`,
+    question.text,
+  ];
+  const quickReplies = constitutionSurveyConfig.getQuickReplyLabels(survey.answerOptions || []);
+  return textMessageWithQuickReplies(lines.join('\n'), quickReplies);
+}
+
+function buildSupportPreferenceFromInitialResult(result = {}) {
+  const prefs = [];
+  const main = normalizeText(result?.mainTypeLabel || '');
+  const sub = normalizeText(result?.subTypeLabel || '');
+  const append = (value) => {
+    const safe = normalizeText(value);
+    if (!safe) return;
+    if (!prefs.includes(safe)) prefs.push(safe);
+  };
+
+  append('提案は1つまで');
+  if (/消耗|我慢|気疲れ|むくみ/.test(main) || /消耗|我慢|気疲れ|むくみ/.test(sub)) append('安心感優先');
+  if (/消耗|食後どんより|省エネ/.test(main)) append('短く返す');
+  if (/考えすぎ|頼もしく導く|省エネ/.test(main) || /考えすぎ/.test(sub)) append('根拠を添えて返す');
+  if (/甘いもの波|気疲れ/.test(main)) append('明るめの温度で返す');
+  return prefs;
+}
+
+function buildSupportPreferenceFromPeriodicDelta(delta = {}) {
+  const prefs = [];
+  const append = (value) => {
+    const safe = normalizeText(value);
+    if (!safe) return;
+    if (!prefs.includes(safe)) prefs.push(safe);
+  };
+  const overwork = Number(delta?.overwork || 0);
+  const stress = Number(delta?.stress || 0);
+  const overthink = Number(delta?.overthink || 0);
+  const slow = Number(delta?.slow || 0);
+
+  append('提案は1つまで');
+  if (overwork > 0 || stress > 0 || slow > 0) append('安心感優先');
+  if (overwork > 1 || slow > 1) append('短く返す');
+  if (overthink > 0) append('根拠を添えて返す');
+  return prefs;
+}
+
+async function maybeHandleConstitutionSurvey(input, shortMemory, longMemory, mergeLongMemory, saveShortMemory, saveWeeklySurvey, saveMonthlySurvey) {
+  if (input?.messageType !== 'text') return null;
+  const text = normalizeText(input?.rawText || '');
+  if (!text) return null;
+
+  const active = shortMemory?.constitutionSurveyState || null;
+  const startInitial = isInitialConstitutionSurveyTrigger(text);
+  const startPeriodic = isPeriodicConstitutionSurveyTrigger(text);
+
+  if (!active && !startInitial && !startPeriodic) return null;
+
+  if (!active && (startInitial || startPeriodic)) {
+    const state = startPeriodic
+      ? constitutionSurveyConfig.buildPeriodicCheckState()
+      : constitutionSurveyConfig.buildInitialSurveyState();
+    const survey = constitutionSurveyConfig.getSurveyByType(state.surveyType);
+    await saveShortMemory(input.userId, { constitutionSurveyState: state });
+    const firstQuestion = buildConstitutionQuestionMessage(state);
+    return {
+      replyText: [survey.introMessage, survey.completeMessage ? '' : null, firstQuestion?.text || ''].filter(Boolean).join('\n'),
+      replyMessage: firstQuestion || { type: 'text', text: survey.introMessage },
+      internal: { intentType: startPeriodic ? 'constitution_periodic_start' : 'constitution_initial_start', responseMode: 'guided' }
+    };
+  }
+
+  if (!active) return null;
+
+  const survey = constitutionSurveyConfig.getSurveyByType(active.surveyType);
+  const answerOption = active.surveyType === constitutionSurveyConfig.SURVEY_TYPES.PERIODIC
+    ? constitutionSurveyConfig.getPeriodicCheckAnswerOption(text)
+    : constitutionSurveyConfig.getInitialSurveyAnswerOption(text);
+
+  if (!answerOption) {
+    const questionMessage = buildConstitutionQuestionMessage(active);
+    return {
+      replyText: `${survey.title}はボタンから選べます。近いものを1つ選んでください。`,
+      replyMessage: questionMessage || { type: 'text', text: `${survey.title}はボタンから選べます。` },
+      internal: { intentType: 'constitution_answer_retry', responseMode: 'guided' }
+    };
+  }
+
+  const nextState = constitutionSurveyConfig.applySurveyAnswer(active, answerOption.label);
+  if (!constitutionSurveyConfig.isSurveyComplete(nextState)) {
+    await saveShortMemory(input.userId, { constitutionSurveyState: nextState });
+    const nextQuestion = buildConstitutionQuestionMessage(nextState);
+    return {
+      replyText: nextQuestion?.text || '次の質問に進みます。',
+      replyMessage: nextQuestion || { type: 'text', text: '次の質問に進みます。' },
+      internal: { intentType: 'constitution_question_progress', responseMode: 'guided' }
+    };
+  }
+
+  let replyText = survey.completeMessage;
+  if (nextState.surveyType === constitutionSurveyConfig.SURVEY_TYPES.INITIAL) {
+    const evaluated = constitutionSurveyConfig.evaluateInitialSurvey(nextState.answers || {});
+    const nextSupportPreference = buildSupportPreferenceFromInitialResult(evaluated?.result || {});
+    const aiTypeFallback = normalizeText(longMemory?.aiType || '') ? null : normalizeText(evaluated?.result?.recommendedAiTypes?.[0] || '');
+    const voiceStyleFallback = normalizeText(longMemory?.voiceStyle || '') ? null : normalizeText(evaluated?.result?.recommendedVoiceStyles?.[0] || '');
+    await mergeLongMemory(input.userId, {
+      constitutionType: evaluated?.result?.mainTypeLabel || '',
+      lifeContext: [
+        `体質主タイプ: ${evaluated?.result?.mainTypeLabel || '未判定'}`,
+        `体質副タイプ: ${evaluated?.result?.subTypeLabel || '未判定'}`
+      ],
+      supportPreference: nextSupportPreference,
+      ...(aiTypeFallback ? { aiType: aiTypeFallback } : {}),
+      ...(voiceStyleFallback ? { voiceStyle: voiceStyleFallback } : {})
+    });
+    await saveMonthlySurvey(input.userId, {
+      completed: true,
+      answers: nextState.answers || {},
+      result: evaluated?.result || {},
+      scores: evaluated?.scores || {}
+    });
+    replyText = [survey.completeMessage, '', evaluated?.result?.text || '今の傾向を整理しました。'].join('\n');
+  } else {
+    const currentDelta = constitutionSurveyConfig.scorePeriodicCheck(nextState.answers || {});
+    const previousDelta = shortMemory?.lastPeriodicConstitutionDelta || {};
+    const diffComment = constitutionSurveyConfig.buildPeriodicCheckSummary(previousDelta, currentDelta);
+    const nextSupportPreference = buildSupportPreferenceFromPeriodicDelta(currentDelta);
+    await mergeLongMemory(input.userId, {
+      lifeContext: ['定期体質チェックを実施'],
+      supportPreference: nextSupportPreference
+    });
+    await saveWeeklySurvey(input.userId, {
+      completed: true,
+      answers: nextState.answers || {},
+      delta: currentDelta
+    });
+    await saveShortMemory(input.userId, { lastPeriodicConstitutionDelta: currentDelta });
+    replyText = [survey.completeMessage, '', diffComment].join('\n');
+  }
+
+  await saveShortMemory(input.userId, { constitutionSurveyState: null });
+  return {
+    replyText,
+    replyMessage: { type: 'text', text: replyText },
+    internal: { intentType: 'constitution_result', responseMode: 'guided' }
+  };
 }
 
 async function orchestrateConversation(input) {
@@ -1464,6 +1879,63 @@ async function orchestrateConversation(input) {
     if (onboarding?.handled) {
       await appendTurn(input.userId, input.rawText || '', onboarding.replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: onboarding.replyText }], internal: { intentType: 'onboarding', responseMode: 'guided' } };
+    }
+
+    const constitutionSurveyHandled = await maybeHandleConstitutionSurvey(
+      input,
+      shortMemory,
+      longMemory,
+      contextMemoryService.mergeLongMemory,
+      contextMemoryService.saveShortMemory,
+      contextMemoryService.saveWeeklySurvey,
+      contextMemoryService.saveMonthlySurvey
+    );
+    if (constitutionSurveyHandled) {
+      await appendTurn(input.userId, input.rawText || '', constitutionSurveyHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [constitutionSurveyHandled.replyMessage || { type: 'text', text: constitutionSurveyHandled.replyText }],
+        internal: constitutionSurveyHandled.internal || { intentType: 'constitution_survey', responseMode: 'guided' }
+      };
+    }
+
+    if (input?.messageType === 'text' && shortMemory?.pendingClarification?.type === 'image_route') {
+      const selected = resolveImageRouteSelection(text);
+      if (selected) {
+        const autoRoute = normalizeText(shortMemory?.pendingClarification?.autoRoute || '');
+        if (autoRoute && autoRoute !== selected) {
+          await contextMemoryService.mergeLongMemory(input.userId, {
+            lifeContext: [`画像分類補正: 自動=${autoRoute} / 手動=${selected}`]
+          });
+        }
+        const pendingImage = consumePendingImageForClarification(input.userId);
+        await contextMemoryService.saveShortMemory(input.userId, {
+          lastImageType: selected,
+          pendingClarification: null
+        });
+        if (pendingImage?.imagePayload?.buffer) {
+          const routed = await handleImageByExplicitRoute({
+            route: selected,
+            input,
+            shortMemory,
+            textHint: pendingImage.textHint || text,
+            imagePayload: pendingImage.imagePayload
+          });
+          await appendTurn(input.userId, input.rawText || '', routed.replyText);
+          return {
+            ok: true,
+            replyMessages: [{ type: 'text', text: routed.replyText }],
+            internal: routed.internal
+          };
+        }
+        const replyText = `ありがとうございます。次は「${selected === 'meal' ? '食事' : selected === 'lab' ? '血液検査' : selected === 'shoe_wear' ? '靴底摩耗' : '動作解析'}」として見るので、同じ画像をもう一度送ってください。`;
+        await appendTurn(input.userId, input.rawText || '', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'image_route_selected', responseMode: 'guided' }
+        };
+      }
     }
 
     if (input?.messageType === 'text' && (looksLikeDistress(text) || looksLikePain(text))) {
@@ -1516,29 +1988,6 @@ async function orchestrateConversation(input) {
 
       imagePayload = ingested.payload;
 
-      if (looksLikeMotionContext(shortMemory, recentMessages)) {
-        const { motionResult, replyText } = await analyzeMotionFromFrames({
-          input,
-          shortMemory,
-          textHint: text,
-          frames: [{
-            buffer: imagePayload.buffer,
-            mimeType: imagePayload.mimeType || 'image/jpeg',
-          }],
-          sourceType: 'image',
-        });
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
-          internal: {
-            intentType: 'motion_image',
-            responseMode: 'answer',
-            motionModel: motionResult?.usedModel || '',
-          }
-        };
-      }
-
       const expectedRoute = inferExpectedImageRoute(shortMemory, recentMessages);
       let labImageHandled = null;
       let mealImageHandled = null;
@@ -1581,6 +2030,15 @@ async function orchestrateConversation(input) {
         lab: labImageHandled?.analysis,
         meal: mealImageHandled?.analysis
       }, text);
+      const routeDecision = resolveImageRouteDecision({
+        shortMemory,
+        recentMessages,
+        imageAnalysis: {
+          lab: labImageHandled?.analysis || null,
+          meal: mealImageHandled?.analysis || null
+        },
+        textHint: text
+      });
       if (labImageHandled?.analysis?.labLike) {
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: 'lab_pending',
@@ -1601,10 +2059,43 @@ async function orchestrateConversation(input) {
           internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
         };
       }
+
+      const isShoeContext = looksLikeShoeContext(shortMemory, recentMessages, text);
+      const isMotionContext = looksLikeMotionContext(shortMemory, recentMessages, text);
+      if (!isShoeContext && !isMotionContext && !routeDecision.isReliable) {
+        const replyMessage = buildImageRouteClarifyMessage();
+        setPendingImageForClarification(input.userId, imagePayload, text);
+        await contextMemoryService.saveShortMemory(input.userId, {
+          pendingClarification: {
+            type: 'image_route',
+            at: new Date().toISOString(),
+            autoRoute: routeDecision.topRoute,
+            autoScore: routeDecision.topScore,
+            secondRoute: routeDecision.secondRoute,
+            secondScore: routeDecision.secondScore
+          }
+        });
+        await appendTurn(input.userId, input.rawText || '[image]', replyMessage?.text || '画像の種類を確認したいです。');
+        return {
+          ok: true,
+          replyMessages: [replyMessage || { type: 'text', text: '画像の種類を確認したいです。' }],
+          internal: {
+            intentType: 'image_route_clarify',
+            responseMode: 'guided',
+            imageKind,
+            fallbackKind,
+            routeDecision
+          }
+        };
+      }
+
+      const motionHint = (isShoeContext || routeDecision.route === 'shoe_wear')
+        ? `${text}\n靴底・ソール摩耗の観点で、歩き方や走り方の癖につながる所見を優先してください。`
+        : text;
       const { motionResult, replyText } = await analyzeMotionFromFrames({
         input,
         shortMemory,
-        textHint: text,
+        textHint: motionHint,
         frames: [{
           buffer: imagePayload.buffer,
           mimeType: imagePayload.mimeType || 'image/jpeg',
@@ -1616,9 +2107,10 @@ async function orchestrateConversation(input) {
         ok: true,
         replyMessages: [{ type: 'text', text: replyText }],
         internal: {
-          intentType: 'motion_image_fallback',
+          intentType: (isShoeContext || routeDecision.route === 'shoe_wear') ? 'shoe_motion_image' : 'motion_image_fallback',
           responseMode: 'answer',
           motionModel: motionResult?.usedModel || '',
+          routeDecision
         }
       };
     }
@@ -1790,6 +2282,13 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_meal_balance', responseMode: 'answer' } };
     }
 
+    if (intent === 'biweekly_meal_balance') {
+      const recentDailyRecords = await contextMemoryService.getRecentDailyRecords(input.userId, 28);
+      const replyText = buildBiweeklyMealBalanceAnswer(recentDailyRecords);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'biweekly_meal_balance', responseMode: 'answer' } };
+    }
+
     const stageGuideIntent = hasSpecificConsultationDetails(text)
       ? null
       : detectStageEntryGuideIntent(text);
@@ -1884,11 +2383,34 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
 
-    if (/^(やさしく伴走|理屈で整理|背中を押す|バランス型)$/u.test(text)) {
-      await contextMemoryService.mergeLongMemory(input.userId, { aiType: text });
-      const replyText = `AIタイプを「${text}」に更新しました。`;
+    if (/^AIタイプ変更$|^タイプ変更$|^人格変更$/.test(text)) {
+      const replyMessage = buildPersonaTypeQuickReplyMessage();
+      const replyText = replyMessage?.text || 'AIタイプ変更ですね。タイプ名を送ってください。';
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [replyMessage || { type: 'text', text: replyText }], internal: { intentType: 'ai_type_change_prompt', responseMode: 'guided' } };
+    }
+
+    if (/^雰囲気変更$|^話し方変更$|^スタイル変更$/.test(text)) {
+      const replyMessage = buildVoiceStyleQuickReplyMessage();
+      const replyText = replyMessage?.text || '雰囲気変更ですね。希望の雰囲気を送ってください。';
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [replyMessage || { type: 'text', text: replyText }], internal: { intentType: 'voice_style_change_prompt', responseMode: 'guided' } };
+    }
+
+    const personaTypeLabel = maybeParsePersonaType(text);
+    if (personaTypeLabel) {
+      await contextMemoryService.mergeLongMemory(input.userId, { aiType: personaTypeLabel });
+      const replyText = `AIタイプを「${personaTypeLabel}」に更新しました。必要なら続けて「雰囲気変更」で温度感も合わせられます。`;
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'ai_type_update', responseMode: 'answer' } };
+    }
+
+    const voiceStyleLabel = maybeParseVoiceStyle(text);
+    if (voiceStyleLabel) {
+      await contextMemoryService.mergeLongMemory(input.userId, { voiceStyle: voiceStyleLabel });
+      const replyText = `雰囲気を「${voiceStyleLabel}」に更新しました。`;
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'voice_style_update', responseMode: 'answer' } };
     }
 
     if (/^(ライト|スタンダード|プレミアム)$/u.test(text)) {
@@ -1920,7 +2442,7 @@ async function orchestrateConversation(input) {
     await maybeStoreSimpleRecords(input.userId, text);
 
     const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
-    const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest);
+    const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, shortMemory);
 
     await appendTurn(input.userId, input.rawText || '', replyText);
 

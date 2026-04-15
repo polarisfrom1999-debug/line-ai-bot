@@ -89,6 +89,7 @@ async function buildMergedProfile(lineUserId) {
     ),
     goal: pickLatestValue(longMemory?.goal, factMap.goal?.value, profile?.goal),
     aiType: pickLatestValue(longMemory?.aiType),
+    voiceStyle: pickLatestValue(longMemory?.voiceStyle, factMap.voiceStyle?.value),
     constitutionType: pickLatestValue(longMemory?.constitutionType),
     selectedPlan: pickLatestValue(longMemory?.selectedPlan, longMemory?.plan),
     latestWeightDate: latestWeight?.date || profile?.latestWeightDate || null
@@ -141,6 +142,7 @@ async function buildMemoryAnswer(lineUserId) {
   if (merged.age) lines.push(`年齢は ${merged.age} として見ています。`);
   if (merged.goal) lines.push(`目標は「${merged.goal}」です。`);
   if (merged.aiType) lines.push(`AIタイプは「${merged.aiType}」です。`);
+  if (merged.voiceStyle) lines.push(`雰囲気は「${merged.voiceStyle}」です。`);
   if (merged.constitutionType) lines.push(`体質タイプは「${merged.constitutionType}」です。`);
   if (merged.selectedPlan) lines.push(`プランは「${merged.selectedPlan}」です。`);
 

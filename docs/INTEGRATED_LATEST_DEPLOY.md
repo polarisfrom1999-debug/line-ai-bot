@@ -1,5 +1,17 @@
 # Integrated latest ZIP (pass4)
 
+## minimal startup env set (required 5)
+- set these before first boot:
+  - `LINE_CHANNEL_ACCESS_TOKEN`
+  - `LINE_CHANNEL_SECRET`
+  - `GEMINI_API_KEY`
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+- quick setup:
+  - copy `.env.example` to `.env`
+  - fill the required 5 vars
+  - keep `PERSONA_ADJUSTMENT_LEVEL=medium` as default
+
 ## これを正として使ってください
 この ZIP は pass1 / pass2 / pass3 を一本化した最新版です。
 以後はこの ZIP を基準に上書きしてください。

@@ -1,5 +1,17 @@
 # Stage Entry manual deploy steps
 
+## minimal startup env set (required 5)
+- before first run, set these 5 vars:
+  - `LINE_CHANNEL_ACCESS_TOKEN`
+  - `LINE_CHANNEL_SECRET`
+  - `GEMINI_API_KEY`
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+- quick start:
+  - copy `.env.example` to `.env`
+  - fill the 5 required vars above
+  - keep `PERSONA_ADJUSTMENT_LEVEL=medium` as default
+
 ## 0. deploy before enabling
 - deploy with all stage-entry flags OFF
 - run `npm run flags:stage-entry`
@@ -34,3 +46,12 @@
 - first set the last enabled flag group back to 0
 - if unstable, set ENABLE_STAGE_ENTRY_GUIDANCE=0
 - if still unstable, set USE_NEW_ORCHESTRATOR=0
+
+## persona adjustment level (new)
+- `PERSONA_ADJUSTMENT_LEVEL` で全返信の人格補正強度を切り替えできます。
+- allowed: `low` / `medium` / `high`
+- default: `medium`
+- guide:
+  - `low`: 既存文面をほぼそのまま返す（補正最小）
+  - `medium`: 推奨。低energy時の情報量調整 + 安全寄り補正
+  - `high`: 低energy時の圧縮を強める（短文寄り）

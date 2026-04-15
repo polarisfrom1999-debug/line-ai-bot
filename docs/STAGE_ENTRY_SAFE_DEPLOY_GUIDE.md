@@ -8,6 +8,19 @@ Stage1〜3 の入口 help を、安全に manual deploy するための手順で
 この版では Stage entry guidance が **デフォルトOFF** です。
 そのため deploy 直後に既存挙動を壊しにくい構成です。
 
+## 最小起動セット（必須）
+最初に起動するために、以下の5項目を必ず設定してください。
+- `LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_CHANNEL_SECRET`
+- `GEMINI_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+推奨手順:
+- `.env.example` を `.env` にコピー
+- 必須5項目を入力
+- `PERSONA_ADJUSTMENT_LEVEL=medium` を維持（標準）
+
 ## 使う環境変数
 - ENABLE_STAGE_ENTRY_GUIDANCE
 - ENABLE_GUIDANCE_GENERAL
@@ -17,6 +30,7 @@ Stage1〜3 の入口 help を、安全に manual deploy するための手順で
 - ENABLE_GUIDANCE_HOMECARE_ENTRY
 - ENABLE_GUIDANCE_SPORTS_ENTRY
 - ENABLE_GUIDANCE_COMPETITION_ENTRY
+- PERSONA_ADJUSTMENT_LEVEL (`low` / `medium` / `high`)
 
 ## 推奨ON順
 ### Step 1

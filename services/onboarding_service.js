@@ -6,16 +6,23 @@ const planService = require('./plan_service');
 const STEPS = {
   PROFILE: 'profile',
   AI_TYPE: 'ai_type',
+  VOICE_STYLE: 'voice_style',
   CONSTITUTION: 'constitution',
   PLAN: 'plan',
   COMPLETE: 'complete'
 };
 
 const AI_TYPES = [
-  'やさしく伴走',
-  '理屈で整理',
-  '背中を押す',
-  'バランス型'
+  'そっと寄り添う',
+  '明るく後押し',
+  '頼もしく導く',
+  '力強く支える'
+];
+
+const VOICE_STYLES = [
+  'いつも優しく',
+  'いつも明るく',
+  '普段優しく、ときどき厳しく'
 ];
 
 const CONSTITUTION_TYPES = [
@@ -70,10 +77,19 @@ function buildGoalPrompt() {
 function buildAiTypeQuestion() {
   return [
     '関わり方の好みを選んでください。',
-    '1. やさしく伴走',
-    '2. 理屈で整理',
-    '3. 背中を押す',
-    '4. バランス型'
+    '1. そっと寄り添う',
+    '2. 明るく後押し',
+    '3. 頼もしく導く',
+    '4. 力強く支える'
+  ].join('\n');
+}
+
+function buildVoiceStyleQuestion() {
+  return [
+    '話し方の雰囲気を選んでください。',
+    '1. いつも優しく',
+    '2. いつも明るく',
+    '3. 普段優しく、ときどき厳しく'
   ].join('\n');
 }
 
@@ -149,6 +165,7 @@ function buildCompleteMessage(onboardingState, selectedPlan) {
   return [
     'ここまでで伴走の土台はそろいました。',
     `AIタイプ: ${answers.aiType || '未設定'}`,
+    `雰囲気: ${answers.voiceStyle || '未設定'}`,
     `体質タイプ: ${answers.constitutionType || '未設定'}`,
     `プラン: ${selectedPlan || '未設定'}`,
     buildConstitutionInsightMessage(answers.constitutionType || '', profile, answers.aiType || ''),
@@ -320,7 +337,10 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
 async function handleAiTypeStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
   if (isOperationalMessage(text)) return { handled: false };
 
-  const selected = pickFromNumeric(text, AI_TYPES);
+  const selected = pickFromNumeric(text, AI_TYPES)
+    || (/やさしく伴走/.test(text) ? 'そっと寄り添う' : null)
+    || (/背中を押す/.test(text) ? '明るく後押し' : null)
+    || (/理屈で整理|バランス型/.test(text) ? '頼もしく導く' : null);
   if (!selected) {
     if (!looksLikeSelectionAttempt(text, AI_TYPES, 4)) return { handled: false };
     return { handled: true, replyText: buildAiTypeQuestion() };
@@ -330,9 +350,31 @@ async function handleAiTypeStep({ input, text, onboardingState, saveShortMemory,
   await saveShortMemory(input.userId, {
     onboardingState: {
       ...onboardingState,
-      currentStep: STEPS.CONSTITUTION,
+      currentStep: STEPS.VOICE_STYLE,
       completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.AI_TYPE])],
       answers: { ...(onboardingState.answers || {}), aiType: selected }
+    }
+  });
+
+  return { handled: true, replyText: buildVoiceStyleQuestion() };
+}
+
+async function handleVoiceStyleStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory }) {
+  if (isOperationalMessage(text)) return { handled: false };
+
+  const selected = pickFromNumeric(text, VOICE_STYLES);
+  if (!selected) {
+    if (!looksLikeSelectionAttempt(text, VOICE_STYLES, 3)) return { handled: false };
+    return { handled: true, replyText: buildVoiceStyleQuestion() };
+  }
+
+  await mergeLongMemory(input.userId, { voiceStyle: selected });
+  await saveShortMemory(input.userId, {
+    onboardingState: {
+      ...onboardingState,
+      currentStep: STEPS.CONSTITUTION,
+      completedSteps: [...new Set([...(onboardingState.completedSteps || []), STEPS.VOICE_STYLE])],
+      answers: { ...(onboardingState.answers || {}), voiceStyle: selected }
     }
   });
 
@@ -441,6 +483,9 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
   if (onboardingState.currentStep === STEPS.AI_TYPE) {
     return handleAiTypeStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
   }
+  if (onboardingState.currentStep === STEPS.VOICE_STYLE) {
+    return handleVoiceStyleStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
+  }
   if (onboardingState.currentStep === STEPS.CONSTITUTION) {
     return handleConstitutionStep({ input, text, onboardingState, saveShortMemory, mergeLongMemory });
   }
@@ -454,10 +499,12 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
 module.exports = {
   STEPS,
   AI_TYPES,
+  VOICE_STYLES,
   CONSTITUTION_TYPES,
   buildStartProfileMessage,
   buildEditProfileMessage,
   buildAiTypeQuestion,
+  buildVoiceStyleQuestion,
   buildConstitutionQuestion,
   buildPlanQuestion,
   buildCompleteMessage,

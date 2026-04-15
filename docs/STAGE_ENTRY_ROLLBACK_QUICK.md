@@ -13,6 +13,12 @@
 - ENABLE_GUIDANCE_PERSONA=0
 - ENABLE_STAGE_ENTRY_GUIDANCE=0
 
+## persona adjustment fallback
+- 返答トーンを最小補正に戻したい場合:
+  - `PERSONA_ADJUSTMENT_LEVEL=low`
+- 標準に戻す場合:
+  - `PERSONA_ADJUSTMENT_LEVEL=medium`
+
 ## rollback now if
 - webhook 401
 - 二重返信

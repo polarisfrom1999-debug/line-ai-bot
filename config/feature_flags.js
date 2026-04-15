@@ -6,6 +6,13 @@ function envBool(name, defaultValue) {
   return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
 }
 
+function envEnum(name, allowedValues, defaultValue) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return defaultValue;
+  const normalized = String(raw).trim().toLowerCase();
+  return allowedValues.includes(normalized) ? normalized : defaultValue;
+}
+
 module.exports = {
   ENABLE_STAGE_ENTRY_GUIDANCE: envBool('ENABLE_STAGE_ENTRY_GUIDANCE', false),
 
@@ -19,4 +26,5 @@ module.exports = {
   ENABLE_SYMPTOM_CORE: envBool('ENABLE_SYMPTOM_CORE', false),
   ENABLE_HOMECARE_CORE: envBool('ENABLE_HOMECARE_CORE', false),
   ENABLE_GUIDE_FATIGUE_COMPRESSION: envBool('ENABLE_GUIDE_FATIGUE_COMPRESSION', true),
+  PERSONA_ADJUSTMENT_LEVEL: envEnum('PERSONA_ADJUSTMENT_LEVEL', ['low', 'medium', 'high'], 'medium'),
 };

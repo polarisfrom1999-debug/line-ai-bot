@@ -23,11 +23,14 @@ const conversationSummaryService = require('./services/conversation_summary_serv
 const webPortalAuthService = require('./services/web_portal_auth_service');
 const webPortalDataService = require('./services/web_portal_data_service');
 const webPortalRealtimeService = require('./services/web_portal_realtime_service');
+const chatCaptureService = require('./services/chat_capture_service');
+const contextMemoryService = require('./context_memory_service');
 const { supabase } = require('./services/supabase_service');
 const { ensureUser } = require('./services/user_service');
 const webLinkCommandService = require('./services/web_link_command_service');
 const inputGatewayService = require('./services/input_gateway_service');
 const webRouter = require('./routes/web');
+const featureFlags = require('./config/feature_flags');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -57,6 +60,133 @@ function normalizeReplyMessages(messages) {
       return message;
     })
     .slice(0, 5);
+}
+
+function getTokyoHour() {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour: 'numeric',
+    hour12: false
+  }).formatToParts(new Date());
+  const hourPart = parts.find((part) => part.type === 'hour');
+  return Number(hourPart?.value || 12);
+}
+
+function inferTimeBand(hour) {
+  if (hour >= 5 && hour <= 10) return 'morning';
+  if (hour >= 18 || hour <= 2) return 'night';
+  return 'day';
+}
+
+function isMealVisualReply(text) {
+  return /📸 お食事の解析が終わりました/.test(String(text || ''));
+}
+
+function inferEnergyLevel(inputText, shortMemory) {
+  const safeText = String(inputText || '').trim();
+  const tone = String(shortMemory?.lastEmotionTone || '').trim();
+  if (/眠い|寝不足|疲れ|しんどい|だるい|限界|もう無理|やる気が出ない|頑張れない/.test(safeText)) return 'low';
+  if (tone === 'tired' || tone === 'heavy_negative' || tone === 'anxious') return 'low';
+  if (/元気|いけそう|調子いい/.test(safeText)) return 'high';
+  return 'middle';
+}
+
+function trimForLowEnergy(text) {
+  const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length <= 4) return String(text || '');
+  return `${lines.slice(0, 3).join('\n')}\n今日はここだけ見れば十分です。`;
+}
+
+function applyIntensityPolicy(text, ctx) {
+  const level = String(featureFlags.PERSONA_ADJUSTMENT_LEVEL || 'medium');
+  if (level === 'low') return String(text || '');
+
+  if (level === 'high') {
+    if (ctx.energyLevel === 'low') return trimForLowEnergy(trimForLowEnergy(text));
+    return String(text || '');
+  }
+
+  if (ctx.energyLevel === 'low') return trimForLowEnergy(text);
+  return String(text || '');
+}
+
+function applyPersonaToneToText(text, ctx) {
+  const original = String(text || '');
+  if (!original.trim()) return original;
+  if (isMealVisualReply(original)) return original;
+
+  const lines = [];
+  if (ctx.timeBand === 'morning' && /empathy|guided/.test(ctx.responseMode)) {
+    lines.push('おはようございます。今日のペースで大丈夫です。');
+  } else if (ctx.timeBand === 'night' && /empathy|answer|guided/.test(ctx.responseMode)) {
+    lines.push('夜は無理に詰め込まず、整える視点でいきましょう。');
+  }
+
+  const level = String(featureFlags.PERSONA_ADJUSTMENT_LEVEL || 'medium');
+  let body = applyIntensityPolicy(original, ctx);
+  if (ctx.aiType === '明るく後押し' && !/！/.test(body) && ctx.energyLevel !== 'low') {
+    body = `${body}\n一緒に、できる一歩から進めていきましょう。`;
+  }
+  if (ctx.aiType === '頼もしく導く' && !/優先|まず/.test(body)) {
+    body = `${body}\nまずは1つに絞って進めれば大丈夫です。`;
+  }
+  if (ctx.voiceStyle === 'いつも明るく' && ctx.energyLevel !== 'low' && !/いきましょう。$/.test(body)) {
+    body = `${body}\n焦らず、前向きにいきましょう。`;
+  }
+  if (ctx.voiceStyle === '普段優しく、ときどき厳しく' && ctx.overworkAlert && !/休む|減速/.test(body)) {
+    body = `${body}\n今日は攻めるより、減速して整える判断で大丈夫です。`;
+  }
+  if (ctx.voiceStyle === 'いつも優しく') {
+    body = body.replace(/！/g, '。');
+  }
+  lines.push(body);
+
+  if (ctx.overworkAlert && level !== 'low') {
+    lines.push('頑張りが続いていそうなので、今日は1つできたら十分です。');
+  }
+  if (ctx.painContext && level !== 'low' && !/無理しない|痛みが強い|受診|安全|休/.test(body)) {
+    lines.push('痛みがある日は安全優先で、悪化しそうなら無理せず休みましょう。');
+  }
+  return lines.filter(Boolean).join('\n');
+}
+
+async function applyGlobalPersonaAdjustments(input, result) {
+  if (!result?.ok || !Array.isArray(result.replyMessages) || !result.replyMessages.length) return result;
+  const userId = input?.userId || input?.lineUserId;
+  let shortMemory = null;
+  let longMemory = null;
+  try {
+    shortMemory = userId ? await contextMemoryService.getShortMemory(userId) : null;
+    longMemory = userId ? await contextMemoryService.getLongMemory(userId) : null;
+  } catch (_) {
+    shortMemory = null;
+    longMemory = null;
+  }
+
+  const inputText = String(input?.rawText || '').trim();
+  const responseMode = String(result?.internal?.responseMode || 'answer');
+  const hour = getTokyoHour();
+  const ctx = {
+    timeBand: inferTimeBand(hour),
+    responseMode,
+    energyLevel: inferEnergyLevel(inputText, shortMemory),
+    overworkAlert: /頑張りすぎ|無理しがち|詰め込み|休めてない|消耗/.test(inputText),
+    painContext: /痛い|しびれ|違和感|骨折|腰|膝|首|むくみ|便通ない/.test(inputText),
+    aiType: String(longMemory?.aiType || '').trim(),
+    voiceStyle: String(longMemory?.voiceStyle || '').trim(),
+    supportPreference: Array.isArray(longMemory?.supportPreference) ? longMemory.supportPreference : []
+  };
+
+  if (ctx.energyLevel !== 'low' && ctx.supportPreference.includes('短く返す')) {
+    ctx.energyLevel = 'low';
+  }
+
+  const replyMessages = result.replyMessages.map((message) => {
+    if (!message || message.type !== 'text') return message;
+    return { ...message, text: applyPersonaToneToText(message.text, ctx) };
+  });
+
+  return { ...result, replyMessages };
 }
 
 async function replyLineMessages(replyToken, messages) {
@@ -127,6 +257,53 @@ function refreshWebPortalCachesForLineUser(lineUserId, options = {}) {
     .catch((error) => console.error('[index] refreshWebPortalCachesForLineUser error:', error?.message || error));
 }
 
+async function persistConversationCapture(input, result) {
+  try {
+    const userId = input?.userId || input?.lineUserId;
+    if (!userId) return;
+    const captured = await chatCaptureService.extractFromConversation({ input, result });
+    if (!captured) return;
+
+    const shortPatch = {};
+    const longPatch = {};
+
+    if (Array.isArray(captured.shortMemoryCandidates) && captured.shortMemoryCandidates.length) {
+      shortPatch.recentSmallTalkTopic = captured.shortMemoryCandidates[captured.shortMemoryCandidates.length - 1];
+    }
+    if (Array.isArray(captured.emotionalSignals) && captured.emotionalSignals.length) {
+      shortPatch.lastEmotionTone = captured.emotionalSignals.includes('heavy_negative')
+        ? 'heavy_negative'
+        : captured.emotionalSignals.includes('anxious')
+          ? 'anxious'
+          : captured.emotionalSignals.includes('fatigued')
+            ? 'tired'
+            : 'neutral';
+    }
+    if (Array.isArray(captured.consultationSignals) && captured.consultationSignals.includes('pain_context')) {
+      shortPatch.activeHealthTheme = '痛み対応';
+      longPatch.bodySignals = ['痛みがある'];
+    }
+    if (Array.isArray(captured.consultationSignals) && captured.consultationSignals.includes('overwork_risk')) {
+      longPatch.lifeContext = [...(longPatch.lifeContext || []), '頑張りすぎやすい'];
+    }
+    if (Array.isArray(captured.supportHints) && captured.supportHints.length) {
+      longPatch.supportPreference = captured.supportHints;
+    }
+    if (Array.isArray(captured.longMemoryCandidates) && captured.longMemoryCandidates.length) {
+      longPatch.lifeContext = [...(longPatch.lifeContext || []), ...captured.longMemoryCandidates];
+    }
+
+    if (Object.keys(shortPatch).length) {
+      await contextMemoryService.saveShortMemory(userId, shortPatch);
+    }
+    if (Object.keys(longPatch).length) {
+      await contextMemoryService.mergeLongMemory(userId, longPatch);
+    }
+  } catch (error) {
+    console.error('[index] persistConversationCapture error:', error?.message || error);
+  }
+}
+
 async function handleWebCodeCommand(input) {
   try {
     const issued = await webLinkCommandService.buildWebLinkReplyByLineUser(input.lineUserId || input.userId);
@@ -168,13 +345,15 @@ async function handleEvent(event) {
 
     const input = normalizeEventInput(event);
     const gatewayResult = await inputGatewayService.handleLineTopLevel(input);
-    const result = gatewayResult?.handled
+    const rawResult = gatewayResult?.handled
       ? { ok: true, replyMessages: gatewayResult.replyMessages, internal: gatewayResult.internal || {} }
       : await conversationRouter.routeConversation({ ...input, entryLane: gatewayResult?.lane || '' });
+    const result = await applyGlobalPersonaAdjustments(input, rawResult);
 
     if (result?.ok && result?.internal?.suppressReply) {
       await chatLogService.logConversationOutcome({ input, result });
       await conversationSummaryService.recordTurn({ input, result });
+      await persistConversationCapture(input, result);
       refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, result));
       return;
     }
@@ -183,6 +362,7 @@ async function handleEvent(event) {
       await replyLineMessages(input.replyToken, result.replyMessages);
       await chatLogService.logConversationOutcome({ input, result });
       await conversationSummaryService.recordTurn({ input, result });
+      await persistConversationCapture(input, result);
       refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, result));
       return;
     }
@@ -195,6 +375,7 @@ async function handleEvent(event) {
     await replyLineMessages(input.replyToken, fallbackResult.replyMessages);
     await chatLogService.logConversationOutcome({ input, result: fallbackResult });
     await conversationSummaryService.recordTurn({ input, result: fallbackResult });
+    await persistConversationCapture(input, fallbackResult);
     refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, fallbackResult));
   } catch (error) {
     console.error('[index] handleEvent error:', error?.message || error);

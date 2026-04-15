@@ -70,6 +70,7 @@ function detectEmotionalSignals(text, result) {
   if (/不安|焦る|怖い|心配/.test(text)) pushUnique(result.emotionalSignals, 'anxious');
   if (/疲れた|眠い|寝不足|だるい|余裕ない|バタバタ/.test(text)) pushUnique(result.emotionalSignals, 'fatigued');
   if (/安心|落ち着|ほっとした|助かった/.test(text)) pushUnique(result.emotionalSignals, 'calming');
+  if (/いけそう|調子いい|元気|前向き|がんばれる/.test(text)) pushUnique(result.emotionalSignals, 'positive_ready');
 }
 
 function detectConsultationSignals(text, result) {
@@ -78,6 +79,8 @@ function detectConsultationSignals(text, result) {
   if (/むくみ|便通|水分/.test(text)) pushUnique(result.consultationSignals, 'body_balance');
   if (/痛み|痛い|骨折|首|腰|膝/.test(text)) pushUnique(result.consultationSignals, 'pain_context');
   if (/夜遅|リズム|乱れ/.test(text)) pushUnique(result.consultationSignals, 'rhythm_disturbance');
+  if (/頑張りすぎ|詰め込み|無理し|休めてない/.test(text)) pushUnique(result.consultationSignals, 'overwork_risk');
+  if (/タイプ変更|雰囲気変更|話し方/.test(text)) pushUnique(result.consultationSignals, 'persona_change_request');
 }
 
 function detectShortMemoryCandidates(text, result) {
@@ -85,6 +88,7 @@ function detectShortMemoryCandidates(text, result) {
   if (/不安|焦る|落ち込/.test(text)) pushUnique(result.shortMemoryCandidates, '今日は不安が強そう');
   if (/痛い|骨折|首|腰|膝/.test(text)) pushUnique(result.shortMemoryCandidates, '今日は身体負担が強そう');
   if (/天気|寒い|暑い|花粉/.test(text)) pushUnique(result.shortMemoryCandidates, '最近の雑談テーマ:天気');
+  if (/頑張りすぎ|詰め込み|休めてない/.test(text)) pushUnique(result.shortMemoryCandidates, '今日は頑張りすぎリスクがありそう');
 }
 
 function detectLongMemoryCandidates(text, result) {
@@ -99,12 +103,18 @@ function detectLongMemoryCandidates(text, result) {
   if (/理屈で|理由が知りたい/.test(text)) pushUnique(result.longMemoryCandidates, '理屈で整理されると受け取りやすい');
   if (/隠して|隠しがち|言いにくい/.test(text)) pushUnique(result.longMemoryCandidates, '隠しやすさがある');
   if (/頑張りすぎ|無理しがち/.test(text)) pushUnique(result.longMemoryCandidates, '頑張りすぎやすい');
+  if (/朝弱い|朝が苦手|朝しんどい/.test(text)) pushUnique(result.longMemoryCandidates, '朝の立ち上がりが重くなりやすい');
+  if (/夜遅くまで|寝るのが遅い/.test(text)) pushUnique(result.longMemoryCandidates, '就寝が遅くなりやすい');
+  if (/生理|PMS|月経/.test(text)) pushUnique(result.longMemoryCandidates, '周期要因で体調が揺れやすい');
 }
 
 function detectSupportHints(text, result) {
   if (/つらい|苦しい|疲れた|眠い/.test(text)) pushUnique(result.supportHints, '安心感優先');
   if (/どうしたら|悩/.test(text)) pushUnique(result.supportHints, '提案は1つまで');
   if (/短く|一言で/.test(text)) pushUnique(result.supportHints, '短く返す');
+  if (/厳しく|はっきり/.test(text)) pushUnique(result.supportHints, '必要時ははっきり返す');
+  if (/明るく|前向き/.test(text)) pushUnique(result.supportHints, '明るめの温度で返す');
+  if (/理屈|根拠|ロジック/.test(text)) pushUnique(result.supportHints, '根拠を添えて返す');
 }
 
 async function extractFromConversation(context) {

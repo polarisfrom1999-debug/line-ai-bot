@@ -59,6 +59,7 @@ const DEFAULT_LONG_MEMORY = {
   weight: null,
   bodyFat: null,
   aiType: null,
+  voiceStyle: null,
   constitutionType: null,
   trialStartedAt: null,
   selectedPlan: null,
@@ -229,6 +230,7 @@ async function persistLongMemoryToDb(lineUserId, next) {
   pushFact('bodyFat', next.bodyFat, '%');
   pushFact('goal', next.goal);
   pushFact('aiType', next.aiType);
+  pushFact('voiceStyle', next.voiceStyle);
   pushFact('constitutionType', next.constitutionType);
   pushFact('selectedPlan', next.selectedPlan);
   pushFact('onboardingCompleted', String(Boolean(next.onboardingCompleted)));
@@ -287,6 +289,7 @@ async function hydrateLongMemoryFromDb(lineUserId) {
     weight: latestWeight?.weight_kg != null ? String(latestWeight.weight_kg) : (factMap.weight || ''),
     bodyFat: latestWeight?.body_fat_pct != null ? String(latestWeight.body_fat_pct) : (factMap.bodyFat || ''),
     aiType: factMap.aiType || normalizeString(user.ai_type || ''),
+    voiceStyle: factMap.voiceStyle || '',
     constitutionType: factMap.constitutionType || '',
     trialStartedAt: factMap.trialStartedAt || '',
     selectedPlan: factMap.selectedPlan || normalizeString(user.selected_plan || ''),
@@ -641,6 +644,7 @@ async function mergeLongMemory(userId, patch) {
     if (safePatch.weight != null) next.weight = safePatch.weight;
     if (safePatch.bodyFat != null) next.bodyFat = safePatch.bodyFat;
     if (safePatch.aiType != null) next.aiType = safePatch.aiType;
+    if (safePatch.voiceStyle != null) next.voiceStyle = safePatch.voiceStyle;
     if (safePatch.constitutionType != null) next.constitutionType = safePatch.constitutionType;
     if (safePatch.trialStartedAt != null) next.trialStartedAt = safePatch.trialStartedAt;
     if (safePatch.selectedPlan != null) next.selectedPlan = safePatch.selectedPlan;
