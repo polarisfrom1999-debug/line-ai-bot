@@ -11,6 +11,7 @@
     "smoke:homecare-core": "node scripts/homecare_core_smoke_inputs.js"
   },
   "dependencies": {
+    "@google/genai": "^1.24.0",
     "@google/generative-ai": "^0.21.0",
     "@line/bot-sdk": "^9.4.0",
     "@supabase/supabase-js": "^2.98.0",

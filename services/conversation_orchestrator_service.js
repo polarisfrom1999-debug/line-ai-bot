@@ -16,6 +16,7 @@ const labDocumentIngestService = require('./lab_document_ingest_service');
 const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
 const sportsConsultationService = require('./sports_consultation_service');
+const motionAnalysisService = require('./motion_analysis_service');
 const profileService = require('./profile_service');
 const featureFlags = require('../config/feature_flags');
 const { detectCaptureTypeFromImageAnalysis } = require('./capture_router_service');
@@ -1388,20 +1389,34 @@ async function orchestrateConversation(input) {
       imagePayload = ingested.payload;
 
       if (looksLikeMotionContext(shortMemory, recentMessages)) {
-        const replyText = 'motion-probe-3 motion route reached';
+        const motionResult = await motionAnalysisService.analyzeMotionImage({
+          imagePayload: {
+            buffer: imagePayload.buffer,
+            mimeType: imagePayload.mimeType || 'image/jpeg',
+          },
+          textHint: normalizeText(shortMemory?.recentSmallTalkTopic || text || ''),
+          userId: input.userId,
+        });
+        const replyText = normalizeText(motionResult?.replyText || '')
+          || '画像は受け取れています。まずは良い動きから一緒に整理していきましょう。';
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: 'motion',
           followUpContext: {
             ...(shortMemory?.followUpContext || {}),
             source: 'image',
-            imageType: 'motion'
+            imageType: 'motion',
+            lastMotionAnalysis: motionResult || null,
           }
         });
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,
           replyMessages: [{ type: 'text', text: replyText }],
-          internal: { intentType: 'motion_image_probe', responseMode: 'answer' }
+          internal: {
+            intentType: 'motion_image',
+            responseMode: 'answer',
+            motionModel: motionResult?.usedModel || '',
+          }
         };
       }
 
