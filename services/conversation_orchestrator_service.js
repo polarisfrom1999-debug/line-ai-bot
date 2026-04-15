@@ -32,7 +32,13 @@ const {
   buildFaqMessage,
 } = require('./user_guide_service');
 const { textMessageWithQuickReplies } = require('./line_service');
-const { looksLikePainConsultation, detectPainArea, buildPainSupportResponse, buildAdminSymptomSummary, buildStretchSupportResponse } = require('./pain_support_service');
+const {
+  looksLikePainConsultation,
+  detectPainArea,
+  buildPainSupportResponse,
+  buildAdminSymptomSummary,
+  buildStretchSupportResponse,
+} = require('./pain_support_service');
 const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
@@ -62,7 +68,6 @@ function pickVariant(seed, variants) {
   if (!rows.length) return '';
   return rows[seed % rows.length];
 }
-
 
 function sanitizePreferredName(value) {
   const safe = normalizeText(value)
@@ -157,7 +162,6 @@ function buildMemoryAnswer(longMemory) {
 
   return lines.join('\n');
 }
-
 
 function normalizeLoose(value) {
   return String(value || '')
@@ -832,7 +836,6 @@ function maybeHandleHomecareCore(input) {
   };
 }
 
-
 function buildPainReply(text) {
   const safe = normalizeText(text);
   if (/毎日心が苦しい|毎日心がしんどい|限界|かなりしんどい/.test(safe)) {
@@ -1356,86 +1359,12 @@ async function orchestrateConversation(input) {
 
     let imagePayload = null;
     if (input?.messageType === 'image') {
-      const ingested = await imageIngestService.ingestLineImage(input);
-      if (!ingested?.ok) {
-        const replyText = buildImageIngestFailureReply();
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
-          internal: { intentType: 'image_ingest_error', responseMode: 'retry' }
-        };
-      }
-      imagePayload = ingested.payload;
-
-      const expectedRoute = inferExpectedImageRoute(shortMemory, recentMessages);
-      let labImageHandled = null;
-      let mealImageHandled = null;
-
-      if (expectedRoute === 'meal') {
-        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
-        if (mealImageHandled?.handled) {
-          if (mealImageHandled.meal?.recordReady) {
-            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
-          }
-          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
-        }
-        labImageHandled = await maybeHandleLabImage(input, imagePayload);
-        if (labImageHandled?.handled) {
-          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
-        }
-      } else {
-        labImageHandled = await maybeHandleLabImage(input, imagePayload);
-        if (labImageHandled?.handled) {
-          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
-        }
-        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
-        if (mealImageHandled?.handled) {
-          if (mealImageHandled.meal?.recordReady) {
-            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
-          }
-          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
-        }
-      }
-
-      const imageKind = imageClassificationService.classifyImageByAnalysis({
-        lab: labImageHandled?.analysis,
-        meal: mealImageHandled?.analysis
-      });
-      const fallbackKind = detectCaptureTypeFromImageAnalysis({
-        lab: labImageHandled?.analysis,
-        meal: mealImageHandled?.analysis
-      }, text);
-      if (labImageHandled?.analysis?.labLike) {
-        await contextMemoryService.saveShortMemory(input.userId, {
-          lastImageType: 'lab_pending',
-          followUpContext: {
-            source: 'image',
-            imageType: 'lab_pending',
-            extractedItems: [],
-            examDate: labImageHandled.analysis.examDate || '',
-            latestExamDate: labImageHandled.analysis.latestExamDate || labImageHandled.analysis.examDate || '',
-            availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
-          }
-        });
-        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、まだ構造化の途中です。「TGは？」「HbA1cは？」「今までの傾向は？」「2025-03-22」のように聞いてもらえれば、この画像を優先して見ます。';
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
-          internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
-        };
-      }
-      const replyText = buildUnhandledImageReply(imageKind === 'unknown' ? fallbackKind : `${imageKind}_record`);
+      const replyText = 'motion-probe-1 を通過しました';
       await appendTurn(input.userId, input.rawText || '[image]', replyText);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: replyText }],
-        internal: { intentType: 'image_unclassified', responseMode: 'retry' }
+        internal: { intentType: 'image_probe', responseMode: 'answer' }
       };
     }
 
