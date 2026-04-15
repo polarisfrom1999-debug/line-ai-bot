@@ -55,7 +55,7 @@ function extractCount(text, labelRegex) {
 
 function detectExerciseType(text) {
   const safe = normalizeText(text);
-  if (/ジョギング|ランニング|走った|走りました/.test(safe)) return 'jogging';
+  if (/ジョギング|ランニング|走った|走りました|走る/.test(safe)) return 'jogging';
   if (/ウォーキング|歩いた|散歩/.test(safe)) return 'walking';
   if (/スクワット/.test(safe)) return 'squat';
   if (/腕立て|プッシュアップ/.test(safe)) return 'pushup';

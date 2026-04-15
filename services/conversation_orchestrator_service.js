@@ -133,7 +133,7 @@ function buildTimeAnswer() {
   return `今日は${now.month}月${now.day}日、今は${now.hour}時${now.minute}分くらいです。`;
 }
 
-function detectIntent(input) {
+function detectIntent(input, _shortMemory = {}) {
   const text = normalizeText(input?.rawText || '');
 
   if (/今何時|何時|何月何日|今日何日|何時何分/.test(text)) return 'time_question';
@@ -149,9 +149,31 @@ function detectIntent(input) {
   if (/最近の食事バランス|2週間の食事バランス|二週間の食事バランス|直近2週間/.test(text)) return 'biweekly_meal_balance';
   if (/今何ポイント|今ポイント|ポイント教えて|ポイントは\??/.test(text)) return 'point_summary';
   if (/管理確認|管理メモ|管理用まとめ/.test(text)) return 'admin_check';
+
   if (/使い方教えて|使い方|ヘルプ|メニュー|コマンド|無料体験|プラン案内|AIタイプ/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
   return 'normal';
+}
+
+function adjustIntentForFollowupContext(intent, text, shortMemory = {}) {
+  if (intent !== 'help') return intent;
+  const safe = normalizeText(text);
+  const explicit =
+    /^使い方$/u.test(safe) ||
+    /^ヘルプ$/u.test(safe) ||
+    /^メニュー$/u.test(safe) ||
+    /^コマンド$/u.test(safe) ||
+    /使い方教えて|コマンド一覧|プラン案内|無料体験開始/.test(safe);
+  if (explicit) return intent;
+
+  const fu = shortMemory?.followUpContext || {};
+  const img = normalizeText(fu?.imageType || shortMemory?.lastImageType || '');
+  const inLab = img === 'lab' || img === 'lab_pending' || Boolean(fu?.labPanel);
+  const inMeal = img === 'meal' || fu?.lastRecordType === 'meal' || fu?.source === 'meal';
+  const inMotion = img === 'motion' || img === 'shoe_wear';
+  if (shortMemory?.painSupportState?.active) return 'normal';
+  if (inLab || inMeal || inMotion) return 'normal';
+  return intent;
 }
 
 function buildMemoryAnswer(longMemory) {
@@ -610,9 +632,21 @@ function parseNumericValue(text, pattern) {
   return match ? Number(String(match[1]).replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 65248))) : null;
 }
 
+function looksLikeExerciseDistanceKilo(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/km|ｋｍ/i.test(safe)) return true;
+  if (!/[0-9０-９]+/.test(safe)) return false;
+  const exerciseCue =
+    /走っ|走る|歩い|歩く|ジョギング|ランニング|漕い|漕ぐ|自転車|サイクリング|スイム|泳い|登山|トレイル|運動した|マラソン|距離/.test(safe);
+  if (!exerciseCue) return false;
+  return /[0-9０-９]+(?:\.[0-9０-９]+)?\s*(?:km|キロ|ｋｍ)/i.test(safe);
+}
+
 function detectWeightRecord(text) {
   const safe = normalizeText(text);
   if (!safe || containsQuestionTone(safe)) return null;
+  if (looksLikeExerciseDistanceKilo(safe)) return null;
 
   const bodyFat = parseNumericValue(safe, /体脂肪率\s*([0-9０-９]+(?:\.[0-9０-９]+)?)\s*%?/i);
   const weight = parseNumericValue(safe, /(?:体重\s*)?([0-9０-９]+(?:\.[0-9０-９]+)?)\s*(?:kg|ＫＧ|キロ)/i);
@@ -1253,7 +1287,58 @@ async function maybeHandleOnboarding(input, shortMemory, longMemory) {
   });
 }
 
-async function maybeHandleSupportState(input) {
+function maybeHandlePainConversationFollowUp(input, shortMemory) {
+  if (input?.messageType !== 'text') return null;
+  const st = shortMemory?.painSupportState;
+  if (!st?.active) return null;
+  const text = normalizeText(input.rawText || '');
+
+  if (/同じ(こと|の)|繰り返|いうこと|言ってる/.test(text)) {
+    return {
+      replyText:
+        '同じ言い方になりすぎましたね。いま一番大事なのは、痛みを増やさない動き方だけです。無理のない範囲で休めたら十分です。',
+      nextState: { ...st, stage: 'ack_duplicate' },
+    };
+  }
+
+  if (/楽な姿勢|楽になる姿勢|楽な体位|楽な寝方|どの姿勢/.test(text)) {
+    const region = st.region || '腰';
+    const body =
+      region === '腰' || /腰/.test(String(st.symptomHint || ''))
+        ? [
+            '仰向けで膝を立て、足の裏を床につけたままが負担が少なめのことが多いです。',
+            '横向きなら、膝の間に薄いクッションを挟むと腰まわりが休みやすいです。',
+          ].join('\n')
+        : '痛みが増えない範囲で「楽だな」と感じる位置を優先し、長く固めないで大丈夫です。';
+    return {
+      replyText: body,
+      nextState: {
+        ...st,
+        stage: 'confirm_change',
+        adviceGiven: [...(st.adviceGiven || []), 'safe_posture'],
+      },
+    };
+  }
+
+  if (/どうす(る|れば)|どうしたら|次(に|は)?|やること|対処/.test(text)) {
+    return {
+      replyText: [
+        'まずは「動くと増えるか」「静かにしていると楽になるか」だけ見るのが安全です。',
+        '増え方がはっきりするなら、その動きはいったん止めて、様子を見ましょう。',
+        '悪化やしびれが強くなるときは、無理せず医療側の相談も視野に入れて大丈夫です。',
+      ].join('\n'),
+      nextState: {
+        ...st,
+        stage: 'gentle_next',
+        adviceGiven: [...(st.adviceGiven || []), 'next_step'],
+      },
+    };
+  }
+
+  return null;
+}
+
+async function maybeHandleSupportState(input, shortMemory) {
   const text = normalizeText(input?.rawText || '');
   if (!text) return null;
   if (featureFlags.ENABLE_SYMPTOM_CORE && looksLikePainConsultation(text)) return null;
@@ -1270,6 +1355,30 @@ async function maybeHandleSupportState(input) {
   if (bodySignals.length) {
     await contextMemoryService.mergeLongMemory(input.userId, { bodySignals });
     await contextMemoryService.saveShortMemory(input.userId, { activeHealthTheme: bodySignals[0] });
+  }
+
+  if (/腰.*痛|腰痛/.test(text)) {
+    await contextMemoryService.saveShortMemory(input.userId, {
+      painSupportState: {
+        active: true,
+        region: '腰',
+        stage: 'intro',
+        adviceGiven: [],
+        symptomHint: '腰痛',
+        startedAt: new Date().toISOString(),
+      },
+    });
+  } else if (/首.*痛|首を痛め/.test(text)) {
+    await contextMemoryService.saveShortMemory(input.userId, {
+      painSupportState: {
+        active: true,
+        region: '首',
+        stage: 'intro',
+        adviceGiven: [],
+        symptomHint: '首',
+        startedAt: new Date().toISOString(),
+      },
+    });
   }
 
   return replyText;
@@ -1654,18 +1763,6 @@ async function buildWeightLookupReply(userId) {
   return `${latest.date} の最新は ${parts.join(' / ')} です。`;
 }
 
-function inferExpectedImageRoute(shortMemory, recentMessages = []) {
-  const followUpType = shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '';
-  if (followUpType === 'meal') return 'meal';
-  if (followUpType === 'lab' || followUpType === 'lab_pending') return 'lab';
-
-  const recent = [...(Array.isArray(recentMessages) ? recentMessages : [])].reverse();
-  const recentUser = recent.find((item) => item?.role === 'user' && normalizeText(item?.content || ''));
-  const recentAssistant = recent.find((item) => item?.role === 'assistant' && normalizeText(item?.content || ''));
-  const merged = [recentUser?.content || '', recentAssistant?.content || ''].join('\n');
-  return imageClassificationService.classifyImageByHint(merged);
-}
-
 function resolveImageRouteDecision({ shortMemory, recentMessages, imageAnalysis, textHint }) {
   const followUpType = shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '';
   const recent = [...(Array.isArray(recentMessages) ? recentMessages : [])].reverse();
@@ -1863,8 +1960,9 @@ async function orchestrateConversation(input) {
     const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
-    const intent = detectIntent(input);
     const text = normalizeText(input.rawText || '');
+    let intent = detectIntent(input, shortMemory);
+    intent = adjustIntentForFollowupContext(intent, text, shortMemory);
 
     const nextState = {
       nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),
@@ -1938,8 +2036,19 @@ async function orchestrateConversation(input) {
       }
     }
 
+    const painThread = input?.messageType === 'text' ? maybeHandlePainConversationFollowUp(input, shortMemory) : null;
+    if (painThread?.replyText) {
+      await contextMemoryService.saveShortMemory(input.userId, { painSupportState: painThread.nextState || shortMemory?.painSupportState });
+      await appendTurn(input.userId, input.rawText || '', painThread.replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: painThread.replyText }],
+        internal: { intentType: 'pain_thread', responseMode: 'empathy_plus_one_hint' },
+      };
+    }
+
     if (input?.messageType === 'text' && (looksLikeDistress(text) || looksLikePain(text))) {
-      const supportReply = await maybeHandleSupportState(input);
+      const supportReply = await maybeHandleSupportState(input, shortMemory);
       if (supportReply) {
         await appendTurn(input.userId, input.rawText || '', supportReply);
         return { ok: true, replyMessages: [{ type: 'text', text: supportReply }], internal: { intentType: 'care_priority', responseMode: 'empathy_only' } };
@@ -1988,38 +2097,21 @@ async function orchestrateConversation(input) {
 
       imagePayload = ingested.payload;
 
-      const expectedRoute = inferExpectedImageRoute(shortMemory, recentMessages);
       let labImageHandled = null;
       let mealImageHandled = null;
 
-      if (expectedRoute === 'meal') {
-        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
-        if (mealImageHandled?.handled) {
-          if (mealImageHandled.meal?.recordReady) {
-            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
-          }
-          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+      labImageHandled = await maybeHandleLabImage(input, imagePayload);
+      if (labImageHandled?.handled) {
+        await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
+        return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+      }
+      mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+      if (mealImageHandled?.handled) {
+        if (mealImageHandled.meal?.recordReady) {
+          await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
         }
-        labImageHandled = await maybeHandleLabImage(input, imagePayload);
-        if (labImageHandled?.handled) {
-          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
-        }
-      } else {
-        labImageHandled = await maybeHandleLabImage(input, imagePayload);
-        if (labImageHandled?.handled) {
-          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
-        }
-        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
-        if (mealImageHandled?.handled) {
-          if (mealImageHandled.meal?.recordReady) {
-            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
-          }
-          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
-        }
+        await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
+        return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
       }
 
       const imageKind = imageClassificationService.classifyImageByAnalysis({
@@ -2420,16 +2512,16 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
     }
 
-    const simpleWeightHandled = await maybeHandleSimpleWeightRecord(input, text);
-    if (simpleWeightHandled) {
-      await appendTurn(input.userId, input.rawText || '', simpleWeightHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: simpleWeightHandled.replyText }], internal: { intentType: 'weight_record', responseMode: 'record' } };
-    }
-
     const simpleExerciseHandled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
     if (simpleExerciseHandled) {
       await appendTurn(input.userId, input.rawText || '', simpleExerciseHandled.replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: simpleExerciseHandled.replyText }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
+    }
+
+    const simpleWeightHandled = await maybeHandleSimpleWeightRecord(input, text);
+    if (simpleWeightHandled) {
+      await appendTurn(input.userId, input.rawText || '', simpleWeightHandled.replyText);
+      return { ok: true, replyMessages: [{ type: 'text', text: simpleWeightHandled.replyText }], internal: { intentType: 'weight_record', responseMode: 'record' } };
     }
 
     const mealTextHandled = await maybeHandleMealText(input);

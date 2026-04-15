@@ -58,9 +58,13 @@ function scoreImageRoutes({ lab, meal, shoeWear, movement, hintText = '', follow
 }
 
 function resolveImageRouteByScore(scores = {}, threshold = 0.66) {
+  const tieBreak = { lab: 4, meal: 3, shoe_wear: 2, motion: 1 };
   const entries = Object.entries(scores)
     .map(([route, score]) => ({ route, score: Number(score || 0) }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return (tieBreak[b.route] || 0) - (tieBreak[a.route] || 0);
+    });
   const top = entries[0] || { route: 'unknown', score: 0 };
   const second = entries[1] || { route: 'unknown', score: 0 };
   const confidence = Math.max(0, Math.min(1, top.score - Math.max(0, second.score * 0.35)));

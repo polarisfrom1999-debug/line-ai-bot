@@ -17,6 +17,7 @@ const DEFAULT_SHORT_MEMORY = {
   pendingClarification: null,
   lastEmotionTone: 'neutral',
   lastAdvice: null,
+  painSupportState: null,
   recentSmallTalkTopic: null,
   followUpContext: null,
   activeHealthTheme: null,

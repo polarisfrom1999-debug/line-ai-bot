@@ -31,6 +31,7 @@ const webLinkCommandService = require('./services/web_link_command_service');
 const inputGatewayService = require('./services/input_gateway_service');
 const webRouter = require('./routes/web');
 const featureFlags = require('./config/feature_flags');
+const assistantRepeatGuard = require('./services/assistant_repeat_guard');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -115,22 +116,54 @@ function applyPersonaToneToText(text, ctx) {
   if (!original.trim()) return original;
   if (isMealVisualReply(original)) return original;
 
+  const recentBodies = ctx.recentAssistantBodies || [];
+  if (ctx.skipPersonaExtras) {
+    let slim = applyIntensityPolicy(original, ctx);
+    slim = assistantRepeatGuard.scrubReplyAgainstRecent(slim, recentBodies);
+    return assistantRepeatGuard.stripBannedLines(slim);
+  }
+
   const lines = [];
-  if (ctx.timeBand === 'morning' && /empathy|guided/.test(ctx.responseMode)) {
-    lines.push('おはようございます。今日のペースで大丈夫です。');
-  } else if (ctx.timeBand === 'night' && /empathy|answer|guided/.test(ctx.responseMode)) {
-    lines.push('夜は無理に詰め込まず、整える視点でいきましょう。');
+  const morningLine = 'おはようございます。今日のペースで大丈夫です。';
+  const nightLine = '夜は無理に詰め込まず、整える視点でいきましょう。';
+  if (
+    ctx.timeBand === 'morning' &&
+    /empathy|guided/.test(ctx.responseMode) &&
+    !assistantRepeatGuard.phraseRecentlyUsed(morningLine, recentBodies, 4)
+  ) {
+    lines.push(morningLine);
+  } else if (
+    ctx.timeBand === 'night' &&
+    /empathy|answer|guided/.test(ctx.responseMode) &&
+    !assistantRepeatGuard.phraseRecentlyUsed(nightLine, recentBodies, 4)
+  ) {
+    lines.push(nightLine);
   }
 
   const level = String(featureFlags.PERSONA_ADJUSTMENT_LEVEL || 'medium');
   let body = applyIntensityPolicy(original, ctx);
-  if (ctx.aiType === '明るく後押し' && !/！/.test(body) && ctx.energyLevel !== 'low') {
+  body = assistantRepeatGuard.scrubReplyAgainstRecent(body, recentBodies);
+  if (
+    ctx.aiType === '明るく後押し' &&
+    !/！/.test(body) &&
+    ctx.energyLevel !== 'low' &&
+    !assistantRepeatGuard.phraseRecentlyUsed('一緒に、できる一歩から進めていきましょう。', recentBodies, 3)
+  ) {
     body = `${body}\n一緒に、できる一歩から進めていきましょう。`;
   }
-  if (ctx.aiType === '頼もしく導く' && !/優先|まず/.test(body)) {
+  if (
+    ctx.aiType === '頼もしく導く' &&
+    !/優先|まず/.test(body) &&
+    !assistantRepeatGuard.phraseRecentlyUsed('まずは1つに絞って進めれば大丈夫です。', recentBodies, 3)
+  ) {
     body = `${body}\nまずは1つに絞って進めれば大丈夫です。`;
   }
-  if (ctx.voiceStyle === 'いつも明るく' && ctx.energyLevel !== 'low' && !/いきましょう。$/.test(body)) {
+  if (
+    ctx.voiceStyle === 'いつも明るく' &&
+    ctx.energyLevel !== 'low' &&
+    !/いきましょう。$/.test(body) &&
+    !assistantRepeatGuard.phraseRecentlyUsed('焦らず、前向きにいきましょう。', recentBodies, 3)
+  ) {
     body = `${body}\n焦らず、前向きにいきましょう。`;
   }
   if (ctx.voiceStyle === '普段優しく、ときどき厳しく' && ctx.overworkAlert && !/休む|減速/.test(body)) {
@@ -141,13 +174,22 @@ function applyPersonaToneToText(text, ctx) {
   }
   lines.push(body);
 
-  if (ctx.overworkAlert && level !== 'low') {
+  if (
+    ctx.overworkAlert &&
+    level !== 'low' &&
+    !assistantRepeatGuard.phraseRecentlyUsed('頑張りが続いていそうなので', recentBodies, 3)
+  ) {
     lines.push('頑張りが続いていそうなので、今日は1つできたら十分です。');
   }
-  if (ctx.painContext && level !== 'low' && !/無理しない|痛みが強い|受診|安全|休/.test(body)) {
+  if (
+    ctx.painContext &&
+    level !== 'low' &&
+    !/無理しない|痛みが強い|受診|安全|休/.test(body) &&
+    !assistantRepeatGuard.phraseRecentlyUsed('痛みがある日は安全優先', recentBodies, 3)
+  ) {
     lines.push('痛みがある日は安全優先で、悪化しそうなら無理せず休みましょう。');
   }
-  return lines.filter(Boolean).join('\n');
+  return assistantRepeatGuard.stripBannedLines(lines.filter(Boolean).join('\n'));
 }
 
 async function applyGlobalPersonaAdjustments(input, result) {
@@ -155,9 +197,12 @@ async function applyGlobalPersonaAdjustments(input, result) {
   const userId = input?.userId || input?.lineUserId;
   let shortMemory = null;
   let longMemory = null;
+  let recentAssistantBodies = [];
   try {
     shortMemory = userId ? await contextMemoryService.getShortMemory(userId) : null;
     longMemory = userId ? await contextMemoryService.getLongMemory(userId) : null;
+    const recent = userId ? await contextMemoryService.getRecentMessages(userId, 12) : [];
+    recentAssistantBodies = assistantRepeatGuard.recentAssistantBodies(recent, 5);
   } catch (_) {
     shortMemory = null;
     longMemory = null;
@@ -165,7 +210,27 @@ async function applyGlobalPersonaAdjustments(input, result) {
 
   const inputText = String(input?.rawText || '').trim();
   const responseMode = String(result?.internal?.responseMode || 'answer');
+  const intentType = String(result?.internal?.intentType || '');
   const hour = getTokyoHour();
+  const skipPersonaExtras = [
+    'time_question',
+    'weight_lookup',
+    'memory_question',
+    'profile_summary',
+    'lab_followup',
+    'lab_save',
+    'lab_date_select',
+    'lab_image',
+    'lab_image_pending',
+    'pain_thread',
+    'care_priority',
+    'exercise_record',
+    'point_summary',
+    'today_records',
+    'today_meal_totals',
+    'admin_check',
+  ].includes(intentType);
+
   const ctx = {
     timeBand: inferTimeBand(hour),
     responseMode,
@@ -174,7 +239,9 @@ async function applyGlobalPersonaAdjustments(input, result) {
     painContext: /痛い|しびれ|違和感|骨折|腰|膝|首|むくみ|便通ない/.test(inputText),
     aiType: String(longMemory?.aiType || '').trim(),
     voiceStyle: String(longMemory?.voiceStyle || '').trim(),
-    supportPreference: Array.isArray(longMemory?.supportPreference) ? longMemory.supportPreference : []
+    supportPreference: Array.isArray(longMemory?.supportPreference) ? longMemory.supportPreference : [],
+    recentAssistantBodies,
+    skipPersonaExtras,
   };
 
   if (ctx.energyLevel !== 'low' && ctx.supportPreference.includes('短く返す')) {

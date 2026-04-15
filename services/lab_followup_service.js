@@ -157,7 +157,14 @@ function buildItemReply(panel, targetName, selectedDate) {
   const row = findValueForDate(panel, targetName, selectedDate);
   if (!row) {
     const label = normalizeTarget(targetName) || targetName;
-    return `${label} は今回の検査ではまだ安定して拾い切れていません。保存が完了したら保存済みデータから返します。`;
+    const item = findItem(panel, targetName);
+    const loose = normalizeText(item?.value || item?.currentValue || '');
+    if (item && loose) {
+      const unit = item.unit ? ` ${item.unit}` : '';
+      const flag = item.flag ? ` ${item.flag}` : '';
+      return `${item.itemName || label} は、いま読み取れている範囲では ${loose}${unit}${flag} です。保存の途中でも、画像から拾えた値としてお伝えします。`;
+    }
+    return `${label} は今回の検査ではまだ安定して拾い切れていません。別の項目名でもう一度聞いてみてください。`;
   }
 
   const unit = row.unit ? ` ${row.unit}` : '';

@@ -1,5 +1,7 @@
 'use strict';
 
+const assistantRepeatGuard = require('./assistant_repeat_guard');
+
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
@@ -233,10 +235,19 @@ async function generateReply(params) {
   const post = postProcessReply(raw);
   const trimmed = clampReplyLines(post, budget);
   if (!trimmed) return clampReplyLines(fallbackGenerate(params), budget);
-  if (countNonEmptyLines(trimmed) < 2 && normalizeText(params?.energyLevel || '') !== 'low' && /empathy_plus_one_hint/.test(normalizeText(params?.responseMode || ''))) {
+  const recentBodies = assistantRepeatGuard.recentAssistantBodies(params?.recentMessages || [], 5);
+  const shortLines = countNonEmptyLines(trimmed) < 2;
+  const lowEnergy = normalizeText(params?.energyLevel || '') === 'low';
+  const empathyHint = /empathy_plus_one_hint/.test(normalizeText(params?.responseMode || ''));
+  if (
+    shortLines &&
+    !lowEnergy &&
+    empathyHint &&
+    assistantRepeatGuard.shouldAppendClosingHint(recentBodies)
+  ) {
     return `${trimmed}\n必要なら次の一手を一緒に1つだけ決めましょう。`;
   }
-  return trimmed;
+  return assistantRepeatGuard.stripBannedLines(assistantRepeatGuard.scrubReplyAgainstRecent(trimmed, recentBodies));
 }
 
 module.exports = {

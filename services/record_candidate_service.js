@@ -1,4 +1,3 @@
-services/record_candidate_service.js
 'use strict';
 
 function normalizeText(value) {
@@ -50,6 +49,16 @@ function detectExerciseCandidate(text) {
   return null;
 }
 
+function looksLikeExerciseDistanceKilo(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/km|ｋｍ/i.test(safe)) return true;
+  const exerciseCue =
+    /走っ|走る|歩い|歩く|ジョギング|ランニング|漕い|自転車|サイクリング|運動|マラソン|距離/.test(safe);
+  if (!exerciseCue) return false;
+  return /[0-9０-９]+(?:\.[0-9０-９]+)?\s*(?:km|キロ|ｋｍ)/i.test(safe);
+}
+
 function detectWeightCandidate(text) {
   const safe = normalizeText(text);
 
@@ -59,6 +68,8 @@ function detectWeightCandidate(text) {
       summary: safe
     };
   }
+
+  if (looksLikeExerciseDistanceKilo(safe)) return null;
 
   if (/体重/.test(safe) || /^[0-9０-９]+(\.[0-9０-９]+)?\s*(kg|ＫＧ|キロ)/i.test(safe)) {
     return {
