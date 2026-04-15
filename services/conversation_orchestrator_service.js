@@ -887,6 +887,21 @@ function maybeHandleSymptomCore(input) {
   };
 }
 
+function looksLikeMotionContext(shortMemory, recentMessages) {
+  const followUpType = normalizeText(shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '');
+  if (followUpType === 'motion') return true;
+
+  const recentText = (Array.isArray(recentMessages) ? recentMessages : [])
+    .slice(-8)
+    .map((m) => normalizeText(m?.content || ''))
+    .join('\n');
+
+  const topicText = normalizeText(shortMemory?.recentSmallTalkTopic || '');
+  const merged = [topicText, recentText].join('\n');
+
+  return /動作解析|フォーム|走り|ランニングフォーム|ランフォーム|歩き方|姿勢|投球|ピッチング|サーブ|スイング|スクワット|片脚立ち|立ち姿|正面|側面|後面/.test(merged);
+}
+
 async function appendTurn(userId, userText, replyText) {
   await contextMemoryService.appendRecentMessage(userId, 'user', userText);
   await contextMemoryService.appendRecentMessage(userId, 'assistant', replyText);
@@ -1360,17 +1375,104 @@ async function orchestrateConversation(input) {
     let imagePayload = null;
     if (input?.messageType === 'image') {
       const ingested = await imageIngestService.ingestLineImage(input);
-      const replyText = ingested?.ok
-        ? 'motion-probe-2 ingest成功'
-        : 'motion-probe-2 ingest失敗';
+      if (!ingested?.ok) {
+        const replyText = 'motion-probe-3 ingest NG';
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'image_probe_ingest_ng', responseMode: 'answer' }
+        };
+      }
+
+      imagePayload = ingested.payload;
+
+      if (looksLikeMotionContext(shortMemory, recentMessages)) {
+        const replyText = 'motion-probe-3 motion route reached';
+        await contextMemoryService.saveShortMemory(input.userId, {
+          lastImageType: 'motion',
+          followUpContext: {
+            ...(shortMemory?.followUpContext || {}),
+            source: 'image',
+            imageType: 'motion'
+          }
+        });
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'motion_image_probe', responseMode: 'answer' }
+        };
+      }
+
+      const expectedRoute = inferExpectedImageRoute(shortMemory, recentMessages);
+      let labImageHandled = null;
+      let mealImageHandled = null;
+
+      if (expectedRoute === 'meal') {
+        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+        if (mealImageHandled?.handled) {
+          if (mealImageHandled.meal?.recordReady) {
+            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+          }
+          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+        }
+        labImageHandled = await maybeHandleLabImage(input, imagePayload);
+        if (labImageHandled?.handled) {
+          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        }
+      } else {
+        labImageHandled = await maybeHandleLabImage(input, imagePayload);
+        if (labImageHandled?.handled) {
+          await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        }
+        mealImageHandled = await maybeHandleMealImage(input, imagePayload);
+        if (mealImageHandled?.handled) {
+          if (mealImageHandled.meal?.recordReady) {
+            await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
+          }
+          await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
+          return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+        }
+      }
+
+      const imageKind = imageClassificationService.classifyImageByAnalysis({
+        lab: labImageHandled?.analysis,
+        meal: mealImageHandled?.analysis
+      });
+      const fallbackKind = detectCaptureTypeFromImageAnalysis({
+        lab: labImageHandled?.analysis,
+        meal: mealImageHandled?.analysis
+      }, text);
+      if (labImageHandled?.analysis?.labLike) {
+        await contextMemoryService.saveShortMemory(input.userId, {
+          lastImageType: 'lab_pending',
+          followUpContext: {
+            source: 'image',
+            imageType: 'lab_pending',
+            extractedItems: [],
+            examDate: labImageHandled.analysis.examDate || '',
+            latestExamDate: labImageHandled.analysis.latestExamDate || labImageHandled.analysis.examDate || '',
+            availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
+          }
+        });
+        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、まだ構造化の途中です。「TGは？」「HbA1cは？」「今までの傾向は？」「2025-03-22」のように聞いてもらえれば、この画像を優先して見ます。';
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
+        };
+      }
+      const replyText = buildUnhandledImageReply(imageKind === 'unknown' ? fallbackKind : `${imageKind}_record`);
       await appendTurn(input.userId, input.rawText || '[image]', replyText);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: replyText }],
-        internal: {
-          intentType: ingested?.ok ? 'image_probe_ingest_ok' : 'image_probe_ingest_ng',
-          responseMode: 'answer'
-        }
+        internal: { intentType: 'image_unclassified', responseMode: 'retry' }
       };
     }
 
