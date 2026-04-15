@@ -86,7 +86,8 @@
     chatVisibleCount: 400,
     cacheByRange: {},
     pendingQuickAction: '',
-    sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || ''
+    sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || '',
+    connectionState: 'disconnected'
   };
 
   const els = {
@@ -188,6 +189,12 @@
   function parseMaybeDate(value) {
     const t = new Date(value || '');
     return Number.isNaN(t.getTime()) ? null : t;
+  }
+
+  function isExpiredAt(value) {
+    const d = parseMaybeDate(value);
+    if (!d) return false;
+    return d.getTime() <= Date.now();
   }
 
   function uniqueBy(items, keyFn) {
@@ -643,14 +650,28 @@
 
   function renderConnection() {
     const data = state.data || MOCK_DATA;
-    if (data.connected) {
+    const expired = isExpiredAt(data.expiresAt);
+    const isConnected = Boolean(data.connected) && !expired;
+    if (isConnected) {
       els.connectBanner.classList.add('hidden');
-      els.sessionPill.textContent = `接続済み ${data.userName || ''}`.trim();
+      els.sessionPill.dataset.state = state.connectionState === 'connecting' ? 'connecting' : 'connected';
+      els.sessionPill.textContent = state.connectionState === 'connecting'
+        ? '接続中...'
+        : `接続済み ${data.userName || ''}`.trim();
       els.sessionDetail.textContent = `最終更新 ${data.lastUpdated || '—'} / 接続期限 ${data.expiresAt || '—'} / ${data.syncStatus || '同期中'}`;
+      els.disconnectBtn.disabled = false;
+    } else if (expired) {
+      els.connectBanner.classList.remove('hidden');
+      els.sessionPill.dataset.state = 'expired';
+      els.sessionPill.textContent = '接続期限切れ';
+      els.sessionDetail.textContent = '接続コードの有効期限が切れています。新しい接続コードで再接続してください。';
+      els.disconnectBtn.disabled = true;
     } else {
       els.connectBanner.classList.remove('hidden');
+      els.sessionPill.dataset.state = 'disconnected';
       els.sessionPill.textContent = '未接続';
       els.sessionDetail.textContent = '接続コードを入力すると使えます';
+      els.disconnectBtn.disabled = true;
     }
   }
 
@@ -1048,6 +1069,19 @@ function renderMessageAttachments(item) {
     els.composerInput.style.height = `${Math.min(els.composerInput.scrollHeight, 180)}px`;
   }
 
+  function setComposerStatus(message, mode) {
+    const safe = normalizeText(message) || '写真・画像・ファイルを送れます';
+    els.composerHelp.textContent = safe;
+    els.composerHelp.dataset.mode = mode || 'idle';
+  }
+
+  function setComposerSending(isSending) {
+    const sendBtn = els.composerForm.querySelector('.send-btn');
+    if (sendBtn) sendBtn.disabled = Boolean(isSending);
+    els.plusBtn.disabled = Boolean(isSending);
+    els.composerInput.disabled = Boolean(isSending);
+  }
+
   function updateRecordHeadMeta() {
     const data = state.data || MOCK_DATA;
     const weightCount = getFilteredRows(data.records.weight).length;
@@ -1154,26 +1188,38 @@ function renderMessageAttachments(item) {
     const pickedFiles = Array.from(files || []);
     if (!safe && !pickedFiles.length) return;
 
-    const previewFiles = buildAttachmentPreview(pickedFiles);
-    const localLabel = safe || (pickedFiles.length ? (previewFiles.some((file) => file.isImage) ? '写真を送信' : `${pickedFiles.length}件のファイルを送信`) : '');
-    addLocalMessage('user', localLabel, previewFiles);
+    setComposerSending(true);
+    setComposerStatus('送信中です…', 'sending');
+    try {
+      const previewFiles = buildAttachmentPreview(pickedFiles);
+      const localLabel = safe || (pickedFiles.length ? (previewFiles.some((file) => file.isImage) ? '写真を送信' : `${pickedFiles.length}件のファイルを送信`) : '');
+      addLocalMessage('user', localLabel, previewFiles);
 
-    state.pendingQuickAction = '';
-    renderQuickActions();
-    window.dispatchEvent(new CustomEvent('kokokara:web-send', { detail: { text: safe, files: pickedFiles.length } }));
+      state.pendingQuickAction = '';
+      renderQuickActions();
+      window.dispatchEvent(new CustomEvent('kokokara:web-send', { detail: { text: safe, files: pickedFiles.length } }));
 
-    let delivered = false;
-    if (pickedFiles.length) {
-      delivered = await tryUploadFiles(pickedFiles, safe);
-      if (!delivered) {
-        addLocalMessage('assistant', '添付の送信がうまくいかなかったので、もう一度お願いします。');
+      let delivered = false;
+      if (pickedFiles.length) {
+        delivered = await tryUploadFiles(pickedFiles, safe);
+        if (!delivered) {
+          addLocalMessage('assistant', '添付の送信がうまくいかなかったので、もう一度お願いします。');
+          setComposerStatus('添付の送信に失敗しました。ネットワークを確認して再送してください。', 'error');
+        }
       }
-    }
-    if (safe && !delivered) {
-      const sent = await trySendTextToServer(safe);
-      if (!sent) {
-        addLocalMessage('assistant', '今は送信確認が取れなかったので、接続を更新してもう一度お願いします。');
+      if (safe && !delivered) {
+        const sent = await trySendTextToServer(safe);
+        if (!sent) {
+          addLocalMessage('assistant', '今は送信確認が取れなかったので、接続を更新してもう一度お願いします。');
+          setComposerStatus('送信に失敗しました。接続を更新してもう一度送ってください。', 'error');
+        } else {
+          setComposerStatus('送信できました。', 'success');
+        }
+      } else if (delivered) {
+        setComposerStatus('添付を送信できました。', 'success');
       }
+    } finally {
+      setComposerSending(false);
     }
   }
 
@@ -1198,7 +1244,7 @@ function renderMessageAttachments(item) {
     els.filePicker.addEventListener('change', () => {
       const count = els.filePicker.files?.length || 0;
       const names = Array.from(els.filePicker.files || []).map((file) => file.name).slice(0, 2).join(' / ');
-      els.composerHelp.textContent = count ? `${count}件のファイルを選びました ${names}`.trim() : '写真・画像・ファイルを送れます';
+      setComposerStatus(count ? `${count}件のファイルを選びました ${names}`.trim() : '写真・画像・ファイルを送れます', count ? 'selected' : 'idle');
     });
     els.composerInput.addEventListener('input', autosizeComposer);
 
@@ -1210,7 +1256,7 @@ function renderMessageAttachments(item) {
       await sendText(text, files);
       els.composerInput.value = '';
       els.filePicker.value = '';
-      els.composerHelp.textContent = '写真・画像・ファイルを送れます';
+      setComposerStatus('写真・画像・ファイルを送れます', 'idle');
       autosizeComposer();
     });
 
@@ -1218,6 +1264,8 @@ function renderMessageAttachments(item) {
       event.preventDefault();
       const value = els.connectInput.value.trim();
       if (!value) return;
+      state.connectionState = 'connecting';
+      renderConnection();
       try {
         const json = await postJson('/api/web/link/confirm', { code: value }, false);
         const token = normalizeText(json.sessionToken || '');
@@ -1225,6 +1273,7 @@ function renderMessageAttachments(item) {
         state.sessionToken = token;
         localStorage.setItem(WEB_TOKEN_KEY, token);
         state.data.connected = true;
+        state.connectionState = 'connected';
         renderConnection();
         setActiveTab('chat');
         window.dispatchEvent(new CustomEvent('kokokara:web-connect', { detail: { code: value } }));
@@ -1232,6 +1281,7 @@ function renderMessageAttachments(item) {
         renderAll();
       } catch (_error) {
         state.data.connected = false;
+        state.connectionState = 'expired';
         renderConnection();
         addLocalMessage('assistant', '接続コードを確認できませんでした。コードをもう一度貼り付けてください。');
       }
@@ -1245,6 +1295,7 @@ function renderMessageAttachments(item) {
     els.disconnectBtn.addEventListener('click', () => {
       state.data.connected = false;
       state.sessionToken = '';
+      state.connectionState = 'disconnected';
       localStorage.removeItem(WEB_TOKEN_KEY);
       renderConnection();
       window.dispatchEvent(new CustomEvent('kokokara:web-disconnect'));
@@ -1273,6 +1324,17 @@ function renderMessageAttachments(item) {
 
   async function init() {
     els.contextMemoInput.value = localStorage.getItem(MEMO_KEY) || '';
+    state.connectionState = state.sessionToken ? 'connecting' : 'disconnected';
+    if (state.sessionToken) {
+      try {
+        await fetchJson('/api/web/me');
+        state.connectionState = 'connected';
+      } catch (_error) {
+        state.connectionState = 'expired';
+        state.sessionToken = '';
+        localStorage.removeItem(WEB_TOKEN_KEY);
+      }
+    }
     await refreshForRange(state.rangeDays, true);
     bindEvents();
     renderAll();

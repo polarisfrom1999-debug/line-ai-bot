@@ -145,6 +145,26 @@ textarea { resize: vertical; }
   box-shadow: var(--card-shadow);
   font-weight: 800;
 }
+.session-pill[data-state="connected"] {
+  background: rgba(79, 119, 93, 0.14);
+  border-color: rgba(79, 119, 93, 0.42);
+  color: #29573a;
+}
+.session-pill[data-state="connecting"] {
+  background: rgba(135, 93, 136, 0.12);
+  border-color: rgba(135, 93, 136, 0.36);
+  color: var(--primary-strong);
+}
+.session-pill[data-state="expired"] {
+  background: rgba(181, 68, 68, 0.12);
+  border-color: rgba(181, 68, 68, 0.38);
+  color: #922f2f;
+}
+.session-pill[data-state="disconnected"] {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
 .session-detail {
   margin-top: 4px;
   color: var(--muted);
@@ -488,6 +508,26 @@ textarea { resize: vertical; }
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+.composer-help[data-mode="sending"] {
+  color: var(--primary-strong);
+  font-weight: 700;
+}
+.composer-help[data-mode="success"] {
+  color: var(--ok);
+  font-weight: 700;
+}
+.composer-help[data-mode="error"] {
+  color: #b54444;
+  font-weight: 700;
+}
+.send-btn:disabled,
+.plus-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.composer textarea:disabled {
+  opacity: 0.75;
 }
 .side-stack {
   display: grid;
