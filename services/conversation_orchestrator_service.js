@@ -1359,12 +1359,18 @@ async function orchestrateConversation(input) {
 
     let imagePayload = null;
     if (input?.messageType === 'image') {
-      const replyText = 'motion-probe-1 を通過しました';
+      const ingested = await imageIngestService.ingestLineImage(input);
+      const replyText = ingested?.ok
+        ? 'motion-probe-2 ingest成功'
+        : 'motion-probe-2 ingest失敗';
       await appendTurn(input.userId, input.rawText || '[image]', replyText);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: replyText }],
-        internal: { intentType: 'image_probe', responseMode: 'answer' }
+        internal: {
+          intentType: ingested?.ok ? 'image_probe_ingest_ok' : 'image_probe_ingest_ng',
+          responseMode: 'answer'
+        }
       };
     }
 
