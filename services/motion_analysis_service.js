@@ -17,6 +17,17 @@ function asArray(value) {
   return Array.isArray(value) ? value.filter(Boolean).map((v) => normalizeText(v)).filter(Boolean) : [];
 }
 
+function hasJapanese(text) {
+  return /[\u3040-\u30ff\u3400-\u9fff]/.test(String(text || ''));
+}
+
+function localizeForJapaneseAudience(text, fallbackText) {
+  const safe = normalizeText(text);
+  if (!safe) return normalizeText(fallbackText);
+  if (hasJapanese(safe)) return safe;
+  return normalizeText(fallbackText);
+}
+
 function inferTimeOfDay() {
   const hour = Number(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', hour12: false }).format(new Date()));
   if (hour < 11) return 'morning';
@@ -80,6 +91,8 @@ function buildSystemPrompt({ timeOfDay, energyLevel }) {
     corePersonality,
     motionPrompt,
     menuRehabRules,
+    '【言語】ユーザー向け本文は必ず自然な日本語で記述する。英語での説明文は禁止。',
+    '【言語】JSONキー名はスキーマに従い英語のままでよいが、各値の文章は日本語のみで書く。',
     `【時間補正】${timeHint}`,
     `【energy_level補正】${energyHint}`,
     '【出力制約】必ず JSON のみを返す。コードブロックは禁止。主観的な褒めは具体的な観察事実に紐づける。心理状態は断定せず仮説として扱う。'
@@ -143,21 +156,31 @@ function safeParseResponseJson(rawText) {
 }
 
 function normalizeResult(raw = {}) {
+  const facts = asArray(raw.facts).slice(0, 3).map((v) => localizeForJapaneseAudience(v, '見えている動きの特徴があります。'));
+  const strengths = asArray(raw.strengths).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今の動きには活かせる強みがあります。'));
+  const concerns = asArray(raw.concerns).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '気になる点はありますが、急いで変えなくて大丈夫です。'));
+  const backgroundHypotheses = asArray(raw.backgroundHypotheses).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '撮影条件や疲労で見え方が変わる可能性があります。'));
+  const keepPoints = asArray(raw.keepPoints).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今のやりやすさは大切に残しましょう。'));
+  const cautions = asArray(raw.cautions).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '痛みが増える場合は無理せず中断しましょう。'));
+  const smallActions = asArray(raw.smallActions).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今日は1つだけ小さな修正を試してみましょう。'));
+  const dailyLifeTranslation = asArray(raw.dailyLifeTranslation).slice(0, 2).map((v) => localizeForJapaneseAudience(v, 'この調整は日常動作の安定にもつながります。'));
+  const performanceBenefits = asArray(raw.performanceBenefits).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '小さな調整で動きの再現性が高まりやすくなります。'));
+
   return {
     isMotionRelated: Boolean(raw.isMotionRelated),
-    motionType: normalizeText(raw.motionType || 'motion'),
-    facts: asArray(raw.facts).slice(0, 3),
-    strengths: asArray(raw.strengths).slice(0, 2),
-    concerns: asArray(raw.concerns).slice(0, 2),
-    backgroundHypotheses: asArray(raw.backgroundHypotheses).slice(0, 2),
-    keepPoints: asArray(raw.keepPoints).slice(0, 2),
-    cautions: asArray(raw.cautions).slice(0, 2),
-    smallActions: asArray(raw.smallActions).slice(0, 2),
-    dailyLifeTranslation: asArray(raw.dailyLifeTranslation).slice(0, 2),
-    performanceBenefits: asArray(raw.performanceBenefits).slice(0, 2),
-    encouragement: normalizeText(raw.encouragement || ''),
-    safetyMessage: normalizeText(raw.safetyMessage || ''),
-    medicalConsultFlag: normalizeText(raw.medicalConsultFlag || '')
+    motionType: localizeForJapaneseAudience(raw.motionType || 'motion', '動作'),
+    facts,
+    strengths,
+    concerns,
+    backgroundHypotheses,
+    keepPoints,
+    cautions,
+    smallActions,
+    dailyLifeTranslation,
+    performanceBenefits,
+    encouragement: localizeForJapaneseAudience(raw.encouragement || '', '今の良さを活かしながら、あなたのペースで進めば大丈夫です。'),
+    safetyMessage: localizeForJapaneseAudience(raw.safetyMessage || '', '痛みが増える場合は中断し、休息を優先してください。'),
+    medicalConsultFlag: localizeForJapaneseAudience(raw.medicalConsultFlag || '', '')
   };
 }
 
@@ -387,6 +410,7 @@ async function analyzeMotionFrames({ frames = [], context = {}, userId = '' } = 
     'あなたは柔道整復師的な安全感覚と日本代表トレーナーの観察眼を併せ持つ解析者です。医療診断の断定は禁止です。',
     '次の画像群を統合して解析し、必ずJSONのみで返してください。',
     '出力順は facts -> strengths -> concerns -> backgroundHypotheses -> smallActions -> dailyLifeTranslation -> safetyMessage を守ること。',
+    'ユーザーに見える文章は必ず日本語にする。英語の説明文や英単語中心の文は作らない。',
     '強みは必ず1〜2個、気になる点は最大2個、修正案は最大2個。',
     `ユーザー文脈:\n${buildUserContextText(context)}`,
   ].join('\n\n');

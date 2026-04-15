@@ -1,14 +1,18 @@
 'use strict';
 
 const express = require('express');
+const multer = require('multer');
 const conversationRouter = require('../services/chatgpt_conversation_router');
 const chatLogService = require('../services/chat_log_service');
 const conversationSummaryService = require('../services/conversation_summary_service');
 const authService = require('../services/web_portal_auth_service');
 const dataService = require('../services/web_portal_data_service');
 const realtimeService = require('../services/web_portal_realtime_service');
+const mealAnalysisService = require('../services/meal_analysis_service');
+const motionAnalysisService = require('../services/motion_analysis_service');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } });
 
 function getBearerToken(req) {
   const auth = String(req.headers.authorization || '');
@@ -266,7 +270,7 @@ router.get('/chat/bundle', requireSession, async (req, res) => {
 });
 
 router.post('/chat/send', requireSession, async (req, res) => {
-  const message = String(req.body?.message || '').trim();
+  const message = String(req.body?.message || req.body?.text || '').trim();
   if (!message) return res.status(400).json({ ok: false, error: 'empty_message', message: 'メッセージを入力してください。' });
 
   const input = {
@@ -347,6 +351,48 @@ router.post('/chat/send', requireSession, async (req, res) => {
   });
 });
 
+router.post('/chat/upload', requireSession, upload.array('files', 5), async (req, res) => {
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    const text = String(req.body?.message || req.body?.text || '').trim();
+    if (!files.length) {
+      return res.status(400).json({ ok: false, error: 'empty_files', message: '添付ファイルがありません。' });
+    }
+
+    const firstImage = files.find((file) => /^image\//.test(String(file.mimetype || '')));
+    if (!firstImage) {
+      return res.json({
+        ok: true,
+        reply: '画像ファイルを受け取れなかったため、テキストのみ先に受け取りました。画像は jpg / png / webp で送ってください。',
+      });
+    }
+
+    const imagePayload = {
+      ok: true,
+      buffer: firstImage.buffer,
+      mimeType: firstImage.mimetype || 'image/jpeg',
+      kind: 'image',
+    };
+
+    const meal = await mealAnalysisService.analyzeMealImage(imagePayload, req.webSession.user.id, text);
+    if (meal?.isMealImage) {
+      const mealText = await mealAnalysisService.buildMealImageReplyText(imagePayload, req.webSession.user.id, text);
+      return res.json({ ok: true, reply: mealText, mode: 'meal_image' });
+    }
+
+    const motion = await motionAnalysisService.analyzeMotionImage({
+      imagePayload: { buffer: firstImage.buffer, mimeType: firstImage.mimetype || 'image/jpeg' },
+      textHint: text,
+      userId: req.webSession.user.id,
+    });
+    const motionText = String(motion?.replyText || '').trim() || '画像は受け取れています。まずは今の良い動きから一緒に整理していきましょう。';
+    return res.json({ ok: true, reply: motionText, mode: 'motion_image' });
+  } catch (error) {
+    console.error('[web] chat upload error:', error?.message || error);
+    return res.status(500).json({ ok: false, error: 'upload_failed', message: '添付の解析中にエラーが起きました。もう一度送ってください。' });
+  }
+});
+
 router.get('/records/overview', requireSession, async (req, res) => {
   try {
     const overview = await dataService.getRecordsOverview(req.webSession.user);
@@ -425,6 +471,32 @@ router.get('/records/labs/list', requireSession, async (req, res) => {
     console.error('[web] records labs list error:', error?.message || error);
     res.status(500).json({ ok: false, error: 'records_labs_list_failed', message: '血液検査一覧を取得できませんでした。' });
   }
+});
+
+router.use((error, _req, res, next) => {
+  if (!error) return next();
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        ok: false,
+        error: 'file_too_large',
+        message: '添付サイズが大きすぎます。1ファイル 12MB 以下で送ってください。'
+      });
+    }
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({
+        ok: false,
+        error: 'too_many_files',
+        message: '添付は一度に5ファイルまでです。'
+      });
+    }
+    return res.status(400).json({
+      ok: false,
+      error: 'upload_invalid',
+      message: '添付の受け取りに失敗しました。画像を選び直して再送してください。'
+    });
+  }
+  return next(error);
 });
 
 module.exports = router;

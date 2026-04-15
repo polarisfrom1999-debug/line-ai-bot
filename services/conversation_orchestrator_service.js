@@ -139,6 +139,7 @@ function detectIntent(input) {
   if (/月間報告|月刊報告|今月のまとめ/.test(text)) return 'monthly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
   if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計/.test(text)) return 'today_meal_totals';
+  if (/積算|今日ここまで|ここまでの合計/.test(text)) return 'today_meal_totals';
   if (/栄養バランス|1日の食事の総括|今日の食事の総括|今日の栄養/.test(text)) return 'today_meal_balance';
   if (/今何ポイント|今ポイント|ポイント教えて|ポイントは\??/.test(text)) return 'point_summary';
   if (/管理確認|管理メモ|管理用まとめ/.test(text)) return 'admin_check';
@@ -586,9 +587,11 @@ function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
 
   if (/今日ここまで|今日の合計|総カロリー|積算/.test(questionText) || mealType === 'lunch' || mealType === 'dinner') {
     lines.push('');
-    lines.push('📈 今日ここまでの合計');
+    lines.push('📈 本日の合計（積算）');
+    lines.push('━━━━━━━━━━━━━');
     lines.push(`🔥 エネルギー: 約${round1(todayTotals?.kcal || 0)} kcal`);
     lines.push(buildMealNutritionLine(todayTotals || {}));
+    lines.push('━━━━━━━━━━━━━');
   }
 
   return lines.join('\n');
@@ -619,6 +622,32 @@ async function maybeHandleMealDraftQuestion(input, shortMemory) {
 function looksLikeDistress(text) {
   const safe = normalizeText(text);
   return /毎日心が苦しい|毎日心がしんどい|かなりしんどい|ちょっと限界|限界かも|消えたい|もう無理|やる気ない|やる気が出ない/.test(safe);
+}
+
+function looksLikeAnnyui(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  return /なんか今日はだめ|最近ちょっと微妙|やる気が出ない|まあいいかってなっちゃう|頑張れない|今日はむり|なんかしんどい/.test(safe);
+}
+
+function buildAnnyuiReply(text) {
+  const safe = normalizeText(text);
+  if (/やる気が出ない|頑張れない/.test(safe)) {
+    return [
+      '今は気力を使い切っている感じがありそうですね。',
+      '今日は整える日にして、記録だけにするか、今の体調だけ一緒に見ましょう。'
+    ].join('\n');
+  }
+  if (/なんか今日はだめ|今日はむり/.test(safe)) {
+    return [
+      '今日はそんな日なんですね。ここで止まっても大丈夫です。',
+      'いまは原因を広げずに、体調だけ確認するか、食事1件だけ記録して終わりにしましょう。'
+    ].join('\n');
+  }
+  return [
+    '少しエネルギーが落ちている日かもしれませんね。',
+    '今日は正解を下げて、できることを1つだけ選ぶ進め方でいきましょう。'
+  ].join('\n');
 }
 
 function looksLikePain(text) {
@@ -1443,6 +1472,17 @@ async function orchestrateConversation(input) {
         await appendTurn(input.userId, input.rawText || '', supportReply);
         return { ok: true, replyMessages: [{ type: 'text', text: supportReply }], internal: { intentType: 'care_priority', responseMode: 'empathy_only' } };
       }
+    }
+
+    if (input?.messageType === 'text' && looksLikeAnnyui(text)) {
+      const replyText = buildAnnyuiReply(text);
+      const replyMessage = textMessageWithQuickReplies(replyText, ['今日は記録だけ', '体調だけ整理', '1つだけ提案して']);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return {
+        ok: true,
+        replyMessages: [replyMessage],
+        internal: { intentType: 'annyui_support', responseMode: 'empathy_plus_one_hint' }
+      };
     }
 
     const directGuideIntent = detectGuideIntent(text);

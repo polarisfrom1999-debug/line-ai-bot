@@ -15,6 +15,7 @@ try {
 
 const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 const conversationRouter = require('./services/chatgpt_conversation_router');
 const chatLogService = require('./services/chat_log_service');

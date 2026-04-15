@@ -17,6 +17,7 @@
   ];
 
   const MEMO_KEY = 'kokokara-web-memo';
+  const WEB_TOKEN_KEY = 'kokokara-web-token';
 
   const MOCK_DATA = {
     connected: true,
@@ -84,7 +85,8 @@
     data: null,
     chatVisibleCount: 400,
     cacheByRange: {},
-    pendingQuickAction: ''
+    pendingQuickAction: '',
+    sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || ''
   };
 
   const els = {
@@ -709,8 +711,14 @@ function renderMessageAttachments(item) {
     return sortMessages(merged);
   }
 
+  function buildAuthHeaders(base = {}) {
+    const token = normalizeText(state.sessionToken || '');
+    if (!token) return base;
+    return { ...base, Authorization: `Bearer ${token}` };
+  }
+
   async function fetchJson(url) {
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await fetch(url, { credentials: 'include', headers: buildAuthHeaders() });
     if (!res.ok) throw new Error(String(res.status));
     return res.json();
   }
@@ -1065,11 +1073,11 @@ function renderMessageAttachments(item) {
     renderRecords();
   }
 
-  async function postJson(url, payload) {
+  async function postJson(url, payload, useAuth = true) {
     const res = await fetch(url, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: useAuth ? buildAuthHeaders({ 'Content-Type': 'application/json' }) : { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     if (!res.ok) throw new Error(String(res.status));
@@ -1081,6 +1089,7 @@ function renderMessageAttachments(item) {
     const res = await fetch(url, {
       method: 'POST',
       credentials: 'include',
+      headers: buildAuthHeaders(),
       body: formData
     });
     if (!res.ok) throw new Error(String(res.status));
@@ -1103,11 +1112,7 @@ function renderMessageAttachments(item) {
 
   async function trySendTextToServer(text) {
     const urls = [
-      '/api/web/chat',
-      '/web/api/chat',
-      '/api/web/message',
-      '/web/api/message',
-      '/api/web/messages'
+      '/api/web/chat/send'
     ];
     for (const url of urls) {
       try {
@@ -1121,11 +1126,8 @@ function renderMessageAttachments(item) {
 
   async function tryUploadFiles(files, text) {
     const urls = [
-      '/api/web/chat',
-      '/web/api/chat',
-      '/api/web/upload',
-      '/web/api/upload',
-      '/api/web/message'
+      '/api/web/chat/upload',
+      '/api/web/chat/send'
     ];
     for (const url of urls) {
       try {
@@ -1137,7 +1139,9 @@ function renderMessageAttachments(item) {
           form.append(`file${index + 1}`, file);
           if (index === 0) form.append('file', file);
         });
-        const json = await postForm(url, form);
+        const json = url === '/api/web/chat/send'
+          ? await postJson(url, { message: text || '画像を送信しました。', text: text || '画像を送信しました。' })
+          : await postForm(url, form);
         applyServerReply(json);
         return true;
       } catch (_error) {}
@@ -1214,12 +1218,23 @@ function renderMessageAttachments(item) {
       event.preventDefault();
       const value = els.connectInput.value.trim();
       if (!value) return;
-      state.data.connected = true;
-      renderConnection();
-      setActiveTab('chat');
-      window.dispatchEvent(new CustomEvent('kokokara:web-connect', { detail: { code: value } }));
-      await refreshForRange(state.rangeDays, true);
-      renderAll();
+      try {
+        const json = await postJson('/api/web/link/confirm', { code: value }, false);
+        const token = normalizeText(json.sessionToken || '');
+        if (!token) throw new Error('token_missing');
+        state.sessionToken = token;
+        localStorage.setItem(WEB_TOKEN_KEY, token);
+        state.data.connected = true;
+        renderConnection();
+        setActiveTab('chat');
+        window.dispatchEvent(new CustomEvent('kokokara:web-connect', { detail: { code: value } }));
+        await refreshForRange(state.rangeDays, true);
+        renderAll();
+      } catch (_error) {
+        state.data.connected = false;
+        renderConnection();
+        addLocalMessage('assistant', '接続コードを確認できませんでした。コードをもう一度貼り付けてください。');
+      }
     });
 
     els.refreshBtn.addEventListener('click', async () => {
@@ -1229,6 +1244,8 @@ function renderMessageAttachments(item) {
 
     els.disconnectBtn.addEventListener('click', () => {
       state.data.connected = false;
+      state.sessionToken = '';
+      localStorage.removeItem(WEB_TOKEN_KEY);
       renderConnection();
       window.dispatchEvent(new CustomEvent('kokokara:web-disconnect'));
     });

@@ -19,6 +19,20 @@ function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
 
+function normalizeMealItemLabel(item) {
+  const safe = normalizeText(item);
+  if (!safe) return '';
+
+  // 曖昧な緑野菜を無理に断定しない。
+  if (/[?？]|っぽい|かも|おそらく|風/.test(safe) && /オクラ|ピーマン|いんげん|青菜|小松菜|ほうれん草/.test(safe)) {
+    return '緑の野菜のおかず';
+  }
+  if (/野菜炒めっぽい|青菜っぽい/.test(safe)) {
+    return '野菜のおかず';
+  }
+  return safe;
+}
+
 function buildFallbackMeal(reason = 'fallback') {
   return {
     isMealImage: true,
@@ -52,7 +66,7 @@ function normalizeMealData(raw) {
   }
 
   const items = Array.isArray(raw.items)
-    ? raw.items.map((item) => normalizeText(item)).filter(Boolean)
+    ? raw.items.map((item) => normalizeMealItemLabel(item)).filter(Boolean)
     : [];
 
   const sourceNutrition = raw.estimatedNutrition || raw.estimated_nutrition || {};
@@ -135,7 +149,7 @@ function splitMealItems(text) {
 
   const parts = normalized
     .split('、')
-    .map((item) => normalizeText(item))
+    .map((item) => normalizeMealItemLabel(item))
     .filter(Boolean);
 
   if (parts.length > 1) return parts;
@@ -143,14 +157,14 @@ function splitMealItems(text) {
   if (/\s/.test(safe)) {
     const spaced = safe
       .split(/\s+/)
-      .map((item) => normalizeText(item))
+      .map((item) => normalizeMealItemLabel(item))
       .filter(Boolean);
     if (spaced.length > 1) return spaced;
   }
 
   return safe
     .split(/\n+/)
-    .map((item) => normalizeText(item))
+    .map((item) => normalizeMealItemLabel(item))
     .filter(Boolean);
 }
 
