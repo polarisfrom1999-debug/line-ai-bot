@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const contextMemoryService = require('./context_memory_service');
 const aiChatService = require('./ai_chat_service');
 const onboardingService = require('./onboarding_service');
@@ -776,6 +779,10 @@ function buildImageIngestFailureReply() {
   return '画像の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
 }
 
+function buildVideoIngestFailureReply() {
+  return '動画の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
+}
+
 function buildUnhandledImageReply(kind) {
   if (kind === 'lab_record') {
     return '血液検査の画像として見ていますが、読み取りがまだ安定していません。もう一度送ってもらえると助かります。';
@@ -784,6 +791,87 @@ function buildUnhandledImageReply(kind) {
     return '食事の画像は受け取りましたが、まだうまく整理し切れていません。もう一度送ってもらえると助かります。';
   }
   return '今ちょっとうまく受け取れなかったので、もう一度だけ送ってもらえたら大丈夫です。';
+}
+
+function getImageProcessorOptional() {
+  try {
+    return require('./image_processor');
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function analyzeMotionFromFrames({ input, shortMemory, textHint, frames, sourceType }) {
+  const motionResult = await motionAnalysisService.analyzeMotionFrames({
+    frames,
+    context: { note: normalizeText(textHint || shortMemory?.recentSmallTalkTopic || '') },
+    userId: input.userId,
+  });
+  const replyText = normalizeText(motionResult?.replyText || '')
+    || '動きは受け取れています。まずは今の良いところから一緒に整理していきましょう。';
+
+  await contextMemoryService.saveShortMemory(input.userId, {
+    lastImageType: 'motion',
+    followUpContext: {
+      ...(shortMemory?.followUpContext || {}),
+      source: sourceType,
+      imageType: 'motion',
+      lastMotionAnalysis: motionResult || null,
+    }
+  });
+
+  return { motionResult, replyText };
+}
+
+async function analyzeMotionFromVideo({ input, shortMemory, mediaPayload, textHint }) {
+  const imageProcessor = getImageProcessorOptional();
+  if (!imageProcessor || typeof imageProcessor.extractKeyframesFromVideo !== 'function') {
+    return {
+      ok: false,
+      replyText: '動画は受け取れています。いまは静止画解析が先に動く設定なので、横からの静止画を1枚送ってもらえればすぐ見られます。',
+      reason: 'image_processor_unavailable',
+    };
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kokokara-video-'));
+  const ext = /quicktime|mov/i.test(mediaPayload?.mimeType || '') ? '.mov' : '.mp4';
+  const tempVideoPath = path.join(tempDir, `input${ext}`);
+  fs.writeFileSync(tempVideoPath, mediaPayload.buffer);
+
+  try {
+    const frames = await imageProcessor.extractKeyframesFromVideo({
+      videoPath: tempVideoPath,
+      frameCount: 5,
+    });
+    if (!Array.isArray(frames) || !frames.length) {
+      return {
+        ok: false,
+        replyText: '動画を受け取りましたが、解析に使えるフレームを取り出せませんでした。まずは静止画1枚でも大丈夫です。',
+        reason: 'frame_extract_empty',
+      };
+    }
+
+    const { motionResult, replyText } = await analyzeMotionFromFrames({
+      input,
+      shortMemory,
+      textHint,
+      frames,
+      sourceType: 'video',
+    });
+    return { ok: true, motionResult, replyText };
+  } catch (error) {
+    return {
+      ok: false,
+      replyText: '動画の解析中に処理が止まってしまいました。静止画1枚からでも丁寧に見られるので、まずは1枚送ってください。',
+      reason: normalizeText(error?.message || 'video_motion_error'),
+    };
+  } finally {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch (_e) {
+      // no-op
+    }
+  }
 }
 
 function looksLikeHomecareConsultation(text) {
@@ -1377,36 +1465,27 @@ async function orchestrateConversation(input) {
     if (input?.messageType === 'image') {
       const ingested = await imageIngestService.ingestLineImage(input);
       if (!ingested?.ok) {
-        const replyText = 'motion-probe-3 ingest NG';
+        const replyText = buildImageIngestFailureReply();
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,
           replyMessages: [{ type: 'text', text: replyText }],
-          internal: { intentType: 'image_probe_ingest_ng', responseMode: 'answer' }
+          internal: { intentType: 'image_ingest_ng', responseMode: 'answer' }
         };
       }
 
       imagePayload = ingested.payload;
 
       if (looksLikeMotionContext(shortMemory, recentMessages)) {
-        const motionResult = await motionAnalysisService.analyzeMotionImage({
-          imagePayload: {
+        const { motionResult, replyText } = await analyzeMotionFromFrames({
+          input,
+          shortMemory,
+          textHint: text,
+          frames: [{
             buffer: imagePayload.buffer,
             mimeType: imagePayload.mimeType || 'image/jpeg',
-          },
-          textHint: normalizeText(shortMemory?.recentSmallTalkTopic || text || ''),
-          userId: input.userId,
-        });
-        const replyText = normalizeText(motionResult?.replyText || '')
-          || '画像は受け取れています。まずは良い動きから一緒に整理していきましょう。';
-        await contextMemoryService.saveShortMemory(input.userId, {
-          lastImageType: 'motion',
-          followUpContext: {
-            ...(shortMemory?.followUpContext || {}),
-            source: 'image',
-            imageType: 'motion',
-            lastMotionAnalysis: motionResult || null,
-          }
+          }],
+          sourceType: 'image',
         });
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
@@ -1482,12 +1561,56 @@ async function orchestrateConversation(input) {
           internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
         };
       }
-      const replyText = buildUnhandledImageReply(imageKind === 'unknown' ? fallbackKind : `${imageKind}_record`);
+      const { motionResult, replyText } = await analyzeMotionFromFrames({
+        input,
+        shortMemory,
+        textHint: text,
+        frames: [{
+          buffer: imagePayload.buffer,
+          mimeType: imagePayload.mimeType || 'image/jpeg',
+        }],
+        sourceType: 'image',
+      });
       await appendTurn(input.userId, input.rawText || '[image]', replyText);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: replyText }],
-        internal: { intentType: 'image_unclassified', responseMode: 'retry' }
+        internal: {
+          intentType: 'motion_image_fallback',
+          responseMode: 'answer',
+          motionModel: motionResult?.usedModel || '',
+        }
+      };
+    }
+
+    if (input?.messageType === 'video') {
+      const mediaPayload = await lineMediaService.getMediaPayload(input);
+      if (!mediaPayload?.ok || mediaPayload.kind !== 'video') {
+        const replyText = buildVideoIngestFailureReply();
+        await appendTurn(input.userId, input.rawText || '[video]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'video_ingest_ng', responseMode: 'answer' }
+        };
+      }
+
+      const motionVideo = await analyzeMotionFromVideo({
+        input,
+        shortMemory,
+        mediaPayload,
+        textHint: text,
+      });
+      await appendTurn(input.userId, input.rawText || '[video]', motionVideo.replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: motionVideo.replyText }],
+        internal: {
+          intentType: motionVideo.ok ? 'motion_video' : 'motion_video_fallback',
+          responseMode: 'answer',
+          motionModel: motionVideo?.motionResult?.usedModel || '',
+          reason: motionVideo.reason || '',
+        }
       };
     }
 

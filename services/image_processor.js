@@ -12,9 +12,13 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const crypto = require("crypto");
 const { spawn } = require("child_process");
-const sharp = require("sharp");
+let sharp = null;
+try {
+  sharp = require("sharp");
+} catch (_error) {
+  sharp = null;
+}
 
 const DEFAULT_MAX_DIMENSION = 1280;
 const DEFAULT_MAX_BYTES_PER_IMAGE = 420 * 1024;
@@ -156,6 +160,18 @@ async function normalizeImageBuffer(buffer, options = {}) {
   let currentDimension = maxDimension;
   let currentQuality = quality;
   let rendered = null;
+
+  if (!sharp) {
+    const passThrough = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || "");
+    if (outputPath) fs.writeFileSync(outputPath, passThrough);
+    return {
+      buffer: passThrough,
+      data: passThrough.toString("base64"),
+      mimeType: "image/jpeg",
+      byteLength: passThrough.byteLength,
+      outputPath,
+    };
+  }
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     rendered = await sharp(buffer)

@@ -1,7 +1,6 @@
 'use strict';
 
 const { GoogleGenAI } = require('@google/genai');
-const { compactInlineFrames, normalizeEnergyLevel } = require('./image_processor');
 const corePersonality = require('../prompts/kokokara_core_personality_prompt');
 const motionPrompt = require('../prompts/kokokara_motion_analysis_prompt');
 const responseRules = require('../prompts/kokokara_response_style_rules');
@@ -30,6 +29,33 @@ function inferEnergyLevel(textHint) {
   if (!safe) return 'normal';
   if (/疲れ|しんど|きつい|眠い|痛い|不安|怖い|重い/.test(safe)) return 'low';
   return 'normal';
+}
+
+function normalizeEnergyLevelSafe(value) {
+  const input = String(value || 'unknown').trim().toLowerCase();
+  if (['very_low', 'low', 'medium', 'high', 'very_high', 'unknown'].includes(input)) return input;
+  if (['1', '2'].includes(input)) return 'very_low';
+  if (['3', '4'].includes(input)) return 'low';
+  if (['5', '6'].includes(input)) return 'medium';
+  if (['7', '8'].includes(input)) return 'high';
+  if (['9', '10'].includes(input)) return 'very_high';
+  return 'unknown';
+}
+
+function getImageProcessorOptional() {
+  try {
+    return require('./image_processor');
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function compactInlineFramesSafe(frames, options = {}) {
+  const processor = getImageProcessorOptional();
+  if (processor && typeof processor.compactInlineFrames === 'function') {
+    return processor.compactInlineFrames(frames, options);
+  }
+  return frames;
 }
 
 function getGeminiApiKey() {
@@ -320,7 +346,7 @@ async function analyzeWithModelFallback({ prompt, inlineImages }) {
       } catch (error) {
         lastError = error;
         if (isPayloadTooLarge(error)) {
-          payloads = await compactInlineFrames(payloads, {
+          payloads = await compactInlineFramesSafe(payloads, {
             maxDimension: 760,
             maxBytesPerImage: 180 * 1024,
             quality: 62,
@@ -354,7 +380,7 @@ async function analyzeMotionFrames({ frames = [], context = {}, userId = '' } = 
 
   const hintedTime = normalizeText(context.timeOfDay);
   const timeOfDay = hintedTime || inferTimeOfDay();
-  const energyLevel = normalizeEnergyLevel(context.energyLevel || inferEnergyLevel(context.note || ''));
+  const energyLevel = normalizeEnergyLevelSafe(context.energyLevel || inferEnergyLevel(context.note || ''));
 
   const prompt = [
     buildSystemPrompt({ timeOfDay, energyLevel: energyLevel === 'very_low' || energyLevel === 'low' ? 'low' : 'normal' }),
