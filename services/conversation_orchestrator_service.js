@@ -431,8 +431,8 @@ function buildTodayMealTotalsAnswer(records) {
     `🔥 エネルギー: 約${round1(totals.kcal)} kcal`,
     buildMealNutritionLine(totals),
     '━━━━━━━━━━━━━',
-  ].join('
-');
+    'このまま次の食事も足していけば、1日の流れを見やすく追えます。'
+  ].join('\n');
 }
 
 function buildTodayMealBalanceAnswer(records) {
@@ -442,16 +442,20 @@ function buildTodayMealBalanceAnswer(records) {
   }
   const totals = sumMealNutrition(records);
   const lines = [
-    `今日ここまでの栄養バランスです。`,
+    '🥗 今日ここまでの栄養バランス',
+    '━━━━━━━━━━━━━',
+    `🍽️ 食事件数: ${mealCount}件`,
+    `🔥 エネルギー: 約${round1(totals.kcal)} kcal`,
     buildMealNutritionLine(totals),
+    '━━━━━━━━━━━━━'
   ];
 
   if (totals.protein < 20) {
-    lines.push('たんぱく質は少なめなので、卵・肉・魚・ヨーグルトなどを少し足せると整えやすいです。');
+    lines.push('💡 たんぱく質は少なめなので、卵・肉・魚・ヨーグルトなどを少し足せると整えやすいです。');
   } else if (totals.fat > totals.protein * 2) {
-    lines.push('脂質がやや多めなので、次はあっさりしたものを選べるとバランスを戻しやすいです。');
+    lines.push('💡 脂質がやや多めなので、次はあっさりしたものを選べるとバランスを戻しやすいです。');
   } else {
-    lines.push('大きく崩れすぎてはいないので、このまま次の食事で軽く整えれば大丈夫です。');
+    lines.push('💡 大きく崩れすぎてはいないので、このまま次の食事で軽く整えれば大丈夫です。');
   }
 
   return lines.join('\n');
@@ -557,8 +561,7 @@ function buildMealNutritionLine(nutrition) {
     `💪 タンパク質: ${round1(nutrition?.protein || 0)} g`,
     `🍳 脂質: ${round1(nutrition?.fat || 0)} g`,
     `🍞 糖質: ${round1(nutrition?.carbs || 0)} g`,
-  ].join('
-');
+  ].join('\n');
 }
 
 function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
@@ -580,8 +583,7 @@ function buildMealDraftFollowUpReply(meal, todayTotals, questionText) {
     lines.push(buildMealNutritionLine(todayTotals || {}));
   }
 
-  return lines.join('
-');
+  return lines.join('\n');
 }
 
 async function maybeHandleMealDraftQuestion(input, shortMemory) {
@@ -1070,15 +1072,33 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   else if (/少し/.test(text)) ratio = 0.7;
   else if (/全部|完食/.test(text)) ratio = 1;
 
+  const adjustedNutrition = {
+    kcal: round1(base.kcal * ratio),
+    protein: round1(base.protein * ratio),
+    fat: round1(base.fat * ratio),
+    carbs: round1(base.carbs * ratio)
+  };
+
   const adjusted = {
     ...meal,
     amountNote: text,
-    estimatedNutrition: {
-      kcal: round1(base.kcal * ratio),
-      protein: round1(base.protein * ratio),
-      fat: round1(base.fat * ratio),
-      carbs: round1(base.carbs * ratio)
-    }
+    estimatedNutrition: adjustedNutrition
+  };
+
+  const deltaNutrition = {
+    kcal: round1(adjustedNutrition.kcal - Number(base.kcal || 0)),
+    protein: round1(adjustedNutrition.protein - Number(base.protein || 0)),
+    fat: round1(adjustedNutrition.fat - Number(base.fat || 0)),
+    carbs: round1(adjustedNutrition.carbs - Number(base.carbs || 0))
+  };
+
+  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
+  const todayTotals = sumMealNutrition(todayRecords);
+  const correctedTotals = {
+    kcal: round1((todayTotals?.kcal || 0) + deltaNutrition.kcal),
+    protein: round1((todayTotals?.protein || 0) + deltaNutrition.protein),
+    fat: round1((todayTotals?.fat || 0) + deltaNutrition.fat),
+    carbs: round1((todayTotals?.carbs || 0) + deltaNutrition.carbs)
   };
 
   await contextMemoryService.saveShortMemory(input.userId, {
@@ -1090,13 +1110,30 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
 
   return {
     replyText: [
-      `了解です。${text}として見直すと、ざっくり 約${round1(adjusted.estimatedNutrition.kcal)}kcal くらいです。`,
-      buildMealNutritionLine(adjusted.estimatedNutrition || {})
+      `了解です。${text}として見直しました。`,
+      `🍽️ この食事は ざっくり 約${round1(adjustedNutrition.kcal)}kcal くらいです。`,
+      buildMealNutritionLine(adjustedNutrition || {}),
+      '',
+      '📈 修正後の本日の合計（積算）',
+      '━━━━━━━━━━━━━',
+      `🔥 エネルギー: 約${round1(correctedTotals.kcal)} kcal`,
+      buildMealNutritionLine(correctedTotals || {}),
+      '━━━━━━━━━━━━━'
     ].join('\n'),
-    adjusted
+    adjusted,
+    correctionRecord: {
+      type: 'meal',
+      name: '食事量補正',
+      summary: `食事量補正: ${text}`,
+      estimatedNutrition: deltaNutrition,
+      kcal: Number(deltaNutrition.kcal || 0),
+      protein: Number(deltaNutrition.protein || 0),
+      fat: Number(deltaNutrition.fat || 0),
+      carbs: Number(deltaNutrition.carbs || 0),
+      amountNote: text
+    }
   };
 }
-
 
 function maybeHandleMealAnnouncement(input) {
   if (input?.messageType !== 'text') return null;
@@ -1424,16 +1461,19 @@ async function orchestrateConversation(input) {
 
     const mealFollowUpHandled = await maybeHandleMealFollowUp(input, refreshedShortMemory);
     if (mealFollowUpHandled) {
-      await contextMemoryService.addDailyRecord(input.userId, {
-        type: 'meal',
-        name: '食事',
-        summary: mealFollowUpHandled.adjusted?.amountNote || '食事量補正',
-        estimatedNutrition: mealFollowUpHandled.adjusted?.estimatedNutrition || {},
-        kcal: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.kcal || 0),
-        protein: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.protein || 0),
-        fat: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.fat || 0),
-        carbs: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.carbs || 0)
-      });
+      await contextMemoryService.addDailyRecord(
+        input.userId,
+        mealFollowUpHandled.correctionRecord || {
+          type: 'meal',
+          name: '食事',
+          summary: mealFollowUpHandled.adjusted?.amountNote || '食事量補正',
+          estimatedNutrition: mealFollowUpHandled.adjusted?.estimatedNutrition || {},
+          kcal: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.kcal || 0),
+          protein: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.protein || 0),
+          fat: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.fat || 0),
+          carbs: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.carbs || 0)
+        }
+      );
       await appendTurn(input.userId, input.rawText || '', mealFollowUpHandled.replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: mealFollowUpHandled.replyText }], internal: { intentType: 'meal_followup', responseMode: 'record' } };
     }

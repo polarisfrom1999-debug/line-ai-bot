@@ -4,6 +4,7 @@ const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 const { buildMealExtractPrompt } = require('./meal_extract_prompt_builder_service');
 const { buildFullMealReport } = require('./meal_report_service');
 const { supabase } = require('./supabase_service');
+const { MEAL_WORD_HINTS } = require('../config/constants');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -105,10 +106,17 @@ function detectMealType(text) {
   return 'unknown';
 }
 
+function containsQuestionTone(text) {
+  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな\??|\?$|？$/.test(normalizeText(text));
+}
+
 function cleanMealText(text) {
   return normalizeText(text)
-    .replace(/^(朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|夕飯|晩ごはん)[:：]?/g, '')
-    .replace(/(を)?(食べた|食べました|食べたよ|食べています|食べてる|でした)$/g, '')
+    .replace(/^(今日|きょう|今朝|さっき|さきほど)\s*/g, '')
+    .replace(/^(朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|夕飯|晩ごはん|間食)[:：]?/g, '')
+    .replace(/^(朝|昼|夜)[:：]\s*/g, '')
+    .replace(/(を)?(食べた|食べました|食べたよ|食べたー|食べています|食べてる|食べたよー|飲んだ|飲みました|飲んだよ|飲んでる|でした|です)$/g, '')
+    .replace(/[。！!]+$/g, '')
     .trim();
 }
 
@@ -119,8 +127,11 @@ function splitMealItems(text) {
   const normalized = safe
     .replace(/[・]/g, '、')
     .replace(/[／/]/g, '、')
-    .replace(/[,
-]/g, '、');
+    .replace(/[+＋]/g, '、')
+    .replace(/\s*[,&＆]\s*/g, '、')
+    .replace(/\n+/g, '、')
+    .replace(/、?追加で/g, '、')
+    .replace(/、?あと/g, '、');
 
   const parts = normalized
     .split('、')
@@ -128,6 +139,14 @@ function splitMealItems(text) {
     .filter(Boolean);
 
   if (parts.length > 1) return parts;
+
+  if (/\s/.test(safe)) {
+    const spaced = safe
+      .split(/\s+/)
+      .map((item) => normalizeText(item))
+      .filter(Boolean);
+    if (spaced.length > 1) return spaced;
+  }
 
   return safe
     .split(/\n+/)
@@ -140,20 +159,31 @@ function estimateItemNutrition(item) {
   if (!safe) return { kcal: 0, protein: 0, fat: 0, carbs: 0 };
 
   const table = [
-    [/醤油ラーメン|ラーメン/, { kcal: 550, protein: 20, fat: 18, carbs: 70 }],
+    [/醤油ラーメン|味噌ラーメン|豚骨ラーメン|塩ラーメン|ラーメン/, { kcal: 550, protein: 20, fat: 18, carbs: 70 }],
     [/オムライス/, { kcal: 750, protein: 20, fat: 30, carbs: 85 }],
     [/カレー/, { kcal: 650, protein: 18, fat: 20, carbs: 90 }],
+    [/パスタ|スパゲティ/, { kcal: 430, protein: 14, fat: 12, carbs: 65 }],
+    [/うどん/, { kcal: 320, protein: 9, fat: 4, carbs: 58 }],
+    [/そば/, { kcal: 300, protein: 12, fat: 2, carbs: 55 }],
     [/ハムチーズサンド|サンド/, { kcal: 320, protein: 14, fat: 16, carbs: 30 }],
+    [/弁当|定食/, { kcal: 650, protein: 24, fat: 20, carbs: 78 }],
+    [/餃子/, { kcal: 220, protein: 8, fat: 10, carbs: 24 }],
+    [/唐揚げ/, { kcal: 280, protein: 18, fat: 17, carbs: 12 }],
+    [/焼き魚|鮭|さば|鯖|魚/, { kcal: 180, protein: 18, fat: 10, carbs: 1 }],
+    [/納豆/, { kcal: 100, protein: 8, fat: 5, carbs: 6 }],
+    [/味噌汁|みそ汁|スープ/, { kcal: 45, protein: 3, fat: 2, carbs: 4 }],
     [/ヨーグルト/, { kcal: 80, protein: 4, fat: 3, carbs: 10 }],
     [/ウインナー|ソーセージ/, { kcal: 140, protein: 5, fat: 12, carbs: 2 }],
-    [/パイナップル|果物|フルーツ/, { kcal: 50, protein: 0, fat: 0, carbs: 12 }],
+    [/パイナップル|バナナ|りんご|果物|フルーツ/, { kcal: 60, protein: 0, fat: 0, carbs: 14 }],
+    [/ラテ|カフェラテ/, { kcal: 140, protein: 6, fat: 5, carbs: 16 }],
+    [/コーヒー|紅茶|お茶/, { kcal: 5, protein: 0, fat: 0, carbs: 1 }],
     [/ポテトサラダ/, { kcal: 180, protein: 4, fat: 11, carbs: 18 }],
     [/卵サラダ|たまごサラダ|玉子サラダ/, { kcal: 170, protein: 7, fat: 13, carbs: 6 }],
     [/サラダ/, { kcal: 90, protein: 3, fat: 6, carbs: 7 }],
     [/胡麻和え|ごま和え/, { kcal: 70, protein: 2, fat: 4, carbs: 6 }],
     [/しらたき.*炒め|しらたき/, { kcal: 40, protein: 1, fat: 1, carbs: 8 }],
     [/煮物|煮$/, { kcal: 120, protein: 6, fat: 6, carbs: 10 }],
-    [/豚肉|肉炒め|炒め物/, { kcal: 180, protein: 14, fat: 11, carbs: 8 }],
+    [/豚肉|鶏肉|牛肉|肉炒め|炒め物/, { kcal: 180, protein: 14, fat: 11, carbs: 8 }],
     [/豆腐/, { kcal: 80, protein: 7, fat: 5, carbs: 2 }],
     [/ご飯|ごはん|白米|玄米|おにぎり/, { kcal: 180, protein: 3, fat: 0, carbs: 40 }],
     [/パン|トースト/, { kcal: 170, protein: 5, fat: 3, carbs: 32 }],
@@ -206,7 +236,14 @@ function buildMealComment(nutrition) {
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
-  return /食べた|飲んだ|朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|ラーメン|カレー|寿司|サラダ|ご飯|ごはん|パン|ヨーグルト|おにぎり|弁当|豚肉|卵|豆腐|煮物|炒め物|和え物/.test(safe);
+  if (containsQuestionTone(safe)) return false;
+  if (/使い方|送り方|メニュー|コマンド|設定|タイプ変更|雰囲気変更/.test(safe)) return false;
+  if (/運動|歩いた|ジョギング|ランニング|ウォーキング|スクワット|腕立て|体重|体脂肪|睡眠|便通/.test(safe) && !/食べた|飲んだ/.test(safe)) return false;
+  if (/^(朝|昼|夜|夕)(ごはん|ご飯|食)(です|でした)?$/.test(safe)) return false;
+  if (/^(ごはん|ご飯)(です|でした)?$/.test(safe)) return false;
+  if (/(食べた|食べました|食べたよ|食べてる|飲んだ|飲みました|飲んだよ|飲んでる|朝食|昼食|夕食|朝ごはん|昼ごはん|夜ごはん|間食)/.test(safe)) return true;
+  if (MEAL_WORD_HINTS.some((word) => safe.includes(word))) return true;
+  return /ラーメン|カレー|寿司|サラダ|ご飯|ごはん|パン|ヨーグルト|おにぎり|弁当|豚肉|卵|豆腐|煮物|炒め物|和え物|味噌汁|みそ汁|餃子|パスタ|うどん|そば|ラテ|コーヒー|バナナ|納豆/.test(safe);
 }
 
 function parseMealText(text) {
@@ -223,14 +260,21 @@ function parseMealText(text) {
     };
   }
 
-  const items = splitMealItems(safe);
-  const nutrition = clampNutrition(sumNutrition(items.length ? items : [safe]));
-  const confidence = Math.min(0.95, 0.45 + (items.length >= 2 ? 0.25 : 0.1) + (/食べた|食べました|食べたよ|朝食|昼食|夕食|朝ごはん|昼ごはん|夜ごはん/.test(safe) ? 0.15 : 0));
+  const cleaned = cleanMealText(safe);
+  const items = splitMealItems(cleaned).slice(0, 8);
+  const nutrition = clampNutrition(sumNutrition(items.length ? items : [cleaned || safe]));
+  const confidence = Math.min(
+    0.95,
+    0.4
+      + (items.length >= 2 ? 0.22 : 0.1)
+      + (/(食べた|食べました|食べたよ|飲んだ|飲みました|朝食|昼食|夕食|朝ごはん|昼ごはん|夜ごはん|間食)/.test(safe) ? 0.18 : 0)
+      + (MEAL_WORD_HINTS.some((word) => safe.includes(word)) ? 0.12 : 0)
+  );
 
   return {
     isMealImage: false,
     confidence,
-    items: items.length ? items : [cleanMealText(safe)],
+    items: items.length ? items : [cleaned || safe],
     estimatedNutrition: nutrition,
     estimated_nutrition: nutrition,
     comment: buildMealComment(nutrition),
