@@ -88,7 +88,8 @@
     cacheByRange: {},
     pendingQuickAction: '',
     sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || '',
-    connectionState: 'disconnected'
+    connectionState: 'disconnected',
+    auxPanelOpen: false
   };
 
   const els = {
@@ -111,6 +112,10 @@
     },
     chatLog: document.getElementById('chatLog'),
     chatHeadStatus: document.getElementById('chatHeadStatus'),
+    goRecordsBtn: document.getElementById('goRecordsBtn'),
+    openAuxBtn: document.getElementById('openAuxBtn'),
+    closeAuxBtn: document.getElementById('closeAuxBtn'),
+    auxPanel: document.getElementById('auxPanel'),
     loadOlderBtn: document.getElementById('loadOlderBtn'),
     composerForm: document.getElementById('composerForm'),
     composerInput: document.getElementById('composerInput'),
@@ -319,8 +324,10 @@
 
   function setActiveTab(tabId) {
     state.activeTab = tabId;
+    if (tabId !== 'chat' && state.auxPanelOpen) state.auxPanelOpen = false;
     els.tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tabId));
     Object.entries(els.tabPanels).forEach(([key, panel]) => panel.classList.toggle('active', key === tabId));
+    renderAuxPanelState();
   }
 
   function setRecordTab(tabId) {
@@ -693,6 +700,12 @@
       els.sessionDetail.textContent = '接続コードを入力すると使えます';
       els.disconnectBtn.disabled = true;
     }
+  }
+
+  function renderAuxPanelState() {
+    const appShell = document.getElementById('appShell');
+    if (!appShell) return;
+    appShell.classList.toggle('aux-open', Boolean(state.auxPanelOpen));
   }
 
   function fillComposer(text) {
@@ -1367,6 +1380,23 @@ function renderMessageAttachments(item) {
         requestAnimationFrame(() => scrollComposerIntoView());
       }
     }));
+    if (els.goRecordsBtn) {
+      els.goRecordsBtn.addEventListener('click', () => {
+        setActiveTab('records');
+      });
+    }
+    if (els.openAuxBtn) {
+      els.openAuxBtn.addEventListener('click', () => {
+        state.auxPanelOpen = true;
+        renderAuxPanelState();
+      });
+    }
+    if (els.closeAuxBtn) {
+      els.closeAuxBtn.addEventListener('click', () => {
+        state.auxPanelOpen = false;
+        renderAuxPanelState();
+      });
+    }
     els.recordTabButtons.forEach((btn) => btn.addEventListener('click', () => setRecordTab(btn.dataset.recordTab)));
 
     els.rangeGroups.forEach((group) => {
@@ -1494,6 +1524,7 @@ function renderMessageAttachments(item) {
     await refreshForRange(state.rangeDays, true);
     bindEvents();
     renderAll();
+    renderAuxPanelState();
     if (state.sessionToken) {
       renderChat({ stickBottom: true });
       requestAnimationFrame(() => scrollComposerIntoView());

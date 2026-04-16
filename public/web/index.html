@@ -78,6 +78,8 @@
           </div>
           <div class="chat-head-tools">
             <span class="chat-head-status" id="chatHeadStatus">ライブ同期待機中</span>
+            <button class="ghost-btn small" id="goRecordsBtn" type="button">記録を見る</button>
+            <button class="ghost-btn small" id="openAuxBtn" type="button">補助を開く</button>
             <button class="ghost-btn small" id="loadOlderBtn" type="button">前の会話をもっと見る</button>
           </div>
         </div>
@@ -97,7 +99,11 @@
             </form>
           </div>
 
-          <aside class="side-stack">
+          <aside class="side-stack" id="auxPanel">
+            <div class="aux-panel-head">
+              <strong>補助パネル</strong>
+              <button class="ghost-btn small" id="closeAuxBtn" type="button">閉じる</button>
+            </div>
             <section class="mini-card" id="contextCard">
               <div class="mini-card-head">
                 <h3>見守りメモ</h3>
