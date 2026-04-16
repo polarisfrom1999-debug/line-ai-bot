@@ -68,6 +68,52 @@ function pickItemValue(item = {}) {
   return normalizeText(latest?.value || '');
 }
 
+function pickRowLabel(row = {}) {
+  return normalizeText(
+    row?.itemName
+    || row?.labelInImage
+    || row?.label_in_image
+    || row?.display_name
+    || row?.name
+    || ''
+  );
+}
+
+function pickRowValue(row = {}) {
+  const direct = normalizeText(
+    row?.value
+    || row?.value_text
+    || row?.valueText
+    || row?.value_numeric
+    || row?.valueNumeric
+    || ''
+  );
+  if (direct) return direct;
+  const sourceText = normalizeText(row?.sourceText || row?.source_text || '');
+  const m = sourceText.match(/-?\d+(?:\.\d+)?/);
+  return m ? m[0] : '';
+}
+
+function buildMapFromRows(rows = []) {
+  const map = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const label = pickRowLabel(row);
+    const canonicalKey = normalizeLabCanonicalKey(label);
+    if (!canonicalKey) continue;
+    const value = pickRowValue(row);
+    if (!value) continue;
+    const unit = normalizeText(row?.unit || '');
+    map[canonicalKey] = {
+      canonicalKey,
+      label: label || canonicalToLabel(canonicalKey),
+      value,
+      unit,
+      rawLabel: label || canonicalToLabel(canonicalKey)
+    };
+  }
+  return map;
+}
+
 function buildLabItemMapFromPanel(panel = {}) {
   const map = {};
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -86,6 +132,26 @@ function buildLabItemMapFromPanel(panel = {}) {
       rawLabel: displayName || canonicalToLabel(canonicalKey)
     };
   }
+
+  // pending panel では items が空でも structuredRows/rawExtractedItems に値が残るので補完する
+  if (!Object.keys(map).length) {
+    const rowDerived = buildMapFromRows(panel?.structuredRows || panel?.rawExtractedItems || []);
+    for (const [key, value] of Object.entries(rowDerived)) map[key] = value;
+  }
+
+  // さらに DB 形式の rawPayload.reports[].data[] からも拾えるようにする
+  if (!Object.keys(map).length) {
+    const reports = Array.isArray(panel?.rawPayload?.reports)
+      ? panel.rawPayload.reports
+      : (Array.isArray(panel?.rawPayload?.extracted_reports) ? panel.rawPayload.extracted_reports : []);
+    const rawRows = [];
+    for (const report of reports) {
+      for (const row of Array.isArray(report?.data) ? report.data : []) rawRows.push(row);
+    }
+    const rowDerived = buildMapFromRows(rawRows);
+    for (const [key, value] of Object.entries(rowDerived)) map[key] = value;
+  }
+
   return map;
 }
 

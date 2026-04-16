@@ -80,6 +80,31 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
     });
   }
 
+  // 質問から canonical key が取れていれば、targetName が弱くても DB 直接検索を行う
+  if (canonicalFromQuestion) {
+    const latestTwo = await labReportStoreService.getLatestTwoItemsForUser(lineUserId, canonicalFromQuestion);
+    if (latestTwo.length) {
+      const latest = latestTwo[0];
+      const previous = latestTwo[1] || null;
+      const latestLabel = `${latest.value_text || latest.value_numeric}${latest.unit ? ` ${latest.unit}` : ''}`;
+      if (!previous) {
+        return `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel} です。`;
+      }
+      const prevLabel = `${previous.value_text || previous.value_numeric}${previous.unit ? ` ${previous.unit}` : ''}`;
+      const nowNum = Number(latest.value_numeric);
+      const prevNum = Number(previous.value_numeric);
+      if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
+        const delta = Math.round((nowNum - prevNum) * 10) / 10;
+        const tendency = delta > 0 ? '上がり傾向' : delta < 0 ? '下がり傾向' : '横ばい';
+        return [
+          `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel} です。`,
+          `前回 ${previous.exam_date || '前回'} は ${prevLabel} で、差は ${delta > 0 ? '+' : ''}${delta}${latest.unit ? ` ${latest.unit}` : ''}（${tendency}）です。`
+        ].join('\n');
+      }
+      return `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel}、前回 ${previous.exam_date || '前回'} は ${prevLabel} です。`;
+    }
+  }
+
   if (targetName) {
     const canonical = labReportStoreService.toCanonicalName(targetName);
     if (canonical) {

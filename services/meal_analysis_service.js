@@ -5,6 +5,8 @@ const { buildMealExtractPrompt } = require('./meal_extract_prompt_builder_servic
 const { buildFullMealReport } = require('./meal_report_service');
 const { supabase } = require('./supabase_service');
 const { MEAL_WORD_HINTS } = require('../config/constants');
+const mealPersonalizationService = require('./meal_personalization_service');
+const { parseMealAmountRatio } = require('./record_normalizer_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -89,8 +91,25 @@ function normalizeMealData(raw) {
     amountNote: normalizeText(raw.amountNote || ''),
     recordReady: raw.recordReady !== false,
     reason: normalizeText(raw.reason || ''),
+    confidence: normalizeNumber(raw.confidence, 0.7),
     raw,
   };
+}
+
+async function fetchRecentMeals(userId, limit = 30) {
+  if (!normalizeText(userId)) return [];
+  try {
+    const { data, error } = await supabase
+      .from('meals')
+      .select('meal_label, estimated_kcal, protein_g, fat_g, carbs_g, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  } catch (_err) {
+    return [];
+  }
 }
 
 async function saveMealToDb(mealData, userId) {
@@ -302,7 +321,14 @@ function parseMealText(text) {
 
   const cleaned = cleanMealText(safe);
   const items = splitMealItems(cleaned).slice(0, 8);
-  const nutrition = clampNutrition(sumNutrition(items.length ? items : [cleaned || safe]));
+  const ratioInfo = parseMealAmountRatio(safe);
+  const baseNutrition = clampNutrition(sumNutrition(items.length ? items : [cleaned || safe]));
+  const nutrition = clampNutrition({
+    kcal: baseNutrition.kcal * (ratioInfo.ratio || 1),
+    protein: baseNutrition.protein * (ratioInfo.ratio || 1),
+    fat: baseNutrition.fat * (ratioInfo.ratio || 1),
+    carbs: baseNutrition.carbs * (ratioInfo.ratio || 1)
+  });
   const confidence = Math.min(
     0.95,
     0.4
@@ -320,7 +346,8 @@ function parseMealText(text) {
     comment: buildMealComment(nutrition),
     mealType: detectMealType(safe),
     amountRatio: 1,
-    amountNote: '',
+    amountRatio: ratioInfo.ratio || 1,
+    amountNote: ratioInfo.note || '',
     recordReady: true,
   };
 }
@@ -330,6 +357,24 @@ async function analyzeMealImage(imagePayload, userId = null, rawText = '') {
     const { prompt } = buildMealExtractPrompt({ rawText });
     const result = await geminiImageAnalysisService.analyzeImage(imagePayload, prompt);
     const mealData = normalizeMealData(result?.data);
+    const recentMeals = await fetchRecentMeals(userId, 40);
+    const personalized = mealPersonalizationService.applyPersonalization({
+      mealLabel: (mealData.items || [])[0] || '',
+      nutrition: mealData.estimatedNutrition,
+      recentMeals,
+      textProvided: Boolean(normalizeText(rawText))
+    });
+    const patterns = mealPersonalizationService.analyzeMealPatterns(recentMeals);
+    const feedback = mealPersonalizationService.buildSingleFeedback({
+      nutrition: personalized.adjusted,
+      patterns,
+      mismatch: { level: 'unknown' }
+    });
+
+    mealData.estimatedNutrition = personalized.adjusted;
+    mealData.estimated_nutrition = personalized.adjusted;
+    mealData.confidence = personalized.confidence;
+    if (feedback) mealData.comment = feedback;
 
     await saveMealToDb(mealData, userId);
     return mealData;

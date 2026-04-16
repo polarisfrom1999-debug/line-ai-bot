@@ -14,7 +14,10 @@ const {
   normalizeRecordCandidate,
   toNumberOrNull,
   safeText,
+  applyMealAmountRatio
 } = require('./record_normalizer_service');
+const mealPersonalizationService = require('./meal_personalization_service');
+const { supabase } = require('./supabase_service');
 
 let geminiCore = {};
 try {
@@ -263,8 +266,108 @@ function normalizeMealResult(raw = {}) {
   };
 }
 
+function clampKcalByMealLabel(label, kcal) {
+  const safe = normalizeText(label);
+  const n = Number(kcal);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (/サラダ/.test(safe)) return Math.max(40, Math.min(350, n));
+  if (/ラーメン|らーめん/.test(safe)) return Math.max(350, Math.min(1200, n));
+  if (/お茶|水|コーヒー/.test(safe)) return Math.max(0, Math.min(80, n));
+  return Math.max(20, Math.min(2000, n));
+}
+
+function normalizeNutritionShape(meal = {}) {
+  const kcal = clampKcalByMealLabel(meal.meal_label || '', meal.estimated_kcal);
+  const protein = Math.max(0, Number(meal.protein_g || 0));
+  const fat = Math.max(0, Number(meal.fat_g || 0));
+  const carbs = Math.max(0, Number(meal.carbs_g || 0));
+  return {
+    kcal: Number.isFinite(kcal) ? round0(kcal) : 0,
+    protein: round1(protein),
+    fat: round1(fat),
+    carbs: round1(carbs)
+  };
+}
+
+function toJapaneseNutrition(meal = {}) {
+  const n = normalizeNutritionShape(meal);
+  return {
+    estimated_kcal: n.kcal,
+    protein_g: n.protein,
+    fat_g: n.fat,
+    carbs_g: n.carbs,
+    栄養表示: {
+      たんぱく質: n.protein,
+      脂質: n.fat,
+      糖質: n.carbs
+    }
+  };
+}
+
+async function fetchRecentMeals(userId, limit = 30) {
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('meals')
+      .select('meal_label, estimated_kcal, protein_g, fat_g, carbs_g, created_at')
+      .eq('user_id', safeUserId)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(5, Number(limit) || 30));
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+async function applyPostProcessToMealResult(raw = {}, context = {}) {
+  const normalized = {
+    ...raw,
+    ...toJapaneseNutrition(raw)
+  };
+  const recentMeals = await fetchRecentMeals(context.userId, 40);
+  const personalized = mealPersonalizationService.applyPersonalization({
+    mealLabel: normalized.meal_label || '',
+    nutrition: {
+      kcal: normalized.estimated_kcal,
+      protein: normalized.protein_g,
+      fat: normalized.fat_g,
+      carbs: normalized.carbs_g
+    },
+    recentMeals,
+    textProvided: Boolean(normalizeText(context.userText || ''))
+  });
+
+  const patterns = mealPersonalizationService.analyzeMealPatterns(recentMeals);
+  const feedback = mealPersonalizationService.buildSingleFeedback({
+    nutrition: personalized.adjusted,
+    patterns,
+    mismatch: { level: 'unknown' }
+  });
+
+  return {
+    ...normalized,
+    estimated_kcal: personalized.adjusted.kcal,
+    protein_g: personalized.adjusted.protein,
+    fat_g: personalized.adjusted.fat,
+    carbs_g: personalized.adjusted.carbs,
+    confidence: personalized.confidence,
+    personalization: {
+      ratio: personalized.appliedRatio,
+      confidence: personalized.personalizationConfidence,
+      basis: personalized.basis
+    },
+    notes: [safeText(normalized.notes || ''), feedback].filter(Boolean).join(' / ')
+  };
+}
+
 function normalizeGeminiMealResult(raw = {}) {
   return normalizeMealResult(raw);
+}
+
+function normalizeText(value) {
+  return String(value || '').trim();
 }
 
 function buildFallbackMealLabel(items = []) {
@@ -416,15 +519,25 @@ async function analyzeMealTextWithGemini(userText = '', previousMealSummary = ''
 
   const heuristic = buildSimpleMealHeuristic(payload.meal_label || result?.meal_result?.meal_label || directLabel || '', result?.meal_result || {});
 
-  return {
-    is_meal: true,
+  const postProcessed = await applyPostProcessToMealResult({
     meal_label: safeText(payload.meal_label || result?.meal_result?.meal_label || heuristic.meal_label || ''),
     estimated_kcal: toNumberOrNull(payload.estimated_kcal) ?? heuristic.estimated_kcal,
-    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min,
-    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max,
     protein_g: mergeMeaningfulNumber(payload.protein_g, heuristic.protein_g),
     fat_g: mergeMeaningfulNumber(payload.fat_g, heuristic.fat_g),
     carbs_g: mergeMeaningfulNumber(payload.carbs_g, heuristic.carbs_g),
+    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    notes: result?.meal_result?.notes || ''
+  }, { userId: '', userText });
+
+  return {
+    is_meal: true,
+    meal_label: safeText(postProcessed.meal_label || payload.meal_label || result?.meal_result?.meal_label || heuristic.meal_label || ''),
+    estimated_kcal: postProcessed.estimated_kcal,
+    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min,
+    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max,
+    protein_g: postProcessed.protein_g,
+    fat_g: postProcessed.fat_g,
+    carbs_g: postProcessed.carbs_g,
     food_items: Array.isArray(payload.food_items)
       ? payload.food_items.map((item) => ({
           name: safeText(item?.name || ''),
@@ -434,7 +547,8 @@ async function analyzeMealTextWithGemini(userText = '', previousMealSummary = ''
           needs_confirmation: result?.meal_result?.needs_confirmation !== false,
         }))
       : [],
-    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    confidence: postProcessed.confidence,
+    栄養表示: postProcessed.栄養表示,
     needs_confirmation: result?.meal_result?.needs_confirmation !== false,
     raw_model_json: result,
   };
@@ -489,16 +603,39 @@ async function applyMealCorrectionWithGemini(currentMeal = {}, correctionText = 
 
   const heuristic = buildSimpleMealHeuristic(explicitCorrectionLabel || payload.meal_label || currentMeal?.meal_label || '', currentMeal || {});
 
-  return {
-    ...currentMeal,
-    is_meal: true,
+  const postProcessed = await applyPostProcessToMealResult({
     meal_label: safeText(explicitCorrectionLabel || payload.meal_label || currentMeal?.meal_label || heuristic.meal_label || ''),
     estimated_kcal: toNumberOrNull(payload.estimated_kcal) ?? heuristic.estimated_kcal ?? currentMeal?.estimated_kcal ?? null,
-    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min ?? currentMeal?.kcal_min ?? null,
-    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max ?? currentMeal?.kcal_max ?? null,
     protein_g: mergeMeaningfulNumber(payload.protein_g, heuristic.protein_g ?? currentMeal?.protein_g),
     fat_g: mergeMeaningfulNumber(payload.fat_g, heuristic.fat_g ?? currentMeal?.fat_g),
     carbs_g: mergeMeaningfulNumber(payload.carbs_g, heuristic.carbs_g ?? currentMeal?.carbs_g),
+    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    notes: result?.meal_result?.notes || ''
+  }, { userId: '', userText: correctionText });
+
+  const ratioApplied = applyMealAmountRatio({
+    estimatedNutrition: {
+      kcal: postProcessed.estimated_kcal,
+      protein: postProcessed.protein_g,
+      fat: postProcessed.fat_g,
+      carbs: postProcessed.carbs_g
+    },
+    kcal: postProcessed.estimated_kcal,
+    protein: postProcessed.protein_g,
+    fat: postProcessed.fat_g,
+    carbs: postProcessed.carbs_g
+  }, correctionText);
+
+  return {
+    ...currentMeal,
+    is_meal: true,
+    meal_label: safeText(postProcessed.meal_label || explicitCorrectionLabel || payload.meal_label || currentMeal?.meal_label || heuristic.meal_label || ''),
+    estimated_kcal: ratioApplied.estimatedNutrition.kcal,
+    kcal_min: toNumberOrNull(payload.kcal_min) ?? heuristic.kcal_min ?? currentMeal?.kcal_min ?? null,
+    kcal_max: toNumberOrNull(payload.kcal_max) ?? heuristic.kcal_max ?? currentMeal?.kcal_max ?? null,
+    protein_g: ratioApplied.estimatedNutrition.protein,
+    fat_g: ratioApplied.estimatedNutrition.fat,
+    carbs_g: ratioApplied.estimatedNutrition.carbs,
     food_items: Array.isArray(payload.food_items) && payload.food_items.length
       ? payload.food_items.map((item) => ({
           name: safeText(item?.name || ''),
@@ -514,7 +651,10 @@ async function applyMealCorrectionWithGemini(currentMeal = {}, correctionText = 
           confidence: 0.85,
           needs_confirmation: true,
         }))),
-    confidence: Number.isFinite(Number(result?.meal_result?.confidence)) ? Number(result.meal_result.confidence) : 0.65,
+    confidence: postProcessed.confidence,
+    栄養表示: postProcessed.栄養表示,
+    amountRatio: ratioApplied.amountRatio,
+    amountNote: ratioApplied.amountNote,
     needs_confirmation: result?.meal_result?.needs_confirmation !== false,
     raw_model_json: result,
   };
