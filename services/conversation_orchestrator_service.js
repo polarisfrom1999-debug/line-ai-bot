@@ -18,6 +18,7 @@ const mealAnalysisService = require('./meal_analysis_service');
 const labDocumentIngestService = require('./lab_document_ingest_service');
 const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
+const labItemAliasService = require('./lab_item_alias_service');
 const sportsConsultationService = require('./sports_consultation_service');
 const motionAnalysisService = require('./motion_analysis_service');
 const profileService = require('./profile_service');
@@ -1412,6 +1413,18 @@ async function maybeHandleLabImage(input, imagePayload) {
     }
 
     if (!hasItems) {
+      const cachedItemMap = labItemAliasService.buildLabItemMapFromPanel(lab || {});
+      const latestLabCache = {
+        examDate: lab?.latestExamDate || lab?.examDate || '',
+        items: cachedItemMap,
+        rawText: normalizeText(lab?.rawText || ''),
+        updatedAt: new Date().toISOString()
+      };
+      console.info('[lab-cache] save pending', {
+        userId: input.userId,
+        examDate: latestLabCache.examDate || '',
+        itemKeys: Object.keys(cachedItemMap)
+      });
       await contextMemoryService.saveShortMemory(input.userId, {
         lastImageType: 'lab_pending',
         followUpContext: {
@@ -1422,7 +1435,8 @@ async function maybeHandleLabImage(input, imagePayload) {
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
           selectedLabExamDate: lab?.latestExamDate || lab?.examDate || '',
           availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
-          labPanel: lab || null
+          labPanel: lab || null,
+          latestLabCache
         }
       });
       try {
@@ -1452,8 +1466,19 @@ async function maybeHandleLabImage(input, imagePayload) {
         latestExamDate: lab.latestExamDate || lab.examDate || '',
         selectedLabExamDate: lab.latestExamDate || lab.examDate || '',
         availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
-        labPanel: lab
+        labPanel: lab,
+        latestLabCache: {
+          examDate: lab.latestExamDate || lab.examDate || '',
+          items: labItemAliasService.buildLabItemMapFromPanel(lab),
+          rawText: normalizeText(lab?.rawText || ''),
+          updatedAt: new Date().toISOString()
+        }
       }
+    });
+    console.info('[lab-cache] save parsed', {
+      userId: input.userId,
+      examDate: lab?.latestExamDate || lab?.examDate || '',
+      itemKeys: Object.keys(labItemAliasService.buildLabItemMapFromPanel(lab))
     });
 
     await contextMemoryService.upsertLabPanel(input.userId, lab);

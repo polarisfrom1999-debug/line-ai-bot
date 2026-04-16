@@ -4,9 +4,43 @@ const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
 const contextMemoryService = require('./context_memory_service');
 const labReportStoreService = require('./lab_report_store_service');
+const labItemAliasService = require('./lab_item_alias_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function buildValueReply(item = {}, examDate = '') {
+  const label = normalizeText(item?.label || item?.display_name || item?.displayName || '');
+  const value = normalizeText(item?.value || item?.value_text || item?.valueText || item?.value_numeric || item?.valueNumeric || '');
+  const unit = normalizeText(item?.unit || '');
+  if (!value) return '';
+  if (examDate) return `${examDate} の検査では、${label || 'この項目'}は ${value}${unit ? ` ${unit}` : ''} でした。`;
+  return `${label || 'この項目'}は ${value}${unit ? ` ${unit}` : ''} でした。`;
+}
+
+function buildCloseCandidatesReply(cacheItems = {}, fallbackLabel = '') {
+  const keys = Object.keys(cacheItems || {});
+  if (!keys.length) return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。`;
+  const labels = keys
+    .map((key) => cacheItems[key]?.label || labItemAliasService.canonicalToLabel(key))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (!labels.length) return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。`;
+  return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。見えている候補: ${labels.join(' / ')}`;
+}
+
+function readLatestLabCache(shortMemory = {}, panel = null) {
+  const cached = shortMemory?.followUpContext?.latestLabCache;
+  if (cached && cached.items && typeof cached.items === 'object') return cached;
+  const fallbackItems = labItemAliasService.buildLabItemMapFromPanel(panel || {});
+  if (!Object.keys(fallbackItems).length) return null;
+  return {
+    examDate: normalizeText(panel?.latestExamDate || panel?.examDate || ''),
+    items: fallbackItems,
+    rawText: normalizeText(panel?.rawText || ''),
+    updatedAt: ''
+  };
 }
 
 async function answerLabQuery(lineUserId, text, shortMemory = {}) {
@@ -16,9 +50,36 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
     || await contextMemoryService.getLatestLabPanel(lineUserId)
     || await labDocumentStoreService.getLatestPanelForUser(lineUserId)
     || null;
-  if (!panel) return null;
+  const latestCache = readLatestLabCache(shortMemory, panel);
+  if (!panel && !latestCache) return null;
 
+  const canonicalFromQuestion = labItemAliasService.normalizeLabCanonicalKey(safe);
   const targetName = labFollowupService.normalizeTarget(safe);
+  console.info('[lab-qna] question', {
+    userId: lineUserId,
+    question: safe,
+    normalizedKey: canonicalFromQuestion || '',
+    latestCacheExists: Boolean(latestCache)
+  });
+
+  if (canonicalFromQuestion && latestCache?.items?.[canonicalFromQuestion]) {
+    const hit = latestCache.items[canonicalFromQuestion];
+    console.info('[lab-qna] cache hit', {
+      userId: lineUserId,
+      normalizedKey: canonicalFromQuestion,
+      matchedLabel: hit?.label || ''
+    });
+    return buildValueReply(hit, latestCache.examDate || '');
+  }
+
+  if (canonicalFromQuestion && latestCache?.items && !latestCache.items[canonicalFromQuestion]) {
+    console.info('[lab-qna] cache miss', {
+      userId: lineUserId,
+      normalizedKey: canonicalFromQuestion,
+      availableKeys: Object.keys(latestCache.items || {})
+    });
+  }
+
   if (targetName) {
     const canonical = labReportStoreService.toCanonicalName(targetName);
     if (canonical) {
@@ -92,13 +153,16 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
       }
     }
 
-    const trend = labFollowupService.buildTrendReply(panel, safe);
+    const trend = labFollowupService.buildTrendReply(panel || {}, safe);
     if (trend && !/まだ傾向を安定してまとめ切れていません/.test(trend)) return trend;
   }
 
-  if (!targetName) return null;
-  const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
-  return labFollowupService.buildItemReply(panel, targetName, selectedDate);
+  if (!targetName && !canonicalFromQuestion) return null;
+  if (targetName && panel) {
+    const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
+    return labFollowupService.buildItemReply(panel, targetName, selectedDate);
+  }
+  return buildCloseCandidatesReply(latestCache?.items || {}, targetName || labItemAliasService.canonicalToLabel(canonicalFromQuestion));
 }
 
 module.exports = {

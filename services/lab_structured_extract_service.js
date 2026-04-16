@@ -155,7 +155,7 @@ function normalizeRows(report) {
     const itemName = KEY_TO_ITEM_NAME[normalizedKey];
     const date = classifier.normalizeDateToken(row?.date || defaultDate || '');
     const numericValue = normalizeMaybeNumber(row?.value);
-    if (!itemName || !date || numericValue == null) continue;
+    if (!itemName || numericValue == null) continue;
     const referenceLow = normalizeMaybeNumber(row?.reference_low ?? row?.referenceLow);
     const referenceHigh = normalizeMaybeNumber(row?.reference_high ?? row?.referenceHigh);
     rows.push({
@@ -213,7 +213,9 @@ function groupRowsToItems(rows, latestExamDate) {
       seen.add(dedupeKey);
       deduped.push(row);
     }
-    const latest = deduped.find((row) => row.date === latestExamDate) || deduped[deduped.length - 1] || null;
+    const undated = item.history.filter((row) => !row.date && row.value);
+    const latestUndated = undated[undated.length - 1] || null;
+    const latest = deduped.find((row) => row.date === latestExamDate) || deduped[deduped.length - 1] || latestUndated || null;
     out.push({
       itemName: item.itemName,
       unit: latest?.unit || item.unit || '',
