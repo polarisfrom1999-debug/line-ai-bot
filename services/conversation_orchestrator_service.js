@@ -1420,15 +1420,21 @@ async function maybeHandleLabImage(input, imagePayload) {
           extractedItems: [],
           examDate: lab?.examDate || '',
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
+          selectedLabExamDate: lab?.latestExamDate || lab?.examDate || '',
           availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
           labPanel: lab || null
         }
       });
+      try {
+        if (lab) await contextMemoryService.upsertLabPanel(input.userId, lab);
+      } catch (error) {
+        console.error('[conversation_orchestrator] pending lab panel save error:', error?.message || error);
+      }
 
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像は受け取りました。今回は検査画像として認識していますが、まだ構造化の途中です。まずは「TGは？」「HbA1cは？」「2025-03-22」のように1項目か1日付ずつ聞いてください。'
+        replyText: '血液検査の画像を受け取りました。項目抽出は継続中ですが、読めた項目があればそのまま返せます。「TGは？」「HbA1cは？」「LDLは？」のように聞いてください。'
       };
     }
 
@@ -2171,7 +2177,7 @@ async function orchestrateConversation(input) {
             availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
           }
         });
-        const replyText = '血液検査の画像は受け取りました。今回は検査画像として見ていますが、まだ構造化の途中です。「TGは？」「HbA1cは？」「今までの傾向は？」「2025-03-22」のように聞いてもらえれば、この画像を優先して見ます。';
+        const replyText = '血液検査の画像を受け取りました。抽出は継続中ですが、読めた項目は優先して返します。「TGは？」「HbA1cは？」「LDLは？」と聞いてください。';
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,

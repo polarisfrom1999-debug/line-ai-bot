@@ -678,7 +678,7 @@
       els.sessionPill.textContent = state.connectionState === 'connecting'
         ? '接続中...'
         : `接続済み ${data.userName || ''}`.trim();
-      els.sessionDetail.textContent = `最終更新 ${data.lastUpdated || '—'} / 接続期限 ${data.expiresAt || '—'} / ${data.syncStatus || '同期中'}`;
+      els.sessionDetail.textContent = `${data.syncStatus || '同期中'} / 更新 ${data.lastUpdated || '—'}`;
       els.disconnectBtn.disabled = false;
     } else if (expired) {
       els.connectBanner.classList.remove('hidden');

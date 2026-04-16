@@ -189,7 +189,7 @@ function buildItemReply(panel, targetName, selectedDate) {
       return `${item.itemName || label} は、いま読み取れている範囲では ${loose}${unit}${flag} です。保存の途中でも、画像から拾えた値としてお伝えします。`;
     }
     const names = (panel?.items || []).map((it) => normalizeText(it?.itemName || '')).filter(Boolean);
-    const hint = names.length ? `見えている候補: ${names.slice(0, 8).join(' / ')}` : '項目一覧を再読み込みできていません。';
+    const hint = names.length ? `見えている候補: ${names.slice(0, 10).join(' / ')}` : 'まだ読める項目が増える可能性があるので、少し時間を置いてもう一度同じ項目名で聞いてください。';
     return `${label} はこの画像からまだ特定しきれていません。${hint}`;
   }
 
