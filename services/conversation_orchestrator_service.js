@@ -1434,7 +1434,11 @@ async function maybeHandleLabImage(input, imagePayload) {
       return {
         handled: true,
         analysis: lab,
-        replyText: '血液検査の画像を受け取りました。項目抽出は継続中ですが、読めた項目があればそのまま返せます。「TGは？」「HbA1cは？」「LDLは？」のように聞いてください。'
+        replyText: [
+          '血液検査の画像を受け取りました。',
+          lab?.latestExamDate || lab?.examDate ? `検査日候補: ${lab?.latestExamDate || lab?.examDate}` : null,
+          '抽出は進行中ですが、読めた項目は先に返せます。「TGは？」「HbA1cは？」「LDLは？」のように聞いてください。'
+        ].filter(Boolean).join('\n')
       };
     }
 
@@ -2177,7 +2181,11 @@ async function orchestrateConversation(input) {
             availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
           }
         });
-        const replyText = '血液検査の画像を受け取りました。抽出は継続中ですが、読めた項目は優先して返します。「TGは？」「HbA1cは？」「LDLは？」と聞いてください。';
+        const replyText = [
+          '血液検査の画像を受け取りました。',
+          lab?.latestExamDate || lab?.examDate ? `検査日候補: ${lab?.latestExamDate || lab?.examDate}` : null,
+          '抽出は進行中ですが、読めた項目は優先して返します。「TGは？」「HbA1cは？」「LDLは？」と聞いてください。'
+        ].filter(Boolean).join('\n');
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,

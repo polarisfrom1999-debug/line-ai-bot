@@ -25,11 +25,16 @@ function extractJsonObject(text) {
 function normalizeDateToken(token) {
   const safe = normalizeText(token);
   if (!safe) return '';
+  const compact = safe.replace(/\s+/g, '');
 
   let m = safe.match(/(20\d{2})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
   m = safe.match(/(20\d{2})[\/\.年]\s*(\d{1,2})[\/\.月]\s*(\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+
+  // 20260314 / 2026.03.14 などの詰まった表記
+  m = compact.match(/(20\d{2})[\/\.\-年]?(0?[1-9]|1[0-2])[\/\.\-月]?(0?[1-9]|[12]\d|3[01])日?/);
   if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
 
   m = safe.match(/([0-9]{2})[\/\.\-]\s*(\d{1,2})[\/\.\-]\s*(\d{1,2})/);
@@ -43,6 +48,14 @@ function normalizeDateToken(token) {
   if (m) {
     const year = 2018 + Number(m[1]);
     return `${year}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  }
+
+  // 採血日:24/03/14 のような2桁年
+  m = safe.match(/([採検].{0,3}日)[^\d]{0,4}([0-9]{2})[\/\.\-年]\s*(\d{1,2})[\/\.\-月]\s*(\d{1,2})/);
+  if (m) {
+    const yy = Number(m[2]);
+    const yyyy = yy <= 39 ? 2000 + yy : 1900 + yy;
+    return `${yyyy}-${String(m[3]).padStart(2, '0')}-${String(m[4]).padStart(2, '0')}`;
   }
 
   return '';

@@ -554,6 +554,8 @@ function normalizeLabItemName(value) {
   if (safe.includes('クレアチニン') || safe.includes('CRE')) return 'クレアチニン';
   if (safe.includes('EGFR')) return 'eGFR';
   if (safe.includes('尿酸') || safe.includes('UA')) return '尿酸';
+  if (safe.includes('WBC') || safe.includes('白血球')) return 'WBC';
+  if (safe.includes('GLUCOSE')) return '血糖';
   if (safe.includes('血糖')) return '血糖';
   if (safe.includes('空腹時血糖')) return '空腹時血糖';
   return normalizeString(value);
@@ -812,19 +814,25 @@ async function upsertLabPanel(userId, panel) {
   if (!userId || !panel) return null;
 
   const current = clone(labHistoryStore.get(userId) || []);
-  const examDate = normalizeString(panel.examDate || '');
+  const examDate = normalizeString(panel.examDate || panel.latestExamDate || panel.reportDate || '');
   const items = (Array.isArray(panel.items) ? panel.items : [])
     .map(normalizeLabPanelItem)
     .filter((item) => item.itemName && (item.value || item.history.length));
-
-  if (!items.length) return null;
 
   const normalizedPanel = {
     examDate,
     source: normalizeString(panel.source || 'image'),
     capturedAt: nowIso(),
-    items
+    items,
+    latestExamDate: normalizeString(panel.latestExamDate || panel.examDate || ''),
+    reportDate: normalizeString(panel.reportDate || ''),
+    examDates: Array.isArray(panel.examDates) ? panel.examDates.map(normalizeString).filter(Boolean) : [],
+    rawExtractedItems: Array.isArray(panel.rawExtractedItems) ? clone(panel.rawExtractedItems) : [],
+    rawPayload: panel.rawPayload ? clone(panel.rawPayload) : null
   };
+
+  // 日付だけでも保持して follow-up の文脈で再利用できるようにする。
+  if (!normalizedPanel.items.length && !normalizedPanel.examDate) return null;
 
   let merged = false;
   for (let i = 0; i < current.length; i += 1) {
@@ -852,7 +860,9 @@ async function upsertLabPanel(userId, panel) {
       current[i] = {
         ...existing,
         ...normalizedPanel,
-        items: [...map.values()]
+        items: [...map.values()],
+        rawExtractedItems: normalizedPanel.rawExtractedItems?.length ? normalizedPanel.rawExtractedItems : (existing.rawExtractedItems || []),
+        rawPayload: normalizedPanel.rawPayload || existing.rawPayload || null
       };
       merged = true;
       break;

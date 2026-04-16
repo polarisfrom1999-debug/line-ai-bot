@@ -7,12 +7,47 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function normalizeDateToken(token) {
+  return classifierService.normalizeDateToken(token);
+}
+
+function extractPriorityDate(rawText) {
+  const safe = normalizeText(rawText);
+  if (!safe) return '';
+  const lines = safe.split('\n').map((line) => line.trim()).filter(Boolean);
+  const priorityLine = lines.find((line) => /採血日|検査日|受診日|実施日/.test(line));
+  if (priorityLine) {
+    const d = normalizeDateToken(priorityLine);
+    if (d) return d;
+  }
+  for (const line of lines.slice(0, 15)) {
+    const d = normalizeDateToken(line);
+    if (d) return d;
+  }
+  return normalizeDateToken(safe);
+}
+
+function resolveBestExamDate(classification, extraction) {
+  const candidates = [
+    classification?.latestExamDate,
+    extraction?.latestExamDate,
+    ...(Array.isArray(extraction?.examDates) ? extraction.examDates : []),
+    ...(Array.isArray(classification?.examDates) ? classification.examDates : []),
+    classification?.reportDate,
+    extraction?.reportDate,
+    extractPriorityDate(extraction?.rawText || ''),
+    extractPriorityDate(classification?.rawText || '')
+  ].map((value) => normalizeDateToken(value)).filter(Boolean);
+  return candidates[candidates.length - 1] || '';
+}
+
 function buildPendingPanel(classification, extraction) {
-  const reportDate = classification?.reportDate || extraction?.reportDate || '';
+  const reportDate = normalizeDateToken(classification?.reportDate || extraction?.reportDate || '');
   const examDates = Array.isArray(classification?.examDates) && classification.examDates.length
     ? classification.examDates
     : (Array.isArray(extraction?.examDates) ? extraction.examDates : []);
-  const latestExamDate = classification?.latestExamDate || extraction?.latestExamDate || examDates[examDates.length - 1] || reportDate || '';
+  const bestExamDate = resolveBestExamDate(classification, extraction);
+  const latestExamDate = bestExamDate || examDates[examDates.length - 1] || reportDate || '';
   const documentKind = normalizeText(classification?.documentType || extraction?.documentType || 'unknown');
   const issues = [
     ...(Array.isArray(classification?.issues) ? classification.issues : []),
@@ -39,7 +74,8 @@ function buildPendingPanel(classification, extraction) {
     rawPayload: extraction?.rawPayload || null,
     promptVersion: extraction?.promptVersion || '',
     ignoredReason: '',
-    labPending: true
+    labPending: true,
+    rawExtractedItems: Array.isArray(extraction?.rows) ? extraction.rows : []
   };
 }
 
@@ -104,12 +140,16 @@ async function analyzeLabImage(imagePayload) {
   }
 
   const examDates = Array.isArray(extraction.examDates) ? extraction.examDates : [];
-  const latestExamDate = extraction.latestExamDate || examDates[examDates.length - 1] || extraction.reportDate || classification.latestExamDate || '';
+  const latestExamDate = resolveBestExamDate(classification, extraction)
+    || examDates[examDates.length - 1]
+    || normalizeDateToken(extraction.reportDate)
+    || normalizeDateToken(classification.latestExamDate)
+    || '';
   const panel = {
     source: 'image',
     isLabImage: true,
     labLike: true,
-    reportDate: extraction.reportDate || classification.reportDate || '',
+    reportDate: normalizeDateToken(extraction.reportDate || classification.reportDate || ''),
     examDate: latestExamDate,
     latestExamDate,
     examDates,

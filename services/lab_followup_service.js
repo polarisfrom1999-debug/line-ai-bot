@@ -9,9 +9,12 @@ function normalizeText(value) {
 function normalizeDateToken(token) {
   const safe = normalizeText(token);
   if (!safe) return '';
+  const compact = safe.replace(/\s+/g, '');
   let m = safe.match(/(20\d{2})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = safe.match(/(20\d{2})[\/\.年]\s*(\d{1,2})[\/\.月]\s*(\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  m = compact.match(/(20\d{2})[\/\.\-年]?(0?[1-9]|1[0-2])[\/\.\-月]?(0?[1-9]|[12]\d|3[01])日?/);
   if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
   m = safe.match(/([0-9]{2})[\/\.\-]\s*(\d{1,2})[\/\.\-]\s*(\d{1,2})/);
   if (m) {
@@ -196,8 +199,23 @@ function buildItemReply(panel, targetName, selectedDate) {
   const unit = row.unit ? ` ${row.unit}` : '';
   const reference = buildReferenceSentence(row);
   const flagSentence = buildFlagSentence(row);
+  const trendRows = collectTrendRows(panel, row.itemName);
+  const latestIndex = trendRows.findIndex((candidate) => candidate.date === row.date && String(candidate.value) === String(row.value));
+  const previous = latestIndex > 0 ? trendRows[latestIndex - 1] : null;
+  let compareLine = '';
+  if (previous) {
+    const nowNum = Number(row.value);
+    const prevNum = Number(previous.value);
+    if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
+      const delta = Math.round((nowNum - prevNum) * 10) / 10;
+      const absDelta = Math.abs(delta);
+      const direction = delta > 0 ? '上がっています' : delta < 0 ? '下がっています' : '横ばいです';
+      compareLine = `前回 ${previous.date} の ${previous.value}${previous.unit ? ` ${previous.unit}` : ''} と比べて ${absDelta}${row.unit ? ` ${row.unit}` : ''} ${direction}`;
+    }
+  }
   return [
     `${row.itemName} は ${row.date} で ${row.value}${unit} です。`,
+    compareLine || null,
     reference ? `${reference} で、${flagSentence}` : flagSentence
   ].filter(Boolean).join(' ');
 }
@@ -208,14 +226,26 @@ function buildTrendReply(panel, text) {
     const rows = collectTrendRows(panel, target);
     if (!rows.length) return `${target} は、まだ傾向を安定してまとめ切れていません。`;
     const latest = rows[rows.length - 1];
+    const previous = rows.length >= 2 ? rows[rows.length - 2] : null;
     const highest = [...rows].sort((a, b) => Number(b.value) - Number(a.value))[0];
     const lowest = [...rows].sort((a, b) => Number(a.value) - Number(b.value))[0];
     const latestLabel = `${latest.value}${latest.unit ? ` ${latest.unit}` : ''}${latest.flag ? ` ${latest.flag}` : ''}`;
     const highestLabel = `${highest.value}${highest.unit ? ` ${highest.unit}` : ''}${highest.flag ? ` ${highest.flag}` : ''}`;
     const lowestLabel = `${lowest.value}${lowest.unit ? ` ${lowest.unit}` : ''}${lowest.flag ? ` ${lowest.flag}` : ''}`;
+    let compareLine = null;
+    if (previous) {
+      const nowNum = Number(latest.value);
+      const prevNum = Number(previous.value);
+      if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
+        const delta = Math.round((nowNum - prevNum) * 10) / 10;
+        const direction = delta > 0 ? '高め傾向' : delta < 0 ? '改善傾向' : '横ばい';
+        compareLine = `前回 ${previous.date} 比: ${delta > 0 ? '+' : ''}${delta}${latest.unit ? ` ${latest.unit}` : ''}（${direction}）`;
+      }
+    }
     return [
       `${target} の見えている推移です。`,
       `最新: ${latest.date} ${latestLabel}`,
+      compareLine,
       rows.length >= 2 ? `高かった日: ${highest.date} ${highestLabel}` : null,
       rows.length >= 2 ? `低かった日: ${lowest.date} ${lowestLabel}` : null,
       `並び: ${rows.map((r) => `${r.date} ${r.value}${r.flag ? r.flag : ''}`).join(' / ')}`
