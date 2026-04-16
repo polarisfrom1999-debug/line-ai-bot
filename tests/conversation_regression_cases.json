@@ -68,6 +68,18 @@
     }
   },
   {
+    "id": "onboarding_direct_answer_001",
+    "category": "loop",
+    "description": "オンボーディング中でも短い質問へ先に答える",
+    "turns": [
+      { "role": "user", "text": "質問できる？" },
+      { "role": "assistant", "text": "質問できます。体調・食事・体重・血液検査のことはそのまま聞いて大丈夫です。入力はあとで続けられます。" }
+    ],
+    "expect": {
+      "must_answer_short_question_first": true
+    }
+  },
+  {
     "id": "direct_answer_002",
     "category": "direct_answer",
     "description": "案内文で逃げない",

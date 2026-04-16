@@ -210,9 +210,9 @@ function isOnboardingExitTrigger(text) {
 
 function buildOnboardingExitMessage(mode = '') {
   if (mode === 'profile_edit') {
-    return 'プロフィール変更はいったん終わりにしました。必要な時だけ、また「プロフィール変更」で大丈夫です。';
+    return 'プロフィール変更はいったん終了しました。再開は「プロフィール変更」、通常相談はそのまま質問で大丈夫です。';
   }
-  return '無料体験の入力はいったんここで止めました。続けたくなったら、また「無料体験開始」で再開できます。';
+  return '無料体験入力はいったん終了しました。再開は「無料体験開始」、通常相談はそのまま質問で大丈夫です。';
 }
 
 function looksLikeProfilePayload(text) {
@@ -257,7 +257,10 @@ function answerDuringOnboarding(text, onboardingState, longMemory) {
     return buildCurrentProfileSummary(longMemory, profile);
   }
   if (/入力フォーム|抜けられない|終わらせたい/.test(safe)) {
-    return 'いったん入力を止めても大丈夫です。「終わり」と送れば中断できます。続ける時はそのまま再開できます。';
+    return 'いまは入力フローを止められます。「終わり」で終了、「無料体験開始」で再開できます。相談はそのまま続けられます。';
+  }
+  if (/無料体験|プロフィール入力/.test(safe) && /戻る|ループ|進めない|困/.test(safe)) {
+    return '入力ループになっている時は、先に質問へ答えます。必要なら「終わり」で入力を閉じてから通常相談に切り替えてください。';
   }
   return null;
 }
