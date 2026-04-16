@@ -9,7 +9,8 @@
     "smoke:stage-entry": "node scripts/stage_entry_smoke_inputs.js",
     "smoke:symptom-core": "node scripts/symptom_core_smoke_inputs.js",
     "smoke:homecare-core": "node scripts/homecare_core_smoke_inputs.js",
-    "smoke:image-processor-load": "node scripts/image_processor_load_smoke.js"
+    "smoke:image-processor-load": "node scripts/image_processor_load_smoke.js",
+    "quality:check": "node scripts/run_conversation_quality_check.js"
   },
   "dependencies": {
     "@google/genai": "^1.24.0",

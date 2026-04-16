@@ -1,0 +1,108 @@
+[
+  {
+    "id": "loop_profile_001",
+    "category": "loop",
+    "description": "プロフィール入力へ同じ案内を連打していないか",
+    "expect_failure": true,
+    "turns": [
+      { "role": "user", "text": "私のプロフィールは？" },
+      { "role": "assistant", "text": "無料体験プロフィール入力をお願いします。" },
+      { "role": "user", "text": "質問出来る？" },
+      { "role": "assistant", "text": "無料体験プロフィール入力をお願いします。" }
+    ],
+    "expect": {
+      "max_consecutive_same_guide": 1,
+      "must_answer_short_question_first": true
+    }
+  },
+  {
+    "id": "loop_profile_002",
+    "category": "loop",
+    "description": "質問に答えずフォーム誘導へ戻すループ",
+    "expect_failure": true,
+    "turns": [
+      { "role": "user", "text": "何が質問できるの？" },
+      { "role": "assistant", "text": "無料体験プロフィール入力を先に完了してください。" }
+    ],
+    "expect": {
+      "must_answer_short_question_first": true
+    }
+  },
+  {
+    "id": "templated_repeat_001",
+    "category": "templated",
+    "description": "同じ前置きの連続",
+    "expect_failure": true,
+    "turns": [
+      { "role": "assistant", "text": "受け取りました。まずは一緒に整理しましょう。" },
+      { "role": "assistant", "text": "受け取りました。まずは一緒に整理しましょう。" },
+      { "role": "assistant", "text": "受け取りました。まずは一緒に整理しましょう。" }
+    ],
+    "expect": {
+      "max_similar_ratio": 0.55
+    }
+  },
+  {
+    "id": "templated_repeat_002",
+    "category": "templated",
+    "description": "同じ締めの連続",
+    "expect_failure": true,
+    "turns": [
+      { "role": "assistant", "text": "今日はここまでで大丈夫です。また一緒に整えていきましょう。" },
+      { "role": "assistant", "text": "分かりました。また一緒に整えていきましょう。" }
+    ],
+    "expect": {
+      "max_same_closing_hits": 1
+    }
+  },
+  {
+    "id": "direct_answer_001",
+    "category": "direct_answer",
+    "description": "短い質問に先に答える",
+    "turns": [
+      { "role": "user", "text": "質問できる？" },
+      { "role": "assistant", "text": "できます。体調・食事・体重・検査の相談はそのまま送ってください。" }
+    ],
+    "expect": {
+      "must_answer_short_question_first": true
+    }
+  },
+  {
+    "id": "direct_answer_002",
+    "category": "direct_answer",
+    "description": "案内文で逃げない",
+    "expect_failure": true,
+    "turns": [
+      { "role": "user", "text": "今の体重は？" },
+      { "role": "assistant", "text": "プロフィールを入力してください。" }
+    ],
+    "expect": {
+      "must_answer_short_question_first": true
+    }
+  },
+  {
+    "id": "kindness_001",
+    "category": "kindness",
+    "description": "困り時の丁寧説明",
+    "expect_failure": true,
+    "turns": [
+      { "role": "user", "text": "送信に失敗して困ってる" },
+      { "role": "assistant", "text": "接続コードを再入力してください。" }
+    ],
+    "expect": {
+      "require_explanatory_tone_on_distress": true
+    }
+  },
+  {
+    "id": "kindness_002",
+    "category": "kindness",
+    "description": "困り時に理由と次アクションを示す",
+    "turns": [
+      { "role": "user", "text": "画像が送れない、どうしよう" },
+      { "role": "assistant", "text": "通信が不安定な可能性があります。まず画像だけを1枚送ってみてください。だめなら接続を更新して再送しましょう。" }
+    ],
+    "expect": {
+      "require_explanatory_tone_on_distress": true
+    }
+  }
+]

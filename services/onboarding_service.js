@@ -44,6 +44,10 @@ function normalizeLoose(value) {
     .replace(/\s+/g, '');
 }
 
+function containsQuestionTone(text) {
+  return /教えて|知りたい|できますか|できる|ですか|ますか|\?|？|何が|何を|どう/.test(normalizeText(text));
+}
+
 function buildStartProfileMessage() {
   return [
     'ここから。の無料体験を始めますね。',
@@ -220,6 +224,44 @@ function isOperationalMessage(text) {
   return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?|ストレッチ教えて/.test(safe);
 }
 
+function buildCurrentProfileSummary(longMemory = {}, localProfile = {}) {
+  const merged = {
+    preferredName: localProfile.preferredName || longMemory.preferredName || '',
+    age: localProfile.age || longMemory.age || '',
+    height: localProfile.height || longMemory.height || '',
+    weight: localProfile.weight || longMemory.weight || '',
+    bodyFat: localProfile.bodyFat || longMemory.bodyFat || '',
+    goal: localProfile.goal || longMemory.goal || ''
+  };
+  const lines = [
+    merged.preferredName ? `名前: ${merged.preferredName}` : null,
+    merged.age ? `年齢: ${merged.age}` : null,
+    merged.height ? `身長: ${merged.height}` : null,
+    merged.weight ? `体重: ${merged.weight}` : null,
+    merged.bodyFat ? `体脂肪率: ${merged.bodyFat}` : null,
+    merged.goal ? `目標: ${merged.goal}` : null
+  ].filter(Boolean);
+  if (!lines.length) return 'まだプロフィールはほぼ未入力です。分かる項目だけ送ってもらえれば順に反映します。';
+  return ['いま見えているプロフィールです。', ...lines].join('\n');
+}
+
+function answerDuringOnboarding(text, onboardingState, longMemory) {
+  const safe = normalizeText(text);
+  const profile = onboardingState?.answers?.profile || {};
+  if (!safe) return null;
+
+  if (/質問できる|相談できる|何が質問|何を聞ける|使い方/.test(safe)) {
+    return '質問できます。体調・食事・体重・血液検査のことはそのまま聞いて大丈夫です。入力はあとで続けられます。';
+  }
+  if (/私のプロフィール|プロフィールは|今のプロフィール/.test(safe)) {
+    return buildCurrentProfileSummary(longMemory, profile);
+  }
+  if (/入力フォーム|抜けられない|終わらせたい/.test(safe)) {
+    return 'いったん入力を止めても大丈夫です。「終わり」と送れば中断できます。続ける時はそのまま再開できます。';
+  }
+  return null;
+}
+
 function buildDefaultState(mode) {
   return {
     isActive: true,
@@ -248,6 +290,12 @@ async function startProfileEdit(input, shortMemory, saveShortMemory) {
 }
 
 async function handleProfileStep({ input, text, onboardingState, longMemory, saveShortMemory, mergeLongMemory, persistAuthoritativeProfile }) {
+  if (containsQuestionTone(text)) {
+    const direct = answerDuringOnboarding(text, onboardingState, longMemory);
+    if (direct) return { handled: true, replyText: direct };
+    return { handled: false };
+  }
+
   const patch = profileService.extractProfilePatchFromText(text);
 
   if (!Object.keys(patch).length) {
@@ -264,7 +312,9 @@ async function handleProfileStep({ input, text, onboardingState, longMemory, sav
     }
     if (onboardingState.mode === 'start' && isOperationalMessage(text)) return { handled: false };
     if (isOperationalMessage(text)) return { handled: false };
-    return { handled: true, replyText: onboardingState.mode === 'profile_edit' ? buildEditProfileMessage() : buildStartProfileMessage() };
+    return { handled: true, replyText: onboardingState.mode === 'profile_edit'
+      ? '変更したい項目だけ送ってください。例: 体重62 / 目標55kg'
+      : '分かる項目だけで大丈夫です。例: 名前〇〇 / 身長160 / 目標55kg' };
   }
 
   const nextProfile = {
@@ -475,6 +525,11 @@ async function maybeHandleOnboarding({ input, shortMemory, longMemory, saveShort
       }
     });
     return { handled: true, replyText: buildOnboardingExitMessage(onboardingState.mode) };
+  }
+
+  if (onboardingState?.isActive && input?.messageType === 'text') {
+    const direct = answerDuringOnboarding(text, onboardingState, longMemory);
+    if (direct) return { handled: true, replyText: direct };
   }
 
   if (onboardingState.currentStep === STEPS.PROFILE) {
