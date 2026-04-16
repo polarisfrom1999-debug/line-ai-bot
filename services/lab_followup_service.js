@@ -43,6 +43,7 @@ function normalizeTarget(text) {
   if (safe.includes('血糖') || safe.includes('GLUCOSE')) return '血糖';
   if (safe.includes('尿酸')) return '尿酸';
   if (safe.includes('尿素窒素') || safe.includes('BUN')) return '尿素窒素';
+  if (safe.includes('WBC') || safe.includes('白血球')) return 'WBC';
   return '';
 }
 
@@ -68,7 +69,7 @@ function collectAvailableDates(panel) {
 }
 
 function listImportantPreview(items = []) {
-  const preferred = ['中性脂肪', 'HbA1c', 'LDL', 'HDL', '総コレステロール', 'AST'];
+  const preferred = ['中性脂肪', 'HbA1c', 'LDL', 'HDL', 'WBC', '総コレステロール', 'AST'];
   const lines = [];
   for (const name of preferred) {
     const item = items.find((candidate) => normalizeItemName(candidate?.itemName || '') === normalizeItemName(name) && normalizeText(candidate?.value || ''));
@@ -123,9 +124,32 @@ function buildSaveReply(panel) {
   ].filter(Boolean).join('\n');
 }
 
+function namesLikelyMatch(targetNorm, itemName) {
+  const a = normalizeItemName(itemName || '');
+  const b = targetNorm;
+  if (!b) return false;
+  if (a === b) return true;
+  if (b === 'WBC' && /白血球|ＷＢＣ|WBC/i.test(a)) return true;
+  if (b === '中性脂肪' && /中性脂肪|TG|トリグリ|トリグリセリド/i.test(a)) return true;
+  if (b === 'HbA1c' && /HbA1c|ヘモグロビン|糖化/i.test(a)) return true;
+  if (b === 'LDL' && /LDL|悪玉/i.test(a)) return true;
+  if (b === 'HDL' && /HDL|善玉/i.test(a)) return true;
+  if (a.includes(b) || b.includes(a)) return true;
+  return false;
+}
+
 function findItem(panel, targetName) {
   const safe = normalizeTarget(targetName);
-  return (panel?.items || []).find((item) => normalizeItemName(item?.itemName || '') === safe) || null;
+  const items = panel?.items || [];
+  if (safe) {
+    const exact = items.find((item) => normalizeItemName(item?.itemName || '') === safe);
+    if (exact) return exact;
+    const loose = items.find((item) => namesLikelyMatch(safe, item?.itemName || ''));
+    if (loose) return loose;
+  }
+  const raw = normalizeText(targetName);
+  if (!raw) return null;
+  return items.find((item) => namesLikelyMatch(normalizeItemName(raw), item?.itemName || '')) || null;
 }
 
 function findValueForDate(panel, targetName, selectedDate) {
@@ -164,7 +188,9 @@ function buildItemReply(panel, targetName, selectedDate) {
       const flag = item.flag ? ` ${item.flag}` : '';
       return `${item.itemName || label} は、いま読み取れている範囲では ${loose}${unit}${flag} です。保存の途中でも、画像から拾えた値としてお伝えします。`;
     }
-    return `${label} は今回の検査ではまだ安定して拾い切れていません。別の項目名でもう一度聞いてみてください。`;
+    const names = (panel?.items || []).map((it) => normalizeText(it?.itemName || '')).filter(Boolean);
+    const hint = names.length ? `見えている候補: ${names.slice(0, 8).join(' / ')}` : '項目一覧を再読み込みできていません。';
+    return `${label} はこの画像からまだ特定しきれていません。${hint}`;
   }
 
   const unit = row.unit ? ` ${row.unit}` : '';

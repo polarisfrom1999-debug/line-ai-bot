@@ -394,6 +394,16 @@ function buildSelfCareAdvice({ severity, primaryPart, primarySymptom, mechanisms
   return uniq(advice).slice(0, 3);
 }
 
+function mildOpenerIndex(partLabel, symptomLabel, seed = '') {
+  const s = `${partLabel}|${symptomLabel}|${seed}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h) % 4;
+}
+
 function buildReply({ primaryPart, primarySymptom, severity, followupQuestions, selfCareAdvice, conditionHints }) {
   const partLabel = primaryPart?.label || 'その部分';
   const symptomLabel = primarySymptom?.label || '不調';
@@ -425,7 +435,14 @@ function buildReply({ primaryPart, primarySymptom, severity, followupQuestions, 
     return lines.join('\n');
   }
 
-  lines.push(`${partLabel}の${symptomLabel}、気になりますね。`);
+  const mildOpeners = [
+    (p, s) => `${p}の${s}、いまの感覚として受け止めます。`,
+    (p, s) => `${p}の${s}ですね。まずは悪化させない動き方から整えましょう。`,
+    (p, s) => `${p}まわりの${s}、状況に合わせて一緒に整理します。`,
+    (p, s) => `${p}の${s}、急いで結論は出さず、見える範囲から進めます。`,
+  ];
+  const mi = mildOpenerIndex(partLabel, symptomLabel, '');
+  lines.push(mildOpeners[mi](partLabel, symptomLabel));
   if (hintLine) lines.push(hintLine);
   lines.push(...selfCareAdvice);
   return lines.join('\n');

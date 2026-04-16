@@ -21,6 +21,7 @@ function normalizeItemName(name) {
   if (/^TG$/i.test(safe)) return '中性脂肪';
   if (/^GOT$/i.test(safe)) return 'AST';
   if (/^GPT$/i.test(safe)) return 'ALT';
+  if (/白血球|^WBC$/i.test(safe)) return 'WBC';
   return safe;
 }
 

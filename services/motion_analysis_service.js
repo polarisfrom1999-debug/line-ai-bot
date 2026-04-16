@@ -156,15 +156,15 @@ function safeParseResponseJson(rawText) {
 }
 
 function normalizeResult(raw = {}) {
-  const facts = asArray(raw.facts).slice(0, 3).map((v) => localizeForJapaneseAudience(v, '見えている動きの特徴があります。'));
+  const facts = asArray(raw.facts).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '見えている動きの特徴があります。'));
   const strengths = asArray(raw.strengths).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今の動きには活かせる強みがあります。'));
   const concerns = asArray(raw.concerns).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '気になる点はありますが、急いで変えなくて大丈夫です。'));
-  const backgroundHypotheses = asArray(raw.backgroundHypotheses).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '撮影条件や疲労で見え方が変わる可能性があります。'));
-  const keepPoints = asArray(raw.keepPoints).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今のやりやすさは大切に残しましょう。'));
-  const cautions = asArray(raw.cautions).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '痛みが増える場合は無理せず中断しましょう。'));
+  const backgroundHypotheses = asArray(raw.backgroundHypotheses).slice(0, 1).map((v) => localizeForJapaneseAudience(v, '撮影条件や疲労で見え方が変わる可能性があります。'));
+  const keepPoints = asArray(raw.keepPoints).slice(0, 1).map((v) => localizeForJapaneseAudience(v, '今のやりやすさは大切に残しましょう。'));
+  const cautions = asArray(raw.cautions).slice(0, 1).map((v) => localizeForJapaneseAudience(v, '痛みが増える場合は無理せず中断しましょう。'));
   const smallActions = asArray(raw.smallActions).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '今日は1つだけ小さな修正を試してみましょう。'));
-  const dailyLifeTranslation = asArray(raw.dailyLifeTranslation).slice(0, 2).map((v) => localizeForJapaneseAudience(v, 'この調整は日常動作の安定にもつながります。'));
-  const performanceBenefits = asArray(raw.performanceBenefits).slice(0, 2).map((v) => localizeForJapaneseAudience(v, '小さな調整で動きの再現性が高まりやすくなります。'));
+  const dailyLifeTranslation = asArray(raw.dailyLifeTranslation).slice(0, 1).map((v) => localizeForJapaneseAudience(v, 'この調整は日常動作の安定にもつながります。'));
+  const performanceBenefits = asArray(raw.performanceBenefits).slice(0, 1).map((v) => localizeForJapaneseAudience(v, '小さな調整で動きの再現性が高まりやすくなります。'));
 
   return {
     isMotionRelated: Boolean(raw.isMotionRelated),
@@ -185,51 +185,41 @@ function normalizeResult(raw = {}) {
 }
 
 function buildReplyText(result) {
-  const lines = [];
-
-  if (result.facts.length) {
-    lines.push('まず見えていること');
-    result.facts.forEach((v) => lines.push(`・${v}`));
+  const strengthLines = [];
+  if (result.strengths.length) {
+    strengthLines.push(...result.strengths);
+  } else if (result.facts.length) {
+    strengthLines.push(...result.facts.slice(0, 2));
   }
 
-  if (result.strengths.length) {
-    lines.push('');
-    lines.push('良いところ');
-    result.strengths.forEach((v) => lines.push(`・${v}`));
+  const lines = [];
+
+  if (strengthLines.length) {
+    lines.push('【見える強み】');
+    strengthLines.slice(0, 2).forEach((v) => lines.push(`・${v}`));
   }
 
   if (result.concerns.length) {
     lines.push('');
-    lines.push('気になる点');
-    result.concerns.forEach((v) => lines.push(`・${v}`));
+    lines.push('【気になる点】');
+    result.concerns.slice(0, 2).forEach((v) => lines.push(`・${v}`));
   }
 
   if (result.backgroundHypotheses.length) {
     lines.push('');
-    lines.push('考えられる背景');
-    result.backgroundHypotheses.forEach((v) => lines.push(`・${v}`));
-  }
-
-  if (result.keepPoints.length) {
-    lines.push('');
-    lines.push('残してよい特徴');
-    result.keepPoints.forEach((v) => lines.push(`・${v}`));
+    lines.push(`【背景の仮説】${result.backgroundHypotheses[0]}`);
   }
 
   if (result.smallActions.length) {
     lines.push('');
-    lines.push('今日からの小さな修正');
-    result.smallActions.forEach((v) => lines.push(`・${v}`));
+    lines.push('【今日からの小さな修正】');
+    result.smallActions.slice(0, 2).forEach((v) => lines.push(`・${v}`));
   }
 
-  if (result.dailyLifeTranslation.length) {
+  const dailyOne = result.dailyLifeTranslation[0] || result.performanceBenefits[0] || '';
+  if (dailyOne) {
     lines.push('');
-    lines.push('日常生活への翻訳');
-    result.dailyLifeTranslation.forEach((v) => lines.push(`・${v}`));
-  } else if (result.performanceBenefits.length) {
-    lines.push('');
-    lines.push('日常生活への翻訳');
-    result.performanceBenefits.forEach((v) => lines.push(`・${v}`));
+    lines.push(`【日常へのひとこと】${dailyOne}`);
   }
 
   if (result.safetyMessage) {
@@ -237,21 +227,22 @@ function buildReplyText(result) {
     lines.push(result.safetyMessage);
   } else if (result.cautions.length) {
     lines.push('');
-    lines.push('無理しない目安');
-    result.cautions.forEach((v) => lines.push(`・${v}`));
-  }
-
-  if (result.encouragement) {
-    lines.push('');
-    lines.push(result.encouragement);
+    lines.push(`【無理しない目安】${result.cautions[0]}`);
   }
 
   if (result.medicalConsultFlag) {
     lines.push('');
     lines.push(result.medicalConsultFlag);
+  } else if (result.encouragement && lines.join('\n').length < 320) {
+    lines.push('');
+    lines.push(result.encouragement);
   }
 
-  return lines.filter(Boolean).join('\n');
+  let out = lines.filter(Boolean).join('\n');
+  if (out.length > 620) {
+    out = `${out.slice(0, 600).trim()}…\n（詳しく知りたければ「もう少し詳しく」と送ってください）`;
+  }
+  return out;
 }
 
 function buildFallbackResult(textHint) {

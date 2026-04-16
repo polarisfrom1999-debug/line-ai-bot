@@ -677,6 +677,7 @@ function detectExerciseRecord(text) {
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe || containsQuestionTone(safe)) return false;
+  if (mealAnalysisService.isMealNegationOrNonRecordText(safe)) return false;
   if (isMealAnnouncementText(safe)) return false;
   if (/使い方|送り方|メニュー|コマンド/.test(safe)) return false;
   if (/^(朝|昼|夜|夕)(ごはん|ご飯|食)(です|でした)?$/.test(safe)) return false;
@@ -1293,6 +1294,21 @@ function maybeHandlePainConversationFollowUp(input, shortMemory) {
   if (!st?.active) return null;
   const text = normalizeText(input.rawText || '');
 
+  if (/しびれ|痺れ|ビリビリ|ピリピリ|針で刺す|電気が走る/.test(text)) {
+    return {
+      replyText: [
+        'しびれが出ているなら、まず神経症状として慎重にみます。',
+        '足の力が入りにくい、両足に広がる、排尿や便通の異常、会陰まわりのしびれなどがあるときは、今日は無理せず医療機関の受診を優先してください。',
+        '差し支えなければ、いつから・どこからどこまで・歩くと増えるか、もう少し教えてください。',
+      ].join('\n'),
+      nextState: {
+        ...st,
+        stage: 'numbness_safety',
+        adviceGiven: [...(st.adviceGiven || []), 'numbness_safety'],
+      },
+    };
+  }
+
   if (/同じ(こと|の)|繰り返|いうこと|言ってる/.test(text)) {
     return {
       replyText:
@@ -1690,6 +1706,7 @@ async function maybeStoreSimpleRecords(userId, text) {
     // 人の状態ケアを優先し、低余力時は自動記録を急がない
     return;
   }
+  if (mealAnalysisService.isMealNegationOrNonRecordText(text)) return;
   const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text) && !isMealAnnouncementText(text)
     ? mealAnalysisService.parseMealText(text)
     : null;
@@ -2084,7 +2101,19 @@ async function orchestrateConversation(input) {
 
     let imagePayload = null;
     if (input?.messageType === 'image') {
-      const ingested = await imageIngestService.ingestLineImage(input);
+      let ingested = null;
+      if (input?.webImagePayload?.buffer) {
+        ingested = {
+          ok: true,
+          payload: {
+            ok: true,
+            buffer: input.webImagePayload.buffer,
+            mimeType: input.webImagePayload.mimeType || 'image/jpeg',
+          },
+        };
+      } else {
+        ingested = await imageIngestService.ingestLineImage(input);
+      }
       if (!ingested?.ok) {
         const replyText = buildImageIngestFailureReply();
         await appendTurn(input.userId, input.rawText || '[image]', replyText);

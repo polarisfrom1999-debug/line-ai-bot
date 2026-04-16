@@ -124,6 +124,19 @@ function containsQuestionTone(text) {
   return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな\??|\?$|？$/.test(normalizeText(text));
 }
 
+/** 食事「記録」にすべきでない否定・嗜好・非摂取の文 */
+function isMealNegationOrNonRecordText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/記録しない|カロリー(に)?入れない|加算しない|カウントしない/.test(safe)) return true;
+  if (/食べ(て)?ない|食べません|食べなかった|食べてません|未摂取|摂取してない|摂ってない|食べなかった|食べてないよ|食べてません/.test(safe)) return true;
+  if (/飲ん(で)?ない|飲みません|飲んでない/.test(safe)) return true;
+  if (/抜いた|抜き|スキップ|なし(です|だよ)?$|無し/.test(safe) && /朝|昼|夜|ごはん|ご飯|食|ラーメン|ご飯/.test(safe)) return true;
+  if (/嫌い|苦手|いらない|要らない|食べられない|あまり好きじゃない|好きじゃない/.test(safe)) return true;
+  if (/^(いいえ|ううん|違う|ちがう)/.test(safe)) return true;
+  return false;
+}
+
 function cleanMealText(text) {
   return normalizeText(text)
     .replace(/^(今日|きょう|今朝|さっき|さきほど)\s*/g, '')
@@ -250,6 +263,7 @@ function buildMealComment(nutrition) {
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
+  if (isMealNegationOrNonRecordText(safe)) return false;
   if (containsQuestionTone(safe)) return false;
   if (/使い方|送り方|メニュー|コマンド|設定|タイプ変更|雰囲気変更/.test(safe)) return false;
   if (/運動|歩いた|ジョギング|ランニング|ウォーキング|スクワット|腕立て|体重|体脂肪|睡眠|便通/.test(safe) && !/食べた|飲んだ/.test(safe)) return false;
@@ -262,7 +276,19 @@ function looksLikeMealText(text) {
 
 function parseMealText(text) {
   const safe = normalizeText(text);
-  if (!safe || !looksLikeMealText(safe)) {
+  if (!safe || isMealNegationOrNonRecordText(safe)) {
+    return {
+      confidence: 0.05,
+      items: [],
+      estimatedNutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 },
+      comment: '',
+      mealType: 'unknown',
+      amountRatio: 1,
+      amountNote: '',
+      recordReady: false,
+    };
+  }
+  if (!looksLikeMealText(safe)) {
     return {
       confidence: 0.1,
       items: [],
@@ -344,4 +370,5 @@ module.exports = {
   analyzeMealImage,
   buildMealImageReplyText,
   parseMealText,
+  isMealNegationOrNonRecordText,
 };

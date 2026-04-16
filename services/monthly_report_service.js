@@ -123,10 +123,10 @@ function inferMonthlyMeaning(allRecords, signals, longMemory) {
 }
 
 function buildNextStep(signals, longMemory) {
-  if (signals.pain > 0) return '次の一手: 来月は無理に運動量を追わず、痛みが少ない日を基準に整えましょう。';
-  if (signals.fatigue > 0) return '次の一手: 来月は睡眠や休息の立て直しを軸にすると、食事も運動も安定しやすいです。';
-  if (/理屈|整理/.test(normalizeText(longMemory?.aiType))) return '次の一手: 来月は、食事・運動・体重のうち1つだけ主軸を決めると判断がぶれにくいです。';
-  return '次の一手: 来月も完璧を狙うより、送りやすい記録を少しずつ続ける形で十分です。';
+  if (signals.pain > 0) return '来月の一手は、痛みが少ない日を基準に、運動量より負担の見える化を優先しましょう。';
+  if (signals.fatigue > 0) return '来月の一手は、睡眠と休息の立て直しを軸にすると、食事も運動も安定しやすいです。';
+  if (/理屈|整理/.test(normalizeText(longMemory?.aiType))) return '来月の一手は、食事・運動・体重のうち1つだけ主軸にすると判断がぶれにくいです。';
+  return '来月の一手は、完璧より「送りやすい記録」を少しずつ続ける形で十分です。';
 }
 
 async function buildMonthlyReport(params) {
@@ -139,8 +139,8 @@ async function buildMonthlyReport(params) {
   const signals = collectMessageSignals(recentMessages);
 
   const lines = [
-    '今月のまとめです。',
-    `継続: ${allRecords.activeDays || 0}日 記録や会話の動きがありました。`,
+    '今月の流れを、ここから。の目線でまとめました。',
+    `継続の感触: ${allRecords.activeDays || 0}日、記録や会話の動きがありました。`,
     buildMealsLine(allRecords),
     buildExerciseLine(allRecords)
   ];

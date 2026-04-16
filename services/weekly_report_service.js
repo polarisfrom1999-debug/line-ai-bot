@@ -113,6 +113,28 @@ function buildLabLine(allRecords) {
   return `血液検査: 今週は ${labs.length}件の検査関連記録があります。`;
 }
 
+function buildFlowLines(allRecords, signals) {
+  const good = [];
+  const rough = [];
+  const active = Number(allRecords.activeDays || 0);
+  const meals = Array.isArray(allRecords?.meals) ? allRecords.meals : [];
+  const exercises = Array.isArray(allRecords?.exercises) ? allRecords.exercises : [];
+
+  if (active >= 3) good.push('何かしら手が動いた日が続いています');
+  if (meals.length >= 3) good.push('食事の記録が途切れにくい日がありました');
+  if (exercises.length >= 2) good.push('身体を動かせた記録がありました');
+  if (signals.recovery > 0) good.push('落ち着きや回復の言葉が見えました');
+
+  if (signals.fatigue > 1) rough.push('疲れの声が続いた日がありました');
+  if (signals.pain > 0) rough.push('痛みの影響が気になる場面がありました');
+  if (signals.anxiety > 0) rough.push('不安が強い日がありました');
+
+  const out = [];
+  if (good.length) out.push(`良かった流れ: ${good[0]}。`);
+  if (rough.length) out.push(`崩れやすかった流れ: ${rough[0]}。`);
+  return out;
+}
+
 function inferWeeklyMeaning(allRecords, signals, longMemory) {
   const meals = Array.isArray(allRecords?.meals) ? allRecords.meals : [];
   const exercises = Array.isArray(allRecords?.exercises) ? allRecords.exercises : [];
@@ -139,12 +161,12 @@ function inferWeeklyMeaning(allRecords, signals, longMemory) {
 }
 
 function buildNextStep(signals, longMemory) {
-  if (signals.pain > 0) return '次の一手: 痛みがある間は、運動量を足すより負担を増やさない整え方を優先でいきましょう。';
-  if (signals.fatigue > 0) return '次の一手: まずは睡眠や水分を少し整えるだけでも十分です。';
-  if (signals.hydration > 0) return '次の一手: 今日は水分をこまめに入れる意識だけで十分です。';
-  if (signals.bowels > 0) return '次の一手: 便通やお腹の張りも見ながら、数字より体の反応を優先でいきましょう。';
-  if (/理屈|整理/.test(normalizeText(longMemory?.aiType))) return '次の一手: 次週は、食事か運動のどちらか1つだけ軸を決めると流れが安定しやすいです。';
-  return '次の一手: 来週も完璧を狙いすぎず、送りやすいものから続ければ十分です。';
+  if (signals.pain > 0) return '次の一手は、痛みを増やさない整え方だけに絞るのが安全です。';
+  if (signals.fatigue > 0) return '次の一手は、睡眠と水分をひとつだけ整える、で十分です。';
+  if (signals.hydration > 0) return '次の一手は、水分をこまめに足す意識だけで十分です。';
+  if (signals.bowels > 0) return '次の一手は、便通や張りを見ながら、体の反応を先に優先しましょう。';
+  if (/理屈|整理/.test(normalizeText(longMemory?.aiType))) return '次の一手は、食事か運動のどちらか一方だけを軸にすると判断がぶれにくいです。';
+  return '次の一手は、送りやすい記録から一つだけ続ける、で十分です。';
 }
 
 async function buildWeeklyReport(params) {
@@ -166,11 +188,12 @@ async function buildWeeklyReport(params) {
 
   const signals = collectMessageSignals(recentMessages);
   const lines = [
-    '今週のまとめです。',
-    `継続: ${allRecords.activeDays || 0}日 動けています。`,
+    '今週の記録を、伴走の視点で眺めました。',
+    `継続の感触: ${allRecords.activeDays || 0}日、何かしらの記録や会話がありました。`,
     buildMealsLine(allRecords),
     buildExerciseLine(allRecords)
   ];
+  lines.push(...buildFlowLines(allRecords, signals));
 
   const weightLine = buildWeightLine(allRecords, longMemory);
   if (weightLine) lines.push(weightLine);

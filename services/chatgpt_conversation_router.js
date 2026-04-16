@@ -82,7 +82,8 @@ function normalizeConversationInput(input) {
     sourceType: input?.sourceType || event?.source?.type || 'unknown',
     sourceChannel: input?.sourceChannel || 'line',
     traceId: buildTraceId(event, input),
-    originalEvent: event
+    originalEvent: event,
+    webImagePayload: input?.webImagePayload || null
   };
 }
 

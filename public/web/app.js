@@ -18,6 +18,7 @@
 
   const MEMO_KEY = 'kokokara-web-memo';
   const WEB_TOKEN_KEY = 'kokokara-web-token';
+  const CHAT_BACKUP_KEY = 'kokokara-web-chat-history';
 
   const MOCK_DATA = {
     connected: true,
@@ -249,6 +250,7 @@
   function detectMealLikeText(text) {
     const safe = normalizeText(text);
     if (!safe || containsQuestionTone(safe)) return false;
+    if (/食べ(て)?ない|食べません|嫌い|苦手|いらない|要らない|抜いた|未摂取/.test(safe)) return false;
     return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|ラーメン|カレー|ごはん|パン|トースト|ヨーグルト|おにぎり|食べた|飲んだ/.test(safe);
   }
 
@@ -732,6 +734,26 @@ function renderMessageAttachments(item) {
     return sortMessages(merged);
   }
 
+  function loadChatBackup() {
+    try {
+      const raw = localStorage.getItem(CHAT_BACKUP_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return safeArray(arr).map(normalizeMessage).filter(Boolean);
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function saveChatBackup(messages) {
+    try {
+      const list = safeArray(messages).slice(-200);
+      localStorage.setItem(CHAT_BACKUP_KEY, JSON.stringify(list));
+    } catch (_err) {
+      // ignore quota errors
+    }
+  }
+
   function buildAuthHeaders(base = {}) {
     const token = normalizeText(state.sessionToken || '');
     if (!token) return base;
@@ -746,6 +768,7 @@ function renderMessageAttachments(item) {
 
   async function tryFetchChatHistory(days) {
     const suffixes = [
+      `/api/web/chat/history?limit=400`,
       `/api/web/chat-history?limit=400&days=${days}`,
       `/web/api/chat-history?limit=400&days=${days}`,
       `/api/web/messages?limit=400&days=${days}`,
@@ -1041,8 +1064,9 @@ function renderMessageAttachments(item) {
       return;
     }
     const base = await loadBootstrapData(days);
+    const backupMessages = loadChatBackup();
     const extraMessages = await tryFetchChatHistory(Math.max(days, 365));
-    base.chat = mergeMessages(base.chat, extraMessages);
+    base.chat = mergeMessages(mergeMessages(base.chat, backupMessages), extraMessages);
     base.profile = inferProfileFromChat(base.chat, base.profile, base.lastUpdated);
     base.records.weight = maybeAppendLatestWeight(base.records.weight, base.profile, base.lastUpdated);
     base.records.meal = inferMealRowsFromChat(base.chat, base.records.meal, base.lastUpdated);
@@ -1061,6 +1085,7 @@ function renderMessageAttachments(item) {
     };
     state.data.chat.push(entry);
     state.data.chat = sortMessages(state.data.chat);
+    saveChatBackup(state.data.chat);
     renderChat();
   }
 
@@ -1126,21 +1151,46 @@ function renderMessageAttachments(item) {
       headers: buildAuthHeaders(),
       body: formData
     });
-    if (!res.ok) throw new Error(String(res.status));
     const contentType = res.headers.get('content-type') || '';
-    return contentType.includes('application/json') ? res.json() : {};
+    let json = {};
+    if (contentType.includes('application/json')) {
+      try {
+        json = await res.json();
+      } catch (_err) {
+        json = {};
+      }
+    }
+    if (!res.ok) {
+      const err = new Error(json.message || json.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.payload = json;
+      throw err;
+    }
+    return json;
   }
 
   function applyServerReply(json) {
     const message = normalizeText(json.reply || json.message || json.text || json.assistantMessage || '');
-    if (message) addLocalMessage('assistant', message);
-    const portalLike = json.portalData || json.data || json.portal || null;
-    if (portalLike && typeof portalLike === 'object') {
+    const portalLike = json.portalData || json.data || json.portal || json;
+    const hasPortal = portalLike && typeof portalLike === 'object' && (portalLike.homeSnapshot || portalLike.recordsOverview || portalLike.chat);
+    if (hasPortal) {
       const normalized = normalizePortalData(portalLike, false);
       normalized.chat = mergeMessages(state.data.chat, normalized.chat);
       state.data = normalized;
       state.cacheByRange[state.rangeDays] = normalized;
+      if (message) {
+        const dup = state.data.chat.some((m) => m.role === 'assistant' && normalizeText(m.text) === message);
+        if (!dup) {
+          addLocalMessage('assistant', message);
+        } else {
+          saveChatBackup(state.data.chat);
+        }
+      } else {
+        saveChatBackup(state.data.chat);
+      }
       renderAll();
+    } else if (message) {
+      addLocalMessage('assistant', message);
     }
   }
 
@@ -1159,28 +1209,15 @@ function renderMessageAttachments(item) {
   }
 
   async function tryUploadFiles(files, text) {
-    const urls = [
-      '/api/web/chat/upload',
-      '/api/web/chat/send'
-    ];
-    for (const url of urls) {
-      try {
-        const form = new FormData();
-        form.append('text', text || '');
-        form.append('message', text || '');
-        Array.from(files || []).forEach((file, index) => {
-          form.append('files', file);
-          form.append(`file${index + 1}`, file);
-          if (index === 0) form.append('file', file);
-        });
-        const json = url === '/api/web/chat/send'
-          ? await postJson(url, { message: text || '画像を送信しました。', text: text || '画像を送信しました。' })
-          : await postForm(url, form);
-        applyServerReply(json);
-        return true;
-      } catch (_error) {}
-    }
-    return false;
+    const form = new FormData();
+    form.append('text', text || '');
+    form.append('message', text || '');
+    Array.from(files || []).forEach((file) => {
+      form.append('files', file);
+    });
+    const json = await postForm('/api/web/chat/upload', form);
+    applyServerReply(json);
+    return true;
   }
 
   async function sendText(text, files) {
@@ -1200,23 +1237,27 @@ function renderMessageAttachments(item) {
       window.dispatchEvent(new CustomEvent('kokokara:web-send', { detail: { text: safe, files: pickedFiles.length } }));
 
       let delivered = false;
+      let uploadError = '';
       if (pickedFiles.length) {
-        delivered = await tryUploadFiles(pickedFiles, safe);
-        if (!delivered) {
-          addLocalMessage('assistant', '添付の送信がうまくいかなかったので、もう一度お願いします。');
-          setComposerStatus('添付の送信に失敗しました。ネットワークを確認して再送してください。', 'error');
+        try {
+          delivered = await tryUploadFiles(pickedFiles, safe);
+        } catch (err) {
+          uploadError = normalizeText(err?.message || '') || '画像を送れませんでした。通信を確認して、もう一度写真だけ送ってください。';
+          addLocalMessage('assistant', uploadError);
+          setComposerStatus('送信に失敗しました。', 'error');
         }
       }
-      if (safe && !delivered) {
+
+      if (!pickedFiles.length && safe) {
         const sent = await trySendTextToServer(safe);
         if (!sent) {
-          addLocalMessage('assistant', '今は送信確認が取れなかったので、接続を更新してもう一度お願いします。');
-          setComposerStatus('送信に失敗しました。接続を更新してもう一度送ってください。', 'error');
+          addLocalMessage('assistant', '送信に失敗しました。接続コードを確認するか、少し待ってからもう一度送ってください。');
+          setComposerStatus('送信に失敗しました。', 'error');
         } else {
           setComposerStatus('送信できました。', 'success');
         }
-      } else if (delivered) {
-        setComposerStatus('添付を送信できました。', 'success');
+      } else if (pickedFiles.length && delivered) {
+        setComposerStatus(safe ? 'メッセージと写真を送信できました。' : '添付を送信できました。', 'success');
       }
     } finally {
       setComposerSending(false);

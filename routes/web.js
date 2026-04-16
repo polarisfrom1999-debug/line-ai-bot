@@ -8,9 +8,6 @@ const conversationSummaryService = require('../services/conversation_summary_ser
 const authService = require('../services/web_portal_auth_service');
 const dataService = require('../services/web_portal_data_service');
 const realtimeService = require('../services/web_portal_realtime_service');
-const mealAnalysisService = require('../services/meal_analysis_service');
-const motionAnalysisService = require('../services/motion_analysis_service');
-
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } });
 
@@ -356,40 +353,154 @@ router.post('/chat/upload', requireSession, upload.array('files', 5), async (req
     const files = Array.isArray(req.files) ? req.files : [];
     const text = String(req.body?.message || req.body?.text || '').trim();
     if (!files.length) {
-      return res.status(400).json({ ok: false, error: 'empty_files', message: '添付ファイルがありません。' });
+      return res.status(400).json({ ok: false, error: 'empty_files', message: '添付がありません。' });
     }
 
     const firstImage = files.find((file) => /^image\//.test(String(file.mimetype || '')));
-    if (!firstImage) {
-      return res.json({
-        ok: true,
-        reply: '画像ファイルを受け取れなかったため、テキストのみ先に受け取りました。画像は jpg / png / webp で送ってください。',
+    if (!firstImage?.buffer) {
+      return res.status(400).json({
+        ok: false,
+        error: 'no_image',
+        message: '画像（jpg / png / webp）を1枚選んでください。',
       });
     }
 
-    const imagePayload = {
-      ok: true,
-      buffer: firstImage.buffer,
-      mimeType: firstImage.mimetype || 'image/jpeg',
-      kind: 'image',
+    const input = {
+      userId: req.webSession.lineUserId,
+      lineUserId: req.webSession.lineUserId,
+      sourceChannel: 'web',
+      sourceType: 'web',
+      messageType: 'image',
+      rawText: text,
+      webImagePayload: { buffer: firstImage.buffer, mimeType: firstImage.mimetype || 'image/jpeg' },
+      timestamp: Date.now(),
+      replyToken: null,
+      originalEvent: null,
+      relatedEventId: null,
+      messageId: null,
+      traceId: chatLogService.buildTraceId(),
     };
 
-    const meal = await mealAnalysisService.analyzeMealImage(imagePayload, req.webSession.user.id, text);
-    if (meal?.isMealImage) {
-      const mealText = await mealAnalysisService.buildMealImageReplyText(imagePayload, req.webSession.user.id, text);
-      return res.json({ ok: true, reply: mealText, mode: 'meal_image' });
+    let result = null;
+    let replyMessages = [];
+    let replyText = '';
+    try {
+      result = await conversationRouter.routeConversation(input);
+      replyMessages = Array.isArray(result?.replyMessages) ? result.replyMessages : [];
+      replyText = chatLogService.joinReplyText(replyMessages) || '画像を受け取りました。';
+    } catch (error) {
+      console.error('[web] upload conversation error:', error?.message || error);
+      replyText = '画像の処理中にエラーが出ました。通信を確認して、もう一度送ってください。';
+      replyMessages = [{ type: 'text', text: replyText }];
+      result = { ok: true, replyMessages, internal: { intentType: 'web_upload_fallback', responseMode: 'fallback' } };
     }
 
-    const motion = await motionAnalysisService.analyzeMotionImage({
-      imagePayload: { buffer: firstImage.buffer, mimeType: firstImage.mimetype || 'image/jpeg' },
-      textHint: text,
-      userId: req.webSession.user.id,
+    try {
+      await chatLogService.logConversationOutcome({ input, result });
+    } catch (e) {
+      console.error(e);
+    }
+    try {
+      await conversationSummaryService.recordTurn({ input, result });
+    } catch (e) {
+      console.error(e);
+    }
+    try {
+      dataService.invalidateUserCache(req.webSession.user.id, { reason: 'web_upload', scopes: { chat: true, records: true, home: true } });
+    } catch (e) {
+      console.error(e);
+    }
+
+    let payload = null;
+    try {
+      const homeSnapshot = await dataService.getHomeData(req.webSession.user);
+      const [recordsOverview, supportCards, chatHistory] = await Promise.all([
+        dataService.getRecordsOverview(req.webSession.user),
+        dataService.getChatSidebar(req.webSession.user, { home: homeSnapshot }),
+        dataService.getChatHistory(req.webSession.user, 8),
+      ]);
+      const starters = dataService.buildStarterPrompts(homeSnapshot, recordsOverview);
+      const reflection = dataService.buildChatReflection(homeSnapshot, recordsOverview, replyText);
+      const followups = dataService.buildFollowupPrompts(homeSnapshot, recordsOverview, replyText);
+      const actionPlan = homeSnapshot.actionPlan || [];
+      const supportMode = homeSnapshot.supportMode || dataService.buildSupportMode(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const stuckPrompts = homeSnapshot.stuckPrompts || dataService.buildStuckPrompts(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const supportCompass = homeSnapshot.supportCompass || dataService.buildSupportCompass(req.webSession.user, homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const returnDigest = homeSnapshot.returnDigest || dataService.buildReturnDigest(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const microStep = homeSnapshot.microStep || dataService.buildMicroStep(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const consultationCarry = homeSnapshot.consultationCarry || dataService.buildConsultationCarry(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || [], replyText);
+      const returnAnchor = homeSnapshot.returnAnchor || dataService.buildReturnAnchor(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const resumePrompts = homeSnapshot.resumePrompts || dataService.buildResumePrompts(homeSnapshot.recentTimeline || [], homeSnapshot, recordsOverview);
+      const conversationBridge = homeSnapshot.conversationBridge || dataService.buildConversationBridge(chatHistory, homeSnapshot, recordsOverview);
+      const reentryGuide = homeSnapshot.reentryGuide || dataService.buildReentryGuide(homeSnapshot, recordsOverview, homeSnapshot.engagement || {}, homeSnapshot.recentTimeline || []);
+      const sync = await dataService.getSyncStatus(req.webSession.user);
+      try {
+        realtimeService.notifyUser(req.webSession.user.id, { userId: req.webSession.user.id, sync, reason: 'web_upload' });
+      } catch (e) {
+        console.error(e);
+      }
+      payload = {
+        supportCards,
+        homeSnapshot,
+        recordsOverview,
+        starters,
+        reflection,
+        followups,
+        actionPlan,
+        supportMode,
+        stuckPrompts,
+        supportCompass,
+        returnDigest,
+        microStep,
+        consultationCarry,
+        returnAnchor,
+        resumePrompts,
+        conversationBridge,
+        reentryGuide,
+        sync,
+        chatHistory,
+      };
+    } catch (error) {
+      console.error('[web] upload payload error:', error?.message || error);
+      const fallback = buildFallbackChatResponse(req.webSession.user, 'チャットは続けられます。補助情報は整えながら表示しています。');
+      payload = {
+        supportCards: fallback.sidebar,
+        homeSnapshot: fallback.homeSnapshot,
+        recordsOverview: fallback.recordsOverview,
+        starters: fallback.starters,
+        reflection: fallback.reflection,
+        followups: fallback.followups,
+        actionPlan: fallback.actionPlan,
+        supportMode: fallback.supportMode,
+        stuckPrompts: fallback.homeSnapshot?.stuckPrompts || [],
+        supportCompass: fallback.supportCompass,
+        returnDigest: fallback.returnDigest,
+        microStep: fallback.microStep,
+        consultationCarry: fallback.consultationCarry,
+        returnAnchor: fallback.returnAnchor,
+        resumePrompts: fallback.resumePrompts,
+        conversationBridge: fallback.conversationBridge,
+        reentryGuide: fallback.reentryGuide,
+        sync: fallback.sync,
+        fallback: true,
+      };
+    }
+
+    res.json({
+      ok: true,
+      reply: replyText,
+      replyMessages,
+      assistantMessage: {
+        text: replyText,
+        createdAt: new Date().toISOString(),
+        sourceChannel: 'web',
+      },
+      internal: result?.internal || {},
+      ...payload,
     });
-    const motionText = String(motion?.replyText || '').trim() || '画像は受け取れています。まずは今の良い動きから一緒に整理していきましょう。';
-    return res.json({ ok: true, reply: motionText, mode: 'motion_image' });
   } catch (error) {
     console.error('[web] chat upload error:', error?.message || error);
-    return res.status(500).json({ ok: false, error: 'upload_failed', message: '添付の解析中にエラーが起きました。もう一度送ってください。' });
+    return res.status(500).json({ ok: false, error: 'upload_failed', message: '添付の処理に失敗しました。通信を確認して再送してください。' });
   }
 });
 
