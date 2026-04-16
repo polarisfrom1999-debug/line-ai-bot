@@ -745,6 +745,83 @@ textarea { resize: vertical; }
 .lab-name { font-size: 12px; color: var(--muted); }
 .lab-value { margin-top: 4px; font-size: 22px; font-weight: 800; }
 
+@media (min-width: 1024px) {
+  .app-shell {
+    width: calc(100vw - 24px);
+    max-width: none;
+    margin: 4px auto 8px;
+  }
+  .topbar {
+    gap: 8px;
+    padding: 0;
+  }
+  .brand-title {
+    font-size: 20px;
+  }
+  .brand-subtitle {
+    font-size: 11px;
+    margin-top: 1px;
+  }
+  .topbar-right {
+    gap: 4px;
+  }
+  .session-pill {
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .session-detail {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+  .ghost-btn.small {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .compact-nav {
+    margin-top: 4px;
+  }
+  .main-grid {
+    margin-top: 6px;
+  }
+  #chatPanel.tab-panel.active {
+    max-height: calc(100vh - 84px);
+  }
+  .chat-panel-head {
+    padding: 4px 8px 0;
+  }
+  .chat-panel-head h2 {
+    font-size: 16px;
+  }
+  .chat-panel-head p {
+    font-size: 11px;
+    margin-top: 1px;
+  }
+  .chat-layout {
+    grid-template-columns: minmax(0, 74%) minmax(260px, 26%);
+    gap: 10px;
+    min-height: 0;
+    height: 100%;
+  }
+  .chat-card {
+    max-height: none;
+    height: calc(100vh - 150px);
+  }
+  .chat-log {
+    padding: 10px;
+  }
+  .composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+  }
+  .side-stack {
+    max-height: calc(100vh - 150px);
+    overflow-y: auto;
+  }
+}
+
 @media (max-width: 1180px) {
   .chat-layout,
   .summary-cards,
