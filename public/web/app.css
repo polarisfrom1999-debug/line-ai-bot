@@ -870,10 +870,11 @@ textarea { resize: vertical; }
   .session-detail,
   .chat-panel-head p,
   .connect-banner p,
-  .theme-panel,
   #globalRangeGroup,
   #contextCard,
   #quickActionCard { display: none; }
+  .theme-panel { display: block; }
+  .theme-panel.collapsed { display: none; }
   .topbar-right,
   .header-actions { margin-top: 4px; }
   .header-actions > * { margin-right: 4px; margin-bottom: 4px; }
