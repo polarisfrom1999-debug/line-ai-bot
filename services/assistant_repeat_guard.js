@@ -68,7 +68,22 @@ function scrubReplyAgainstRecent(text, recentBodies) {
       out = out.split('\n').filter((line) => !line.includes(ban)).join('\n');
     }
   }
-  return out.trim();
+
+  const recentNormalized = recentBodies
+    .map((body) => normalizeForOverlap(body))
+    .filter(Boolean);
+
+  const filteredLines = out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const normalized = normalizeForOverlap(line);
+      if (!normalized || normalized.length < 10) return true;
+      return !recentNormalized.includes(normalized);
+    });
+
+  return filteredLines.join('\n').trim();
 }
 
 module.exports = {

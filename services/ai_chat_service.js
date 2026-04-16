@@ -58,9 +58,10 @@ function postProcessReply(text) {
   return softenAnxietyWording(
     safe
     .replace(/報告ありがとうございます。?/g, '')
-    .replace(/引き続き頑張りましょう。?/g, 'また続きを聞かせて。')
+    .replace(/引き続き頑張りましょう。?/g, '')
     .replace(/素晴らしいです。?/g, 'いい流れですね。')
-    .replace(/一緒に整えていきましょう。?/g, 'また必要なところだけ詰めよう。')
+    .replace(/一緒に整えていきましょう。?/g, '')
+    .replace(/また必要なところだけ詰めよう。?/g, '')
       .trim()
   );
 }

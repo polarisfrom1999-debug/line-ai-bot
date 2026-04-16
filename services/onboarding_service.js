@@ -241,8 +241,8 @@ function buildCurrentProfileSummary(longMemory = {}, localProfile = {}) {
     merged.bodyFat ? `体脂肪率: ${merged.bodyFat}` : null,
     merged.goal ? `目標: ${merged.goal}` : null
   ].filter(Boolean);
-  if (!lines.length) return 'まだプロフィールはほぼ未入力です。分かる項目だけ送ってもらえれば順に反映します。';
-  return ['いま見えているプロフィールです。', ...lines].join('\n');
+  if (!lines.length) return 'いま見えているプロフィールはまだ少なめです。分かる項目だけ送ってもらえれば、その都度反映できます。';
+  return ['今わかっているプロフィールはこんな感じです。', ...lines].join('\n');
 }
 
 function answerDuringOnboarding(text, onboardingState, longMemory) {
@@ -251,7 +251,7 @@ function answerDuringOnboarding(text, onboardingState, longMemory) {
   if (!safe) return null;
 
   if (/質問できる|相談できる|何が質問|何を聞ける|使い方/.test(safe)) {
-    return '質問できます。体調・食事・体重・血液検査のことはそのまま聞いて大丈夫です。入力はあとで続けられます。';
+    return 'はい、できます。体調・食事・体重・血液検査のことはそのまま聞いて大丈夫です。入力はあとで続けられます。';
   }
   if (/私のプロフィール|プロフィールは|今のプロフィール/.test(safe)) {
     return buildCurrentProfileSummary(longMemory, profile);

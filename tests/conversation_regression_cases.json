@@ -116,5 +116,156 @@
     "expect": {
       "require_explanatory_tone_on_distress": true
     }
+  },
+  {
+    "id": "profile_question_should_not_loop",
+    "title": "プロフィール質問で入力フォームに戻さない",
+    "category": "loop",
+    "description": "プロフィール質問で入力フォームに戻さない",
+    "turns": [
+      { "role": "user", "text": "私のプロフィールは？" },
+      { "role": "assistant", "text": "現在わかっているプロフィールを返します。名前、年齢、身長、体重、体脂肪率、目標などを確認できます。" }
+    ],
+    "must_not_contain": [
+      "無料体験を始めます",
+      "この形で分かる所だけ送ってください",
+      "名前：",
+      "年齢：",
+      "身長：",
+      "体重：",
+      "体脂肪率：",
+      "目標："
+    ],
+    "must_prefer_direct_answer": true,
+    "max_length": 220
+  },
+  {
+    "id": "question_allowed_mid_profile",
+    "title": "質問できるか聞かれたら素直に答える",
+    "category": "direct_answer",
+    "description": "質問できるか聞かれたら素直に答える",
+    "turns": [
+      { "role": "user", "text": "質問出来る？" },
+      { "role": "assistant", "text": "はい、できます。プロフィール入力の途中でも質問できます。" }
+    ],
+    "must_not_contain": [
+      "無料体験を始めます",
+      "この形で分かる所だけ送ってください"
+    ],
+    "must_prefer_direct_answer": true,
+    "max_length": 160
+  },
+  {
+    "id": "exercise_log_direct",
+    "title": "20キロ走った報告に自然に返す",
+    "category": "direct_answer",
+    "description": "20キロ走った報告に自然に返す",
+    "turns": [
+      { "role": "user", "text": "今日20キロ走ったよ" },
+      { "role": "assistant", "text": "今日はジョギング20kmとして受け取り、推定消費や労いを自然に返す。" }
+    ],
+    "must_contain_any": [
+      ["20km", "20キロ"],
+      ["ジョギング", "ラン", "走"]
+    ],
+    "must_not_contain": [
+      "まだ運動の記録が届いていないみたいです"
+    ],
+    "must_prefer_direct_answer": true,
+    "max_length": 220
+  },
+  {
+    "id": "weekly_exercise_summary",
+    "title": "週間運動量質問で手元データを優先して返す",
+    "category": "direct_answer",
+    "description": "週間運動量質問で手元データを優先して返す",
+    "turns": [
+      { "role": "user", "text": "今週の運動量は？" },
+      { "role": "assistant", "text": "今週の運動件数、時間、消費の要点を返す。データ不足なら不足を短く伝える。" }
+    ],
+    "must_not_contain": [
+      "無理のない範囲で",
+      "ゆるく続けていきましょう"
+    ],
+    "max_length": 260
+  },
+  {
+    "id": "blood_test_item_question",
+    "title": "血液検査画像後のTG質問に答える",
+    "category": "blood_test",
+    "description": "血液検査画像後のTG質問に答える",
+    "turns": [
+      { "role": "user", "text": "TGは？" },
+      { "role": "assistant", "text": "TGまたは中性脂肪の値を返す。完全構造化前でも読めた値は返す。" }
+    ],
+    "must_contain_any": [
+      ["TG", "中性脂肪"]
+    ],
+    "must_not_contain": [
+      "構造化の途中です",
+      "1項目か1日付ずつ聞いてください"
+    ],
+    "max_length": 180
+  },
+  {
+    "id": "blood_test_trend_question",
+    "title": "血液検査の傾向質問に比較で返す",
+    "category": "blood_test",
+    "description": "血液検査の傾向質問に比較で返す",
+    "turns": [
+      { "role": "user", "text": "この検査結果の傾向は？" },
+      { "role": "assistant", "text": "今回だけでなく、前回または過去推移との比較を返す。" }
+    ],
+    "must_contain_any": [
+      ["前回", "以前", "過去", "傾向", "流れ"]
+    ],
+    "must_not_contain": [
+      "まだ傾向を安定してまとめ切れていません"
+    ],
+    "max_length": 260
+  },
+  {
+    "id": "video_analysis_entry",
+    "title": "動画受信後に動作解析へ入る",
+    "category": "video",
+    "description": "動画受信後に動作解析へ入る",
+    "turns": [
+      { "role": "user", "text": "この動作解析をお願いします" },
+      { "role": "assistant", "text": "動画または静止画から見える範囲の観察を始める。見られない場合も代替案を丁寧に出す。" }
+    ],
+    "must_not_contain": [
+      "動画は直接見られないんだ",
+      "言葉で教えてもらえれば"
+    ],
+    "max_length": 240
+  },
+  {
+    "id": "food_correction_should_update",
+    "title": "ユーザー訂正を優先する",
+    "category": "food",
+    "description": "ユーザー訂正を優先する",
+    "turns": [
+      { "role": "user", "text": "ヨーグルトの写真に59kcalって書いてあるよ！訂正して" },
+      { "role": "assistant", "text": "訂正を受け入れて、ヨーグルトは59kcalとして再計算するね。" }
+    ],
+    "must_contain_any": [
+      ["59kcal", "59 kcal", "59"]
+    ],
+    "must_not_contain": [
+      "90kcalくらいです"
+    ],
+    "max_length": 220
+  },
+  {
+    "id": "same_message_repeat_guard",
+    "title": "同じ案内文を連投しない",
+    "category": "templated",
+    "description": "同じ案内文を連投しない",
+    "turns": [
+      { "role": "user", "text": "2" },
+      { "role": "assistant", "text": "プラン選択後の次の一手を自然に進める。" }
+    ],
+    "must_not_repeat_previous": true,
+    "max_length": 220
   }
 ]
