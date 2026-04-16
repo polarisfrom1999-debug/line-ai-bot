@@ -198,7 +198,8 @@ router.get('/bootstrap', requireSession, async (req, res) => {
   try {
     const user = req.webSession.user;
     const since = req.query.since ? String(req.query.since) : undefined;
-    const payload = await dataService.getBootstrapData(user, { since });
+    const rangeDays = Math.min(90, Math.max(7, Number(req.query.days || req.query.range || 30)));
+    const payload = await dataService.getBootstrapData(user, { since, rangeDays });
     const profile = await dataService.getProfileEnvelope(user);
     res.json({
       ok: true,

@@ -1595,6 +1595,35 @@ async function getMealsList(user, { from, to, limit = 50 } = {}) {
   }));
 }
 
+function aggregateMealsByDayFromList(meals) {
+  const map = new Map();
+  for (const m of meals || []) {
+    const d = normalizeText(m.date || (m.eatenAt ? String(m.eatenAt).slice(0, 10) : ''));
+    if (!d) continue;
+    const row = map.get(d) || {
+      date: d,
+      count: 0,
+      kcal: 0,
+      breakfastCount: 0,
+      lunchCount: 0,
+      dinnerCount: 0,
+      summary: ''
+    };
+    row.count += 1;
+    row.kcal += Number(m.estimatedKcal || 0);
+    const slot = normalizeText(m.slot || '');
+    if (slot === 'breakfast') row.breakfastCount += 1;
+    else if (slot === 'lunch') row.lunchCount += 1;
+    else if (slot === 'dinner') row.dinnerCount += 1;
+    const piece = normalizeText(m.summary || '');
+    if (piece) {
+      row.summary = row.summary ? `${row.summary} / ${piece}` : piece;
+    }
+    map.set(d, row);
+  }
+  return Array.from(map.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
 async function getWeightsSeries(user, range = '30d') {
   const days = rangeToDays(range);
   const since = new Date(tokyoNow());
@@ -1784,7 +1813,9 @@ async function getSyncStatus(user) {
 
 async function getBootstrapData(user, options = {}) {
   const since = normalizeIsoCandidate(options.since);
-  return withCache(buildCacheKey('bootstrap', user.id, since || ''), DEFAULT_CACHE_TTL_MS, async () => {
+  const rangeDays = Math.min(90, Math.max(7, Number(options.rangeDays || options.days || 30)));
+  const rangeKey = `${rangeDays}d`;
+  return withCache(buildCacheKey('bootstrap', user.id, `${since || ''}:${rangeKey}`), DEFAULT_CACHE_TTL_MS, async () => {
     const home = await getHomeData(user, { since });
     const recentMeals = await getRecentMeals(user.id, 10);
     const recentWeights = await getRecentWeights(user.id, 8);
@@ -1793,17 +1824,33 @@ async function getBootstrapData(user, options = {}) {
       items: home.latestLab.items,
       summaryNote: home.latestLab.items?.length ? home.latestLab.items.slice(0, 3).map((item) => `${item.itemName} ${item.value}`).join(' / ') : null
     } : null;
-    const [recordsOverview, sync, timeline] = await Promise.all([
+    const fromYmd = todayYmdMinusDays(rangeDays - 1);
+    const [recordsOverview, sync, timeline, weightsBundle, mealListRaw] = await Promise.all([
       getRecordsOverview(user, { recentMeals, recentWeights, latestLab }),
       getSyncStatus(user),
-      getRecentTimeline(user, 8)
+      getRecentTimeline(user, 8),
+      getWeightsSeries(user, rangeKey),
+      getMealsList(user, { from: fromYmd, limit: 240 })
     ]);
+    const mealDayRows = aggregateMealsByDayFromList(mealListRaw);
+    const labRowsForPortal = latestLab?.items?.length
+      ? latestLab.items.map((item) => ({
+        name: normalizeText(item.itemName || item.label || item.normalized_key || '検査項目'),
+        value: [item.value, item.unit].filter((v) => v != null && String(v).trim() !== '').map(String).join(' ').trim() || '—',
+        note: latestLab.examDate ? `採血日 ${latestLab.examDate}` : ''
+      }))
+      : [];
     const sidebar = buildSidebarFromHome(home);
     const starters = buildStarterPrompts(home, recordsOverview);
     return {
       home,
       sidebar,
       recordsOverview,
+      records: {
+        weight: weightsBundle.series || [],
+        meal: mealDayRows,
+        lab: labRowsForPortal
+      },
       starters,
       sync,
       supportMode: home.supportMode || buildSupportMode(home, recordsOverview, home.engagement || {}, timeline),

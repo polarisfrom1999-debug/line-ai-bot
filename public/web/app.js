@@ -216,6 +216,16 @@
     });
   }
 
+  function dedupeWeightRowsByDate(rows) {
+    const map = new Map();
+    sortByDateAsc(rows).forEach((row) => {
+      const key = formatDate(row.date, true);
+      if (!key || key === '—') return;
+      map.set(key, row);
+    });
+    return Array.from(map.values());
+  }
+
   function withUnitIfMissing(value, unit) {
     const safe = normalizeText(value);
     if (!safe) return '';
@@ -384,11 +394,14 @@
   function summarizeLabRows(rows) {
     const list = safeArray(rows);
     if (!list.length) return { latest: 'まだありません', note: '血液検査', sub: '追加待ち' };
-    const latest = list[0];
+    const primary = list[0];
+    const rest = list.slice(1, 4).filter((row) => normalizeText(row.name) && normalizeText(row.value));
     return {
-      latest: normalizeText(latest.value || 'まだありません'),
-      note: normalizeText(latest.name || '血液検査'),
-      sub: normalizeText((list[1] && list[1].value) || latest.note || '見返しメモなし')
+      latest: normalizeText(primary.value || 'まだありません'),
+      note: normalizeText(primary.name || '血液検査'),
+      sub: rest.length
+        ? rest.map((row) => `${normalizeText(row.name)} ${normalizeText(row.value)}`).join(' · ')
+        : normalizeText(primary.note || '見返しメモなし')
     };
   }
 
@@ -585,12 +598,12 @@
 
   function renderLabPanel(rows) {
     const items = safeArray(rows);
-    els.labMeta.textContent = items[0]?.value || 'まだありません';
+    const examHint = items.map((i) => i.note).find((n) => /採血日|検査日/.test(String(n || '')));
+    els.labMeta.textContent = examHint || (items[0] ? `${items[0].name || '検査'} の主要指標です` : 'まだありません');
     els.labGrid.innerHTML = items.map((item) => `
       <div class="lab-pill">
-        <div class="lab-name">${escapeHtml(item.name)}</div>
+        <div class="lab-name">${escapeHtml(item.name || '項目')}</div>
         <div class="lab-value">${escapeHtml(item.value)}</div>
-        <div class="simple-row-sub">${escapeHtml(item.note || '')}</div>
       </div>
     `).join('');
   }
@@ -797,18 +810,16 @@ function renderMessageAttachments(item) {
       } catch (_err) {}
     }
 
+    const token = normalizeText(state.sessionToken || '');
+    if (!token) {
+      return normalizePortalData({ ...MOCK_DATA, connected: false }, true);
+    }
+
     const stamp = Date.now();
     const endpoints = [
-      `/api/web/portal-data?days=${days}&range=${days}&_=${stamp}`,
-      `/web/api/portal-data?days=${days}&range=${days}&_=${stamp}`,
-      `/api/web/portal?days=${days}&range=${days}&_=${stamp}`,
-      `/web/data?days=${days}&range=${days}&_=${stamp}`,
-      `/api/web/portal-data?days=${days}&_=${stamp}`,
-      `/web/api/portal-data?days=${days}&_=${stamp}`,
-      `/api/web/portal-data?_=${stamp}`,
-      `/web/api/portal-data?_=${stamp}`,
-      `/api/web/portal?_=${stamp}`,
-      `/web/data?_=${stamp}`
+      `/api/web/bootstrap?days=${days}&range=${days}&_=${stamp}`,
+      `/api/web/bootstrap?days=${days}&_=${stamp}`,
+      `/api/web/bootstrap?_=${stamp}`
     ];
 
     for (const url of endpoints) {
@@ -818,7 +829,9 @@ function renderMessageAttachments(item) {
       } catch (_error) {}
     }
 
-    return normalizePortalData(MOCK_DATA, true);
+    const fallback = normalizePortalData({ ...MOCK_DATA, connected: true }, false);
+    fallback.syncStatus = 'データ取得に失敗しました。更新ボタンで再読み込みしてください。';
+    return fallback;
   }
 
   function normalizeMessage(item) {
@@ -894,8 +907,11 @@ function renderMessageAttachments(item) {
 
   function normalizeLabRow(row) {
     if (!row || typeof row !== 'object') return null;
-    const name = row.name || row.label || row.title;
-    const value = row.value || row.examDate || row.exam_date || row.result;
+    const name = row.name || row.label || row.title || row.itemName || row.normalized_key;
+    const rawVal = row.value != null ? String(row.value) : '';
+    const unit = row.unit != null ? String(row.unit).trim() : '';
+    const combined = [rawVal, unit].filter(Boolean).join(' ').trim();
+    const value = combined || row.examDate || row.exam_date || row.result || '';
     if (!name && !value) return null;
     return {
       name: name || '検査',
@@ -1018,7 +1034,9 @@ function renderMessageAttachments(item) {
     const data = raw && typeof raw === 'object' ? raw : {};
     const profileBase = data.profile || data.userProfile || data.authoritativeProfile || {};
     const userName = data.userName || data.displayName || profileBase.preferredName || data.user?.displayName || MOCK_DATA.userName;
-    const connected = demoMode ? true : Boolean(data.connected ?? data.isConnected ?? userName);
+    const connected = demoMode
+      ? Boolean(data.connected)
+      : Boolean(data.connected ?? data.isConnected ?? userName);
 
     const fallbackWeight = safeArray(data.records?.weight || data.weightRows || data.weight_logs || data.weights).map(normalizeWeightRow).filter(Boolean);
     const fallbackMeal = safeArray(data.records?.meal || data.mealRows || data.meal_logs || data.dailyMeals || data.meals).map(normalizeMealRow).filter(Boolean);
@@ -1045,7 +1063,7 @@ function renderMessageAttachments(item) {
       connected,
       userName,
       lastUpdated: data.lastUpdated || data.updatedAt || data.latestUpdated || MOCK_DATA.lastUpdated,
-      expiresAt: data.expiresAt || data.connectionExpiry || MOCK_DATA.expiresAt,
+      expiresAt: data.expiresAt || data.session?.expiresAt || data.connectionExpiry || MOCK_DATA.expiresAt,
       syncStatus: data.syncStatus || data.statusText || MOCK_DATA.syncStatus,
       reminders: data.reminders || data.memo || MOCK_DATA.reminders,
       profile: mergedProfile,
@@ -1068,7 +1086,7 @@ function renderMessageAttachments(item) {
     const extraMessages = await tryFetchChatHistory(Math.max(days, 365));
     base.chat = mergeMessages(mergeMessages(base.chat, backupMessages), extraMessages);
     base.profile = inferProfileFromChat(base.chat, base.profile, base.lastUpdated);
-    base.records.weight = maybeAppendLatestWeight(base.records.weight, base.profile, base.lastUpdated);
+    base.records.weight = dedupeWeightRowsByDate(maybeAppendLatestWeight(base.records.weight, base.profile, base.lastUpdated));
     base.records.meal = inferMealRowsFromChat(base.chat, base.records.meal, base.lastUpdated);
     state.cacheByRange[days] = base;
     state.data = base;
@@ -1139,9 +1157,22 @@ function renderMessageAttachments(item) {
       headers: useAuth ? buildAuthHeaders({ 'Content-Type': 'application/json' }) : { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error(String(res.status));
     const contentType = res.headers.get('content-type') || '';
-    return contentType.includes('application/json') ? res.json() : {};
+    let json = {};
+    if (contentType.includes('application/json')) {
+      try {
+        json = await res.json();
+      } catch (_err) {
+        json = {};
+      }
+    }
+    if (!res.ok) {
+      const err = new Error(json.message || json.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.payload = json;
+      throw err;
+    }
+    return json;
   }
 
   async function postForm(url, formData) {
@@ -1195,17 +1226,15 @@ function renderMessageAttachments(item) {
   }
 
   async function trySendTextToServer(text) {
-    const urls = [
-      '/api/web/chat/send'
-    ];
-    for (const url of urls) {
-      try {
-        const json = await postJson(url, { text, message: text, days: state.rangeDays });
-        applyServerReply(json);
-        return true;
-      } catch (_error) {}
+    try {
+      const json = await postJson('/api/web/chat/send', { text, message: text, days: state.rangeDays });
+      applyServerReply(json);
+      return true;
+    } catch (err) {
+      const msg = normalizeText(err?.message || '');
+      if (msg) addLocalMessage('assistant', msg);
+      return false;
     }
-    return false;
   }
 
   async function tryUploadFiles(files, text) {
@@ -1251,7 +1280,6 @@ function renderMessageAttachments(item) {
       if (!pickedFiles.length && safe) {
         const sent = await trySendTextToServer(safe);
         if (!sent) {
-          addLocalMessage('assistant', '送信に失敗しました。接続コードを確認するか、少し待ってからもう一度送ってください。');
           setComposerStatus('送信に失敗しました。', 'error');
         } else {
           setComposerStatus('送信できました。', 'success');
