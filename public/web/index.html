@@ -35,6 +35,7 @@
         <div>
           <h2>ここから。WEBへようこそ。</h2>
           <p>LINEで発行した接続コードを入れると、この画面で見やすく使えます。</p>
+          <p class="connect-auto-hint hidden" id="connectAutoHint" role="status"></p>
         </div>
         <form class="connect-form" id="connectForm">
           <input id="connectInput" type="text" autocomplete="off" placeholder="接続コードを入力">
@@ -69,6 +70,7 @@
 
     <main class="main-grid">
       <section class="tab-panel active" id="chatPanel">
+        <div class="chat-panel-scroll">
         <div class="panel-head compact chat-panel-head">
           <div>
             <h2>チャット</h2>
@@ -117,6 +119,7 @@
             </section>
           </aside>
         </div>
+        </div>
       </section>
 
       <section class="tab-panel" id="recordsPanel">
@@ -153,7 +156,9 @@
                 </div>
                 <div class="chart-meta" id="weightChartMeta">データ待機中</div>
               </div>
-              <canvas id="weightChartCanvas" width="980" height="320"></canvas>
+              <div class="chart-canvas-wrap" aria-hidden="true">
+                <canvas id="weightChartCanvas" width="980" height="320"></canvas>
+              </div>
             </div>
             <div class="simple-list" id="weightList"></div>
           </section>
@@ -171,7 +176,9 @@
                   <div class="meal-total-sub" id="mealTotalSub">表示期間の合計</div>
                 </div>
               </div>
-              <canvas id="mealChartCanvas" width="980" height="320"></canvas>
+              <div class="chart-canvas-wrap" aria-hidden="true">
+                <canvas id="mealChartCanvas" width="980" height="320"></canvas>
+              </div>
               <div class="meal-footer-meta" id="mealChartMeta">データ待機中</div>
             </div>
             <div class="simple-list" id="mealList"></div>

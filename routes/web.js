@@ -80,15 +80,15 @@ function buildFallbackChatResponse(user, message) {
 function buildWebFallbackReply(message) {
   const safe = String(message || '').trim();
   if (/痛い|痛み|しんどい|つらい|違和感/.test(safe)) {
-    return `つらさがある中で送ってくれてありがとうございます。まずは「どこが」「いつから」「何をするとつらいか」を一つずつ整理すると、次の見方を作りやすいです。`;
+    return 'しんどいね。どこが・いつ頃から・何をするときついか、分かる範囲で一言ずつ送ってくれるかな。';
   }
   if (/TG|HbA1c|LDL|HDL|血液|検査/.test(safe)) {
-    return '検査の相談を受け取りました。画像や項目を一つずつ見ながら、まずは気になる数値から整理していきましょう。';
+    return '検査の話、いいよ。気になる数値か画像を1つずつ送ってくれるかな。';
   }
   if (/食事|ごはん|朝|昼|夜|カロリー/.test(safe)) {
-    return '食事の相談を受け取りました。全部を直そうとせず、まずは一食ぶんの見直しから一緒に整理していけます。';
+    return '食事の話、いいよ。いまは一食ぶんだけ見てもらう感じで。';
   }
-  return `「${safe.slice(0, 60)}${safe.length > 60 ? '…' : ''}」を受け取りました。今いちばん気になる一点から、一緒に整理していきましょう。`;
+  return `「${safe.slice(0, 60)}${safe.length > 60 ? '…' : ''}」、受け取った。いちばん気になるところからでいいよ。`;
 }
 
 async function requireSession(req, res, next) {

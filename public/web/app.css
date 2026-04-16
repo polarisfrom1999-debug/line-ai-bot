@@ -199,6 +199,13 @@ textarea { resize: vertical; }
   margin: 4px 0 0;
   color: var(--muted);
 }
+.connect-auto-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #922f2f;
+  font-weight: 700;
+}
+.connect-auto-hint.hidden { display: none; }
 .connect-form {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -364,6 +371,19 @@ textarea { resize: vertical; }
 .main-grid { margin-top: 10px; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
+#chatPanel.tab-panel.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 168px);
+}
+.chat-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .chat-panel-head,
 #recordsPanel .panel-head.compact,
@@ -381,6 +401,9 @@ textarea { resize: vertical; }
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 10px;
+  flex: 1;
+  min-height: 0;
+  align-content: stretch;
 }
 .chat-layout > * { min-width: 0; }
 .chat-card,
@@ -395,7 +418,9 @@ textarea { resize: vertical; }
   box-shadow: var(--card-shadow);
 }
 .chat-card {
-  min-height: min(80vh, 920px);
+  min-height: 0;
+  max-height: min(72vh, 820px);
+  height: 100%;
   display: grid;
   grid-template-rows: 1fr auto;
   overflow: hidden;
@@ -405,6 +430,7 @@ textarea { resize: vertical; }
   overflow: auto;
   min-height: 0;
   background: linear-gradient(180deg, var(--surface-soft), var(--surface));
+  -webkit-overflow-scrolling: touch;
 }
 .message-row {
   display: flex;
@@ -491,6 +517,10 @@ textarea { resize: vertical; }
   border-top: 1px solid var(--border);
   background: var(--surface);
   padding: 10px 12px 12px;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
 }
 .composer-bar {
   display: grid;
@@ -533,6 +563,10 @@ textarea { resize: vertical; }
   display: grid;
   grid-template-rows: auto auto;
   gap: 12px;
+  max-height: min(72vh, 820px);
+  overflow-y: auto;
+  align-self: stretch;
+  min-height: 0;
 }
 .mini-card {
   padding: 14px;
@@ -628,13 +662,31 @@ textarea { resize: vertical; }
   font-size: 12px;
   font-weight: 700;
 }
-.chart-card canvas {
-  display: block;
+.chart-canvas-wrap {
+  height: 280px;
+  max-height: min(40vh, 320px);
   width: 100%;
-  max-width: 100%;
-  height: auto;
+  overflow: hidden;
   border-radius: 14px;
   background: linear-gradient(180deg, var(--surface-soft), var(--surface));
+  flex-shrink: 0;
+}
+.chart-canvas-wrap canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+}
+.record-panel .chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.record-panel .simple-list {
+  max-height: min(48vh, 520px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .meal-total-box {
   min-width: 180px;
@@ -684,6 +736,9 @@ textarea { resize: vertical; }
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  max-height: min(48vh, 520px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .lab-pill { padding: 12px; }
 .lab-name { font-size: 12px; color: var(--muted); }
@@ -717,7 +772,8 @@ textarea { resize: vertical; }
   .lab-grid,
   .chat-layout,
   .side-stack { display: grid; grid-template-columns: 1fr; }
-  .chat-card { min-height: min(72vh, 760px); }
+  .chat-card { max-height: min(70vh, 720px); }
+  #chatPanel.tab-panel.active { max-height: calc(100vh - 220px); }
   .message-bubble { max-width: 92%; min-width: 0; }
   .composer-bar { grid-template-columns: auto minmax(0, 1fr); }
   .send-btn { grid-column: 1 / -1; }

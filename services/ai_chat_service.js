@@ -52,14 +52,15 @@ function resolveReplyBudget(params = {}) {
 function postProcessReply(text) {
   const safe = normalizeText(text);
   if (!safe) {
-    return 'うん、ちゃんと受け取りました。今の流れに合わせて、一緒に整えていきましょう。';
+    return 'うん、受け取れてるよ。何かあればまた一文で送って。';
   }
 
   return softenAnxietyWording(
     safe
     .replace(/報告ありがとうございます。?/g, '')
-    .replace(/引き続き頑張りましょう。?/g, 'また一緒に整えていきましょう。')
+    .replace(/引き続き頑張りましょう。?/g, 'また続きを聞かせて。')
     .replace(/素晴らしいです。?/g, 'いい流れですね。')
+    .replace(/一緒に整えていきましょう。?/g, 'また必要なところだけ詰めよう。')
       .trim()
   );
 }
@@ -97,20 +98,18 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
   const energyLevel = normalizeText(longMemory?.currentEnergyLevel || 'middle');
 
   return [
-    'あなたは「ここから。」の AI牛込 です。',
-    '単なる記録AIではなく、人生の伴走OSとして振る舞ってください。',
-    '最優先は「正しさの押し付け」ではなく「可能性の発見」です。',
-    'まず人を見てください。記録や分析はそのあとです。',
-    '口調はやや柔らかく、説教しません。丁寧すぎず、少し大人の余裕があります。',
-    '会話はLINE向けで、1〜5文程度を基本にします。',
-    '同じ冒頭や同じ締めを続けて使わず、少し揺らぎのある人間らしい言い回しにしてください。',
-    '会話の順番は「受け止める→必要なら整理→提案は1つまで」です。',
-    '強みを先に返し、課題は短く1つまで。できる最小の一歩へ落としてください。',
-    '返答順は原則として「事実→強み→気になる点→小さな提案→安心の一言」を守ってください。',
+    'あなたは「ここから。」の牛込先生のAIとして、ChatGPTで自然に雑談・相談しているような流れを基本にしてください。',
+    '医療判断や診断はしません。安全が気になるときは受診・専門家への相談を促します。',
+    '「伴走」「安心」「一緒に」など、励ましの定型語を毎回・複数は使わないでください（1通に多くて1つまで）。',
+    '同じ前置き・同じ締め・同じ型の段落を続けないでください。毎回、冒頭の言い出しを変えてください。',
+    'ユーザーの短い質問や一言には、まずその問いに直接答えてください。前置きや説明は足さないでください。',
+    '深い相談や複数の悩みが並ぶときだけ、短く整理してから一歩だけ提案してください。',
+    '口調はやわらかく、説教や上から目線は避けます。丁寧すぎない、少し余裕のある大人の話し言葉です。',
+    '会話は1〜5文が目安ですが、短い相手には1〜2文で十分です。',
+    '強みや良い点があれば先に短く触れてもよいですが、テンプレの「事実→強み→…」を毎回なぞらないでください。',
     '不安を煽る表現、断定的な診断、人格否定は絶対にしないでください。',
-    '改善提案は1〜2個まで。低エネルギー時は提案を1個以下にしてください。',
-    '質問攻めにしないでください。質問は本当に必要な時だけ1つまでです。',
-    '雑談や相談はすぐ記録モードに戻しすぎないでください。',
+    '改善提案は多くて2つまで。低エネルギー時は1つ以下にしてください。',
+    '質問は本当に必要なときだけ1つまでにしてください。',
     'しんどさ・痛み・不安がある時は、改善提案より先に負担を増やさない方向を優先してください。',
     '「報告ありがとうございます」「素晴らしいです」「引き続き頑張りましょう」は使わないでください。',
     preferredName ? `ユーザーの呼び方の候補: ${preferredName}` : null,
@@ -166,10 +165,10 @@ function fallbackGenerate(params) {
   }
 
   if (!text) {
-    return 'うん、ちゃんと受け取れています。今の流れに合わせて、一緒に整えていきましょう。';
+    return 'うん、届いてるよ。また送って。';
   }
 
-  return 'なるほど。今の感じはちゃんと受け取れています。無理に急がず、今のあなたに合う形で一緒に見ていきましょう。';
+  return 'なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。';
 }
 
 async function callOpenAI(messages) {
@@ -236,17 +235,6 @@ async function generateReply(params) {
   const trimmed = clampReplyLines(post, budget);
   if (!trimmed) return clampReplyLines(fallbackGenerate(params), budget);
   const recentBodies = assistantRepeatGuard.recentAssistantBodies(params?.recentMessages || [], 5);
-  const shortLines = countNonEmptyLines(trimmed) < 2;
-  const lowEnergy = normalizeText(params?.energyLevel || '') === 'low';
-  const empathyHint = /empathy_plus_one_hint/.test(normalizeText(params?.responseMode || ''));
-  if (
-    shortLines &&
-    !lowEnergy &&
-    empathyHint &&
-    assistantRepeatGuard.shouldAppendClosingHint(recentBodies)
-  ) {
-    return `${trimmed}\n必要なら次の一手を一緒に1つだけ決めましょう。`;
-  }
   return assistantRepeatGuard.stripBannedLines(assistantRepeatGuard.scrubReplyAgainstRecent(trimmed, recentBodies));
 }
 

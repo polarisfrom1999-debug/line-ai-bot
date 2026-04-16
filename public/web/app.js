@@ -84,7 +84,7 @@
     rangeDays: Number(localStorage.getItem('kokokara-web-range')) || 7,
     theme: localStorage.getItem('kokokara-web-theme') || 'soft-default',
     data: null,
-    chatVisibleCount: 400,
+    chatVisibleCount: 48,
     cacheByRange: {},
     pendingQuickAction: '',
     sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || '',
@@ -95,6 +95,7 @@
     connectBanner: document.getElementById('connectBanner'),
     connectForm: document.getElementById('connectForm'),
     connectInput: document.getElementById('connectInput'),
+    connectAutoHint: document.getElementById('connectAutoHint'),
     sessionPill: document.getElementById('sessionPill'),
     sessionDetail: document.getElementById('sessionDetail'),
     refreshBtn: document.getElementById('refreshBtn'),
@@ -429,9 +430,13 @@
   }
 
   function resetCanvas(canvas) {
-    const parentWidth = canvas.parentElement ? Math.max(320, Math.floor(canvas.parentElement.clientWidth - 4)) : 980;
+    const wrap = canvas.parentElement;
+    const parentWidth = wrap ? Math.max(320, Math.floor(wrap.clientWidth - 4)) : 980;
     const logicalWidth = parentWidth;
-    const logicalHeight = Number(canvas.getAttribute('height') || 320);
+    let logicalHeight = Number(canvas.getAttribute('height') || 320);
+    if (wrap && wrap.classList && wrap.classList.contains('chart-canvas-wrap') && wrap.clientHeight > 40) {
+      logicalHeight = Math.floor(wrap.clientHeight);
+    }
     const ratio = window.devicePixelRatio || 1;
     canvas.width = logicalWidth * ratio;
     canvas.height = logicalHeight * ratio;
@@ -771,6 +776,64 @@ function renderMessageAttachments(item) {
     const token = normalizeText(state.sessionToken || '');
     if (!token) return base;
     return { ...base, Authorization: `Bearer ${token}` };
+  }
+
+  function getCodeFromUrl() {
+    try {
+      return normalizeText(new URLSearchParams(window.location.search).get('code') || '');
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  function stripCodeFromUrl() {
+    try {
+      const u = new URL(window.location.href);
+      if (!u.searchParams.has('code')) return;
+      u.searchParams.delete('code');
+      window.history.replaceState({}, '', `${u.pathname}${u.search}${u.hash}`);
+    } catch (_e) {}
+  }
+
+  function setConnectAutoHint(message) {
+    if (!els.connectAutoHint) return;
+    const safe = normalizeText(message || '');
+    if (!safe) {
+      els.connectAutoHint.classList.add('hidden');
+      els.connectAutoHint.textContent = '';
+      return;
+    }
+    els.connectAutoHint.textContent = safe;
+    els.connectAutoHint.classList.remove('hidden');
+  }
+
+  function scrollComposerIntoView() {
+    try {
+      els.chatLog.scrollTop = els.chatLog.scrollHeight;
+      requestAnimationFrame(() => {
+        els.chatLog.scrollTop = els.chatLog.scrollHeight;
+        els.composerForm?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+      });
+    } catch (_e) {}
+  }
+
+  async function connectWithCode(rawInput) {
+    const code = normalizeText(rawInput);
+    if (!code) throw new Error('接続コードが空です');
+    const json = await postJson('/api/web/link/confirm', { code }, false);
+    const token = normalizeText(json.sessionToken || '');
+    if (!token) throw new Error('接続コードを確認できませんでした。');
+    state.sessionToken = token;
+    localStorage.setItem(WEB_TOKEN_KEY, token);
+    if (!state.data) state.data = {};
+    state.data.connected = true;
+    state.connectionState = 'connected';
+    stripCodeFromUrl();
+    setConnectAutoHint('');
+    setActiveTab('chat');
+    window.dispatchEvent(new CustomEvent('kokokara:web-connect', { detail: { code } }));
+    state.chatVisibleCount = 48;
+    return json;
   }
 
   async function fetchJson(url) {
@@ -1298,7 +1361,12 @@ function renderMessageAttachments(item) {
 
   function bindEvents() {
     els.toggleThemePanelBtn.addEventListener('click', toggleThemePanel);
-    els.tabButtons.forEach((btn) => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
+    els.tabButtons.forEach((btn) => btn.addEventListener('click', () => {
+      setActiveTab(btn.dataset.tab);
+      if (btn.dataset.tab === 'chat') {
+        requestAnimationFrame(() => scrollComposerIntoView());
+      }
+    }));
     els.recordTabButtons.forEach((btn) => btn.addEventListener('click', () => setRecordTab(btn.dataset.recordTab)));
 
     els.rangeGroups.forEach((group) => {
@@ -1334,25 +1402,22 @@ function renderMessageAttachments(item) {
       const value = els.connectInput.value.trim();
       if (!value) return;
       state.connectionState = 'connecting';
+      setConnectAutoHint('');
       renderConnection();
       try {
-        const json = await postJson('/api/web/link/confirm', { code: value }, false);
-        const token = normalizeText(json.sessionToken || '');
-        if (!token) throw new Error('token_missing');
-        state.sessionToken = token;
-        localStorage.setItem(WEB_TOKEN_KEY, token);
-        state.data.connected = true;
-        state.connectionState = 'connected';
-        renderConnection();
-        setActiveTab('chat');
-        window.dispatchEvent(new CustomEvent('kokokara:web-connect', { detail: { code: value } }));
+        await connectWithCode(value);
+        els.connectInput.value = '';
         await refreshForRange(state.rangeDays, true);
         renderAll();
-      } catch (_error) {
-        state.data.connected = false;
-        state.connectionState = 'expired';
+        renderChat({ stickBottom: true });
+        scrollComposerIntoView();
+      } catch (err) {
+        state.sessionToken = '';
+        localStorage.removeItem(WEB_TOKEN_KEY);
+        if (state.data) state.data.connected = false;
+        state.connectionState = 'disconnected';
+        setConnectAutoHint(normalizeText(err?.message) || '接続に失敗しました。もう一度入力してください。');
         renderConnection();
-        addLocalMessage('assistant', '接続コードを確認できませんでした。コードをもう一度貼り付けてください。');
       }
     });
 
@@ -1362,6 +1427,7 @@ function renderMessageAttachments(item) {
     });
 
     els.disconnectBtn.addEventListener('click', () => {
+      setConnectAutoHint('');
       state.data.connected = false;
       state.sessionToken = '';
       state.connectionState = 'disconnected';
@@ -1371,7 +1437,7 @@ function renderMessageAttachments(item) {
     });
 
     els.loadOlderBtn.addEventListener('click', async () => {
-      state.chatVisibleCount += 120;
+      state.chatVisibleCount += 100;
       const extra = await tryFetchChatHistory(365);
       if (extra.length) state.data.chat = mergeMessages(state.data.chat, extra);
       renderChat({ stickBottom: false });
@@ -1393,20 +1459,45 @@ function renderMessageAttachments(item) {
 
   async function init() {
     els.contextMemoInput.value = localStorage.getItem(MEMO_KEY) || '';
+    setConnectAutoHint('');
+    const urlCode = getCodeFromUrl();
+    let sessionOk = false;
     state.connectionState = state.sessionToken ? 'connecting' : 'disconnected';
     if (state.sessionToken) {
       try {
         await fetchJson('/api/web/me');
+        sessionOk = true;
         state.connectionState = 'connected';
       } catch (_error) {
-        state.connectionState = 'expired';
+        sessionOk = false;
         state.sessionToken = '';
         localStorage.removeItem(WEB_TOKEN_KEY);
+      }
+    }
+    if (sessionOk && urlCode) {
+      stripCodeFromUrl();
+    }
+    if (!sessionOk && urlCode) {
+      state.connectionState = 'connecting';
+      renderConnection();
+      try {
+        await connectWithCode(urlCode);
+      } catch (err) {
+        setConnectAutoHint(normalizeText(err?.message) || '自動接続できませんでした。下にコードを入力してください。');
+        state.sessionToken = '';
+        localStorage.removeItem(WEB_TOKEN_KEY);
+        if (state.data) state.data.connected = false;
+        state.connectionState = 'disconnected';
+        stripCodeFromUrl();
       }
     }
     await refreshForRange(state.rangeDays, true);
     bindEvents();
     renderAll();
+    if (state.sessionToken) {
+      renderChat({ stickBottom: true });
+      requestAnimationFrame(() => scrollComposerIntoView());
+    }
   }
 
   init();

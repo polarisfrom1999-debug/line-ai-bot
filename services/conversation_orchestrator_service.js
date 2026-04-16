@@ -1727,11 +1727,10 @@ function inferEnergyLevelForNormalReply(inputText, shortMemory) {
 async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, shortMemory) {
   const energyLevel = inferEnergyLevelForNormalReply(input?.rawText || '', shortMemory);
   const systemHint = [
-    '[伴走OSルール]',
-    '- 受け止めを先に置く',
-    '- 提案は多くて1つ',
-    '- 管理者のような言い方は禁止',
-    '- 痛みやしんどさが出たら記録よりケアを優先する',
+    '[会話の姿勢]',
+    '- 短い相手には短く。まず質問に答える',
+    '- 提案は多くて1つ。毎回同じ締めを使わない',
+    '- 上から言わない。痛みやしんどさが出たら記録よりケアを優先',
     '[プロフィール要約]',
     `- 名前: ${sanitizePreferredName(longMemoryLatest?.preferredName || '') || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
