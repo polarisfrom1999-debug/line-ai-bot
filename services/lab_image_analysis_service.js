@@ -27,18 +27,41 @@ function extractPriorityDate(rawText) {
   return normalizeDateToken(safe);
 }
 
+function uniqueDates(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => normalizeDateToken(value)).filter(Boolean))];
+}
+
 function resolveBestExamDate(classification, extraction) {
-  const candidates = [
-    classification?.latestExamDate,
-    extraction?.latestExamDate,
-    ...(Array.isArray(extraction?.examDates) ? extraction.examDates : []),
-    ...(Array.isArray(classification?.examDates) ? classification.examDates : []),
-    classification?.reportDate,
-    extraction?.reportDate,
-    extractPriorityDate(extraction?.rawText || ''),
-    extractPriorityDate(classification?.rawText || '')
-  ].map((value) => normalizeDateToken(value)).filter(Boolean);
-  return candidates[candidates.length - 1] || '';
+  const weighted = new Map();
+  const add = (date, weight) => {
+    const d = normalizeDateToken(date);
+    if (!d) return;
+    weighted.set(d, Math.max(Number(weighted.get(d) || 0), Number(weight || 0)));
+  };
+
+  // 最優先: 「採血日/検査日」などラベル付きの明示日付
+  add(extractPriorityDate(extraction?.rawText || ''), 100);
+  add(extractPriorityDate(classification?.rawText || ''), 95);
+
+  // 次点: 構造化で出た検査日
+  add(extraction?.latestExamDate, 90);
+  for (const d of uniqueDates(extraction?.examDates)) add(d, 85);
+
+  // 次点: 分類段階の日付
+  add(classification?.latestExamDate, 75);
+  for (const d of uniqueDates(classification?.examDates)) add(d, 70);
+
+  // 低優先: report_date（帳票作成日が混ざるので比較的弱く扱う）
+  add(extraction?.reportDate, 30);
+  add(classification?.reportDate, 25);
+
+  if (!weighted.size) return '';
+  const sorted = [...weighted.entries()]
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return String(b[0]).localeCompare(String(a[0]));
+    });
+  return sorted[0][0] || '';
 }
 
 function buildPendingPanel(classification, extraction) {

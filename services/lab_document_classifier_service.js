@@ -40,13 +40,13 @@ function normalizeDateToken(token) {
   m = safe.match(/([0-9]{2})[\/\.\-]\s*(\d{1,2})[\/\.\-]\s*(\d{1,2})/);
   if (m) {
     const yy = Number(m[1]);
-    const yyyy = yy <= 39 ? 2000 + yy : 1900 + yy;
+    const yyyy = coerceYearForLab(yy <= 39 ? 2000 + yy : 1900 + yy);
     return `${yyyy}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
   }
 
   m = safe.match(/R\s*(\d+)[\.\/\-](\d{1,2})[\.\/\-](\d{1,2})/i);
   if (m) {
-    const year = 2018 + Number(m[1]);
+    const year = coerceYearForLab(2018 + Number(m[1]));
     return `${year}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
   }
 
@@ -54,11 +54,28 @@ function normalizeDateToken(token) {
   m = safe.match(/([採検].{0,3}日)[^\d]{0,4}([0-9]{2})[\/\.\-年]\s*(\d{1,2})[\/\.\-月]\s*(\d{1,2})/);
   if (m) {
     const yy = Number(m[2]);
-    const yyyy = yy <= 39 ? 2000 + yy : 1900 + yy;
+    const yyyy = coerceYearForLab(yy <= 39 ? 2000 + yy : 1900 + yy);
     return `${yyyy}-${String(m[3]).padStart(2, '0')}-${String(m[4]).padStart(2, '0')}`;
   }
 
   return '';
+}
+
+function isPlausibleLabYear(year) {
+  const y = Number(year);
+  if (!Number.isFinite(y)) return false;
+  const now = new Date();
+  const maxYear = now.getFullYear() + 1;
+  return y >= 2000 && y <= maxYear;
+}
+
+function coerceYearForLab(year) {
+  const y = Number(year);
+  if (!Number.isFinite(y)) return null;
+  if (isPlausibleLabYear(y)) return y;
+  if (y >= 1900 && y <= 1999 && isPlausibleLabYear(y + 100)) return y + 100;
+  if (y >= 2100 && isPlausibleLabYear(y - 100)) return y - 100;
+  return y;
 }
 
 function uniqueSortedDates(values) {
