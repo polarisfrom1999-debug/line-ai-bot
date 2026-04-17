@@ -75,6 +75,8 @@ function pickRowLabel(row = {}) {
     || row?.label_in_image
     || row?.display_name
     || row?.name
+    || row?.normalized_key
+    || row?.normalizedKey
     || ''
   );
 }

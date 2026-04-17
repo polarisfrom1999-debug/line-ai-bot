@@ -87,14 +87,26 @@ function buildRowsFromStructuredRows({ reportId, userId, examDate, rows = [] }) 
   return out;
 }
 
+function collectRowsFromRawPayload(panel = {}) {
+  const reports = Array.isArray(panel?.rawPayload?.reports)
+    ? panel.rawPayload.reports
+    : (Array.isArray(panel?.rawPayload?.extracted_reports) ? panel.rawPayload.extracted_reports : []);
+  const rawRows = [];
+  for (const report of reports) {
+    for (const row of Array.isArray(report?.data) ? report.data : []) rawRows.push(row);
+  }
+  return rawRows;
+}
+
 function buildRowsFromRawText({ reportId, userId, examDate, rawText = '' }) {
   const safe = normalizeText(rawText);
   if (!safe) return [];
   const patterns = [
-    { canonical: 'TG', display: '中性脂肪', regex: /(?:^|[\s、,;:：])(?:TG|中性脂肪)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'HBA1C', display: 'HbA1c', regex: /(?:HbA1c|HBA1C)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: '%' },
-    { canonical: 'LDL', display: 'LDL', regex: /(?:LDL)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
+    { canonical: 'TG', display: '中性脂肪', regex: /(?:^|[\s、,;:：])(?:TG|中性脂肪|ＴＧ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'TG', display: '中性脂肪', regex: /(?:TG|中性脂肪|ＴＧ)\s*[:：＝=]\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'HBA1C', display: 'HbA1c', regex: /(?:HbA1c|HBA1C|ヘモグロビン\s*A1c|グリコヘモグロビン)\s*(?:\([^)]*\))?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: '%' },
+    { canonical: 'LDL', display: 'LDL', regex: /(?:LDL|ＬＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL|ＨＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
   ];
   const rows = [];
   for (const p of patterns) {
@@ -142,7 +154,8 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
       .single();
     if (error) throw error;
     reportId = data?.id || null;
-  } catch (_error) {
+  } catch (error) {
+    console.warn('[lab-store] lab_reports insert failed:', error?.message || error);
     return null;
   }
   if (!reportId) return null;
@@ -159,6 +172,14 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
       userId: safeUserId,
       examDate,
       rows: panel?.structuredRows || panel?.rawExtractedItems || []
+    });
+  }
+  if (!rows.length) {
+    rows = buildRowsFromStructuredRows({
+      reportId,
+      userId: safeUserId,
+      examDate,
+      rows: collectRowsFromRawPayload(panel)
     });
   }
   if (!rows.length) {
@@ -181,7 +202,9 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
     try {
       const { error } = await supabase.from('lab_report_items').insert(rows);
       if (error) throw error;
-    } catch (_error) {}
+    } catch (error) {
+      console.warn('[lab-store] lab_report_items insert failed:', error?.message || error);
+    }
   }
 
   return { id: reportId, examDate, status, itemCount: rows.length };

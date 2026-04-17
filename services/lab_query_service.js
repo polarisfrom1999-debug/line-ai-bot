@@ -32,12 +32,28 @@ function buildCloseCandidatesReply(cacheItems = {}, fallbackLabel = '') {
 
 function readLatestLabCache(shortMemory = {}, panel = null) {
   const cached = shortMemory?.followUpContext?.latestLabCache;
-  if (cached && cached.items && typeof cached.items === 'object') return cached;
-  const fallbackItems = labItemAliasService.buildLabItemMapFromPanel(panel || {});
-  if (!Object.keys(fallbackItems).length) return null;
+  const panelItems = labItemAliasService.buildLabItemMapFromPanel(panel || {});
+  const panelKeys = Object.keys(panelItems);
+
+  // items が {} のときも truthy になり得るため、キーが無ければパネル由来で補完する
+  if (cached && cached.items && typeof cached.items === 'object') {
+    const cacheKeys = Object.keys(cached.items);
+    if (cacheKeys.length > 0) return cached;
+    if (panelKeys.length > 0) {
+      return {
+        ...cached,
+        examDate: normalizeText(cached.examDate || panel?.latestExamDate || panel?.examDate || ''),
+        items: { ...panelItems },
+        rawText: normalizeText(cached.rawText || panel?.rawText || '')
+      };
+    }
+    return cached;
+  }
+
+  if (!Object.keys(panelItems).length) return null;
   return {
     examDate: normalizeText(panel?.latestExamDate || panel?.examDate || ''),
-    items: fallbackItems,
+    items: panelItems,
     rawText: normalizeText(panel?.rawText || ''),
     updatedAt: ''
   };
