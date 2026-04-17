@@ -33,6 +33,90 @@ function parseNumeric(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseNumericTokenFromText(value) {
+  const safe = normalizeText(value);
+  if (!safe) return null;
+  const m = safe.match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+function buildRowsFromPanelItems({ reportId, userId, examDate, items = [] }) {
+  const rows = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const canonical = toCanonicalName(item?.itemName || item?.name || '');
+    if (!canonical) continue;
+    const valueText = normalizeText(item?.value || item?.currentValue || '');
+    if (!valueText) continue;
+    rows.push({
+      report_id: reportId,
+      user_id: userId,
+      exam_date: examDate,
+      canonical_name: canonical,
+      display_name: normalizeText(item?.itemName || item?.name || canonical),
+      value_numeric: parseNumeric(valueText),
+      value_text: valueText,
+      unit: normalizeText(item?.unit || item?.currentUnit || ''),
+      raw_label: normalizeText(item?.rawLabel || item?.itemName || item?.name || canonical)
+    });
+  }
+  return rows;
+}
+
+function buildRowsFromStructuredRows({ reportId, userId, examDate, rows = [] }) {
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const label = normalizeText(row?.itemName || row?.labelInImage || row?.label_in_image || row?.display_name || row?.name || '');
+    const canonical = toCanonicalName(label || row?.normalizedKey || row?.normalized_key || '');
+    if (!canonical) continue;
+    const rawValueText = normalizeText(row?.value || row?.value_text || row?.valueText || row?.value_numeric || row?.valueNumeric || '');
+    const numeric = parseNumeric(rawValueText) ?? parseNumericTokenFromText(row?.sourceText || row?.source_text || '');
+    if (numeric == null && !rawValueText) continue;
+    const valueText = rawValueText || String(numeric);
+    out.push({
+      report_id: reportId,
+      user_id: userId,
+      exam_date: normalizeDate(row?.date || examDate) || examDate,
+      canonical_name: canonical,
+      display_name: label || canonical,
+      value_numeric: numeric,
+      value_text: valueText,
+      unit: normalizeText(row?.unit || ''),
+      raw_label: label || canonical
+    });
+  }
+  return out;
+}
+
+function buildRowsFromRawText({ reportId, userId, examDate, rawText = '' }) {
+  const safe = normalizeText(rawText);
+  if (!safe) return [];
+  const patterns = [
+    { canonical: 'TG', display: '中性脂肪', regex: /(?:^|[\s、,;:：])(?:TG|中性脂肪)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'HBA1C', display: 'HbA1c', regex: /(?:HbA1c|HBA1C)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: '%' },
+    { canonical: 'LDL', display: 'LDL', regex: /(?:LDL)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL)\s*[:：]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
+  ];
+  const rows = [];
+  for (const p of patterns) {
+    const m = safe.match(p.regex);
+    if (!m) continue;
+    const valueText = normalizeText(m[1]);
+    if (!valueText) continue;
+    rows.push({
+      report_id: reportId,
+      user_id: userId,
+      exam_date: examDate,
+      canonical_name: p.canonical,
+      display_name: p.display,
+      value_numeric: parseNumeric(valueText),
+      value_text: valueText,
+      unit: p.unit,
+      raw_label: p.display
+    });
+  }
+  return rows;
+}
+
 async function saveLabReport({ userId, panel, imageUrl = null }) {
   const safeUserId = normalizeText(userId);
   if (!safeUserId || !panel) return null;
@@ -63,24 +147,35 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
   }
   if (!reportId) return null;
 
-  const rows = [];
-  for (const item of items) {
-    const canonical = toCanonicalName(item?.itemName || item?.name || '');
-    if (!canonical) continue;
-    const valueText = normalizeText(item?.value || item?.currentValue || '');
-    if (!valueText) continue;
-    rows.push({
-      report_id: reportId,
-      user_id: safeUserId,
-      exam_date: examDate,
-      canonical_name: canonical,
-      display_name: normalizeText(item?.itemName || item?.name || canonical),
-      value_numeric: parseNumeric(valueText),
-      value_text: valueText,
-      unit: normalizeText(item?.unit || item?.currentUnit || ''),
-      raw_label: normalizeText(item?.rawLabel || item?.itemName || item?.name || canonical)
+  let rows = buildRowsFromPanelItems({
+    reportId,
+    userId: safeUserId,
+    examDate,
+    items
+  });
+  if (!rows.length) {
+    rows = buildRowsFromStructuredRows({
+      reportId,
+      userId: safeUserId,
+      examDate,
+      rows: panel?.structuredRows || panel?.rawExtractedItems || []
     });
   }
+  if (!rows.length) {
+    rows = buildRowsFromRawText({
+      reportId,
+      userId: safeUserId,
+      examDate,
+      rawText: panel?.rawText || ''
+    });
+  }
+
+  const dedup = new Map();
+  for (const row of rows) {
+    const key = `${row.canonical_name}:${row.exam_date || ''}:${row.value_text || ''}`;
+    if (!dedup.has(key)) dedup.set(key, row);
+  }
+  rows = [...dedup.values()];
 
   if (rows.length) {
     try {
