@@ -153,7 +153,7 @@ function detectIntent(input, _shortMemory = {}) {
   if (/今何ポイント|今ポイント|ポイント教えて|ポイントは\??/.test(text)) return 'point_summary';
   if (/管理確認|管理メモ|管理用まとめ/.test(text)) return 'admin_check';
 
-  if (/使い方教えて|使い方|ヘルプ|メニュー|コマンド|無料体験|プラン案内|AIタイプ/.test(text)) return 'help';
+  if (/使い方教えて|使い方|ヘルプ|コマンド|無料体験|プラン案内|AIタイプ|メニュー表示|操作メニュー/.test(text)) return 'help';
   if (/無料体験開始|無料体験スタート|体験開始|プロフィール変更|プロフィール入力|プロフィール修正/.test(text)) return 'onboarding';
   return 'normal';
 }
@@ -2604,6 +2604,17 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'biweekly_meal_balance', responseMode: 'answer' } };
     }
 
+    // 意図が曖昧なときは分類処理へ無理に入れず、自然会話を優先する
+    if (shouldAnswerWithChatFirst(text)) {
+      const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: replyText }],
+        internal: { intentType: 'normal', responseMode: 'conversation_first' }
+      };
+    }
+
     const stageGuideIntent = hasSpecificConsultationDetails(text)
       ? null
       : detectStageEntryGuideIntent(text);
@@ -2733,16 +2744,6 @@ async function orchestrateConversation(input) {
       const replyText = `プラン候補を「${text}」として見ています。必要ならこのまま詳しい案内につなげます。`;
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
-    }
-
-    if (shouldAnswerWithChatFirst(text)) {
-      const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return {
-        ok: true,
-        replyMessages: [{ type: 'text', text: replyText }],
-        internal: { intentType: 'normal', responseMode: 'conversation_first' }
-      };
     }
 
     const simpleExerciseHandled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
