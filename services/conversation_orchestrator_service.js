@@ -52,7 +52,9 @@ const constitutionSurveyConfig = require('../config/constitution_survey_config')
 const aiPersonaConfig = require('../config/ai_persona_config');
 
 const pendingImageClarificationStore = new Map();
-const PENDING_IMAGE_TTL_MS = 5 * 60 * 1000;
+const PENDING_IMAGE_TTL_MS = 15 * 60 * 1000;
+/** shortMemory に退避する最大バイト（スナップショット肥大化を抑える） */
+const MAX_PENDING_IMAGE_PERSIST_BYTES = 900 * 1024;
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -1151,7 +1153,7 @@ function maybeHandleSymptomCore(input) {
 }
 
 function looksLikeMotionContext(shortMemory, recentMessages, currentText = '') {
-  const followUpType = normalizeText(shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '');
+  const followUpType = normalizeText(shortMemory?.lastImageType || shortMemory?.followUpContext?.imageType || '');
   if (followUpType === 'motion') return true;
   if (followUpType === 'meal' || followUpType === 'lab' || followUpType === 'lab_pending') return false;
 
@@ -1169,12 +1171,16 @@ function looksLikeMotionContext(shortMemory, recentMessages, currentText = '') {
   const merged = [safeCurrent, topicText, recentUserText].join('\n');
 
   if (/食べた|ごはん|ご飯|朝食|昼食|夕食|おかず|ラーメン|カレー|寿司|弁当|間食/.test(merged)) return false;
+  // 血液検査・帳票まわりの文脈では動作解析に寄せない（選択肢の「動作・フォーム」などが混ざっても誤爆しない）
+  if (/血液検査|検査結果|検査所見|採血|採血日|中性脂肪|トリグリ|hb\s*a1c|hba1c|ldl|hdl|gpt|got|γ\s*gtp|白血球|赤血球|血小板|e\s*gfr|クレアチニン|尿酸/i.test(merged)) {
+    return false;
+  }
 
   return /動作解析|フォーム|走り|ランニングフォーム|ランフォーム|歩き方|姿勢|投球|ピッチング|サーブ|スイング|スクワット|片脚立ち|立ち姿|正面|側面|後面/.test(merged);
 }
 
 function looksLikeShoeContext(shortMemory, recentMessages, currentText = '') {
-  const followUpType = normalizeText(shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '');
+  const followUpType = normalizeText(shortMemory?.lastImageType || shortMemory?.followUpContext?.imageType || '');
   if (followUpType === 'shoe_wear') return true;
   const recentUserText = (Array.isArray(recentMessages) ? recentMessages : [])
     .filter((m) => m?.role === 'user')
@@ -1190,7 +1196,7 @@ function buildImageRouteClarifyMessage() {
     [
       '画像の種類をもう一度だけ合わせたいです。',
       'この画像はどれに近いですか？',
-      '（選んだあと、同じ画像をもう一度送ってください）'
+      '（下から選ぶだけで大丈夫です。こちらで画像を保持して、そのまま解析に進みます）'
     ].join('\n'),
     ['食事の写真', '血液検査の画像', '動作・フォーム解析', '靴底の摩耗確認']
   );
@@ -1223,6 +1229,55 @@ function consumePendingImageForClarification(userId) {
   return row;
 }
 
+function buildPendingImagePersistFields(imagePayload) {
+  const buf = imagePayload?.buffer;
+  const mimeType = normalizeText(imagePayload?.mimeType) || 'image/jpeg';
+  if (!Buffer.isBuffer(buf) || !buf.length) {
+    return { imageBase64: null, imageMimeType: mimeType, imagePersistNote: 'no_buffer' };
+  }
+  if (buf.length > MAX_PENDING_IMAGE_PERSIST_BYTES) {
+    return { imageBase64: null, imageMimeType: mimeType, imagePersistNote: 'too_large' };
+  }
+  return { imageBase64: buf.toString('base64'), imageMimeType: mimeType, imagePersistNote: '' };
+}
+
+/** メモリ Map が空でも shortMemory に退避した画像で続行できるようにする */
+async function resolvePendingImagePayload(userId) {
+  if (!userId) return null;
+
+  const memRow = pendingImageClarificationStore.get(userId);
+  if (memRow) {
+    pendingImageClarificationStore.delete(userId);
+    if (Number(memRow.expiresAt || 0) >= Date.now() && memRow.imagePayload?.buffer) {
+      return { imagePayload: memRow.imagePayload, textHint: memRow.textHint || '' };
+    }
+  }
+
+  const sm = await contextMemoryService.getShortMemory(userId);
+  const pc = sm?.pendingClarification;
+  if (!pc || pc.type !== 'image_route' || !pc.imageBase64) return null;
+
+  const exp = Number(pc.pendingImageExpiresAt || 0);
+  if (exp && Date.now() > exp) return null;
+
+  let buf;
+  try {
+    buf = Buffer.from(String(pc.imageBase64), 'base64');
+  } catch (_err) {
+    return null;
+  }
+  if (!buf?.length) return null;
+
+  return {
+    imagePayload: {
+      ok: true,
+      buffer: buf,
+      mimeType: normalizeText(pc.imageMimeType) || 'image/jpeg'
+    },
+    textHint: normalizeText(pc.textHint || '')
+  };
+}
+
 async function handleImageByExplicitRoute({ route, input, shortMemory, textHint, imagePayload }) {
   if (route === 'meal') {
     const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
@@ -1236,6 +1291,14 @@ async function handleImageByExplicitRoute({ route, input, shortMemory, textHint,
         internal: { intentType: 'meal_image', responseMode: 'record' }
       };
     }
+    return {
+      ok: true,
+      replyText: [
+        '食事の写真として受け取りましたが、いまの画像だけでは料理の輪郭がはっきりしませんでした。',
+        'もう一度同じ写真を送るか、少し明るい場所で全体が写る1枚だと助かります。'
+      ].join('\n'),
+      internal: { intentType: 'meal_image_retry', responseMode: 'guided' }
+    };
   }
 
   if (route === 'lab') {
@@ -1247,6 +1310,14 @@ async function handleImageByExplicitRoute({ route, input, shortMemory, textHint,
         internal: { intentType: 'lab_image', responseMode: 'answer' }
       };
     }
+    return {
+      ok: true,
+      replyText: [
+        '血液検査の画像として受け取りました。いまの1枚だけでは帳票としての判定が少し不安定でした。',
+        '同じ画像でもう一度送るか、検査日や項目名が読めるように寄せた写真だと、TGやHbA1cなど項目ごとのお答えがしやすくなります。'
+      ].join('\n'),
+      internal: { intentType: 'lab_image_retry', responseMode: 'guided' }
+    };
   }
 
   const motionHint = route === 'shoe_wear'
@@ -1815,7 +1886,8 @@ async function buildWeightLookupReply(userId) {
 }
 
 function resolveImageRouteDecision({ shortMemory, recentMessages, imageAnalysis, textHint }) {
-  const followUpType = shortMemory?.followUpContext?.imageType || shortMemory?.lastImageType || '';
+  // ユーザーが直前に選んだ画像用途（lastImageType）を優先し、古い followUp の imageType に負けない
+  const followUpType = shortMemory?.lastImageType || shortMemory?.followUpContext?.imageType || '';
   const recent = [...(Array.isArray(recentMessages) ? recentMessages : [])].reverse();
   const recentUser = recent.find((item) => item?.role === 'user' && normalizeText(item?.content || ''));
   const recentAssistant = recent.find((item) => item?.role === 'assistant' && normalizeText(item?.content || ''));
@@ -1828,7 +1900,7 @@ function resolveImageRouteDecision({ shortMemory, recentMessages, imageAnalysis,
     hintText: mergedHint,
     followUpType
   });
-  return imageClassificationService.resolveImageRouteByScore(scores);
+  return { ...imageClassificationService.resolveImageRouteByScore(scores), scores };
 }
 
 function buildConversationFallbackReply(input) {
@@ -2057,7 +2129,7 @@ async function orchestrateConversation(input) {
             lifeContext: [`画像分類補正: 自動=${autoRoute} / 手動=${selected}`]
           });
         }
-        const pendingImage = consumePendingImageForClarification(input.userId);
+        const pendingImage = await resolvePendingImagePayload(input.userId);
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: selected,
           pendingClarification: null
@@ -2077,7 +2149,7 @@ async function orchestrateConversation(input) {
             internal: routed.internal
           };
         }
-        const replyText = `ありがとうございます。次は「${selected === 'meal' ? '食事' : selected === 'lab' ? '血液検査' : selected === 'shoe_wear' ? '靴底摩耗' : '動作解析'}」として見るので、同じ画像をもう一度送ってください。`;
+        const replyText = `ありがとうございます。次は「${selected === 'meal' ? '食事' : selected === 'lab' ? '血液検査' : selected === 'shoe_wear' ? '靴底摩耗' : '動作解析'}」として見ます。画像の保持が切れてしまったようなので、同じ写真をもう一度送ってください。（画像が大きい場合はこちらで保持できないことがあります）`;
         await appendTurn(input.userId, input.rawText || '', replyText);
         return {
           ok: true,
@@ -2195,20 +2267,36 @@ async function orchestrateConversation(input) {
         textHint: text
       });
       if (labImageHandled?.analysis?.labLike) {
+        const labPanel = labImageHandled.analysis;
+        const cachedItemMap = labItemAliasService.buildLabItemMapFromPanel(labPanel || {});
+        const latestLabCache = {
+          examDate: labPanel?.latestExamDate || labPanel?.examDate || '',
+          items: cachedItemMap,
+          rawText: normalizeText(labPanel?.rawText || ''),
+          updatedAt: new Date().toISOString()
+        };
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: 'lab_pending',
           followUpContext: {
             source: 'image',
             imageType: 'lab_pending',
             extractedItems: [],
-            examDate: labImageHandled.analysis.examDate || '',
-            latestExamDate: labImageHandled.analysis.latestExamDate || labImageHandled.analysis.examDate || '',
-            availableLabDates: Array.isArray(labImageHandled.analysis?.examDates) ? labImageHandled.analysis.examDates : []
+            examDate: labPanel.examDate || '',
+            latestExamDate: labPanel.latestExamDate || labPanel.examDate || '',
+            selectedLabExamDate: labPanel.latestExamDate || labPanel.examDate || '',
+            availableLabDates: Array.isArray(labPanel?.examDates) ? labPanel.examDates : [],
+            labPanel: labPanel || null,
+            latestLabCache
           }
         });
+        try {
+          if (labPanel) await contextMemoryService.upsertLabPanel(input.userId, labPanel);
+        } catch (error) {
+          console.error('[conversation_orchestrator] lab_like branch upsert error:', error?.message || error);
+        }
         const replyText = [
           '血液検査の画像を受け取りました。',
-          lab?.latestExamDate || lab?.examDate ? `検査日候補: ${lab?.latestExamDate || lab?.examDate}` : null,
+          labPanel?.latestExamDate || labPanel?.examDate ? `検査日候補: ${labPanel?.latestExamDate || labPanel?.examDate}` : null,
           '抽出は進行中ですが、読めた項目は優先して返します。「TGは？」「HbA1cは？」「LDLは？」と聞いてください。'
         ].filter(Boolean).join('\n');
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
@@ -2219,11 +2307,40 @@ async function orchestrateConversation(input) {
         };
       }
 
+      // スコアは検査寄りだが motion フォールバックに落とさない（誤って「動作解析」文面になるのを防ぐ）
+      if (routeDecision.isReliable && routeDecision.topRoute === 'lab') {
+        const replyText = [
+          '血液検査の画像として受け止めています。',
+          '自動判定が迷ったようなので、同じ写真でもう一度送るか、検査日の近くが読めるように寄せて送ってもらえると助かります。',
+          '「TGは？」「HbA1cは？」のように項目名で聞いても大丈夫です。'
+        ].join('\n');
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'lab_image_route_hint', responseMode: 'answer', routeDecision }
+        };
+      }
+
+      if (routeDecision.isReliable && routeDecision.topRoute === 'meal') {
+        const replyText = [
+          '食事の写真として受け止めています。',
+          'いまの1枚だけでは料理の輪郭がはっきりしなかったので、全体が写る1枚をもう一度送ってもらえると助かります。'
+        ].join('\n');
+        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: replyText }],
+          internal: { intentType: 'meal_image_route_hint', responseMode: 'guided', routeDecision }
+        };
+      }
+
       const isShoeContext = looksLikeShoeContext(shortMemory, recentMessages, text);
       const isMotionContext = looksLikeMotionContext(shortMemory, recentMessages, text);
       if (!isShoeContext && !isMotionContext && !routeDecision.isReliable) {
         const replyMessage = buildImageRouteClarifyMessage();
         setPendingImageForClarification(input.userId, imagePayload, text);
+        const persistFields = buildPendingImagePersistFields(imagePayload);
         await contextMemoryService.saveShortMemory(input.userId, {
           pendingClarification: {
             type: 'image_route',
@@ -2231,7 +2348,10 @@ async function orchestrateConversation(input) {
             autoRoute: routeDecision.topRoute,
             autoScore: routeDecision.topScore,
             secondRoute: routeDecision.secondRoute,
-            secondScore: routeDecision.secondScore
+            secondScore: routeDecision.secondScore,
+            textHint: normalizeText(text),
+            pendingImageExpiresAt: Date.now() + PENDING_IMAGE_TTL_MS,
+            ...persistFields
           }
         });
         await appendTurn(input.userId, input.rawText || '[image]', replyMessage?.text || '画像の種類を確認したいです。');
