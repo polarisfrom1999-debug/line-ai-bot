@@ -97,6 +97,9 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
   const supportPreference = Array.isArray(longMemory?.supportPreference) ? longMemory.supportPreference.slice(0, 4) : [];
   const supportPreferenceText = supportPreference.length ? supportPreference.join(' / ') : '';
   const energyLevel = normalizeText(longMemory?.currentEnergyLevel || 'middle');
+  const styleMemory = longMemory?.conversationStyleMemory || {};
+  const likedExamples = Array.isArray(styleMemory?.likedExamples) ? styleMemory.likedExamples.slice(-3) : [];
+  const dislikedExamples = Array.isArray(styleMemory?.dislikedExamples) ? styleMemory.dislikedExamples.slice(-3) : [];
   const relationshipStage = normalizeText(longMemory?.relationshipStage || 'coach');
   const recallStyle = normalizeText(longMemory?.recallStyle || 'direct');
 
@@ -140,6 +143,8 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
     voiceStyle ? `雰囲気: ${voiceStyle}` : null,
     `雰囲気ヒント: ${voiceStyleHint}`,
     supportPreferenceText ? `支え方の好み: ${supportPreferenceText}` : null,
+    likedExamples.length ? `好まれる表現例: ${likedExamples.join(' / ')}` : null,
+    dislikedExamples.length ? `避ける表現例: ${dislikedExamples.join(' / ')}` : null,
     `energy_level: ${energyLevel}`,
     `responseMode: ${responseMode || 'empathy_plus_one_hint'}`,
     '返答は長くしすぎず、要点を先に書いてください。',

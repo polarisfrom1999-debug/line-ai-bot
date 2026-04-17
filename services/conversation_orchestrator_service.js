@@ -1873,6 +1873,61 @@ async function maybeStoreSimpleRecords(userId, text) {
   }
 }
 
+function extractStyleFeedbackSample(text = '') {
+  const safe = normalizeText(text);
+  if (!safe) return '';
+  const m = safe.match(/「([^」]{4,120})」/);
+  if (m && m[1]) return normalizeText(m[1]).slice(0, 120);
+  const m2 = safe.match(/"([^"]{4,120})"/);
+  if (m2 && m2[1]) return normalizeText(m2[1]).slice(0, 120);
+  return '';
+}
+
+async function maybeHandleConversationStyleFeedback(input, text, longMemoryLatest) {
+  if (input?.messageType !== 'text') return null;
+  const safe = normalizeText(text);
+  if (!safe) return null;
+
+  const wantsMoreHuman = /人間味|寄り添|伴走|牛込|chatgptみたい|自然に話|機械っぽ/.test(safe);
+  const explicitLike = /この返し.*好き|この言い方.*好き|こういう感じ.*好き|この感じで|このトーンで/.test(safe);
+  const explicitDislike = /この返し.*嫌|機械っぽい|硬い|テンプレ|冷たい|説明しすぎ|長すぎ/.test(safe);
+  if (!wantsMoreHuman && !explicitLike && !explicitDislike) return null;
+
+  const sample = extractStyleFeedbackSample(safe);
+  const patch = {
+    supportPreference: [
+      '悩み解決優先',
+      '寄り添い重視',
+      '短く自然な会話'
+    ],
+    conversationStyleMemory: {
+      likedExamples: explicitLike && sample ? [sample] : [],
+      dislikedExamples: explicitDislike && sample ? [sample] : [],
+      updatedAt: new Date().toISOString()
+    }
+  };
+  await contextMemoryService.mergeLongMemory(input.userId, patch);
+
+  const likedCount = Array.isArray(longMemoryLatest?.conversationStyleMemory?.likedExamples)
+    ? longMemoryLatest.conversationStyleMemory.likedExamples.length + (explicitLike && sample ? 1 : 0)
+    : (explicitLike && sample ? 1 : 0);
+  const dislikedCount = Array.isArray(longMemoryLatest?.conversationStyleMemory?.dislikedExamples)
+    ? longMemoryLatest.conversationStyleMemory.dislikedExamples.length + (explicitDislike && sample ? 1 : 0)
+    : (explicitDislike && sample ? 1 : 0);
+
+  const replyText = [
+    '受け取りました。これからは「悩みを一緒にほどく伴走者」として、もっと自然に返します。',
+    sample
+      ? `「${sample}」のような言い回しは好みとして反映しておきます。`
+      : '言い回しの好みは会話の中で学習して、少しずつ合わせます。',
+    `会話メモ: 好き ${likedCount}件 / 避けたい ${dislikedCount}件`
+  ].join('\n');
+  return {
+    replyText,
+    internal: { intentType: 'style_feedback', responseMode: 'guided' }
+  };
+}
+
 function inferEnergyLevelForNormalReply(inputText, shortMemory) {
   const safe = normalizeText(inputText);
   const tone = normalizeText(shortMemory?.lastEmotionTone || '');
@@ -1884,6 +1939,9 @@ function inferEnergyLevelForNormalReply(inputText, shortMemory) {
 
 async function buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, shortMemory) {
   const energyLevel = inferEnergyLevelForNormalReply(input?.rawText || '', shortMemory);
+  const styleMemory = longMemoryLatest?.conversationStyleMemory || {};
+  const likedExamples = Array.isArray(styleMemory?.likedExamples) ? styleMemory.likedExamples.slice(-3) : [];
+  const dislikedExamples = Array.isArray(styleMemory?.dislikedExamples) ? styleMemory.dislikedExamples.slice(-3) : [];
   const systemHint = [
     '[会話の姿勢]',
     '- まず自然な短文の会話として返す（カロリー確定・記録処理の口調にしない）',
@@ -1904,6 +1962,8 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     Array.isArray(longMemoryLatest?.supportPreference) && longMemoryLatest.supportPreference.length
       ? `- 支え方の好み: ${longMemoryLatest.supportPreference.slice(0, 4).join(' / ')}`
       : null,
+    likedExamples.length ? `- 好きな言い回し例: ${likedExamples.join(' / ')}` : null,
+    dislikedExamples.length ? `- 避けたい言い回し例: ${dislikedExamples.join(' / ')}` : null,
     recentSummary ? `- 最近の流れ: ${recentSummary}` : null,
     recentMessages.filter((m) => m.role === 'assistant').slice(-4).length ? `- 直近で避けたい言い回し: ${recentMessages.filter((m) => m.role === 'assistant').slice(-4).map((m) => m.content).join(' / ')}` : null
   ].filter(Boolean).join('\n');
@@ -2181,6 +2241,16 @@ async function orchestrateConversation(input) {
         ok: true,
         replyMessages: [constitutionSurveyHandled.replyMessage || { type: 'text', text: constitutionSurveyHandled.replyText }],
         internal: constitutionSurveyHandled.internal || { intentType: 'constitution_survey', responseMode: 'guided' }
+      };
+    }
+
+    const styleFeedbackHandled = await maybeHandleConversationStyleFeedback(input, text, longMemory);
+    if (styleFeedbackHandled) {
+      await appendTurn(input.userId, input.rawText || '', styleFeedbackHandled.replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: styleFeedbackHandled.replyText }],
+        internal: styleFeedbackHandled.internal
       };
     }
 

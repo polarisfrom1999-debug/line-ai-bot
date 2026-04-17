@@ -61,6 +61,11 @@ const DEFAULT_LONG_MEMORY = {
   aiType: null,
   voiceStyle: null,
   constitutionType: null,
+  conversationStyleMemory: {
+    likedExamples: [],
+    dislikedExamples: [],
+    updatedAt: null
+  },
   trialStartedAt: null,
   selectedPlan: null,
   onboardingCompleted: false
@@ -671,6 +676,26 @@ async function mergeLongMemory(userId, patch) {
     }
     if (Array.isArray(safePatch.lifeContext)) {
       for (const item of safePatch.lifeContext) uniquePush(next.lifeContext, item);
+    }
+    if (safePatch.conversationStyleMemory && typeof safePatch.conversationStyleMemory === 'object') {
+      const cur = next.conversationStyleMemory && typeof next.conversationStyleMemory === 'object'
+        ? next.conversationStyleMemory
+        : { likedExamples: [], dislikedExamples: [], updatedAt: null };
+      const likedExamples = Array.isArray(cur.likedExamples) ? [...cur.likedExamples] : [];
+      const dislikedExamples = Array.isArray(cur.dislikedExamples) ? [...cur.dislikedExamples] : [];
+      const incomingLiked = Array.isArray(safePatch.conversationStyleMemory.likedExamples)
+        ? safePatch.conversationStyleMemory.likedExamples
+        : [];
+      const incomingDisliked = Array.isArray(safePatch.conversationStyleMemory.dislikedExamples)
+        ? safePatch.conversationStyleMemory.dislikedExamples
+        : [];
+      for (const item of incomingLiked) uniquePush(likedExamples, item);
+      for (const item of incomingDisliked) uniquePush(dislikedExamples, item);
+      next.conversationStyleMemory = {
+        likedExamples: likedExamples.slice(-30),
+        dislikedExamples: dislikedExamples.slice(-30),
+        updatedAt: safePatch.conversationStyleMemory.updatedAt || nowIso()
+      };
     }
   }
 
