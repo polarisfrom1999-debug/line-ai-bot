@@ -6,6 +6,30 @@ const aiChatService = require('./ai_chat_service');
 const contextMemoryService = require('./context_memory_service');
 
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'sticker', 'audio', 'video', 'file', 'location', 'other']);
+const BYPASS_NATURALIZE_INTENTS = new Set([
+  // 食事・運動・検査など、構造化された数値/項目表示はそのまま返す
+  'meal_image',
+  'meal_text',
+  'meal_followup',
+  'meal_draft_followup',
+  'exercise_record',
+  'exercise_calorie',
+  'weight_record',
+  'lab_image',
+  'lab_image_pending',
+  'lab_followup',
+  'lab_date_select',
+  'lab_save',
+  'today_records',
+  'today_meal_totals',
+  'today_meal_balance',
+  'biweekly_meal_balance',
+  'weekly_report',
+  'monthly_report',
+  'point_summary',
+  'admin_check',
+  'image_route_clarify'
+]);
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -144,6 +168,15 @@ function buildUnsupportedResult(messageType) {
 async function naturalizeResult(normalized, result) {
   const base = result && typeof result === 'object' ? result : { ok: true, replyMessages: [] };
   const messages = Array.isArray(base.replyMessages) ? base.replyMessages : [];
+  const intentType = normalizeText(base?.internal?.intentType || '');
+  const responseMode = normalizeText(base?.internal?.responseMode || '');
+  const messageType = normalizeText(normalized?.messageType || '');
+  const isStructuredHealthIntent =
+    intentType.startsWith('meal_') ||
+    intentType.startsWith('lab_') ||
+    BYPASS_NATURALIZE_INTENTS.has(intentType);
+  const isImageRecordLike = messageType === 'image' && (responseMode === 'record' || isStructuredHealthIntent);
+  if (isStructuredHealthIntent || isImageRecordLike) return base;
   const naturalized = [];
 
   const longMemory = await contextMemoryService.getLongMemory(normalized?.userId || '');

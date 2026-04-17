@@ -1395,8 +1395,17 @@ async function handleImageByExplicitRoute({ route, input, shortMemory, textHint,
 }
 
 async function appendTurn(userId, userText, replyText) {
+  const replyId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await contextMemoryService.appendRecentMessage(userId, 'user', userText);
-  await contextMemoryService.appendRecentMessage(userId, 'assistant', replyText);
+  await contextMemoryService.appendRecentMessage(userId, 'assistant', replyText, { messageId: replyId });
+  await contextMemoryService.saveShortMemory(userId, {
+    lastAssistantReplySnapshot: {
+      replyId,
+      text: normalizeText(replyText || '').slice(0, 240),
+      sourceUserText: normalizeText(userText || '').slice(0, 160),
+      at: new Date().toISOString()
+    }
+  });
 }
 
 async function maybeHandleOnboarding(input, shortMemory, longMemory) {
@@ -1883,7 +1892,26 @@ function extractStyleFeedbackSample(text = '') {
   return '';
 }
 
-async function maybeHandleConversationStyleFeedback(input, text, longMemoryLatest) {
+function deriveFeedbackSampleFromShortMemory(shortMemory = {}) {
+  const snap = shortMemory?.lastAssistantReplySnapshot || {};
+  const text = normalizeText(snap?.text || '');
+  if (!text) return '';
+  const line = text.split('\n').map((v) => normalizeText(v)).find((v) => v.length >= 6) || '';
+  return line.slice(0, 120);
+}
+
+function deriveFeedbackSampleFromRecentById(shortMemory = {}, recentMessages = []) {
+  const replyId = normalizeText(shortMemory?.lastAssistantReplySnapshot?.replyId || '');
+  if (!replyId) return '';
+  const hit = (Array.isArray(recentMessages) ? recentMessages : [])
+    .slice()
+    .reverse()
+    .find((m) => m?.role === 'assistant' && normalizeText(m?.messageId || '') === replyId && normalizeText(m?.content || ''));
+  if (!hit) return '';
+  return normalizeText(hit.content).split('\n').map((v) => normalizeText(v)).find((v) => v.length >= 6)?.slice(0, 120) || '';
+}
+
+async function maybeHandleConversationStyleFeedback(input, text, longMemoryLatest, shortMemory = {}) {
   if (input?.messageType !== 'text') return null;
   const safe = normalizeText(text);
   if (!safe) return null;
@@ -1893,7 +1921,10 @@ async function maybeHandleConversationStyleFeedback(input, text, longMemoryLates
   const explicitDislike = /この返し.*嫌|機械っぽい|硬い|テンプレ|冷たい|説明しすぎ|長すぎ/.test(safe);
   if (!wantsMoreHuman && !explicitLike && !explicitDislike) return null;
 
-  const sample = extractStyleFeedbackSample(safe);
+  const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
+  const sample = extractStyleFeedbackSample(safe)
+    || deriveFeedbackSampleFromRecentById(shortMemory, recentMessages)
+    || deriveFeedbackSampleFromShortMemory(shortMemory);
   const patch = {
     supportPreference: [
       '悩み解決優先',
@@ -1922,8 +1953,14 @@ async function maybeHandleConversationStyleFeedback(input, text, longMemoryLates
       : '言い回しの好みは会話の中で学習して、少しずつ合わせます。',
     `会話メモ: 好き ${likedCount}件 / 避けたい ${dislikedCount}件`
   ].join('\n');
+  const replyMessage = textMessageWithQuickReplies(replyText, [
+    'この言い方好き',
+    'ここは機械っぽい',
+    '短めでお願い'
+  ]);
   return {
     replyText,
+    replyMessage,
     internal: { intentType: 'style_feedback', responseMode: 'guided' }
   };
 }
@@ -2244,12 +2281,12 @@ async function orchestrateConversation(input) {
       };
     }
 
-    const styleFeedbackHandled = await maybeHandleConversationStyleFeedback(input, text, longMemory);
+    const styleFeedbackHandled = await maybeHandleConversationStyleFeedback(input, text, longMemory, shortMemory);
     if (styleFeedbackHandled) {
       await appendTurn(input.userId, input.rawText || '', styleFeedbackHandled.replyText);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: styleFeedbackHandled.replyText }],
+        replyMessages: [styleFeedbackHandled.replyMessage || { type: 'text', text: styleFeedbackHandled.replyText }],
         internal: styleFeedbackHandled.internal
       };
     }

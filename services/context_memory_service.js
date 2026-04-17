@@ -34,6 +34,7 @@ const DEFAULT_SHORT_MEMORY = {
   lastEmotionTone: 'neutral',
   lastAdvice: null,
   recentSmallTalkTopic: null,
+  lastAssistantReplySnapshot: null,
   followUpContext: null,
   activeHealthTheme: null,
   movementVideoSession: null,
@@ -725,7 +726,7 @@ async function getRecentMessages(userId, limit = 20) {
   return clone(arr.slice(-limit));
 }
 
-async function appendRecentMessage(userId, role, content) {
+async function appendRecentMessage(userId, role, content, meta = {}) {
   const safeContent = normalizeString(content);
   if (!userId || !role || !safeContent) return;
 
@@ -733,6 +734,7 @@ async function appendRecentMessage(userId, role, content) {
   arr.push({
     role,
     content: safeContent,
+    messageId: normalizeString(meta?.messageId || ''),
     createdAt: nowIso()
   });
 
