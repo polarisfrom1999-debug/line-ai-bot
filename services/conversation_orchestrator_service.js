@@ -627,7 +627,39 @@ function parseInlineProfile(text) {
 }
 
 function containsQuestionTone(text) {
-  return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|\?$|？$/.test(text);
+  const safe = normalizeText(text);
+  return /教えて|知りたい|考えて|つくって|組んで|覚えてる|なんだっけ|ですか|ますか|かな\??|どう\??|\?$|？$/.test(safe);
+}
+
+/** 練習メニュー・指導方針など「記録」ではなく相談・設計の文脈 */
+function looksLikeCoachingOrConsultationText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/練習メニュー|メニュー.*(考え|教え|一緒)|プラン|プログラム|立てて|組んで|アドバイス|相談|ヒント|おすすめ|どうすれば|なぜ|理由|上達|強化|中学生|部活|選手|タイム.*(出|伸)|記録.*(出|伸)/.test(safe)) {
+    return true;
+  }
+  if (safe.length >= 28 && /(走る|走れ|800m|400m|1500m|中距離|長距離)/.test(safe) && /(メニュー|練習|週間|スピード|持久)/.test(safe)) {
+    return true;
+  }
+  return false;
+}
+
+/** 会話（生成）を先にし、運動・食事の自動記録は後回しにする */
+function shouldAnswerWithChatFirst(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/記録して|ログ|つけといて|入れといて|保存して|カロリーで記録/.test(safe)) return false;
+  if (looksLikeCoachingOrConsultationText(safe)) return true;
+  if (containsQuestionTone(safe)) return true;
+  if (
+    safe.length >= 40
+    && mealAnalysisService.looksLikeMealText(safe)
+    && !mealAnalysisService.isMealNegationOrNonRecordText(safe)
+  ) {
+    return false;
+  }
+  if (safe.length >= 40) return true;
+  return false;
 }
 
 function parseNumericValue(text, pattern) {
@@ -1766,6 +1798,7 @@ async function maybeHandleSimpleWeightRecord(input, text) {
 }
 
 async function maybeHandleSimpleExerciseRecord(input, text, longMemoryLatest) {
+  if (looksLikeCoachingOrConsultationText(text) || shouldAnswerWithChatFirst(text)) return null;
   const record = energyService.buildExerciseRecord(text, { weightKg: Number(longMemoryLatest?.weight || 60) || 60 });
   if (!record || record.exerciseType === 'unknown' || containsQuestionTone(text)) return null;
 
@@ -1808,6 +1841,7 @@ function buildAdminCheckReply({ longMemory, records, points }) {
 }
 
 async function maybeStoreSimpleRecords(userId, text) {
+  if (shouldAnswerWithChatFirst(text) || looksLikeCoachingOrConsultationText(text)) return;
   if (looksLikeDistress(text) || looksLikePain(text) || looksLikeAnnyui(text)) {
     // 人の状態ケアを優先し、低余力時は自動記録を急がない
     return;
@@ -1834,6 +1868,8 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
   const energyLevel = inferEnergyLevelForNormalReply(input?.rawText || '', shortMemory);
   const systemHint = [
     '[会話の姿勢]',
+    '- まず自然な短文の会話として返す（カロリー確定・記録処理の口調にしない）',
+    '- 練習メニューやタイムの相談では、共感と一緒に組む方向だけ。数値記録として締めない',
     '- 短い相手には短く。まず質問に答える',
     '- 提案は多くて1つ。毎回同じ締めを使わない',
     '- 上から言わない。痛みやしんどさが出たら記録よりケアを優先',
@@ -2697,6 +2733,16 @@ async function orchestrateConversation(input) {
       const replyText = `プラン候補を「${text}」として見ています。必要ならこのまま詳しい案内につなげます。`;
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
+    }
+
+    if (shouldAnswerWithChatFirst(text)) {
+      const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
+      await appendTurn(input.userId, input.rawText || '', replyText);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: replyText }],
+        internal: { intentType: 'normal', responseMode: 'conversation_first' }
+      };
     }
 
     const simpleExerciseHandled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);

@@ -120,6 +120,10 @@ function estimateExerciseCalories(text, options = {}) {
 function buildExerciseRecord(text, options = {}) {
   const safe = normalizeText(text);
   if (!safe) return null;
+  // メニュー設計・相談文を運動「記録」にしない
+  if (/練習メニュー|メニュー.*(考え|教え)|考えて|中学生|部活|選手|アドバイス|相談|どうすれば|おすすめ|プラン|プログラム/.test(safe)) {
+    return null;
+  }
 
   const type = detectExerciseType(safe);
   const minutes = extractMinutes(safe);
