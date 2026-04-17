@@ -69,6 +69,13 @@ function normalizeMaybeNumber(value) {
   return safe ? Number(safe) : null;
 }
 
+function numberFromSourceText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  const m = safe.match(/-?\d+(?:\.\d+)?/);
+  return m ? normalizeMaybeNumber(m[0]) : null;
+}
+
 function normalizeStatus(value) {
   const safe = normalizeText(value).toLowerCase();
   if (!safe) return 'unknown';
@@ -154,7 +161,7 @@ function normalizeRows(report) {
     if (!normalizedKey) continue;
     const itemName = KEY_TO_ITEM_NAME[normalizedKey];
     const date = classifier.normalizeDateToken(row?.date || defaultDate || '');
-    const numericValue = normalizeMaybeNumber(row?.value);
+    const numericValue = normalizeMaybeNumber(row?.value) ?? numberFromSourceText(row?.source_text || row?.sourceText || '');
     if (!itemName || numericValue == null) continue;
     const referenceLow = normalizeMaybeNumber(row?.reference_low ?? row?.referenceLow);
     const referenceHigh = normalizeMaybeNumber(row?.reference_high ?? row?.referenceHigh);

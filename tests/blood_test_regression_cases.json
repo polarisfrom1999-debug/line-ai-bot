@@ -1,0 +1,52 @@
+[
+  {
+    "id": "blood_lab_compare_overall",
+    "title": "前回よりの全体比較で具体値を返す",
+    "category": "blood_test",
+    "description": "項目名なしの比較質問はDB上の直近2検査日を要約する",
+    "turns": [
+      { "role": "user", "text": "前回よりどう？" },
+      { "role": "assistant", "text": "直近の検査を 2025-10-01 → 2025-12-01 で比べると、\nTG: 今回 110 mg/dL / 前回 95 mg/dL（差 +15、上がっています）" }
+    ],
+    "must_contain_any": [
+      ["前回", "今回"],
+      ["TG", "中性脂肪", "HbA1c", "LDL"]
+    ],
+    "must_not_contain": [
+      "構造化の途中です",
+      "1項目か1日付ずつ聞いてください"
+    ],
+    "max_length": 300
+  },
+  {
+    "id": "blood_lab_trend_two_points",
+    "title": "傾向はで直近2点を示す",
+    "category": "blood_test",
+    "turns": [
+      { "role": "user", "text": "傾向は？" },
+      { "role": "assistant", "text": "TG の見えている推移です。\n最新: 2025-12-01 110 mg/dL\n前回 2025-10-01 比: +15 mg/dL（高め傾向）" }
+    ],
+    "must_contain_any": [
+      ["前回", "以前", "過去", "傾向", "流れ", "最新"]
+    ],
+    "must_not_contain": [
+      "まだ傾向を安定してまとめ切れていません"
+    ],
+    "max_length": 260
+  },
+  {
+    "id": "blood_practice_not_exercise_log",
+    "title": "練習相談を運動記録にしない",
+    "category": "intent",
+    "turns": [
+      { "role": "user", "text": "今日の練習メニューどう思う？相談したい" },
+      { "role": "assistant", "text": "いいね、そのメニューなら負担が増えすぎないかだけ一緒に見よう。今の体感はどう？" }
+    ],
+    "must_not_contain": [
+      "運動の記録として受け取りました",
+      "消費カロリーとして記録"
+    ],
+    "must_prefer_direct_answer": true,
+    "max_length": 220
+  }
+]

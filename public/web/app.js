@@ -793,7 +793,15 @@ function renderMessageAttachments(item) {
 
   function getCodeFromUrl() {
     try {
-      return normalizeText(new URLSearchParams(window.location.search).get('code') || '');
+      const sp = new URLSearchParams(window.location.search);
+      let code = normalizeText(sp.get('code') || sp.get('connect') || sp.get('c') || '');
+      if (!code && window.location.hash) {
+        const rawHash = window.location.hash.replace(/^#/, '');
+        const hashQuery = rawHash.includes('?') ? rawHash.split('?').slice(1).join('?') : rawHash;
+        const hsp = new URLSearchParams(hashQuery.startsWith('?') ? hashQuery.slice(1) : hashQuery);
+        code = normalizeText(hsp.get('code') || hsp.get('connect') || hsp.get('c') || '');
+      }
+      return code;
     } catch (_e) {
       return '';
     }
@@ -802,9 +810,20 @@ function renderMessageAttachments(item) {
   function stripCodeFromUrl() {
     try {
       const u = new URL(window.location.href);
-      if (!u.searchParams.has('code')) return;
-      u.searchParams.delete('code');
-      window.history.replaceState({}, '', `${u.pathname}${u.search}${u.hash}`);
+      let changed = false;
+      ['code', 'connect', 'c'].forEach((k) => {
+        if (u.searchParams.has(k)) {
+          u.searchParams.delete(k);
+          changed = true;
+        }
+      });
+      if (u.hash && /(?:^#?\??|&)(code|connect|c)=/i.test(u.hash)) {
+        u.hash = '';
+        changed = true;
+      }
+      if (changed) {
+        window.history.replaceState({}, '', `${u.pathname}${u.search}${u.hash}`);
+      }
     } catch (_e) {}
   }
 
@@ -1513,12 +1532,12 @@ function renderMessageAttachments(item) {
       try {
         await connectWithCode(urlCode);
       } catch (err) {
-        setConnectAutoHint(normalizeText(err?.message) || '自動接続できませんでした。下にコードを入力してください。');
+        setConnectAutoHint(normalizeText(err?.message) || '自動接続できませんでした。下の欄にコードを入れて接続してください。');
         state.sessionToken = '';
         localStorage.removeItem(WEB_TOKEN_KEY);
         if (state.data) state.data.connected = false;
         state.connectionState = 'disconnected';
-        stripCodeFromUrl();
+        if (els.connectInput) els.connectInput.value = urlCode;
       }
     }
     await refreshForRange(state.rangeDays, true);

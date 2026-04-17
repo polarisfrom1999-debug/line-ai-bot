@@ -79,6 +79,7 @@ function buildPendingPanel(classification, extraction) {
 
   return {
     source: 'image',
+    intakeKind: 'lab_image',
     isLabImage: documentKind !== 'chat_screenshot' && documentKind !== 'unknown',
     labLike: documentKind !== 'chat_screenshot' && documentKind !== 'unknown',
     reportDate,
@@ -105,6 +106,7 @@ function buildPendingPanel(classification, extraction) {
 function buildIgnoredPanel(reason, classification) {
   return {
     source: 'image',
+    intakeKind: '',
     isLabImage: false,
     labLike: false,
     reportDate: '',
@@ -170,6 +172,7 @@ async function analyzeLabImage(imagePayload) {
     || '';
   const panel = {
     source: 'image',
+    intakeKind: 'blood_test',
     isLabImage: true,
     labLike: true,
     reportDate: normalizeDateToken(extraction.reportDate || classification.reportDate || ''),

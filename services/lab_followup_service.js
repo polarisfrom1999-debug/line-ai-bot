@@ -86,26 +86,15 @@ function buildLabImageReply(panel) {
   const dates = collectAvailableDates(panel);
   const latest = normalizeDateToken(panel?.latestExamDate || panel?.examDate || '') || dates[dates.length - 1] || '';
   const issues = Array.isArray(panel?.issues) ? panel.issues.filter(Boolean) : [];
-  if ((panel?.documentKind || '').includes('multi') || dates.length >= 2) {
-    const preview = listImportantPreview(panel?.items || []);
-    return [
-      '血液検査の画像を受け取りました。今回は推移表として整理しています。',
-      dates.length ? `読み取れた日付: ${dates.join(' / ')}` : null,
-      latest ? `今の既定は ${latest} です。` : null,
-      preview.length ? `主な値: ${preview.join(' / ')}` : null,
-      issues.length ? `注意: ${issues[0]}` : null,
-      'このまま「TGは？」「HbA1cは？」「今までの傾向は？」のように聞いて大丈夫です。'
-    ].filter(Boolean).join('\n');
-  }
-
   const preview = listImportantPreview(panel?.items || []);
-  return [
-    '血液検査の画像を受け取りました。今回は1日分の検査として整理しています。',
-    latest ? `検査日: ${latest}` : null,
-    preview.length ? `主な値: ${preview.join(' / ')}` : null,
-    issues.length ? `注意: ${issues[0]}` : null,
-    'このまま「TGは？」「LDLは？」「HbA1cは？」のように聞いて大丈夫です。'
-  ].filter(Boolean).join('\n');
+  const previewLine = preview.length ? `いま拾えてるのは ${preview.join(' / ')} 。` : '';
+  const dateLine = latest ? `検査日は ${latest} として見てる。` : '';
+  const issueLine = issues.length ? `（注意: ${issues[0]}）` : '';
+  if ((panel?.documentKind || '').includes('multi') || dates.length >= 2) {
+    const multiDate = dates.length ? `日付は ${dates.join(' / ')} 。` : '';
+    return [`検査の画像ありがとう。推移表っぽいね。`, multiDate, dateLine, previewLine, issueLine, `TGやHbA1c、気になるところを一文で。`].filter(Boolean).join('\n');
+  }
+  return [`検査だね、受け取ったよ。`, dateLine, previewLine, issueLine, `聞きたい項目を送って。`].filter(Boolean).join('\n');
 }
 
 function buildDateSelectionReply(date) {
@@ -255,7 +244,8 @@ function buildTrendReply(panel, text) {
 }
 
 function shouldHandleTrendQuestion(text) {
-  return /傾向|推移|今まで|過去から|比較|一番高/.test(normalizeText(text));
+  const safe = normalizeText(text);
+  return /傾向|推移|今まで|過去から|比較|一番高|直近2|2件|二件|前回と|前と比|流れは/.test(safe);
 }
 
 function shouldHandleSaveAll(text) {

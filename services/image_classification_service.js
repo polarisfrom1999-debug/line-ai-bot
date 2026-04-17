@@ -50,7 +50,7 @@ function scoreImageRoutes({ lab, meal, shoeWear, movement, hintText = '', follow
 
   const follow = normalizeText(followUpType);
   if (follow === 'meal') scores.meal += 0.18;
-  if (follow === 'lab' || follow === 'lab_pending') scores.lab += 0.18;
+  if (follow === 'lab' || follow === 'lab_pending' || follow === 'blood_test' || follow === 'lab_image') scores.lab += 0.18;
   if (follow === 'motion') scores.motion += 0.18;
   if (follow === 'shoe_wear') scores.shoe_wear += 0.18;
 

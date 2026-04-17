@@ -22,6 +22,7 @@ const path = require('path');
 
 const ROOT = process.cwd();
 const CASES_PATH = path.join(ROOT, 'tests', 'conversation_regression_cases.json');
+const EXTRA_CASES_PATH = path.join(ROOT, 'tests', 'blood_test_regression_cases.json');
 
 function normalize(text) {
   return String(text || '')
@@ -92,9 +93,15 @@ function loadJson(filePath) {
 
 function loadCases() {
   const raw = loadJson(CASES_PATH);
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.cases)) return raw.cases;
-  return [];
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.cases) ? raw.cases : []);
+  if (!fs.existsSync(EXTRA_CASES_PATH)) return list;
+  try {
+    const extra = loadJson(EXTRA_CASES_PATH);
+    const extraList = Array.isArray(extra) ? extra : (Array.isArray(extra?.cases) ? extra.cases : []);
+    return list.concat(extraList);
+  } catch (_error) {
+    return list;
+  }
 }
 
 function defaultAssistantOutputFromCase(testCase) {

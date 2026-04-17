@@ -1,6 +1,7 @@
 'use strict';
 
 const { supabase } = require('./supabase_service');
+const labDocumentClassifierService = require('./lab_document_classifier_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -24,6 +25,22 @@ function normalizeDate(value) {
   const safe = normalizeText(value);
   const m = safe.match(/(20\d{2})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+function resolveStoredExamDate(panel) {
+  if (!panel) return null;
+  const candidates = [
+    panel.latestExamDate,
+    panel.examDate,
+    ...(Array.isArray(panel.examDates) ? panel.examDates : []),
+    panel.reportDate
+  ];
+  for (const c of candidates) {
+    const iso = normalizeDate(c) || labDocumentClassifierService.normalizeDateToken(String(c || ''));
+    if (iso) return iso;
+  }
+  const fromRaw = labDocumentClassifierService.extractExamDateFromBlobText(panel.rawText || '');
+  return fromRaw || null;
 }
 
 function parseNumeric(value) {
@@ -106,7 +123,11 @@ function buildRowsFromRawText({ reportId, userId, examDate, rawText = '' }) {
     { canonical: 'TG', display: '中性脂肪', regex: /(?:TG|中性脂肪|ＴＧ)\s*[:：＝=]\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
     { canonical: 'HBA1C', display: 'HbA1c', regex: /(?:HbA1c|HBA1C|ヘモグロビン\s*A1c|グリコヘモグロビン)\s*(?:\([^)]*\))?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: '%' },
     { canonical: 'LDL', display: 'LDL', regex: /(?:LDL|ＬＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL|ＨＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
+    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL|ＨＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
+    { canonical: 'WBC', display: '白血球', regex: /(?:WBC|ＷＢＣ|白血球(?:数)?)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: '/μL' },
+    { canonical: 'AST', display: 'AST', regex: /(?:AST|ＡＳＴ|GOT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'U/L' },
+    { canonical: 'ALT', display: 'ALT', regex: /(?:ALT|ＡＬＴ|GPT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'U/L' },
+    { canonical: 'GLU', display: '血糖', regex: /(?:空腹時血糖|随時血糖|血糖(?:値)?|BS|GLU|GLUCOSE)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
   ];
   const rows = [];
   for (const p of patterns) {
@@ -133,7 +154,7 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
   const safeUserId = normalizeText(userId);
   if (!safeUserId || !panel) return null;
 
-  const examDate = normalizeDate(panel?.latestExamDate || panel?.examDate || panel?.reportDate || null);
+  const examDate = resolveStoredExamDate(panel);
   const items = Array.isArray(panel?.items) ? panel.items : [];
   const readableCount = items.filter((item) => normalizeText(item?.value || '')).length;
   const status = readableCount > 0 ? 'parsed' : 'partial';
@@ -251,6 +272,36 @@ async function getLatestTwoItemsForUser(userId, canonicalName) {
   }
 }
 
+async function getLatestTwoExamSnapshots(userId) {
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return { dates: [], byDate: {} };
+  try {
+    const { data, error } = await supabase
+      .from('lab_report_items')
+      .select('canonical_name, display_name, value_text, value_numeric, unit, exam_date, created_at')
+      .eq('user_id', safeUserId)
+      .order('exam_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(240);
+    if (error) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    const dates = [...new Set(rows.map((r) => r.exam_date).filter(Boolean))].sort((a, b) => String(b).localeCompare(String(a)));
+    const topDates = dates.slice(0, 2);
+    const byDate = {};
+    for (const d of topDates) byDate[d] = {};
+    for (const row of rows) {
+      const d = row.exam_date;
+      if (!topDates.includes(d)) continue;
+      const canon = normalizeText(row.canonical_name);
+      if (!canon || byDate[d][canon]) continue;
+      byDate[d][canon] = row;
+    }
+    return { dates: topDates, byDate };
+  } catch (_error) {
+    return { dates: [], byDate: {} };
+  }
+}
+
 async function getRecentTrendForUser(userId, canonicalName, limit = 5) {
   const safeUserId = normalizeText(userId);
   const safeCanonical = toCanonicalName(canonicalName);
@@ -276,5 +327,7 @@ module.exports = {
   saveLabReport,
   getLatestItemForUser,
   getLatestTwoItemsForUser,
-  getRecentTrendForUser
+  getRecentTrendForUser,
+  getLatestTwoExamSnapshots,
+  resolveStoredExamDate
 };

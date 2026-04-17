@@ -99,6 +99,18 @@ function pickVariant(seed, variants) {
   return rows[seed % rows.length];
 }
 
+function buildLabPendingAckReply(panel, userId) {
+  const dateHint = panel?.latestExamDate || panel?.examDate
+    ? `検査日っぽいのは「${panel.latestExamDate || panel.examDate}」くらい。`
+    : '検査日はまだはっきりしないかも。';
+  const seed = hashText(`${userId}:${panel?.latestExamDate || panel?.examDate || ''}:${Math.floor(Date.now() / 45000)}`);
+  return pickVariant(seed, [
+    `うん、届いた。${dateHint}\nTGとか、気になる項目を一文で送って。`,
+    `写真みた。${dateHint}\n「中性脂肪は？」みたいに聞いてくれれば返す。`,
+    `検査の画像ありがとう。${dateHint}\n読めた数値から先に返すね。`,
+  ]);
+}
+
 function sanitizePreferredName(value) {
   const safe = normalizeText(value)
     .replace(/^(私の名前は|名前は|名前：|名前:)/u, '')
@@ -189,7 +201,8 @@ function adjustIntentForFollowupContext(intent, text, shortMemory = {}) {
 
   const fu = shortMemory?.followUpContext || {};
   const img = normalizeText(fu?.imageType || shortMemory?.lastImageType || '');
-  const inLab = img === 'lab' || img === 'lab_pending' || Boolean(fu?.labPanel);
+  const intake = normalizeText(fu?.intakeKind || '');
+  const inLab = img === 'lab' || img === 'lab_pending' || intake === 'blood_test' || intake === 'lab_image' || Boolean(fu?.labPanel);
   const inMeal = img === 'meal' || fu?.lastRecordType === 'meal' || fu?.source === 'meal';
   const inMotion = img === 'motion' || img === 'shoe_wear';
   if (shortMemory?.painSupportState?.active) return 'normal';
@@ -1205,7 +1218,7 @@ function maybeHandleSymptomCore(input) {
 function looksLikeMotionContext(shortMemory, recentMessages, currentText = '') {
   const followUpType = normalizeText(shortMemory?.lastImageType || shortMemory?.followUpContext?.imageType || '');
   if (followUpType === 'motion') return true;
-  if (followUpType === 'meal' || followUpType === 'lab' || followUpType === 'lab_pending') return false;
+  if (followUpType === 'meal' || followUpType === 'lab' || followUpType === 'lab_pending' || followUpType === 'blood_test' || followUpType === 'lab_image') return false;
 
   const safeCurrent = normalizeText(currentText);
   if (/食べた|ごはん|ご飯|朝食|昼食|夕食|おかず|ラーメン|カレー|寿司|弁当|間食/.test(safeCurrent)) return false;
@@ -1560,6 +1573,7 @@ async function maybeHandleLabImage(input, imagePayload) {
         followUpContext: {
           source: 'image',
           imageType: 'lab_pending',
+          intakeKind: lab?.intakeKind || 'lab_image',
           extractedItems: [],
           examDate: lab?.examDate || '',
           latestExamDate: lab?.latestExamDate || lab?.examDate || '',
@@ -1578,11 +1592,7 @@ async function maybeHandleLabImage(input, imagePayload) {
       return {
         handled: true,
         analysis: lab,
-        replyText: [
-          '血液検査の画像を受け取りました。',
-          lab?.latestExamDate || lab?.examDate ? `検査日候補: ${lab?.latestExamDate || lab?.examDate}` : null,
-          '抽出は進行中ですが、読めた項目は先に返せます。「TGは？」「HbA1cは？」「LDLは？」のように聞いてください。'
-        ].filter(Boolean).join('\n')
+        replyText: buildLabPendingAckReply(lab, input.userId)
       };
     }
 
@@ -1591,6 +1601,7 @@ async function maybeHandleLabImage(input, imagePayload) {
       followUpContext: {
         source: 'image',
         imageType: 'lab',
+        intakeKind: lab.intakeKind || 'blood_test',
         extractedItems: lab.items,
         examDate: lab.examDate || '',
         latestExamDate: lab.latestExamDate || lab.examDate || '',
@@ -2451,6 +2462,7 @@ async function orchestrateConversation(input) {
           followUpContext: {
             source: 'image',
             imageType: 'lab_pending',
+            intakeKind: labPanel?.intakeKind || 'lab_image',
             extractedItems: [],
             examDate: labPanel.examDate || '',
             latestExamDate: labPanel.latestExamDate || labPanel.examDate || '',
@@ -2465,11 +2477,7 @@ async function orchestrateConversation(input) {
         } catch (error) {
           console.error('[conversation_orchestrator] lab_like branch upsert error:', error?.message || error);
         }
-        const replyText = [
-          '血液検査の画像を受け取りました。',
-          labPanel?.latestExamDate || labPanel?.examDate ? `検査日候補: ${labPanel?.latestExamDate || labPanel?.examDate}` : null,
-          '抽出は進行中ですが、読めた項目は優先して返します。「TGは？」「HbA1cは？」「LDLは？」と聞いてください。'
-        ].filter(Boolean).join('\n');
+        const replyText = buildLabPendingAckReply(labPanel, input.userId);
         await appendTurn(input.userId, input.rawText || '[image]', replyText);
         return {
           ok: true,

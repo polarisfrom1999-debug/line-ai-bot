@@ -102,6 +102,7 @@ function buildPrompt() {
     '- "unknown"',
     '重要: LINEやチャット画面、吹き出し、スマホUI、共有ボタンが主役の画像は chat_screenshot にしてください。',
     'report_date には帳票の作成日や印刷日、exam_dates には結果列に対応する検査日だけを入れてください。',
+    'exam_dates / latest_exam_date は「採血日」「検査日」「受診日」ラベル付きの日付を最優先で拾ってください（印刷日だけで埋めない）。',
     '{',
     '  "is_lab_document": true,',
     '  "document_type": "single_day_report",',
@@ -146,11 +147,28 @@ async function classifyLabDocument(imagePayload) {
   };
 }
 
+function extractExamDateFromBlobText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return '';
+  const lines = safe.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const priorityLine = lines.find((line) => /採血日|検査日|受診日|実施日|採取日/.test(line));
+  if (priorityLine) {
+    const d = normalizeDateToken(priorityLine);
+    if (d) return d;
+  }
+  for (const line of lines.slice(0, 25)) {
+    const d = normalizeDateToken(line);
+    if (d) return d;
+  }
+  return normalizeDateToken(safe);
+}
+
 module.exports = {
   classifyLabDocument,
   normalizeDateToken,
   normalizeDocumentType,
   uniqueSortedDates,
   sanitizeGeminiText,
-  extractJsonObject
+  extractJsonObject,
+  extractExamDateFromBlobText
 };

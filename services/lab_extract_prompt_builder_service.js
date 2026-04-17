@@ -54,6 +54,7 @@ function buildLabExtractPrompt(meta = {}) {
   const prompt = [
     'あなたは「ここから。」の血液検査構造化抽出担当です。返答はJSONのみです。',
     '目的は、単日票または推移表を構造化し、後で保存・照会できるようにすることです。',
+    '採血日・検査日の列やラベル付き日付を最優先で読み、各 data 行の date と exam_dates / latest_exam_date に反映してください（印刷日だけで埋めない）。',
     '読めない時は推測せず status="unclear" にしてください。',
     '重要: document_type は single_day_report / multi_date_timeseries / unknown のいずれかにしてください。',
     '重要: normalized_key は既定の正規化キーを優先してください。',

@@ -118,6 +118,15 @@ function isMealDesireOrFeelingText(text) {
   return false;
 }
 
+function isPracticeConsultationText(text) {
+  const t = normalizeLoose(text);
+  if (!t) return false;
+  if (t.includes('練習相談')) return true;
+  if (t.includes('練習') && (t.includes('相談') || t.includes('聞きたい') || /どう思う|どうでしょう|アドバイス|教えて/.test(t))) return true;
+  if (t.includes('フォーム') && (t.includes('相談') || t.includes('聞きたい') || /どう|見て|チェック/.test(t))) return true;
+  return false;
+}
+
 function isExerciseConsultationText(text) {
   const t = normalizeLoose(text);
   if (!t) return false;
@@ -133,6 +142,7 @@ function isExerciseConsultationText(text) {
     'スクワット',
     '散歩',
     'トレーニング',
+    '練習',
   ].some((w) => t.includes(normalizeLoose(w)));
 
   if (!hasExerciseWord) return false;
@@ -177,6 +187,7 @@ function isExplicitMealLogText(text) {
 function isExerciseLogText(text) {
   const t = normalizeLoose(text);
   if (!t) return false;
+  if (isPracticeConsultationText(text)) return false;
   if (isExerciseConsultationText(text)) return false;
 
   const patterns = [

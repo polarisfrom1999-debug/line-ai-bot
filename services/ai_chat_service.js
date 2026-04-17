@@ -46,7 +46,7 @@ function resolveReplyBudget(params = {}) {
   if (supportPreference.includes('短く返す')) return 3;
   if (/guided/.test(responseMode)) return 6;
   if (/empathy_only/.test(responseMode)) return 3;
-  return 5;
+  return 4;
 }
 
 function postProcessReply(text) {

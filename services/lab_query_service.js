@@ -10,6 +10,65 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+const COMPARE_KEYS = ['TG', 'HBA1C', 'LDL', 'HDL', 'GLU', 'AST', 'ALT', 'WBC'];
+
+function hasExplicitLabItemMention(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (labItemAliasService.normalizeLabCanonicalKey(safe)) return true;
+  if (labFollowupService.normalizeTarget(safe)) return true;
+  return false;
+}
+
+function isOverallLabCompareQuestion(text) {
+  const safe = normalizeText(text);
+  if (!safe || hasExplicitLabItemMention(safe)) return false;
+  return /前回より|前回と(比べ|比較|くらべ)|前と(比べ|比較|くらべ)|前回はどう|まとめてどう|全体(的)?どう|検査(結果)?の流れ|結果はどう/.test(safe);
+}
+
+function formatRowBrief(row) {
+  if (!row) return '';
+  const v = normalizeText(row.value_text || row.value_numeric || '');
+  const u = normalizeText(row.unit || '');
+  return v ? `${v}${u ? ` ${u}` : ''}` : '';
+}
+
+async function buildOverallLabCompareReply(userId) {
+  const { dates, byDate } = await labReportStoreService.getLatestTwoExamSnapshots(userId);
+  if (dates.length < 2) {
+    return dates.length === 1
+      ? `いま保存できている検査日は ${dates[0]} だけです。前回比には、もう1回分の検査画像を送ってもらえると出せます。`
+      : 'まだ比較できる検査データが足りません。血液検査の画像を1枚送ってもらえると、日付つきで整理します。';
+  }
+  const [latestD, prevD] = dates;
+  const lines = [];
+  for (const key of COMPARE_KEYS) {
+    const cur = byDate[latestD]?.[key];
+    const prev = byDate[prevD]?.[key];
+    if (!cur && !prev) continue;
+    const label = cur?.display_name || prev?.display_name || labItemAliasService.canonicalToLabel(key.toLowerCase()) || key;
+    const curV = formatRowBrief(cur);
+    const prevV = formatRowBrief(prev);
+    if (curV && prevV) {
+      const a = Number(cur.value_numeric);
+      const b = Number(prev.value_numeric);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        const delta = Math.round((a - b) * 10) / 10;
+        const dir = delta > 0 ? '上がっています' : delta < 0 ? '下がっています' : 'ほぼ同じです';
+        lines.push(`${label}: 今回 ${curV} / 前回 ${prevV}（差 ${delta > 0 ? '+' : ''}${delta}、${dir}）`);
+      } else {
+        lines.push(`${label}: 今回 ${curV} / 前回 ${prevV}`);
+      }
+    } else if (curV) {
+      lines.push(`${label}: 今回 ${curV}（前回はデータなし）`);
+    }
+  }
+  if (!lines.length) {
+    return `${latestD} と ${prevD} の2回分はあるのですが、主要項目の数値がまだ拾えていません。「TGは？」のように項目名で聞いてもらえると返しやすいです。`;
+  }
+  return [`直近の検査を ${prevD} → ${latestD} で比べると、`, ...lines.slice(0, 5)].join('\n');
+}
+
 function buildValueReply(item = {}, examDate = '') {
   const label = normalizeText(item?.label || item?.display_name || item?.displayName || '');
   const value = normalizeText(item?.value || item?.value_text || item?.valueText || item?.value_numeric || item?.valueNumeric || '');
@@ -62,6 +121,11 @@ function readLatestLabCache(shortMemory = {}, panel = null) {
 async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   const safe = normalizeText(text);
   if (!safe) return null;
+
+  if (isOverallLabCompareQuestion(safe)) {
+    return buildOverallLabCompareReply(lineUserId);
+  }
+
   const panel = shortMemory?.followUpContext?.labPanel
     || await contextMemoryService.getLatestLabPanel(lineUserId)
     || await labDocumentStoreService.getLatestPanelForUser(lineUserId)

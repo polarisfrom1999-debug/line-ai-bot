@@ -106,7 +106,7 @@ textarea { resize: vertical; }
 
 .app-shell {
   width: min(var(--page-max), calc(100vw - 14px));
-  margin: 8px auto 14px;
+  margin: 6px auto 12px;
 }
 .topbar {
   display: flex;
@@ -893,8 +893,8 @@ textarea { resize: vertical; }
   .side-stack { display: none; }
   #goRecordsBtn,
   #openAuxBtn { display: none; }
-  .chat-card { max-height: none; height: calc(100vh - 126px); border-radius: 12px; }
-  #chatPanel.tab-panel.active { max-height: calc(100vh - 108px); }
+  .chat-card { max-height: none; height: calc(100vh - 108px); border-radius: 12px; }
+  #chatPanel.tab-panel.active { max-height: calc(100vh - 96px); }
   .chat-log { padding: 8px; }
   .message-row { margin-bottom: 8px; }
   .message-bubble { max-width: 96%; min-width: 0; font-size: 13px; line-height: 1.55; }
