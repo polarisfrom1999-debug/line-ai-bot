@@ -70,6 +70,10 @@ const DEFAULT_USER_STATE = {
   nagiScore: 5,
   gasolineScore: 5,
   trustScore: 3,
+  relationshipScore: 0,
+  relationshipStage: 'coach',
+  totalTurns: 0,
+  recallStyle: 'direct',
   lastEmotionTone: 'neutral',
   updatedAt: null
 };

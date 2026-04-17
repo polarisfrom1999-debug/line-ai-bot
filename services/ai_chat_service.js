@@ -97,6 +97,14 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
   const supportPreference = Array.isArray(longMemory?.supportPreference) ? longMemory.supportPreference.slice(0, 4) : [];
   const supportPreferenceText = supportPreference.length ? supportPreference.join(' / ') : '';
   const energyLevel = normalizeText(longMemory?.currentEnergyLevel || 'middle');
+  const relationshipStage = normalizeText(longMemory?.relationshipStage || 'coach');
+  const recallStyle = normalizeText(longMemory?.recallStyle || 'direct');
+
+  const relationshipHint = relationshipStage === 'best_friend'
+    ? '深い信頼関係。親友のように近いが、依存を煽らず安定した伴走。'
+    : relationshipStage === 'friend'
+      ? '信頼が育っている。友人の温度感で率直かつ丁寧に伴走。'
+      : 'まずはコーチとして安心感と見通しを渡す。';
 
   return [
     'あなたは「ここから。」の牛込先生のAIとして、ChatGPTで自然に雑談・相談しているような流れを基本にしてください。',
@@ -119,6 +127,14 @@ function buildSystemPrompt(hiddenContext, responseMode, longMemory) {
     '軽い共感やねぎらい（👍 😊 など）は可。ふざけた絵文字（🤣😜 など）や過剰連打は使わない。',
     '医療不安・強い痛みの文脈では、絵文字は使わないか最小限にする。',
     '話題が切り替わった時は前の文脈を無理に引きずらず、今の質問に自然につなげる。',
+    'ユーザーは悩みを解決したい相手。友達雑談だけで終わらず、短く具体的な一歩を添える。',
+    'ただし機械的な説明は避け、人の伴走者として自然に返す。',
+    `関係性ステージ: ${relationshipStage}`,
+    `関係性ヒント: ${relationshipHint}`,
+    `想起スタイル: ${recallStyle}`,
+    recallStyle === 'slow_recall_with_hint'
+      ? '思い出しは即断せず「前にも似た場面があった気がします。○○の時でしたっけ？」のように小さな確認を入れてよい。'
+      : null,
     preferredName ? `ユーザーの呼び方の候補: ${preferredName}` : null,
     `AIスタイル: ${aiStyle}`,
     voiceStyle ? `雰囲気: ${voiceStyle}` : null,
@@ -245,7 +261,44 @@ async function generateReply(params) {
   return assistantRepeatGuard.stripBannedLines(assistantRepeatGuard.scrubReplyAgainstRecent(trimmed, recentBodies));
 }
 
+async function generateNaturalResponse(user_input, context = {}, data = {}) {
+  const userMessage = normalizeText(user_input || '');
+  const contextSummary = [
+    context?.intentType ? `intentType: ${normalizeText(context.intentType)}` : null,
+    context?.responseMode ? `responseMode: ${normalizeText(context.responseMode)}` : null,
+    context?.messageType ? `messageType: ${normalizeText(context.messageType)}` : null
+  ].filter(Boolean).join('\n');
+
+  const draft = normalizeText(data?.draftReply || data?.draft || '');
+  const dataHints = [
+    draft ? `下書き（意味だけ参照）: ${draft}` : null,
+    data?.hasStructuredData ? '構造化データあり。必要な事実だけ短く反映。' : null
+  ].filter(Boolean).join('\n');
+
+  const hiddenContext = [
+    '[最終返答ルール]',
+    '- 2〜3行の短文',
+    '- ChatGPTのように自然な会話',
+    '- やさしい口調',
+    '- 絵文字は0〜2個まで（毎回使わない）',
+    '- 説明しすぎない',
+    '- テンプレ感を出さない',
+    contextSummary ? `[会話コンテキスト]\n${contextSummary}` : null,
+    dataHints ? `[補足データ]\n${dataHints}` : null
+  ].filter(Boolean).join('\n');
+
+  return generateReply({
+    userMessage,
+    recentMessages: Array.isArray(context?.recentMessages) ? context.recentMessages : [],
+    responseMode: 'conversation_first',
+    energyLevel: normalizeText(context?.energyLevel || 'middle'),
+    hiddenContext,
+    longMemory: context?.longMemory || {}
+  });
+}
+
 module.exports = {
   generateReply,
+  generateNaturalResponse,
   inferAiStyle
 };

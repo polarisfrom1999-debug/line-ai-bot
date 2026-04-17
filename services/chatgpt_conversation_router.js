@@ -2,6 +2,8 @@
 
 const conversationOrchestratorService = require('./conversation_orchestrator_service');
 const webLinkCommandService = require('./web_link_command_service');
+const aiChatService = require('./ai_chat_service');
+const contextMemoryService = require('./context_memory_service');
 
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'sticker', 'audio', 'video', 'file', 'location', 'other']);
 
@@ -139,27 +141,75 @@ function buildUnsupportedResult(messageType) {
   };
 }
 
+async function naturalizeResult(normalized, result) {
+  const base = result && typeof result === 'object' ? result : { ok: true, replyMessages: [] };
+  const messages = Array.isArray(base.replyMessages) ? base.replyMessages : [];
+  const naturalized = [];
+
+  const longMemory = await contextMemoryService.getLongMemory(normalized?.userId || '');
+  const userState = await contextMemoryService.getUserState(normalized?.userId || '');
+  const recentMessages = await contextMemoryService.getRecentMessages(normalized?.userId || '', 10);
+
+  for (const message of messages) {
+    if (!message || message.type !== 'text' || !normalizeText(message.text)) {
+      naturalized.push(message);
+      continue;
+    }
+
+    const rewritten = await aiChatService.generateNaturalResponse(
+      normalized?.rawText || '',
+      {
+        intentType: base?.internal?.intentType || '',
+        responseMode: base?.internal?.responseMode || '',
+        messageType: normalized?.messageType || '',
+        energyLevel: normalizeText(userState?.lastEmotionTone || '') === 'tired' ? 'low' : 'middle',
+        recentMessages,
+        longMemory: {
+          ...(longMemory || {}),
+          relationshipStage: userState?.relationshipStage || 'coach',
+          recallStyle: userState?.recallStyle || 'direct'
+        }
+      },
+      {
+        draftReply: message.text,
+        hasStructuredData: true
+      }
+    );
+
+    naturalized.push({
+      ...message,
+      text: normalizeText(rewritten || message.text) || message.text
+    });
+  }
+
+  return {
+    ...base,
+    replyMessages: naturalized
+  };
+}
+
 async function routeConversation(input) {
   const normalized = normalizeConversationInput(input);
 
   if (!normalized.userId) {
-    return {
+    return naturalizeResult(normalized, {
       ok: true,
       replyMessages: [{ type: 'text', text: '今うまく相手を特定できなかったので、もう一度だけ送ってもらえたら大丈夫です。' }],
       internal: { intentType: 'invalid', responseMode: 'empathy_only' }
-    };
+    });
   }
 
   if (!SUPPORTED_MESSAGE_TYPES.has(normalized.messageType)) {
-    return buildUnsupportedResult(normalized.messageType);
+    return naturalizeResult(normalized, buildUnsupportedResult(normalized.messageType));
   }
 
   if (normalized.messageType === 'sticker') {
-    return buildUnsupportedResult(normalized.messageType);
+    return naturalizeResult(normalized, buildUnsupportedResult(normalized.messageType));
   }
 
   const routerHints = buildRouterHints(normalized);
-  return conversationOrchestratorService.orchestrateConversation({ ...normalized, routerHints });
+  const rawResult = await conversationOrchestratorService.orchestrateConversation({ ...normalized, routerHints });
+  return naturalizeResult(normalized, rawResult);
 }
 
 module.exports = {

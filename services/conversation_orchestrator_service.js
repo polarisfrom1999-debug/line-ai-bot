@@ -64,6 +64,24 @@ function clampScore(value) {
   return Math.min(10, Math.max(1, Number(value || 5)));
 }
 
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value || 0)));
+}
+
+function resolveRelationshipStage(score) {
+  const s = Number(score || 0);
+  if (s >= 0.75) return 'best_friend';
+  if (s >= 0.4) return 'friend';
+  return 'coach';
+}
+
+function resolveRecallStyle(turnCount) {
+  const turns = Number(turnCount || 0);
+  // たまに「思い出すのに少し時間」がある揺らぎを作る
+  if (turns > 0 && turns % 7 === 0) return 'slow_recall_with_hint';
+  return 'direct';
+}
+
 function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
@@ -2123,10 +2141,20 @@ async function orchestrateConversation(input) {
     let intent = detectIntent(input, shortMemory);
     intent = adjustIntentForFollowupContext(intent, text, shortMemory);
 
+    const totalTurns = Number(userStateBefore?.totalTurns || 0) + 1;
+    const relationDelta = /ありがとう|助かった|頼れる|信頼|安心/.test(text) ? 0.03 : 0.01;
+    const relationPenalty = /違う|ちがう|わからない|機械的|テンプレ/.test(text) ? 0.04 : 0;
+    const relationshipScore = clamp01((Number(userStateBefore?.relationshipScore || 0) + relationDelta) - relationPenalty);
+    const relationshipStage = resolveRelationshipStage(relationshipScore);
+
     const nextState = {
       nagiScore: clampScore((userStateBefore?.nagiScore || 5) + (/安心|大丈夫/.test(text) ? 0.3 : 0)),
       gasolineScore: clampScore((userStateBefore?.gasolineScore || 5) + (/眠い|疲れ|限界/.test(text) ? -0.5 : 0)),
       trustScore: clampScore((userStateBefore?.trustScore || 3) + 0.1),
+      relationshipScore,
+      relationshipStage,
+      totalTurns,
+      recallStyle: resolveRecallStyle(totalTurns),
       lastEmotionTone: /眠い|疲れ|限界|しんど/.test(text) ? 'tired' : 'neutral',
       updatedAt: new Date().toISOString()
     };
