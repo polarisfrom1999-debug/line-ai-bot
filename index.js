@@ -230,6 +230,7 @@ async function applyGlobalPersonaAdjustments(input, result) {
     'meal_image_retry',
     'meal_text',
     'meal_followup',
+    'meal_log_correction',
     'meal_draft_followup',
     'meal_announcement',
     'meal_input_help',

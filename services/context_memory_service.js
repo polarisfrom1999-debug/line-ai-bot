@@ -315,11 +315,17 @@ async function persistDailyRecordToDb(lineUserId, record) {
   const now = nowIso();
   try {
     if (record.type === 'meal') {
+      const eatenAtIso = record.eatenAt
+        ? new Date(record.eatenAt).toISOString()
+        : now;
+      const foodItems = Array.isArray(record.food_items) && record.food_items.length
+        ? record.food_items
+        : (Array.isArray(record.items) ? record.items : (normalizeString(record.name) ? [normalizeString(record.name)] : []));
       await supabase.from('meal_logs').insert({
         user_id: user.id,
-        eaten_at: now,
+        eaten_at: eatenAtIso,
         meal_label: normalizeString(record.summary || record.name || '食事'),
-        food_items: Array.isArray(record.items) ? record.items : (normalizeString(record.name) ? [normalizeString(record.name)] : []),
+        food_items: foodItems,
         estimated_kcal: Number(record.kcal || record.estimatedNutrition?.kcal || 0) || null,
         protein_g: Number(record.protein || record.estimatedNutrition?.protein || 0) || null,
         fat_g: Number(record.fat || record.estimatedNutrition?.fat || 0) || null,
@@ -375,23 +381,7 @@ async function readDailyRecordsFromDb(lineUserId, days = 1) {
 
   for (const row of meals) {
     const dateKey = formatTokyoDate(row.eaten_at);
-    ensureBucket(dateKey).meals.push({
-      type: 'meal',
-      summary: normalizeString(row.meal_label || '食事'),
-      name: normalizeString(row.meal_label || '食事'),
-      items: Array.isArray(row.food_items) ? row.food_items : [],
-      kcal: Number(row.estimated_kcal || 0),
-      protein: Number(row.protein_g || 0),
-      fat: Number(row.fat_g || 0),
-      carbs: Number(row.carbs_g || 0),
-      estimatedNutrition: {
-        kcal: Number(row.estimated_kcal || 0),
-        protein: Number(row.protein_g || 0),
-        fat: Number(row.fat_g || 0),
-        carbs: Number(row.carbs_g || 0)
-      },
-      createdAt: row.eaten_at
-    });
+    ensureBucket(dateKey).meals.push(mealPayloadFromDbRow(row, dateKey));
   }
   for (const row of exercises) {
     const dateKey = formatTokyoDate(row.logged_at);
@@ -486,6 +476,131 @@ function getTodayKey() {
     month: '2-digit',
     day: '2-digit'
   }).format(new Date());
+}
+
+function addCalendarDaysToTokyoYmd(ymd, deltaDays) {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+09:00`);
+  dt.setDate(dt.getDate() + Number(deltaDays || 0));
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(dt);
+}
+
+function tokyoNoonIsoFromYmd(ymd) {
+  const safe = normalizeString(ymd);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safe)) return null;
+  return `${safe}T12:00:00+09:00`;
+}
+
+function mealPayloadFromDbRow(row, dateKey = '') {
+  const items = Array.isArray(row?.food_items) ? row.food_items : [];
+  return {
+    type: 'meal',
+    date: dateKey || formatTokyoDate(row?.eaten_at),
+    summary: normalizeString(row?.meal_label || '食事'),
+    name: normalizeString(row?.meal_label || '食事'),
+    items,
+    food_items: items,
+    kcal: Number(row?.estimated_kcal || 0),
+    protein: Number(row?.protein_g || 0),
+    fat: Number(row?.fat_g || 0),
+    carbs: Number(row?.carbs_g || 0),
+    estimatedNutrition: {
+      kcal: Number(row?.estimated_kcal || 0),
+      protein: Number(row?.protein_g || 0),
+      fat: Number(row?.fat_g || 0),
+      carbs: Number(row?.carbs_g || 0)
+    },
+    createdAt: row?.eaten_at || nowIso()
+  };
+}
+
+async function fetchLatestMealLogRow(lineUserId) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return null;
+  return safeMaybeSingle(() => supabase
+    .from('meal_logs')
+    .select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g')
+    .eq('user_id', user.id)
+    .order('eaten_at', { ascending: false })
+    .limit(1)
+    .maybeSingle(), null);
+}
+
+function popLastMealFromDailyBucket(lineUserId, dateKey) {
+  ensureSnapshotLoaded();
+  const key = `${lineUserId}:${dateKey}`;
+  const bucket = dailyRecordStore.get(key);
+  if (!bucket?.meals?.length) return null;
+  const moved = bucket.meals.pop();
+  dailyRecordStore.set(key, bucket);
+  return moved;
+}
+
+function pushMealToDailyBucket(lineUserId, dateKey, mealPayload) {
+  ensureSnapshotLoaded();
+  const key = `${lineUserId}:${dateKey}`;
+  const bucket = dailyRecordStore.get(key) || buildDailyRecordBucket();
+  bucket.meals.push({ ...mealPayload, date: dateKey });
+  dailyRecordStore.set(key, bucket);
+}
+
+async function relocateLastMealToTokyoDate(lineUserId, targetYmd) {
+  const safeDate = normalizeString(targetYmd);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeDate)) return { ok: false, reason: 'bad_date' };
+
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) {
+    const moved = popLastMealFromDailyBucket(lineUserId, getTodayKey());
+    if (!moved) return { ok: false, reason: 'no_memory_meal' };
+    pushMealToDailyBucket(lineUserId, safeDate, moved);
+    scheduleSnapshotFlush();
+    return { ok: true, targetYmd: safeDate, memoryOnly: true };
+  }
+
+  const row = await fetchLatestMealLogRow(lineUserId);
+  if (!row?.id) return { ok: false, reason: 'no_db_meal' };
+  const eatenAt = tokyoNoonIsoFromYmd(safeDate);
+  if (!eatenAt) return { ok: false, reason: 'bad_date' };
+  try {
+    const { error } = await supabase.from('meal_logs').update({ eaten_at: eatenAt }).eq('id', row.id);
+    if (error) return { ok: false, reason: normalizeString(error.message || 'update_failed') };
+  } catch (error) {
+    return { ok: false, reason: normalizeString(error?.message || 'update_failed') };
+  }
+
+  popLastMealFromDailyBucket(lineUserId, getTodayKey());
+  pushMealToDailyBucket(lineUserId, safeDate, { ...mealPayloadFromDbRow(row, safeDate), createdAt: eatenAt });
+  scheduleSnapshotFlush();
+  return { ok: true, mealId: row.id, targetYmd: safeDate };
+}
+
+async function deleteLastMealLog(lineUserId) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) {
+    const moved = popLastMealFromDailyBucket(lineUserId, getTodayKey());
+    if (!moved) return { ok: false, reason: 'no_memory_meal' };
+    scheduleSnapshotFlush();
+    return { ok: true, memoryOnly: true };
+  }
+
+  const row = await fetchLatestMealLogRow(lineUserId);
+  if (!row?.id) return { ok: false, reason: 'no_db_meal' };
+  try {
+    const { error } = await supabase.from('meal_logs').delete().eq('id', row.id);
+    if (error) return { ok: false, reason: normalizeString(error.message || 'delete_failed') };
+  } catch (error) {
+    return { ok: false, reason: normalizeString(error?.message || 'delete_failed') };
+  }
+
+  popLastMealFromDailyBucket(lineUserId, getTodayKey());
+  scheduleSnapshotFlush();
+  return { ok: true, mealId: row.id };
 }
 
 function getWeekKey() {
@@ -1073,5 +1188,9 @@ module.exports = {
   saveMonthlySurvey,
   getPoints,
   addPoints,
-  resetAllMemory
+  resetAllMemory,
+  getTokyoTodayYmd: () => getTodayKey(),
+  addCalendarDaysToTokyoYmd,
+  relocateLastMealToTokyoDate,
+  deleteLastMealLog
 };

@@ -171,7 +171,8 @@ async function translateParentNoteForAthlete(userId, body = {}) {
   if (raw) {
     try {
       const aiChatService = require('./ai_chat_service');
-      if (process.env.OPENAI_API_KEY) {
+      const rewriteOn = /^1|true|yes$/i.test(String(process.env.KOKOKARA_CONVERSATION_REWRITE || '').trim());
+      if (process.env.OPENAI_API_KEY && rewriteOn) {
         summaryForAthlete = normalizeText(
           await aiChatService.generateNaturalResponse(
             '親からのメッセージの要約',

@@ -49,6 +49,7 @@ const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
 const conversationSurfaceService = require('./conversation_surface_service');
+const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
 const aiPersonaConfig = require('../config/ai_persona_config');
 
@@ -203,6 +204,38 @@ async function maybeHandleMealDayScopeSummary(input, text) {
     includeAnomalyNote: true
   });
   return { replyText };
+}
+
+async function maybeHandleMealLogCorrection(input, text) {
+  if (input?.messageType !== 'text') return null;
+  const safe = normalizeText(text || input?.rawText || '');
+  if (!safe) return null;
+
+  if (/さっきの食事を(消して|削除|取り消し)|この食事を(消して|削除)|直近の食事を(消して|削除)|一つ前の食事を(消して|削除)/.test(safe)) {
+    const res = await contextMemoryService.deleteLastMealLog(input.userId);
+    if (!res.ok) {
+      return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
+    }
+    const totals = await contextMemoryService.getTodayRecords(input.userId);
+    return { replyText: ['直近の食事1件を削除し、合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+  }
+
+  if (/昨日の分|昨日にして|昨日だった|日付は昨日|前の日の分|一つ前の日|食事.*昨日/.test(safe)) {
+    const y = contextMemoryService.addCalendarDaysToTokyoYmd(contextMemoryService.getTokyoTodayYmd(), -1);
+    const res = await contextMemoryService.relocateLastMealToTokyoDate(input.userId, y);
+    if (!res.ok) {
+      return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。食事写真やテキストでもう一度送ってください。` };
+    }
+    const totals = await contextMemoryService.getTodayRecords(input.userId);
+    return { replyText: [`直近の食事1件を「${y}」に移し、今日の合計を出し直しました。`, '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+  }
+
+  if (/再計算|合計.*し直し|積算.*し直し|今日の合計.*もう一度/.test(safe)) {
+    const totals = await contextMemoryService.getTodayRecords(input.userId);
+    return { replyText: buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true }) };
+  }
+
+  return null;
 }
 
 function maybeHandleConversationFrustrationRepair(input, text) {
@@ -541,18 +574,27 @@ function buildHelpAnswer() {
   ].join('\n');
 }
 
+function mealFoodDescription(meal) {
+  const fi = Array.isArray(meal?.food_items) && meal.food_items.length
+    ? meal.food_items
+    : (Array.isArray(meal?.items) ? meal.items : []);
+  const joined = fi.map((x) => normalizeText(x)).filter(Boolean).join('、');
+  return joined || '';
+}
+
 function buildTodayRecordsAnswer(records) {
   const lines = [];
 
   if (Array.isArray(records?.meals) && records.meals.length) {
-    lines.push(`今日の食事記録: ${records.meals.length}件`);
+    lines.push(`今日の食事記録: ${records.meals.length}件（保存データを読み直した結果です）`);
     for (const meal of records.meals.slice(-5)) {
       const title = meal.summary || meal.name || '食事';
       const kcal = Number(meal.kcal || meal.estimatedNutrition?.kcal || 0);
-      lines.push(`- ${title}${kcal ? ` 約${round1(kcal)}kcal` : ''}`);
+      const food = mealFoodDescription(meal);
+      lines.push(`- ${title}${food ? `（食べたもののメモ: ${food}）` : ''}${kcal ? ` 約${round1(kcal)}kcal` : ''}`);
     }
   } else {
-    lines.push('今日の食事記録はまだ見当たりません。');
+    lines.push('いま保存データを読み直したところ、今日付けの食事は0件でした。食事写真や「昨日の分です」と送れば整理できます。');
   }
 
   if (Array.isArray(records?.exercises) && records.exercises.length) {
@@ -577,7 +619,7 @@ function buildTodayMealTotalsAnswer(records, options = {}) {
   const totals = sumMealNutrition(records);
   const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
   if (!mealCount) {
-    return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえればそこから合計を見ていけます。';
+    return 'いま保存データ（今日付け）を読み直したところ、食事は0件でした。食べた記録を送るか、「昨日の分です」と直近1件を昨日へ移せます。';
   }
 
   const ymd = options.dateLabel || formatTokyoYmd();
@@ -962,10 +1004,14 @@ function buildMealReply(parsedMeal, options = {}) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
   const todayTotals = options?.todayTotals || null;
+  const conf = Number(parsedMeal?.confidence || 0);
 
   const rawJoin = items.map((it) => normalizeText(it)).filter(Boolean).join('、');
+  const hedgeLowConf = conf > 0 && conf < 0.7;
   const mealLabel = rawJoin
-    ? `ざっくり見ると「${rawJoin}」のように見えます（料理名は見立てで、違っていたら教えてください）。`
+    ? (hedgeLowConf
+      ? `画像の自信度がまだ高くないので、「${rawJoin}」っぽく見える、くらいに受け取ってください（違っていたら教えてください）。`
+      : `ざっくり見ると「${rawJoin}」のように見えます（料理名は見立てで、違っていたら教えてください）。`)
     : '内容の輪郭がまだはっきりしにくいです。';
   const kcal = round1(nut.kcal || 0);
   const protein = round1(nut.protein || 0);
@@ -998,35 +1044,45 @@ function buildMealReply(parsedMeal, options = {}) {
 }
 
 function buildMealRecordPayload(text, parsedMeal) {
+  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   return {
     type: 'meal',
-    name: Array.isArray(parsedMeal?.items) && parsedMeal.items.length ? parsedMeal.items.join('、') : normalizeText(text),
+    date: formatTokyoYmd(),
+    name: items.length ? items.join('、') : normalizeText(text),
     summary: normalizeText(text) || '食事',
+    items,
+    food_items: items,
     estimatedNutrition: parsedMeal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 },
     kcal: Number(parsedMeal?.estimatedNutrition?.kcal || 0),
     protein: Number(parsedMeal?.estimatedNutrition?.protein || 0),
     fat: Number(parsedMeal?.estimatedNutrition?.fat || 0),
     carbs: Number(parsedMeal?.estimatedNutrition?.carbs || 0),
     amountRatio: Number(parsedMeal?.amountRatio || 1),
-    amountNote: parsedMeal?.amountNote || ''
+    amountNote: parsedMeal?.amountNote || '',
+    confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
+    comment: parsedMeal?.comment || ''
   };
 }
 
 function buildImageMealRecordPayload(parsedMeal) {
-  const itemLabel = Array.isArray(parsedMeal?.items) && parsedMeal.items.length
-    ? parsedMeal.items.join('、')
-    : '食事写真';
+  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
+  const itemLabel = items.length ? items.join('、') : '食事写真';
 
   return {
     type: 'meal',
+    date: formatTokyoYmd(),
     name: itemLabel,
     summary: itemLabel,
+    items,
+    food_items: items,
     estimatedNutrition: parsedMeal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 },
     kcal: Number(parsedMeal?.estimatedNutrition?.kcal || 0),
     protein: Number(parsedMeal?.estimatedNutrition?.protein || 0),
     fat: Number(parsedMeal?.estimatedNutrition?.fat || 0),
     carbs: Number(parsedMeal?.estimatedNutrition?.carbs || 0),
-    amountNote: parsedMeal?.amountNote || ''
+    amountNote: parsedMeal?.amountNote || '',
+    confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
+    comment: parsedMeal?.comment || ''
   };
 }
 
@@ -1535,7 +1591,7 @@ async function appendTurn(userId, userText, replyText) {
 }
 
 async function withSurfaceReply(input, draftText, ctx, intentType) {
-  return conversationSurfaceService.polishDraftToSurface({
+  const polished = await conversationSurfaceService.polishDraftToSurface({
     userMessage: input?.rawText || '',
     draftReply: draftText,
     recentMessages: ctx?.recentMessages || [],
@@ -1543,6 +1599,7 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
     intentType: intentType || 'surface',
     messageType: input?.messageType || 'text'
   });
+  return replyIntegrityService.softenCantDoStatements(polished);
 }
 
 async function polishReplyMessage(input, replyMessage, ctx, intentType) {
@@ -2817,6 +2874,17 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
+
+    const mealLogCorrection = await maybeHandleMealLogCorrection(input, text);
+    if (mealLogCorrection?.replyText) {
+      const mealCorrOut = await withSurfaceReply(input, mealLogCorrection.replyText, { recentMessages, longMemory }, 'meal_log_correction');
+      await appendTurn(input.userId, input.rawText || '', mealCorrOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: mealCorrOut }],
+        internal: { intentType: 'meal_log_correction', responseMode: 'record' }
+      };
+    }
 
     const labSaveReply = await maybeHandleLabSaveAll(input, refreshedShortMemory);
     if (labSaveReply) {

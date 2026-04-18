@@ -19,6 +19,7 @@ const BYPASS_NATURALIZE_INTENTS = new Set([
   'meal_image',
   'meal_text',
   'meal_followup',
+  'meal_log_correction',
   'meal_draft_followup',
   'exercise_record',
   'exercise_calorie',
@@ -231,6 +232,11 @@ function buildUnsupportedResult(messageType) {
 
 async function naturalizeResult(normalized, result) {
   const base = result && typeof result === 'object' ? result : { ok: true, replyMessages: [] };
+  // 再設計: ルータ第2段の言い換えは停止（オーケストレータ本文をそのまま返す）。
+  // 再有効化は KOKOKARA_CONVERSATION_REWRITE=1 のときのみ（下で従来分岐）。
+  if (!/^1|true|yes$/i.test(String(process.env.KOKOKARA_CONVERSATION_REWRITE || '').trim())) {
+    return base;
+  }
   if (!conversationSurfaceService.isSurfacePolishEnabled()) {
     return base;
   }

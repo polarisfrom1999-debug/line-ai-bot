@@ -12,11 +12,14 @@ function normalizeText(value) {
 }
 
 /**
- * 既定は OFF（緊急方針: 自動の「自然文化」で会話を壊さない）。
- * 明示的に KOKOKARA_SURFACE_LAYER_ON=1/true/yes のときだけ有効。
- * 互換: KOKOKARA_SURFACE_LAYER_OFF=1 のときは常に無効。
+ * 再設計: データ整合性が整うまで GPT 言い換えは停止（下書きそのまま）。
+ * 会話改善を再開する場合のみ KOKOKARA_CONVERSATION_REWRITE=1 と
+ * KOKOKARA_SURFACE_LAYER_ON=1 の両方を付与。KOKOKARA_SURFACE_LAYER_OFF=1 は常に無効。
  */
 function isSurfacePolishEnabled() {
+  if (!/^1|true|yes$/i.test(String(process.env.KOKOKARA_CONVERSATION_REWRITE || '').trim())) {
+    return false;
+  }
   if (/^1|true|yes$/i.test(String(process.env.KOKOKARA_SURFACE_LAYER_OFF || '').trim())) {
     return false;
   }
