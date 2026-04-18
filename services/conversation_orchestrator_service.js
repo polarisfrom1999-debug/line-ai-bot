@@ -48,6 +48,7 @@ const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
+const conversationSurfaceService = require('./conversation_surface_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
 const aiPersonaConfig = require('../config/ai_persona_config');
 
@@ -1421,6 +1422,53 @@ async function appendTurn(userId, userText, replyText) {
   });
 }
 
+async function withSurfaceReply(input, draftText, ctx, intentType) {
+  return conversationSurfaceService.polishDraftToSurface({
+    userMessage: input?.rawText || '',
+    draftReply: draftText,
+    recentMessages: ctx?.recentMessages || [],
+    longMemory: ctx?.longMemory || {},
+    intentType: intentType || 'surface',
+    messageType: input?.messageType || 'text'
+  });
+}
+
+async function polishReplyMessage(input, replyMessage, ctx, intentType) {
+  if (!replyMessage || replyMessage.type !== 'text') return replyMessage;
+  const base = normalizeText(replyMessage.text || '');
+  if (!base) return replyMessage;
+  const polished = await withSurfaceReply(input, base, ctx, intentType);
+  return { ...replyMessage, text: polished };
+}
+
+async function polishQuickReplyBundle(input, handled, ctx, intentType) {
+  const base = normalizeText(handled?.replyText || '');
+  if (!base) {
+    const fallback = handled?.replyMessage || { type: 'text', text: '' };
+    await appendTurn(input.userId, input.rawText || '', fallback.text || '');
+    return {
+      ok: true,
+      replyMessages: [fallback],
+      internal: handled.internal
+    };
+  }
+  const labels = Array.isArray(handled?.replyMessage?.quickReply?.items)
+    ? handled.replyMessage.quickReply.items
+      .map((it) => normalizeText(it?.action?.label || it?.action?.text || ''))
+      .filter(Boolean)
+    : [];
+  const polished = await withSurfaceReply(input, base, ctx, intentType);
+  const nextMessage = labels.length
+    ? textMessageWithQuickReplies(polished, labels)
+    : { type: 'text', text: polished };
+  await appendTurn(input.userId, input.rawText || '', nextMessage.text || polished);
+  return {
+    ok: true,
+    replyMessages: [nextMessage],
+    internal: handled.internal
+  };
+}
+
 async function maybeHandleOnboarding(input, shortMemory, longMemory) {
   return onboardingService.maybeHandleOnboarding({
     input,
@@ -2270,8 +2318,9 @@ async function orchestrateConversation(input) {
 
     const onboarding = await maybeHandleOnboarding(input, shortMemory, longMemory);
     if (onboarding?.handled) {
-      await appendTurn(input.userId, input.rawText || '', onboarding.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: onboarding.replyText }], internal: { intentType: 'onboarding', responseMode: 'guided' } };
+      const onboardingOut = await withSurfaceReply(input, onboarding.replyText, { recentMessages, longMemory }, 'onboarding');
+      await appendTurn(input.userId, input.rawText || '', onboardingOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: onboardingOut }], internal: { intentType: 'onboarding', responseMode: 'guided' } };
     }
 
     const constitutionSurveyHandled = await maybeHandleConstitutionSurvey(
@@ -2284,20 +2333,34 @@ async function orchestrateConversation(input) {
       contextMemoryService.saveMonthlySurvey
     );
     if (constitutionSurveyHandled) {
-      await appendTurn(input.userId, input.rawText || '', constitutionSurveyHandled.replyText);
+      const surveyInternal = constitutionSurveyHandled.internal || { intentType: 'constitution_survey', responseMode: 'guided' };
+      const surveyIntentTag = surveyInternal.intentType || 'constitution_survey';
+      const surveyOut = await withSurfaceReply(
+        input,
+        constitutionSurveyHandled.replyText,
+        { recentMessages, longMemory },
+        surveyIntentTag
+      );
+      await appendTurn(input.userId, input.rawText || '', surveyOut);
       return {
         ok: true,
-        replyMessages: [constitutionSurveyHandled.replyMessage || { type: 'text', text: constitutionSurveyHandled.replyText }],
-        internal: constitutionSurveyHandled.internal || { intentType: 'constitution_survey', responseMode: 'guided' }
+        replyMessages: [{ type: 'text', text: surveyOut }],
+        internal: surveyInternal
       };
     }
 
     const styleFeedbackHandled = await maybeHandleConversationStyleFeedback(input, text, longMemory, shortMemory);
     if (styleFeedbackHandled) {
-      await appendTurn(input.userId, input.rawText || '', styleFeedbackHandled.replyText);
+      const styleOut = await withSurfaceReply(input, styleFeedbackHandled.replyText, { recentMessages, longMemory }, 'style_feedback');
+      const styleMessage = textMessageWithQuickReplies(styleOut, [
+        'この言い方好き',
+        'ここは機械っぽい',
+        '短めでお願い'
+      ]);
+      await appendTurn(input.userId, input.rawText || '', styleOut);
       return {
         ok: true,
-        replyMessages: [styleFeedbackHandled.replyMessage || { type: 'text', text: styleFeedbackHandled.replyText }],
+        replyMessages: [styleMessage],
         internal: styleFeedbackHandled.internal
       };
     }
@@ -2324,18 +2387,20 @@ async function orchestrateConversation(input) {
             textHint: pendingImage.textHint || text,
             imagePayload: pendingImage.imagePayload
           });
-          await appendTurn(input.userId, input.rawText || '', routed.replyText);
+          const routedOut = await withSurfaceReply(input, routed.replyText, { recentMessages, longMemory }, 'image_route_rerun');
+          await appendTurn(input.userId, input.rawText || '', routedOut);
           return {
             ok: true,
-            replyMessages: [{ type: 'text', text: routed.replyText }],
+            replyMessages: [{ type: 'text', text: routedOut }],
             internal: routed.internal
           };
         }
         const replyText = `ありがとうございます。次は「${selected === 'meal' ? '食事' : selected === 'lab' ? '血液検査' : selected === 'shoe_wear' ? '靴底摩耗' : '動作解析'}」として見ます。画像の保持が切れてしまったようなので、同じ写真をもう一度送ってください。（画像が大きい場合はこちらで保持できないことがあります）`;
-        await appendTurn(input.userId, input.rawText || '', replyText);
+        const routeLostOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'image_route_lost');
+        await appendTurn(input.userId, input.rawText || '', routeLostOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: routeLostOut }],
           internal: { intentType: 'image_route_selected', responseMode: 'guided' }
         };
       }
@@ -2344,10 +2409,11 @@ async function orchestrateConversation(input) {
     const painThread = input?.messageType === 'text' ? maybeHandlePainConversationFollowUp(input, shortMemory) : null;
     if (painThread?.replyText) {
       await contextMemoryService.saveShortMemory(input.userId, { painSupportState: painThread.nextState || shortMemory?.painSupportState });
-      await appendTurn(input.userId, input.rawText || '', painThread.replyText);
+      const painOut = await withSurfaceReply(input, painThread.replyText, { recentMessages, longMemory }, 'pain_thread');
+      await appendTurn(input.userId, input.rawText || '', painOut);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: painThread.replyText }],
+        replyMessages: [{ type: 'text', text: painOut }],
         internal: { intentType: 'pain_thread', responseMode: 'empathy_plus_one_hint' },
       };
     }
@@ -2355,15 +2421,17 @@ async function orchestrateConversation(input) {
     if (input?.messageType === 'text' && (looksLikeDistress(text) || looksLikePain(text))) {
       const supportReply = await maybeHandleSupportState(input, shortMemory);
       if (supportReply) {
-        await appendTurn(input.userId, input.rawText || '', supportReply);
-        return { ok: true, replyMessages: [{ type: 'text', text: supportReply }], internal: { intentType: 'care_priority', responseMode: 'empathy_only' } };
+        const careOut = await withSurfaceReply(input, supportReply, { recentMessages, longMemory }, 'care_priority');
+        await appendTurn(input.userId, input.rawText || '', careOut);
+        return { ok: true, replyMessages: [{ type: 'text', text: careOut }], internal: { intentType: 'care_priority', responseMode: 'empathy_only' } };
       }
     }
 
     if (input?.messageType === 'text' && looksLikeAnnyui(text)) {
-      const replyText = buildAnnyuiReply(text);
-      const replyMessage = textMessageWithQuickReplies(replyText, ['今日は記録だけ', '体調だけ整理', '1つだけ提案して']);
-      await appendTurn(input.userId, input.rawText || '', replyText);
+      const replyTextRaw = buildAnnyuiReply(text);
+      const annyuiOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'annyui_support');
+      const replyMessage = textMessageWithQuickReplies(annyuiOut, ['今日は記録だけ', '体調だけ整理', '1つだけ提案して']);
+      await appendTurn(input.userId, input.rawText || '', annyuiOut);
       return {
         ok: true,
         replyMessages: [replyMessage],
@@ -2373,9 +2441,10 @@ async function orchestrateConversation(input) {
 
     const directGuideIntent = detectGuideIntent(text);
     if (directGuideIntent) {
-      const replyMessage = buildGuideReplyMessage(directGuideIntent, {
+      const replyMessageRaw = buildGuideReplyMessage(directGuideIntent, {
         conversationState: getConversationState(input.userId),
       });
+      const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, directGuideIntent);
       const replyText = replyMessage?.text || buildHelpAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [replyMessage], internal: { intentType: directGuideIntent, responseMode: 'guided' } };
@@ -2383,8 +2452,9 @@ async function orchestrateConversation(input) {
 
     const mealAnnouncementHandled = maybeHandleMealAnnouncement(input);
     if (mealAnnouncementHandled) {
-      await appendTurn(input.userId, input.rawText || '', mealAnnouncementHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealAnnouncementHandled.replyText }], internal: mealAnnouncementHandled.internal };
+      const mealAnnOut = await withSurfaceReply(input, mealAnnouncementHandled.replyText, { recentMessages, longMemory }, 'meal_announcement');
+      await appendTurn(input.userId, input.rawText || '', mealAnnOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealAnnOut }], internal: mealAnnouncementHandled.internal };
     }
 
     let imagePayload = null;
@@ -2404,10 +2474,11 @@ async function orchestrateConversation(input) {
       }
       if (!ingested?.ok) {
         const replyText = buildImageIngestFailureReply();
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        const imgFailOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'image_ingest_ng');
+        await appendTurn(input.userId, input.rawText || '[image]', imgFailOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: imgFailOut }],
           internal: { intentType: 'image_ingest_ng', responseMode: 'answer' }
         };
       }
@@ -2419,16 +2490,18 @@ async function orchestrateConversation(input) {
 
       labImageHandled = await maybeHandleLabImage(input, imagePayload);
       if (labImageHandled?.handled) {
-        await appendTurn(input.userId, input.rawText || '[image]', labImageHandled.replyText);
-        return { ok: true, replyMessages: [{ type: 'text', text: labImageHandled.replyText }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        const labImgOut = await withSurfaceReply(input, labImageHandled.replyText, { recentMessages, longMemory }, 'lab_image');
+        await appendTurn(input.userId, input.rawText || '[image]', labImgOut);
+        return { ok: true, replyMessages: [{ type: 'text', text: labImgOut }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
       }
       mealImageHandled = await maybeHandleMealImage(input, imagePayload);
       if (mealImageHandled?.handled) {
         if (mealImageHandled.meal?.recordReady) {
           await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
         }
-        await appendTurn(input.userId, input.rawText || '[image]', mealImageHandled.replyText);
-        return { ok: true, replyMessages: [{ type: 'text', text: mealImageHandled.replyText }], internal: { intentType: 'meal_image', responseMode: 'record' } };
+        const mealImgOut = await withSurfaceReply(input, mealImageHandled.replyText, { recentMessages, longMemory }, 'meal_image');
+        await appendTurn(input.userId, input.rawText || '[image]', mealImgOut);
+        return { ok: true, replyMessages: [{ type: 'text', text: mealImgOut }], internal: { intentType: 'meal_image', responseMode: 'record' } };
       }
 
       const imageKind = imageClassificationService.classifyImageByAnalysis({
@@ -2478,10 +2551,11 @@ async function orchestrateConversation(input) {
           console.error('[conversation_orchestrator] lab_like branch upsert error:', error?.message || error);
         }
         const replyText = buildLabPendingAckReply(labPanel, input.userId);
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        const labPendOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'lab_image_pending');
+        await appendTurn(input.userId, input.rawText || '[image]', labPendOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: labPendOut }],
           internal: { intentType: 'lab_image_pending', responseMode: 'answer' }
         };
       }
@@ -2493,10 +2567,11 @@ async function orchestrateConversation(input) {
           '自動判定が迷ったようなので、同じ写真でもう一度送るか、検査日の近くが読めるように寄せて送ってもらえると助かります。',
           '「TGは？」「HbA1cは？」のように項目名で聞いても大丈夫です。'
         ].join('\n');
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        const labHintOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'lab_image_route_hint');
+        await appendTurn(input.userId, input.rawText || '[image]', labHintOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: labHintOut }],
           internal: { intentType: 'lab_image_route_hint', responseMode: 'answer', routeDecision }
         };
       }
@@ -2506,10 +2581,11 @@ async function orchestrateConversation(input) {
           '食事の写真として受け止めています。',
           'いまの1枚だけでは料理の輪郭がはっきりしなかったので、全体が写る1枚をもう一度送ってもらえると助かります。'
         ].join('\n');
-        await appendTurn(input.userId, input.rawText || '[image]', replyText);
+        const mealHintOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'meal_image_route_hint');
+        await appendTurn(input.userId, input.rawText || '[image]', mealHintOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: mealHintOut }],
           internal: { intentType: 'meal_image_route_hint', responseMode: 'guided', routeDecision }
         };
       }
@@ -2517,7 +2593,8 @@ async function orchestrateConversation(input) {
       const isShoeContext = looksLikeShoeContext(shortMemory, recentMessages, text);
       const isMotionContext = looksLikeMotionContext(shortMemory, recentMessages, text);
       if (!isShoeContext && !isMotionContext && !routeDecision.isReliable) {
-        const replyMessage = buildImageRouteClarifyMessage();
+        const replyMessageRaw = buildImageRouteClarifyMessage();
+        const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'image_route_clarify');
         setPendingImageForClarification(input.userId, imagePayload, text);
         const persistFields = buildPendingImagePersistFields(imagePayload);
         await contextMemoryService.saveShortMemory(input.userId, {
@@ -2560,10 +2637,12 @@ async function orchestrateConversation(input) {
         }],
         sourceType: 'image',
       });
-      await appendTurn(input.userId, input.rawText || '[image]', replyText);
+      const motionIntent = (isShoeContext || routeDecision.route === 'shoe_wear') ? 'shoe_motion_image' : 'motion_image_fallback';
+      const motionOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, motionIntent);
+      await appendTurn(input.userId, input.rawText || '[image]', motionOut);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: replyText }],
+        replyMessages: [{ type: 'text', text: motionOut }],
         internal: {
           intentType: (isShoeContext || routeDecision.route === 'shoe_wear') ? 'shoe_motion_image' : 'motion_image_fallback',
           responseMode: 'answer',
@@ -2577,10 +2656,11 @@ async function orchestrateConversation(input) {
       const mediaPayload = await lineMediaService.getMediaPayload(input);
       if (!mediaPayload?.ok || mediaPayload.kind !== 'video') {
         const replyText = buildVideoIngestFailureReply();
-        await appendTurn(input.userId, input.rawText || '[video]', replyText);
+        const vidFailOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'video_ingest_ng');
+        await appendTurn(input.userId, input.rawText || '[video]', vidFailOut);
         return {
           ok: true,
-          replyMessages: [{ type: 'text', text: replyText }],
+          replyMessages: [{ type: 'text', text: vidFailOut }],
           internal: { intentType: 'video_ingest_ng', responseMode: 'answer' }
         };
       }
@@ -2591,10 +2671,12 @@ async function orchestrateConversation(input) {
         mediaPayload,
         textHint: text,
       });
-      await appendTurn(input.userId, input.rawText || '[video]', motionVideo.replyText);
+      const vidIntent = motionVideo.ok ? 'motion_video' : 'motion_video_fallback';
+      const motionVidOut = await withSurfaceReply(input, motionVideo.replyText, { recentMessages, longMemory }, vidIntent);
+      await appendTurn(input.userId, input.rawText || '[video]', motionVidOut);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: motionVideo.replyText }],
+        replyMessages: [{ type: 'text', text: motionVidOut }],
         internal: {
           intentType: motionVideo.ok ? 'motion_video' : 'motion_video_fallback',
           responseMode: 'answer',
@@ -2608,20 +2690,23 @@ async function orchestrateConversation(input) {
 
     const labSaveReply = await maybeHandleLabSaveAll(input, refreshedShortMemory);
     if (labSaveReply) {
-      await appendTurn(input.userId, input.rawText || '', labSaveReply);
-      return { ok: true, replyMessages: [{ type: 'text', text: labSaveReply }], internal: { intentType: 'lab_save', responseMode: 'answer' } };
+      const labSaveOut = await withSurfaceReply(input, labSaveReply, { recentMessages, longMemory }, 'lab_save');
+      await appendTurn(input.userId, input.rawText || '', labSaveOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: labSaveOut }], internal: { intentType: 'lab_save', responseMode: 'answer' } };
     }
 
     const labDateReply = await maybeHandleLabDateSelection(input, refreshedShortMemory);
     if (labDateReply) {
-      await appendTurn(input.userId, input.rawText || '', labDateReply);
-      return { ok: true, replyMessages: [{ type: 'text', text: labDateReply }], internal: { intentType: 'lab_date_select', responseMode: 'answer' } };
+      const labDateOut = await withSurfaceReply(input, labDateReply, { recentMessages, longMemory }, 'lab_date_select');
+      await appendTurn(input.userId, input.rawText || '', labDateOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: labDateOut }], internal: { intentType: 'lab_date_select', responseMode: 'answer' } };
     }
 
     const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory) || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
     if (labFollowUpReply) {
-      await appendTurn(input.userId, input.rawText || '', labFollowUpReply);
-      return { ok: true, replyMessages: [{ type: 'text', text: labFollowUpReply }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
+      const labFollowOut = await withSurfaceReply(input, labFollowUpReply, { recentMessages, longMemory }, 'lab_followup');
+      await appendTurn(input.userId, input.rawText || '', labFollowOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
     }
 
     const mealFollowUpHandled = await maybeHandleMealFollowUp(input, refreshedShortMemory);
@@ -2639,44 +2724,51 @@ async function orchestrateConversation(input) {
           carbs: Number(mealFollowUpHandled.adjusted?.estimatedNutrition?.carbs || 0)
         }
       );
-      await appendTurn(input.userId, input.rawText || '', mealFollowUpHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealFollowUpHandled.replyText }], internal: { intentType: 'meal_followup', responseMode: 'record' } };
+      const mealFollowOut = await withSurfaceReply(input, mealFollowUpHandled.replyText, { recentMessages, longMemory }, 'meal_followup');
+      await appendTurn(input.userId, input.rawText || '', mealFollowOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealFollowOut }], internal: { intentType: 'meal_followup', responseMode: 'record' } };
     }
 
     const exerciseCalorieHandled = await maybeHandleExerciseCalorieQuestion(input, text, longMemory);
     if (exerciseCalorieHandled) {
-      await appendTurn(input.userId, input.rawText || '', exerciseCalorieHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: exerciseCalorieHandled.replyText }], internal: { intentType: 'exercise_calorie', responseMode: 'answer' } };
+      const exerciseCalOut = await withSurfaceReply(input, exerciseCalorieHandled.replyText, { recentMessages, longMemory }, 'exercise_calorie');
+      await appendTurn(input.userId, input.rawText || '', exerciseCalOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: exerciseCalOut }], internal: { intentType: 'exercise_calorie', responseMode: 'answer' } };
     }
 
     const mealDraftQuestion = await maybeHandleMealDraftQuestion(input, refreshedShortMemory);
     if (mealDraftQuestion) {
-      await appendTurn(input.userId, input.rawText || '', mealDraftQuestion.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealDraftQuestion.replyText }], internal: { intentType: 'meal_draft_followup', responseMode: 'answer' } };
+      const mealDraftOut = await withSurfaceReply(input, mealDraftQuestion.replyText, { recentMessages, longMemory }, 'meal_draft_followup');
+      await appendTurn(input.userId, input.rawText || '', mealDraftOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealDraftOut }], internal: { intentType: 'meal_draft_followup', responseMode: 'answer' } };
     }
 
     if (intent === 'time_question') {
       const replyText = buildTimeAnswer();
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'time_question', responseMode: 'answer' } };
+      const timeOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'time_question');
+      await appendTurn(input.userId, input.rawText || '', timeOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: timeOut }], internal: { intentType: 'time_question', responseMode: 'answer' } };
     }
 
     if (intent === 'weight_lookup') {
       const replyText = await conversationFactResolverService.buildWeightLookupReply(input.userId);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weight_lookup', responseMode: 'answer' } };
+      const weightOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'weight_lookup');
+      await appendTurn(input.userId, input.rawText || '', weightOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: weightOut }], internal: { intentType: 'weight_lookup', responseMode: 'answer' } };
     }
 
     if (intent === 'memory_question') {
       const replyText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
+      const memoryOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'memory_question');
+      await appendTurn(input.userId, input.rawText || '', memoryOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: memoryOut }], internal: { intentType: 'memory_question', responseMode: 'answer' } };
     }
 
     if (intent === 'profile_summary') {
       const replyText = await conversationFactResolverService.buildProfileSummary(input.userId);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_summary', responseMode: 'answer' } };
+      const profileOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'profile_summary');
+      await appendTurn(input.userId, input.rawText || '', profileOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: profileOut }], internal: { intentType: 'profile_summary', responseMode: 'answer' } };
     }
 
     if (intent === 'weekly_report') {
@@ -2688,8 +2780,9 @@ async function orchestrateConversation(input) {
         todayRecords: records,
         recentDailyRecords
       });
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'weekly_report', responseMode: 'answer' } };
+      const weeklyOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'weekly_report');
+      await appendTurn(input.userId, input.rawText || '', weeklyOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: weeklyOut }], internal: { intentType: 'weekly_report', responseMode: 'answer' } };
     }
 
     if (intent === 'monthly_report') {
@@ -2699,15 +2792,17 @@ async function orchestrateConversation(input) {
         recentMessages,
         recentDailyRecords
       });
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'monthly_report', responseMode: 'answer' } };
+      const monthlyOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'monthly_report');
+      await appendTurn(input.userId, input.rawText || '', monthlyOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: monthlyOut }], internal: { intentType: 'monthly_report', responseMode: 'answer' } };
     }
 
     if (intent === 'point_summary') {
       const totalPoints = await contextMemoryService.getPoints(input.userId);
       const replyText = pointsService.buildPointSummary(totalPoints);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'point_summary', responseMode: 'answer' } };
+      const pointOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'point_summary');
+      await appendTurn(input.userId, input.rawText || '', pointOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: pointOut }], internal: { intentType: 'point_summary', responseMode: 'answer' } };
     }
 
     if (intent === 'admin_check') {
@@ -2715,36 +2810,41 @@ async function orchestrateConversation(input) {
       const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
       const totalPoints = await contextMemoryService.getPoints(input.userId);
       const replyText = buildAdminCheckReply({ longMemory: longMemoryLatest, records, points: totalPoints });
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'admin_check', responseMode: 'answer' } };
+      const adminOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory: longMemoryLatest }, 'admin_check');
+      await appendTurn(input.userId, input.rawText || '', adminOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: adminOut }], internal: { intentType: 'admin_check', responseMode: 'answer' } };
     }
 
     if (intent === 'today_records') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
       const replyText = buildTodayRecordsAnswer(records);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_records', responseMode: 'answer' } };
+      const todayRecOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_records');
+      await appendTurn(input.userId, input.rawText || '', todayRecOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: todayRecOut }], internal: { intentType: 'today_records', responseMode: 'answer' } };
     }
 
     if (intent === 'today_meal_totals') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
       const replyText = buildTodayMealTotalsAnswer(records);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_meal_totals', responseMode: 'answer' } };
+      const mealTotOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_totals');
+      await appendTurn(input.userId, input.rawText || '', mealTotOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealTotOut }], internal: { intentType: 'today_meal_totals', responseMode: 'answer' } };
     }
 
     if (intent === 'today_meal_balance') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
       const replyText = buildTodayMealBalanceAnswer(records);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'today_meal_balance', responseMode: 'answer' } };
+      const mealBalOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_balance');
+      await appendTurn(input.userId, input.rawText || '', mealBalOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealBalOut }], internal: { intentType: 'today_meal_balance', responseMode: 'answer' } };
     }
 
     if (intent === 'biweekly_meal_balance') {
       const recentDailyRecords = await contextMemoryService.getRecentDailyRecords(input.userId, 28);
       const replyText = buildBiweeklyMealBalanceAnswer(recentDailyRecords);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'biweekly_meal_balance', responseMode: 'answer' } };
+      const biweeklyOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'biweekly_meal_balance');
+      await appendTurn(input.userId, input.rawText || '', biweeklyOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: biweeklyOut }], internal: { intentType: 'biweekly_meal_balance', responseMode: 'answer' } };
     }
 
     // 意図が曖昧なときは分類処理へ無理に入れず、自然会話を優先する
@@ -2762,9 +2862,10 @@ async function orchestrateConversation(input) {
       ? null
       : detectStageEntryGuideIntent(text);
     if (stageGuideIntent) {
-      const replyMessage = buildGuideReplyMessage(stageGuideIntent, {
+      const replyMessageRaw = buildGuideReplyMessage(stageGuideIntent, {
         conversationState: getConversationState(input.userId),
       });
+      const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, stageGuideIntent);
       setConversationState(input.userId, { lastGuidanceType: stageGuideIntent, lastIntent: 'guided' });
       const replyText = replyMessage?.text || buildHelpAnswer();
       await appendTurn(input.userId, input.rawText || '', replyText);
@@ -2777,62 +2878,58 @@ async function orchestrateConversation(input) {
 
     const sportsHandled = await maybeHandleSportsConsultation(input);
     if (sportsHandled) {
-      await appendTurn(input.userId, input.rawText || '', sportsHandled.replyText);
+      const sportsOut = await withSurfaceReply(input, sportsHandled.replyText, { recentMessages, longMemory }, 'sports_consultation');
+      await appendTurn(input.userId, input.rawText || '', sportsOut);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: sportsHandled.replyText }],
+        replyMessages: [{ type: 'text', text: sportsOut }],
         internal: sportsHandled.internal
       };
     }
 
     const symptomCoreHandled = maybeHandleSymptomCore(input);
     if (symptomCoreHandled) {
-      await appendTurn(input.userId, input.rawText || '', symptomCoreHandled.replyText);
-      return {
-        ok: true,
-        replyMessages: [symptomCoreHandled.replyMessage],
-        internal: symptomCoreHandled.internal
-      };
+      return polishQuickReplyBundle(input, symptomCoreHandled, { recentMessages, longMemory }, 'symptom_core');
     }
 
     const homecareCoreHandled = maybeHandleHomecareCore(input);
     if (homecareCoreHandled) {
-      await appendTurn(input.userId, input.rawText || '', homecareCoreHandled.replyText);
-      return {
-        ok: true,
-        replyMessages: [homecareCoreHandled.replyMessage],
-        internal: homecareCoreHandled.internal
-      };
+      return polishQuickReplyBundle(input, homecareCoreHandled, { recentMessages, longMemory }, 'homecare_core');
     }
 
     if (intent === 'help') {
       if (/^無料体験$/u.test(text)) {
-        const replyMessage = buildGuideReplyMessage('trial', { conversationState: getConversationState(input.userId) });
+        const replyMessageRaw = buildGuideReplyMessage('trial', { conversationState: getConversationState(input.userId) });
+        const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'trial');
         const replyText = replyMessage?.text || buildHelpAnswer();
         await appendTurn(input.userId, input.rawText || '', replyText);
         return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'trial', responseMode: 'guided' } };
       }
       if (/^AIタイプ$/u.test(text)) {
-        const replyMessage = buildGuideReplyMessage('type', { conversationState: getConversationState(input.userId) });
+        const replyMessageRaw = buildGuideReplyMessage('type', { conversationState: getConversationState(input.userId) });
+        const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'type');
         const replyText = replyMessage?.text || buildHelpAnswer();
         await appendTurn(input.userId, input.rawText || '', replyText);
         return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'type', responseMode: 'guided' } };
       }
       if (/^プラン案内$/u.test(text)) {
-        const replyMessage = buildGuideReplyMessage('plan', { conversationState: getConversationState(input.userId) });
+        const replyMessageRaw = buildGuideReplyMessage('plan', { conversationState: getConversationState(input.userId) });
+        const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'plan');
         const replyText = replyMessage?.text || buildHelpAnswer();
         await appendTurn(input.userId, input.rawText || '', replyText);
         return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'plan', responseMode: 'guided' } };
       }
       if (/^食事の送り方$/u.test(text)) {
-        const replyMessage = buildGuideReplyMessage('meal_input_help', { conversationState: getConversationState(input.userId) });
+        const replyMessageRaw = buildGuideReplyMessage('meal_input_help', { conversationState: getConversationState(input.userId) });
+        const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'meal_input_help');
         const replyText = replyMessage?.text || buildHelpAnswer();
         await appendTurn(input.userId, input.rawText || '', replyText);
         return { ok: true, replyMessages: [replyMessage], internal: { intentType: 'meal_input_help', responseMode: 'guided' } };
       }
-      const replyText = buildHelpAnswer();
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'help', responseMode: 'answer' } };
+      const replyTextRaw = buildHelpAnswer();
+      const helpOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'help');
+      await appendTurn(input.userId, input.rawText || '', helpOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: helpOut }], internal: { intentType: 'help', responseMode: 'answer' } };
     }
 
     const inlineProfile = parseInlineProfile(text);
@@ -2840,27 +2937,31 @@ async function orchestrateConversation(input) {
       await contextMemoryService.mergeLongMemory(input.userId, inlineProfile);
       await conversationFactResolverService.persistInlineProfile(input.userId, inlineProfile);
       const replyText = await conversationFactResolverService.buildMemoryAnswer(input.userId);
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
+      const profUpOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'profile_update');
+      await appendTurn(input.userId, input.rawText || '', profUpOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: profUpOut }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
 
     if (/うっし〜って呼んで|うっし～って呼んで|うっし〜と呼んで|うっし～と呼んで/.test(text)) {
       await contextMemoryService.mergeLongMemory(input.userId, { preferredName: 'うっし〜' });
       await conversationFactResolverService.persistInlineProfile(input.userId, { preferredName: 'うっし〜' });
-      const replyText = 'いいですね。これからは「うっし〜」って呼びますね。';
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
+      const replyTextRaw = 'いいですね。これからは「うっし〜」って呼びますね。';
+      const nickOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'profile_nickname');
+      await appendTurn(input.userId, input.rawText || '', nickOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: nickOut }], internal: { intentType: 'profile_update', responseMode: 'answer' } };
     }
 
     if (/^AIタイプ変更$|^タイプ変更$|^人格変更$/.test(text)) {
-      const replyMessage = buildPersonaTypeQuickReplyMessage();
+      const replyMessageRaw = buildPersonaTypeQuickReplyMessage();
+      const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'ai_type_change_prompt');
       const replyText = replyMessage?.text || 'AIタイプ変更ですね。タイプ名を送ってください。';
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [replyMessage || { type: 'text', text: replyText }], internal: { intentType: 'ai_type_change_prompt', responseMode: 'guided' } };
     }
 
     if (/^雰囲気変更$|^話し方変更$|^スタイル変更$/.test(text)) {
-      const replyMessage = buildVoiceStyleQuickReplyMessage();
+      const replyMessageRaw = buildVoiceStyleQuickReplyMessage();
+      const replyMessage = await polishReplyMessage(input, replyMessageRaw, { recentMessages, longMemory }, 'voice_style_change_prompt');
       const replyText = replyMessage?.text || '雰囲気変更ですね。希望の雰囲気を送ってください。';
       await appendTurn(input.userId, input.rawText || '', replyText);
       return { ok: true, replyMessages: [replyMessage || { type: 'text', text: replyText }], internal: { intentType: 'voice_style_change_prompt', responseMode: 'guided' } };
@@ -2869,43 +2970,49 @@ async function orchestrateConversation(input) {
     const personaTypeLabel = maybeParsePersonaType(text);
     if (personaTypeLabel) {
       await contextMemoryService.mergeLongMemory(input.userId, { aiType: personaTypeLabel });
-      const replyText = `AIタイプを「${personaTypeLabel}」に更新しました。必要なら続けて「雰囲気変更」で温度感も合わせられます。`;
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'ai_type_update', responseMode: 'answer' } };
+      const replyTextRaw = `AIタイプを「${personaTypeLabel}」に更新しました。必要なら続けて「雰囲気変更」で温度感も合わせられます。`;
+      const aiTypeOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'ai_type_update');
+      await appendTurn(input.userId, input.rawText || '', aiTypeOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: aiTypeOut }], internal: { intentType: 'ai_type_update', responseMode: 'answer' } };
     }
 
     const voiceStyleLabel = maybeParseVoiceStyle(text);
     if (voiceStyleLabel) {
       await contextMemoryService.mergeLongMemory(input.userId, { voiceStyle: voiceStyleLabel });
-      const replyText = `雰囲気を「${voiceStyleLabel}」に更新しました。`;
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'voice_style_update', responseMode: 'answer' } };
+      const replyTextRaw = `雰囲気を「${voiceStyleLabel}」に更新しました。`;
+      const voiceOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'voice_style_update');
+      await appendTurn(input.userId, input.rawText || '', voiceOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: voiceOut }], internal: { intentType: 'voice_style_update', responseMode: 'answer' } };
     }
 
     if (/^(ライト|スタンダード|プレミアム)$/u.test(text)) {
       await contextMemoryService.mergeLongMemory(input.userId, { selectedPlan: text });
-      const replyText = `プラン候補を「${text}」として見ています。必要ならこのまま詳しい案内につなげます。`;
-      await appendTurn(input.userId, input.rawText || '', replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
+      const replyTextRaw = `プラン候補を「${text}」として見ています。必要ならこのまま詳しい案内につなげます。`;
+      const planSelOut = await withSurfaceReply(input, replyTextRaw, { recentMessages, longMemory }, 'plan_select');
+      await appendTurn(input.userId, input.rawText || '', planSelOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: planSelOut }], internal: { intentType: 'plan_select', responseMode: 'answer' } };
     }
 
     const simpleExerciseHandled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
     if (simpleExerciseHandled) {
-      await appendTurn(input.userId, input.rawText || '', simpleExerciseHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: simpleExerciseHandled.replyText }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
+      const exOut = await withSurfaceReply(input, simpleExerciseHandled.replyText, { recentMessages, longMemory }, 'exercise_record');
+      await appendTurn(input.userId, input.rawText || '', exOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: exOut }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
     }
 
     const simpleWeightHandled = await maybeHandleSimpleWeightRecord(input, text);
     if (simpleWeightHandled) {
-      await appendTurn(input.userId, input.rawText || '', simpleWeightHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: simpleWeightHandled.replyText }], internal: { intentType: 'weight_record', responseMode: 'record' } };
+      const wtOut = await withSurfaceReply(input, simpleWeightHandled.replyText, { recentMessages, longMemory }, 'weight_record');
+      await appendTurn(input.userId, input.rawText || '', wtOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: wtOut }], internal: { intentType: 'weight_record', responseMode: 'record' } };
     }
 
     const mealTextHandled = await maybeHandleMealText(input);
     if (mealTextHandled) {
       await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
-      await appendTurn(input.userId, input.rawText || '', mealTextHandled.replyText);
-      return { ok: true, replyMessages: [{ type: 'text', text: mealTextHandled.replyText }], internal: { intentType: 'meal_text', responseMode: 'record' } };
+      const mealTxtOut = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, 'meal_text');
+      await appendTurn(input.userId, input.rawText || '', mealTxtOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: mealTxtOut }], internal: { intentType: 'meal_text', responseMode: 'record' } };
     }
 
     await maybeStoreSimpleRecords(input.userId, text);
@@ -2918,11 +3025,29 @@ async function orchestrateConversation(input) {
     return { ok: true, replyMessages: [{ type: 'text', text: replyText }], internal: { intentType: 'normal', responseMode: 'empathy_plus_one_hint' } };
   } catch (error) {
     console.error('[conversation_orchestrator] fatal error:', error?.message || error);
-    return {
-      ok: true,
-      replyMessages: [{ type: 'text', text: buildConversationFallbackReply(input) }],
-      internal: { intentType: 'fallback', responseMode: 'empathy_only' }
-    };
+    const fallbackText = buildConversationFallbackReply(input);
+    try {
+      const longMemoryCatch = await contextMemoryService.getLongMemory(input.userId).catch(() => ({}));
+      const recentCatch = await contextMemoryService.getRecentMessages(input.userId, 20).catch(() => []);
+      const surfaced = await withSurfaceReply(input, fallbackText, { recentMessages: recentCatch, longMemory: longMemoryCatch }, 'fallback');
+      await appendTurn(input.userId, input.rawText || '', surfaced);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: surfaced }],
+        internal: { intentType: 'fallback', responseMode: 'empathy_only' }
+      };
+    } catch (_appendErr) {
+      try {
+        await appendTurn(input.userId, input.rawText || '', fallbackText);
+      } catch (_e2) {
+        // no-op: avoid masking original error if memory layer is unavailable
+      }
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: fallbackText }],
+        internal: { intentType: 'fallback', responseMode: 'empathy_only' }
+      };
+    }
   }
 }
 

@@ -46,6 +46,7 @@ function resolveReplyBudget(params = {}) {
   if (supportPreference.includes('短く返す')) return 3;
   if (/guided/.test(responseMode)) return 6;
   if (/empathy_only/.test(responseMode)) return 3;
+  if (/conversation_first|surface/.test(responseMode)) return 4;
   return 4;
 }
 
@@ -276,18 +277,20 @@ async function generateNaturalResponse(user_input, context = {}, data = {}) {
 
   const draft = normalizeText(data?.draftReply || data?.draft || '');
   const dataHints = [
-    draft ? `下書き（意味だけ参照）: ${draft}` : null,
-    data?.hasStructuredData ? '構造化データあり。必要な事実だけ短く反映。' : null
+    draft ? `事実下書き（数値・日付・単位は一字一句変えない）: ${draft}` : null,
+    data?.hasStructuredData ? '構造化データあり。事実は省略せず、言い回しだけ自然に。' : null
   ].filter(Boolean).join('\n');
 
   const hiddenContext = [
     '[最終返答ルール]',
-    '- 2〜3行の短文',
-    '- ChatGPTのように自然な会話',
-    '- やさしい口調',
-    '- 絵文字は0〜2個まで（毎回使わない）',
-    '- 説明しすぎない',
-    '- テンプレ感を出さない',
+    '- 2〜4行の短文。まずユーザーの問いに答える',
+    '- ChatGPTのように自然な会話。牛込先生らしい温かさは強すぎず、少しにじむ程度',
+    '- 下書きに含まれる数値・日付・単位・記号は事実として必ず残す（変更・捏造禁止）',
+    '- やさしい口調。説教・上から目線・機能説明の羅列は禁止',
+    '- 絵文字は0〜2個、会話全体で3回に1回程度まで（毎回は使わない）',
+    '- 推奨: 😊 👍 🍀 🌿 。禁止: 🤣 😜、🔥の多用、絵文字の連打',
+    '- 説明しすぎない。同じ冒頭・同じ締めを使わない',
+    '- テンプレ感・自動返信感を出さない',
     contextSummary ? `[会話コンテキスト]\n${contextSummary}` : null,
     dataHints ? `[補足データ]\n${dataHints}` : null
   ].filter(Boolean).join('\n');

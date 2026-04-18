@@ -221,7 +221,7 @@ function looksLikeProfilePayload(text) {
 
 function isOperationalMessage(text) {
   const safe = normalizeText(text);
-  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?|ストレッチ教えて/.test(safe);
+  return /痛い|つらい|しんどい|苦しい|疲れ|眠い|歩いた|走った|ジョギング|スクワット|運動|食べた|ごはん|朝ごはん|昼ごはん|夜ごはん|ラーメン|カレー|寿司|LDL|血液検査|写真|画像|記録|まとめ|週間報告|月間報告|使い方|覚えてる|何時|何月何日|無料体験|プラン|AIタイプ|コマンド|総カロリー|私の体重は|体重は\?|体脂肪率は\?|ストレッチ教えて|練習相談|練習メニュー|フォーム|メニュー.*考え|相談したい/.test(safe);
 }
 
 function buildCurrentProfileSummary(longMemory = {}, localProfile = {}) {
@@ -250,7 +250,7 @@ function answerDuringOnboarding(text, onboardingState, longMemory) {
   const profile = onboardingState?.answers?.profile || {};
   if (!safe) return null;
 
-  if (/質問できる|相談できる|何が質問|何を聞ける|使い方/.test(safe)) {
+  if (/質問できる|質問出来る|相談できる|相談出来る|何が質問|何を聞ける|使い方/.test(safe)) {
     return 'はい、できます。体調・食事・体重・血液検査のことはそのまま聞いて大丈夫です。入力はあとで続けられます。';
   }
   if (/私のプロフィール|プロフィールは|今のプロフィール/.test(safe)) {

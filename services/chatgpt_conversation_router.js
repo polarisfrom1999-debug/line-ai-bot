@@ -6,6 +6,13 @@ const aiChatService = require('./ai_chat_service');
 const contextMemoryService = require('./context_memory_service');
 
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'sticker', 'audio', 'video', 'file', 'location', 'other']);
+/**
+ * ルータ第2段の generateNaturalResponse をかけない intent。
+ * - meal_/lab_ 接頭辞は下でまとめて判定
+ * - オーケストレータで withSurfaceReply / polishReplyMessage / polishQuickReplyBundle
+ *   済みのものは二重の言い換え・API二重呼び出しを避ける（設計: 自然文は最終一段）
+ * - normal は buildNormalReply（generateReply）で既に会話生成済み
+ */
 const BYPASS_NATURALIZE_INTENTS = new Set([
   // 食事・運動・検査など、構造化された数値/項目表示はそのまま返す
   'meal_image',
@@ -28,7 +35,63 @@ const BYPASS_NATURALIZE_INTENTS = new Set([
   'monthly_report',
   'point_summary',
   'admin_check',
-  'image_route_clarify'
+  'image_route_clarify',
+  // オーケストレータ表面レイヤー済み（meal_/lab_ 以外）
+  'onboarding',
+  'constitution_survey',
+  'constitution_periodic_start',
+  'constitution_initial_start',
+  'constitution_answer_retry',
+  'constitution_question_progress',
+  'constitution_result',
+  'style_feedback',
+  'image_route_selected',
+  'image_route_rerun',
+  'image_route_lost',
+  'pain_thread',
+  'care_priority',
+  'annyui_support',
+  'image_ingest_ng',
+  'shoe_motion_image',
+  'motion_image',
+  'motion_image_fallback',
+  'motion_video',
+  'motion_video_fallback',
+  'video_ingest_ng',
+  'time_question',
+  'weight_lookup',
+  'memory_question',
+  'profile_summary',
+  'help',
+  'profile_update',
+  'ai_type_change_prompt',
+  'voice_style_change_prompt',
+  'ai_type_update',
+  'voice_style_update',
+  'plan_select',
+  'symptom_core',
+  'homecare_core',
+  'fallback',
+  'invalid',
+  'unsupported',
+  'trial',
+  'type',
+  'plan',
+  'meal_input_help',
+  'faq',
+  'food',
+  'exercise',
+  'weight',
+  'consult',
+  'lab',
+  'general_usage_help',
+  'weight_input_help',
+  'summary_view_help',
+  'persona_change_help',
+  'symptom_entry_help',
+  'homecare_entry_help',
+  'sports_entry_help',
+  'competition_entry_help'
 ]);
 
 function normalizeText(value) {
@@ -175,8 +238,11 @@ async function naturalizeResult(normalized, result) {
     intentType.startsWith('meal_') ||
     intentType.startsWith('lab_') ||
     BYPASS_NATURALIZE_INTENTS.has(intentType);
+  const isOrchestratorConversationComplete =
+    intentType === 'normal' ||
+    intentType.startsWith('sports_');
   const isImageRecordLike = messageType === 'image' && (responseMode === 'record' || isStructuredHealthIntent);
-  if (isStructuredHealthIntent || isImageRecordLike) return base;
+  if (isStructuredHealthIntent || isImageRecordLike || isOrchestratorConversationComplete) return base;
   const naturalized = [];
 
   const longMemory = await contextMemoryService.getLongMemory(normalized?.userId || '');
