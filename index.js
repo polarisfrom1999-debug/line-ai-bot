@@ -253,6 +253,7 @@ async function applyGlobalPersonaAdjustments(input, result) {
     'point_summary',
     'today_records',
     'today_meal_totals',
+    'meal_scope_query',
     'admin_check',
   ].includes(intentType);
 

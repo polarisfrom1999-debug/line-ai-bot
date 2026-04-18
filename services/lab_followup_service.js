@@ -169,6 +169,71 @@ function buildFlagSentence(row) {
   return '基準内です。';
 }
 
+function extractMetricFromRawText(rawText, targetCanon) {
+  const t = normalizeText(rawText).replace(/\s+/g, ' ');
+  if (!t) return null;
+  const num = (s) => String(s || '').replace(/,/g, '').trim();
+
+  const tryLdl = () => {
+    const patterns = [
+      /LDL[-‐\s]?C?\s*[：:]\s*(\d+(?:\.\d+)?)\s*(mg\/dL|mmol\/L)?/i,
+      /LDL[-‐\s]?C?\s+(\d+(?:\.\d+)?)\s*(mg\/dL|mmol\/L)?/i,
+      /悪玉[^\d]{0,6}(\d+(?:\.\d+)?)\s*(mg\/dL)?/i,
+    ];
+    for (const re of patterns) {
+      const m = t.match(re);
+      if (m) return { itemName: 'LDLコレステロール', value: num(m[1]), unit: normalizeText(m[2] || 'mg/dL') };
+    }
+    return null;
+  };
+
+  const tryTg = () => {
+    const patterns = [
+      /(?:中性脂肪|トリグリセリド)\s*[：:]\s*(\d+(?:\.\d+)?)\s*(mg\/dL)?/i,
+      /(?:中性脂肪|トリグリセリド)\s+(\d+(?:\.\d+)?)\s*(mg\/dL)?/i,
+      /\bTG\b\s*[：:]\s*(\d+(?:\.\d+)?)\s*(mg\/dL)?/i,
+      /\bTG\b\s+(\d+(?:\.\d+)?)\s*(mg\/dL)?/i,
+    ];
+    for (const re of patterns) {
+      const m = t.match(re);
+      if (m) return { itemName: '中性脂肪', value: num(m[1]), unit: normalizeText(m[2] || 'mg/dL') };
+    }
+    return null;
+  };
+
+  if (targetCanon === 'LDL') return tryLdl();
+  if (targetCanon === '中性脂肪') return tryTg();
+  return null;
+}
+
+function buildReadableInventoryReply(panel) {
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  const lines = items
+    .map((it) => {
+      const v = normalizeText(it?.value || it?.currentValue || '');
+      if (!v) return '';
+      const u = it.unit ? ` ${it.unit}` : '';
+      const f = it.flag ? ` ${it.flag}` : '';
+      return `${normalizeText(it.itemName || '項目')}: ${v}${u}${f}`;
+    })
+    .filter(Boolean);
+  const raw = normalizeText(panel?.rawText || '');
+  const rawClip = raw.length > 600 ? `${raw.slice(0, 600)}…` : raw;
+  const head = lines.length
+    ? ['読み取れている項目（保存済みのパネルから）:', ...lines.slice(0, 24)].join('\n')
+    : 'パネルの項目配列は空ですが、下の raw テキストから拾えるものはあります。';
+  const tail = rawClip ? `\n\n（画像からの生テキスト抜粋）\n${rawClip}` : '';
+  return `${head}${tail}`;
+}
+
+function buildExamDateQuickReply(panel) {
+  const dates = collectAvailableDates(panel);
+  const latest = normalizeDateToken(panel?.latestExamDate || panel?.examDate || '') || dates[dates.length - 1] || '';
+  if (latest) return `検査日（保存済み）: ${latest}${dates.length > 1 ? `（他候補: ${dates.join(' / ')}）` : ''}`;
+  if (dates.length) return `検査日の候補: ${dates.join(' / ')}`;
+  return '検査日はまだパネルに入っていません。画像をもう一度送るか、「〇〇年〇月〇日」と日付を送ってください。';
+}
+
 function buildItemReply(panel, targetName, selectedDate) {
   const row = findValueForDate(panel, targetName, selectedDate);
   if (!row) {
@@ -179,6 +244,11 @@ function buildItemReply(panel, targetName, selectedDate) {
       const unit = item.unit ? ` ${item.unit}` : '';
       const flag = item.flag ? ` ${item.flag}` : '';
       return `${item.itemName || label} は、いま読み取れている範囲では ${loose}${unit}${flag} です。保存の途中でも、画像から拾えた値としてお伝えします。`;
+    }
+    const fromRaw = extractMetricFromRawText(panel?.rawText || '', label);
+    if (fromRaw?.value) {
+      const u = fromRaw.unit ? ` ${fromRaw.unit}` : '';
+      return `${fromRaw.itemName} は、画像から抜き出したテキスト上では ${fromRaw.value}${u} として読めます（構造化itemsに無い場合のフォールバックです）。`;
     }
     const names = (panel?.items || []).map((it) => normalizeText(it?.itemName || '')).filter(Boolean);
     const hint = names.length ? `見えている候補: ${names.slice(0, 10).join(' / ')}` : 'まだ読める項目が増える可能性があるので、少し時間を置いてもう一度同じ項目名で聞いてください。';
@@ -264,4 +334,7 @@ module.exports = {
   buildTrendReply,
   shouldHandleTrendQuestion,
   shouldHandleSaveAll,
+  buildReadableInventoryReply,
+  buildExamDateQuickReply,
+  extractMetricFromRawText,
 };

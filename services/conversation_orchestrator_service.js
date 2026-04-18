@@ -48,6 +48,7 @@ const { buildExerciseMenuResponse } = require('./video_support_service');
 const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
+const mealLogQueryService = require('./meal_log_query_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -181,6 +182,145 @@ function isMealDayScopeQuestion(text) {
   return false;
 }
 
+function detectMealQuestionScope(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  if (labFollowupService.normalizeTarget(safe)) return null;
+  const mealish = /食事|食べた|メニュー|kcal|キロカロリー|カロリー|摂取|詳細|内訳|一覧|写真|運動|消費|今週|昨日|一昨日|今日|何食べ|件|^\d{1,2}月\d{1,2}日|20\d{2}-\d{2}-\d{2}/.test(safe);
+  if (!mealish) return null;
+
+  if (/食事と運動|摂取と消費|摂取.*消費|消費.*摂取|運動.*食事/.test(safe)) {
+    return { scope: 'meal_and_exercise' };
+  }
+
+  const iso = safe.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (iso) return { scope: 'specific_date', dateYmd: `${iso[1]}-${iso[2]}-${iso[3]}` };
+
+  const jp = safe.match(/(\d{1,2})月(\d{1,2})日/);
+  if (jp) {
+    const y = Number(formatTokyoYmd().slice(0, 4));
+    const mm = String(jp[1]).padStart(2, '0');
+    const dd = String(jp[2]).padStart(2, '0');
+    return { scope: 'specific_date', dateYmd: `${y}-${mm}-${dd}` };
+  }
+
+  if (/一昨日/.test(safe)) return { scope: 'day_before_yesterday' };
+  if (/今週|この1週間|週間の食事|週間.*カロリー/.test(safe)) return { scope: 'week' };
+  if (/昨日の|昨日は|昨日.*(食事|カロリー|kcal|食べた|摂取)/.test(safe)) return { scope: 'yesterday' };
+  if (/この食事|これは何|この写真|写真のカロリー|この写真のカロリー|直前の食事|さっきの写真|この1食/.test(safe)) return { scope: 'last_meal' };
+  if (/詳細|内訳|一覧|具体的に|何が入って/.test(safe)) return { scope: 'today', detailOnly: true };
+  if (
+    /今日の(食事|合計|カロリー|摂取|記録|一覧|内訳)/.test(safe) ||
+    /今日.*(食事|合計|カロリー|kcal|食べた|1日|摂取)/.test(safe) ||
+    /今日は.*(食事|カロリー|kcal|食べた)/.test(safe) ||
+    /今日何食べ/.test(safe)
+  ) {
+    return { scope: 'today' };
+  }
+  if (/今日.*(\d+\s*件|件数|何件)/.test(safe)) return { scope: 'today' };
+  if (isMealDayScopeQuestion(safe)) return { scope: 'today', totalsFocus: true };
+  return null;
+}
+
+function mealLogsToRecordMeals(logs) {
+  const list = mealLogQueryService.deduplicateMealLogs(Array.isArray(logs) ? logs : []);
+  return list.map((log) => ({
+    type: 'meal',
+    summary: log.mealLabel,
+    name: log.mealLabel,
+    items: log.foodItems,
+    food_items: log.foodItems,
+    kcal: log.kcal,
+    protein: log.protein,
+    fat: log.fat,
+    carbs: log.carbs,
+    estimatedNutrition: {
+      kcal: log.kcal,
+      protein: log.protein,
+      fat: log.fat,
+      carbs: log.carbs
+    },
+    confidence: log.confidence,
+    createdAt: log.eatenAt
+  }));
+}
+
+async function maybeHandleUnifiedMealScopeQuestion(input, text) {
+  if (input?.messageType !== 'text') return null;
+  const safe = normalizeText(text || input?.rawText || '');
+  const spec = detectMealQuestionScope(safe);
+  if (!spec) return null;
+
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+
+  if (spec.scope === 'meal_and_exercise') {
+    const logs = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const deduped = mealLogQueryService.deduplicateMealLogs(logs);
+    const msum = mealLogQueryService.sumMealLogs(deduped);
+    const records = await contextMemoryService.getTodayRecords(input.userId);
+    let burn = 0;
+    for (const ex of records.exercises || []) {
+      burn += Number(ex?.estimatedCalories != null ? ex.estimatedCalories : 0) || 0;
+    }
+    const lines = [
+      '【今日の摂取と運動（DBの食事ログ＋今日の運動記録）】',
+      `食事: ${msum.count}件 / 約${round1(msum.kcal)} kcal`,
+      buildMealNutritionLine({ protein: msum.protein, fat: msum.fat, carbs: msum.carbs }),
+      `運動の記録から拾えた消費目安: 約${round1(burn)} kcal（運動ログが無い場合は0に近いです）`,
+    ];
+    return { replyText: lines.join('\n') };
+  }
+
+  let fromYmd = todayYmd;
+  let toYmd = todayYmd;
+  let label = '今日';
+
+  if (spec.scope === 'yesterday') {
+    fromYmd = toYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -1);
+    label = '昨日';
+  } else if (spec.scope === 'day_before_yesterday') {
+    fromYmd = toYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -2);
+    label = '一昨日';
+  } else if (spec.scope === 'week') {
+    fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -6);
+    toYmd = todayYmd;
+    label = '直近7日（今週に近い範囲）';
+  } else if (spec.scope === 'specific_date') {
+    fromYmd = toYmd = spec.dateYmd;
+    label = spec.dateYmd;
+  } else if (spec.scope === 'last_meal') {
+    fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -30);
+    toYmd = todayYmd;
+  }
+
+  const rawLogs = await mealLogQueryService.getMealLogsByDateRange(input.userId, fromYmd, toYmd);
+  const logs = mealLogQueryService.deduplicateMealLogs(rawLogs);
+  const sum = mealLogQueryService.sumMealLogs(logs);
+
+  if (spec.scope === 'last_meal') {
+    const one = logs[0];
+    if (!one) {
+      return { replyText: '直近の食事ログ（DB）が見つかりませんでした。食事を記録してからもう一度聞いてください。' };
+    }
+    const lines = mealLogQueryService.formatMealLogDetails([one], { maxItems: 1 });
+    return { replyText: ['【直近1件の食事（DB）】', lines[0] || '—'].join('\n') };
+  }
+
+  const wantDetails = Boolean(spec.detailOnly) || /詳細|内訳|一覧|具体的|何が入って|何食べた/.test(safe);
+  const lines = [
+    `【${label}の食事（DB meal_logs、重複は除外済み）】`,
+    `件数: ${sum.count} / 合計 約${round1(sum.kcal)} kcal`,
+    buildMealNutritionLine({ protein: sum.protein, fat: sum.fat, carbs: sum.carbs }),
+  ];
+  if (wantDetails && sum.count > 0) {
+    lines.push('', '▼ 一覧（新しい順、最大25件）');
+    lines.push(...mealLogQueryService.formatMealLogDetails(logs, { maxItems: 25 }));
+  } else if (sum.count === 0) {
+    lines.push('', '該当日の食事ログは0件でした。');
+  }
+  return { replyText: lines.join('\n') };
+}
+
 function buildMealDayAnomalyNote(mealCount, totals) {
   const kcal = Number(totals?.kcal || 0);
   const n = Number(mealCount || 0);
@@ -198,7 +338,9 @@ async function maybeHandleMealDayScopeSummary(input, text) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!isMealDayScopeQuestion(safe)) return null;
 
-  const records = await contextMemoryService.getTodayRecords(input.userId);
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const raw = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+  const records = { meals: mealLogsToRecordMeals(raw) };
   const replyText = buildTodayMealTotalsAnswer(records, {
     dayScopeHeader: true,
     includeAnomalyNote: true
@@ -211,28 +353,48 @@ async function maybeHandleMealLogCorrection(input, text) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe) return null;
 
-  if (/さっきの食事を(消して|削除|取り消し)|この食事を(消して|削除)|直近の食事を(消して|削除)|一つ前の食事を(消して|削除)/.test(safe)) {
+  if (/さっきの食事を(消して|削除|取り消し)|この食事を(消して|削除)|直近の食事を(消して|削除)|一つ前の食事を(消して|削除)|食事を削除して|記録を削除/.test(safe)) {
     const res = await contextMemoryService.deleteLastMealLog(input.userId);
     if (!res.ok) {
       return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
     }
-    const totals = await contextMemoryService.getTodayRecords(input.userId);
-    return { replyText: ['直近の食事1件を削除し、合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const totals = { meals: mealLogsToRecordMeals(rawT) };
+    return { replyText: ['直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
   }
 
-  if (/昨日の分|昨日にして|昨日だった|日付は昨日|前の日の分|一つ前の日|食事.*昨日/.test(safe)) {
-    const y = contextMemoryService.addCalendarDaysToTokyoYmd(contextMemoryService.getTokyoTodayYmd(), -1);
+  if (/昨日の分|昨晩の食事|昨晩の分|これは昨晩|昨日食べた|昨日にして|昨日だった|日付は昨日|前の日の分|一つ前の日|食事.*昨日/.test(safe)) {
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const y = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -1);
     const res = await contextMemoryService.relocateLastMealToTokyoDate(input.userId, y);
     if (!res.ok) {
       return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。食事写真やテキストでもう一度送ってください。` };
     }
-    const totals = await contextMemoryService.getTodayRecords(input.userId);
-    return { replyText: [`直近の食事1件を「${y}」に移し、今日の合計を出し直しました。`, '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+    const rawToday = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const rawYest = await mealLogQueryService.getMealLogsByDateRange(input.userId, y, y);
+    const tRec = { meals: mealLogsToRecordMeals(rawToday) };
+    const yRec = { meals: mealLogsToRecordMeals(rawYest) };
+    const tSum = mealLogQueryService.sumMealLogs(mealLogQueryService.deduplicateMealLogs(rawToday));
+    const ySum = mealLogQueryService.sumMealLogs(mealLogQueryService.deduplicateMealLogs(rawYest));
+    return {
+      replyText: [
+        `DBの meal_logs.eaten_at を更新し、直近1件を「${y}」へ移しました（今日の合計からは外れています）。`,
+        '',
+        `【今日 ${todayYmd}】${tSum.count}件 / 約${round1(tSum.kcal)} kcal`,
+        buildTodayMealTotalsAnswer(tRec, { dayScopeHeader: false, includeAnomalyNote: true }),
+        '',
+        `【昨日 ${y}】${ySum.count}件 / 約${round1(ySum.kcal)} kcal`,
+        buildTodayMealTotalsAnswer(yRec, { dayScopeHeader: false, includeAnomalyNote: false }),
+      ].join('\n')
+    };
   }
 
-  if (/再計算|合計.*し直し|積算.*し直し|今日の合計.*もう一度/.test(safe)) {
-    const totals = await contextMemoryService.getTodayRecords(input.userId);
-    return { replyText: buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true }) };
+  if (/再計算|合計.*し直し|積算.*し直し|今日の合計.*もう一度|記録を修正して/.test(safe)) {
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const totals = { meals: mealLogsToRecordMeals(rawT) };
+    return { replyText: ['DBを再読込して今日の合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
   }
 
   return null;
@@ -244,7 +406,7 @@ function maybeHandleConversationFrustrationRepair(input, text) {
   if (!safe) return null;
   if (labFollowupService.normalizeTarget(safe)) return null;
   if (isMealDayScopeQuestion(safe)) return null;
-  if (!/(繰り返|同じこと|同じ返事|言い換え(だけ)?|また同じ|同じ文|テンプレ|ロボット|答えてない|ちゃんと答えて|別の話|違う話|修正して|直して|やり直して)/.test(safe)) return null;
+  if (!/(繰り返|同じこと|同じ返事|言い換え(だけ)?|また同じ|同じ文|テンプレ|ロボット|答えてない|ちゃんと答えて|別の話|違う話|直して|やり直して)/.test(safe)) return null;
   return {
     replyText: [
       'すみません、返し方がループに寄ってしまっていました。',
@@ -587,7 +749,7 @@ function buildTodayRecordsAnswer(records) {
 
   if (Array.isArray(records?.meals) && records.meals.length) {
     lines.push(`今日の食事記録: ${records.meals.length}件（保存データを読み直した結果です）`);
-    for (const meal of records.meals.slice(-5)) {
+    for (const meal of records.meals.slice(0, 8)) {
       const title = meal.summary || meal.name || '食事';
       const kcal = Number(meal.kcal || meal.estimatedNutrition?.kcal || 0);
       const food = mealFoodDescription(meal);
@@ -1043,7 +1205,7 @@ function buildMealReply(parsedMeal, options = {}) {
   return lines.join('\n');
 }
 
-function buildMealRecordPayload(text, parsedMeal) {
+function buildMealRecordPayload(text, parsedMeal, input = {}) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   return {
     type: 'meal',
@@ -1060,11 +1222,12 @@ function buildMealRecordPayload(text, parsedMeal) {
     amountRatio: Number(parsedMeal?.amountRatio || 1),
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
-    comment: parsedMeal?.comment || ''
+    comment: parsedMeal?.comment || '',
+    sourceLineMessageId: normalizeText(input?.messageId || '')
   };
 }
 
-function buildImageMealRecordPayload(parsedMeal) {
+function buildImageMealRecordPayload(parsedMeal, input = {}) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   const itemLabel = items.length ? items.join('、') : '食事写真';
 
@@ -1082,7 +1245,8 @@ function buildImageMealRecordPayload(parsedMeal) {
     carbs: Number(parsedMeal?.estimatedNutrition?.carbs || 0),
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
-    comment: parsedMeal?.comment || ''
+    comment: parsedMeal?.comment || '',
+    sourceLineMessageId: normalizeText(input?.messageId || '')
   };
 }
 
@@ -1102,6 +1266,13 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
   if (labFollowupService.shouldHandleTrendQuestion(safe)) {
     return labFollowupService.buildTrendReply(panel, safe);
+  }
+
+  if (/他に(?:は)?読めた|他に取れた|拾えてる項目|読めた記録|他の項目|記録を教えて/.test(safe)) {
+    return labFollowupService.buildReadableInventoryReply(panel);
+  }
+  if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) {
+    return labFollowupService.buildExamDateQuickReply(panel);
   }
 
   const targetName = labFollowupService.normalizeTarget(safe);
@@ -2886,6 +3057,17 @@ async function orchestrateConversation(input) {
       };
     }
 
+    const unifiedMealScope = await maybeHandleUnifiedMealScopeQuestion(input, text);
+    if (unifiedMealScope?.replyText) {
+      const mealScopeOut = await withSurfaceReply(input, unifiedMealScope.replyText, { recentMessages, longMemory }, 'meal_scope_query');
+      await appendTurn(input.userId, input.rawText || '', mealScopeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: mealScopeOut }],
+        internal: { intentType: 'meal_scope_query', responseMode: 'answer' }
+      };
+    }
+
     const labSaveReply = await maybeHandleLabSaveAll(input, refreshedShortMemory);
     if (labSaveReply) {
       const labSaveOut = await withSurfaceReply(input, labSaveReply, { recentMessages, longMemory }, 'lab_save');
@@ -3025,15 +3207,24 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'today_records') {
-      const records = await contextMemoryService.getTodayRecords(input.userId);
-      const replyText = buildTodayRecordsAnswer(records);
+      const base = await contextMemoryService.getTodayRecords(input.userId);
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawLogs = mealLogQueryService.deduplicateMealLogs(
+        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      );
+      const merged = { ...base, meals: mealLogsToRecordMeals(rawLogs) };
+      const replyText = buildTodayRecordsAnswer(merged);
       const todayRecOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_records');
       await appendTurn(input.userId, input.rawText || '', todayRecOut);
       return { ok: true, replyMessages: [{ type: 'text', text: todayRecOut }], internal: { intentType: 'today_records', responseMode: 'answer' } };
     }
 
     if (intent === 'today_meal_totals') {
-      const records = await contextMemoryService.getTodayRecords(input.userId);
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawLogs = mealLogQueryService.deduplicateMealLogs(
+        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      );
+      const records = { meals: mealLogsToRecordMeals(rawLogs) };
       const replyText = buildTodayMealTotalsAnswer(records, {
         dayScopeHeader: true,
         includeAnomalyNote: true
@@ -3044,7 +3235,11 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'today_meal_balance') {
-      const records = await contextMemoryService.getTodayRecords(input.userId);
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawLogs = mealLogQueryService.deduplicateMealLogs(
+        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      );
+      const records = { meals: mealLogsToRecordMeals(rawLogs) };
       const replyText = buildTodayMealBalanceAnswer(records);
       const mealBalOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_balance');
       await appendTurn(input.userId, input.rawText || '', mealBalOut);

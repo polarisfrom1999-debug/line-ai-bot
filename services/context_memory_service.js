@@ -321,6 +321,11 @@ async function persistDailyRecordToDb(lineUserId, record) {
       const foodItems = Array.isArray(record.food_items) && record.food_items.length
         ? record.food_items
         : (Array.isArray(record.items) ? record.items : (normalizeString(record.name) ? [normalizeString(record.name)] : []));
+      const rawModel = {
+        ...(typeof record === 'object' ? record : {}),
+        sourceLineMessageId: normalizeString(record.sourceLineMessageId || ''),
+        dedupeKey: normalizeString(record.dedupeKey || '')
+      };
       await supabase.from('meal_logs').insert({
         user_id: user.id,
         eaten_at: eatenAtIso,
@@ -332,7 +337,7 @@ async function persistDailyRecordToDb(lineUserId, record) {
         carbs_g: Number(record.carbs || record.estimatedNutrition?.carbs || 0) || null,
         confidence: record.confidence != null ? Number(record.confidence) : null,
         ai_comment: normalizeString(record.comment || record.amountNote || '食事記録'),
-        raw_model_json: record
+        raw_model_json: rawModel
       });
       return true;
     }
@@ -368,7 +373,7 @@ async function readDailyRecordsFromDb(lineUserId, days = 1) {
   const todayEnd = getTokyoDayRangeIso(1).startIso;
 
   const [meals, exercises, weights] = await Promise.all([
-    safeRows(() => supabase.from('meal_logs').select('eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g').eq('user_id', user.id).gte('eaten_at', range.startIso).lt('eaten_at', todayEnd).order('eaten_at', { ascending: true })),
+    safeRows(() => supabase.from('meal_logs').select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g, raw_model_json').eq('user_id', user.id).gte('eaten_at', range.startIso).lt('eaten_at', todayEnd).order('eaten_at', { ascending: true })),
     safeRows(() => supabase.from('activity_logs').select('logged_at, steps, walking_minutes, estimated_activity_kcal, exercise_summary, raw_detail_json').eq('user_id', user.id).gte('logged_at', range.startIso).lt('logged_at', todayEnd).order('logged_at', { ascending: true })),
     safeRows(() => supabase.from('weight_logs').select('logged_at, weight_kg, body_fat_pct').eq('user_id', user.id).gte('logged_at', range.startIso).lt('logged_at', todayEnd).order('logged_at', { ascending: true }))
   ]);
@@ -501,6 +506,7 @@ function mealPayloadFromDbRow(row, dateKey = '') {
   const items = Array.isArray(row?.food_items) ? row.food_items : [];
   return {
     type: 'meal',
+    id: row?.id,
     date: dateKey || formatTokyoDate(row?.eaten_at),
     summary: normalizeString(row?.meal_label || '食事'),
     name: normalizeString(row?.meal_label || '食事'),
@@ -525,7 +531,7 @@ async function fetchLatestMealLogRow(lineUserId) {
   if (!user || !supabase) return null;
   return safeMaybeSingle(() => supabase
     .from('meal_logs')
-    .select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g')
+    .select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g, raw_model_json')
     .eq('user_id', user.id)
     .order('eaten_at', { ascending: false })
     .limit(1)
@@ -574,8 +580,7 @@ async function relocateLastMealToTokyoDate(lineUserId, targetYmd) {
     return { ok: false, reason: normalizeString(error?.message || 'update_failed') };
   }
 
-  popLastMealFromDailyBucket(lineUserId, getTodayKey());
-  pushMealToDailyBucket(lineUserId, safeDate, { ...mealPayloadFromDbRow(row, safeDate), createdAt: eatenAt });
+  clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
   return { ok: true, mealId: row.id, targetYmd: safeDate };
 }
@@ -598,9 +603,17 @@ async function deleteLastMealLog(lineUserId) {
     return { ok: false, reason: normalizeString(error?.message || 'delete_failed') };
   }
 
-  popLastMealFromDailyBucket(lineUserId, getTodayKey());
+  clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
   return { ok: true, mealId: row.id };
+}
+
+function clearUserDailyRecordCache(lineUserId) {
+  ensureSnapshotLoaded();
+  const prefix = `${lineUserId}:`;
+  for (const key of [...dailyRecordStore.keys()]) {
+    if (key.startsWith(prefix)) dailyRecordStore.delete(key);
+  }
 }
 
 function getWeekKey() {
@@ -876,13 +889,46 @@ async function buildRecentSummary(userId, _days = 3) {
   return parts.join(' ') || '';
 }
 
+async function isDuplicateMealInsert(lineUserId, record) {
+  if (record?.type !== 'meal') return false;
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return false;
+  const sid = normalizeString(record.sourceLineMessageId || '');
+  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  const rows = await safeRows(() => supabase
+    .from('meal_logs')
+    .select('id, raw_model_json, estimated_kcal, meal_label, eaten_at')
+    .eq('user_id', user.id)
+    .gte('eaten_at', since)
+    .order('eaten_at', { ascending: false })
+    .limit(15));
+  if (sid) {
+    for (const r of rows) {
+      const raw = r?.raw_model_json && typeof r.raw_model_json === 'object' ? r.raw_model_json : {};
+      if (normalizeString(raw.sourceLineMessageId) === sid) return true;
+    }
+  }
+  const kcal = Number(record.kcal || record.estimatedNutrition?.kcal || 0);
+  const label = normalizeString(record.summary || record.name);
+  if (!label && !kcal) return false;
+  return rows.some((r) => Number(r.estimated_kcal || 0) === kcal && normalizeString(r.meal_label) === label);
+}
+
 async function addDailyRecord(userId, record) {
   ensureSnapshotLoaded();
   const key = `${userId}:${getTodayKey()}`;
   const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
   const next = clone(current);
 
-  if (record?.type === 'meal') next.meals.push({ ...record, createdAt: nowIso() });
+  if (record?.type === 'meal') {
+    if (await isDuplicateMealInsert(userId, record)) {
+      return {
+        ...clone(dailyRecordStore.get(key) || buildDailyRecordBucket()),
+        points: await getPoints(userId)
+      };
+    }
+    next.meals.push({ ...record, createdAt: nowIso() });
+  }
   if (record?.type === 'exercise') next.exercises.push({ ...record, createdAt: nowIso() });
   if (record?.type === 'weight') next.weights.push({ ...record, createdAt: nowIso() });
   if (record?.type === 'lab') next.labs.push({ ...record, createdAt: nowIso() });
@@ -910,7 +956,10 @@ function inferPointsFromRecord(record) {
 async function getTodayRecords(userId) {
   ensureSnapshotLoaded();
   const persisted = await readDailyRecordsFromDb(userId, 1);
-  if (persisted && persisted.size) return clone(persisted.get(getTodayKey()) || buildDailyRecordBucket());
+  // DBに繋げた場合は「今日」は常にDBスナップショットを優先（空でもメモリに逃げない）
+  if (persisted instanceof Map) {
+    return clone(persisted.get(getTodayKey()) || buildDailyRecordBucket());
+  }
   const key = `${userId}:${getTodayKey()}`;
   return clone(dailyRecordStore.get(key) || buildDailyRecordBucket());
 }
@@ -996,7 +1045,9 @@ async function upsertLabPanel(userId, panel) {
     reportDate: normalizeString(panel.reportDate || ''),
     examDates: Array.isArray(panel.examDates) ? panel.examDates.map(normalizeString).filter(Boolean) : [],
     rawExtractedItems: Array.isArray(panel.rawExtractedItems) ? clone(panel.rawExtractedItems) : [],
-    rawPayload: panel.rawPayload ? clone(panel.rawPayload) : null
+    rawPayload: panel.rawPayload ? clone(panel.rawPayload) : null,
+    rawText: normalizeString(panel.rawText || ''),
+    sourceImageId: normalizeString(panel.sourceImageId || '')
   };
 
   // 項目が空でも raw 行や検査日があれば保持し、follow-up で別名辞書から拾えるようにする。
