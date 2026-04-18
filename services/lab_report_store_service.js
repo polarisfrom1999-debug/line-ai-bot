@@ -252,6 +252,28 @@ async function getLatestItemForUser(userId, canonicalName) {
   }
 }
 
+async function getLatestItemForUserOnExamDate(userId, canonicalName, examDate) {
+  const safeUserId = normalizeText(userId);
+  const safeCanonical = toCanonicalName(canonicalName);
+  const safeExam = normalizeDate(examDate) || normalizeText(examDate);
+  if (!safeUserId || !safeCanonical || !safeExam) return null;
+  try {
+    const { data, error } = await supabase
+      .from('lab_report_items')
+      .select('canonical_name, display_name, value_numeric, value_text, unit, exam_date, created_at')
+      .eq('user_id', safeUserId)
+      .eq('canonical_name', safeCanonical)
+      .eq('exam_date', safeExam)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function getLatestTwoItemsForUser(userId, canonicalName) {
   const safeUserId = normalizeText(userId);
   const safeCanonical = toCanonicalName(canonicalName);
@@ -326,6 +348,7 @@ module.exports = {
   toCanonicalName,
   saveLabReport,
   getLatestItemForUser,
+  getLatestItemForUserOnExamDate,
   getLatestTwoItemsForUser,
   getRecentTrendForUser,
   getLatestTwoExamSnapshots,

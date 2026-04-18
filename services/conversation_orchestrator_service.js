@@ -1944,7 +1944,9 @@ async function maybeHandleLabImage(input, imagePayload) {
     }
 
     if (!hasItems) {
-      const cachedItemMap = labItemAliasService.buildLabItemMapFromPanel(lab || {});
+      const fromRaw = labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || '');
+      const fromPanel = labItemAliasService.buildLabItemMapFromPanel(lab || {});
+      const cachedItemMap = { ...fromRaw, ...fromPanel };
       const latestLabCache = {
         examDate: lab?.latestExamDate || lab?.examDate || '',
         items: cachedItemMap,
@@ -1954,7 +1956,10 @@ async function maybeHandleLabImage(input, imagePayload) {
       console.info('[lab-cache] save pending', {
         userId: input.userId,
         examDate: latestLabCache.examDate || '',
-        itemKeys: Object.keys(cachedItemMap)
+        itemKeys: Object.keys(cachedItemMap),
+        rawTextPresent: Boolean(normalizeText(lab?.rawText || '')),
+        rawExtractedKeyCount: Object.keys(fromRaw).length,
+        panelExtractedKeyCount: Object.keys(fromPanel).length
       });
       await contextMemoryService.saveShortMemory(input.userId, {
         lastImageType: 'lab_pending',
@@ -1998,16 +2003,25 @@ async function maybeHandleLabImage(input, imagePayload) {
         labPanel: lab,
         latestLabCache: {
           examDate: lab.latestExamDate || lab.examDate || '',
-          items: labItemAliasService.buildLabItemMapFromPanel(lab),
+          items: {
+            ...labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || ''),
+            ...labItemAliasService.buildLabItemMapFromPanel(lab)
+          },
           rawText: normalizeText(lab?.rawText || ''),
           updatedAt: new Date().toISOString()
         }
       }
     });
+    const mergedParsed = {
+      ...labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || ''),
+      ...labItemAliasService.buildLabItemMapFromPanel(lab)
+    };
     console.info('[lab-cache] save parsed', {
       userId: input.userId,
       examDate: lab?.latestExamDate || lab?.examDate || '',
-      itemKeys: Object.keys(labItemAliasService.buildLabItemMapFromPanel(lab))
+      itemKeys: Object.keys(mergedParsed),
+      rawTextPresent: Boolean(normalizeText(lab?.rawText || '')),
+      rawExtractedKeyCount: Object.keys(labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || '')).length
     });
 
     await contextMemoryService.upsertLabPanel(input.userId, lab);

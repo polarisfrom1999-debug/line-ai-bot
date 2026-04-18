@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 
 const labDocumentStoreService = require('./lab_document_store_service');
 const labFollowupService = require('./lab_followup_service');
@@ -10,63 +10,34 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
-const COMPARE_KEYS = ['TG', 'HBA1C', 'LDL', 'HDL', 'GLU', 'AST', 'ALT', 'WBC'];
+const ALLOWED_FOLLOW_TARGETS = new Set(['LDL', 'HDL', 'HbA1c', '中性脂肪', 'AST', 'ALT', '血糖', 'クレアチニン']);
+const ALLOWED_CANONICAL_KEYS = new Set(['ldl', 'hdl', 'tg', 'hba1c', 'ast', 'alt', 'glu', 'cr']);
 
-function hasExplicitLabItemMention(text) {
-  const safe = normalizeText(text);
-  if (!safe) return false;
-  if (labItemAliasService.normalizeLabCanonicalKey(safe)) return true;
-  if (labFollowupService.normalizeTarget(safe)) return true;
+/**
+ * lab-qna に入れてはいけない一般会話・他ドメイン
+ */
+function isNonLabQuestionForLabQna(safe) {
+  if (/食事|カロリー|kcal|キロカロリー|食べた|メニュー|何食べ|摂取.*食|合計.*食/.test(safe)) return true;
+  if (/運動|消費カロ|歩数|筋トレ/.test(safe)) return true;
+  if (/体重|体脂肪/.test(safe)) return true;
+  if (/週間報告|月間報告|今週の食|週間.*食|週間.*カロリー/.test(safe)) return true;
+  if (/データがおかしい|おかしくないか|ずれてる|重複|件数がおかしい/.test(safe)) return true;
+  if (/削除して|記録を修正|再計算|昨日の分|昨晩|一昨日/.test(safe)) return true;
+  if ((/詳細|内訳|一覧/.test(safe)) && !/(血液|検査|LDL|TG|HbA1c|脂質|肝|腎|項目|中性脂肪)/i.test(safe)) return true;
   return false;
 }
 
-function isOverallLabCompareQuestion(text) {
-  const safe = normalizeText(text);
-  if (!safe || hasExplicitLabItemMention(safe)) return false;
-  return /前回より|前回と(比べ|比較|くらべ)|前と(比べ|比較|くらべ)|前回はどう|まとめてどう|全体(的)?どう|検査(結果)?の流れ|結果はどう/.test(safe);
-}
-
-function formatRowBrief(row) {
-  if (!row) return '';
-  const v = normalizeText(row.value_text || row.value_numeric || '');
-  const u = normalizeText(row.unit || '');
-  return v ? `${v}${u ? ` ${u}` : ''}` : '';
-}
-
-async function buildOverallLabCompareReply(userId) {
-  const { dates, byDate } = await labReportStoreService.getLatestTwoExamSnapshots(userId);
-  if (dates.length < 2) {
-    return dates.length === 1
-      ? `いま保存できている検査日は ${dates[0]} だけです。前回比には、もう1回分の検査画像を送ってもらえると出せます。`
-      : 'まだ比較できる検査データが足りません。血液検査の画像を1枚送ってもらえると、日付つきで整理します。';
-  }
-  const [latestD, prevD] = dates;
-  const lines = [];
-  for (const key of COMPARE_KEYS) {
-    const cur = byDate[latestD]?.[key];
-    const prev = byDate[prevD]?.[key];
-    if (!cur && !prev) continue;
-    const label = cur?.display_name || prev?.display_name || labItemAliasService.canonicalToLabel(key.toLowerCase()) || key;
-    const curV = formatRowBrief(cur);
-    const prevV = formatRowBrief(prev);
-    if (curV && prevV) {
-      const a = Number(cur.value_numeric);
-      const b = Number(prev.value_numeric);
-      if (Number.isFinite(a) && Number.isFinite(b)) {
-        const delta = Math.round((a - b) * 10) / 10;
-        const dir = delta > 0 ? '上がっています' : delta < 0 ? '下がっています' : 'ほぼ同じです';
-        lines.push(`${label}: 今回 ${curV} / 前回 ${prevV}（差 ${delta > 0 ? '+' : ''}${delta}、${dir}）`);
-      } else {
-        lines.push(`${label}: 今回 ${curV} / 前回 ${prevV}`);
-      }
-    } else if (curV) {
-      lines.push(`${label}: 今回 ${curV}（前回はデータなし）`);
-    }
-  }
-  if (!lines.length) {
-    return `${latestD} と ${prevD} の2回分はあるのですが、主要項目の数値がまだ拾えていません。「TGは？」のように項目名で聞いてもらえると返しやすいです。`;
-  }
-  return [`直近の検査を ${prevD} → ${latestD} で比べると、`, ...lines.slice(0, 5)].join('\n');
+/**
+ * lab-qna に通す血液検査 follow-up のみ（ホワイトリスト）
+ */
+function isStrictLabQnaQuestion(safe) {
+  if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) return true;
+  if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) return true;
+  const nt = labFollowupService.normalizeTarget(safe);
+  if (nt && ALLOWED_FOLLOW_TARGETS.has(nt)) return true;
+  const k = labItemAliasService.normalizeLabCanonicalKey(safe);
+  if (k && ALLOWED_CANONICAL_KEYS.has(k)) return true;
+  return false;
 }
 
 function buildValueReply(item = {}, examDate = '') {
@@ -78,26 +49,29 @@ function buildValueReply(item = {}, examDate = '') {
   return `${label || 'この項目'}は ${value}${unit ? ` ${unit}` : ''} でした。`;
 }
 
-function buildCloseCandidatesReply(cacheItems = {}, fallbackLabel = '') {
-  const keys = Object.keys(cacheItems || {});
-  if (!keys.length) return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。`;
-  const labels = keys
-    .map((key) => cacheItems[key]?.label || labItemAliasService.canonicalToLabel(key))
-    .filter(Boolean)
-    .slice(0, 6);
-  if (!labels.length) return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。`;
-  return `${fallbackLabel || 'その項目'}はこの画像では確認できませんでした。見えている候補: ${labels.join(' / ')}`;
-}
-
 function readLatestLabCache(shortMemory = {}, panel = null) {
   const cached = shortMemory?.followUpContext?.latestLabCache;
   const panelItems = labItemAliasService.buildLabItemMapFromPanel(panel || {});
   const panelKeys = Object.keys(panelItems);
 
-  // items が {} のときも truthy になり得るため、キーが無ければパネル由来で補完する
   if (cached && cached.items && typeof cached.items === 'object') {
     const cacheKeys = Object.keys(cached.items);
-    if (cacheKeys.length > 0) return cached;
+    if (cacheKeys.length > 0) {
+      return {
+        ...cached,
+        rawText: normalizeText(cached.rawText || panel?.rawText || '')
+      };
+    }
+    const raw = normalizeText(cached.rawText || panel?.rawText || '');
+    const fromRaw = raw ? labItemAliasService.buildLabItemMapFromRawText(raw) : {};
+    if (Object.keys(fromRaw).length > 0) {
+      return {
+        ...cached,
+        examDate: normalizeText(cached.examDate || panel?.latestExamDate || panel?.examDate || ''),
+        items: { ...fromRaw },
+        rawText: raw
+      };
+    }
     if (panelKeys.length > 0) {
       return {
         ...cached,
@@ -106,7 +80,7 @@ function readLatestLabCache(shortMemory = {}, panel = null) {
         rawText: normalizeText(cached.rawText || panel?.rawText || '')
       };
     }
-    return cached;
+    return { ...cached, rawText: raw };
   }
 
   if (!Object.keys(panelItems).length) return null;
@@ -118,156 +92,180 @@ function readLatestLabCache(shortMemory = {}, panel = null) {
   };
 }
 
+function syntheticPanelFromSession(shortMemory, latestCache) {
+  const base = shortMemory?.followUpContext?.labPanel || {};
+  const fromMap = latestCache?.items || {};
+  const syntheticItems = Object.entries(fromMap).map(([, v]) => ({
+    itemName: v.label || v.rawLabel || '',
+    value: v.value,
+    unit: v.unit || ''
+  }));
+  const items = Array.isArray(base.items) && base.items.length ? base.items : syntheticItems;
+  return {
+    ...base,
+    items,
+    rawText: normalizeText(latestCache?.rawText || base.rawText || ''),
+    examDate: latestCache?.examDate || base.examDate,
+    latestExamDate: latestCache?.examDate || base.latestExamDate || base.examDate
+  };
+}
+
+async function resolveCanonicalWithFallbacks(lineUserId, canonical, latestCache, sessionPanel) {
+  const availableKeys = Object.keys(latestCache?.items || {});
+  let dbPanelHadKeys = [];
+
+  if (canonical && latestCache?.items?.[canonical]) {
+    return {
+      source: 'latestCache.items',
+      item: latestCache.items[canonical],
+      examDate: latestCache.examDate || ''
+    };
+  }
+
+  const rawOnly = labItemAliasService.buildLabItemMapFromRawText(latestCache?.rawText || '');
+  if (canonical && rawOnly[canonical]) {
+    return {
+      source: 'latestCache.rawText_reparse',
+      item: rawOnly[canonical],
+      examDate: latestCache?.examDate || ''
+    };
+  }
+
+  const dbPanel = (await contextMemoryService.getLatestLabPanel(lineUserId))
+    || (await labDocumentStoreService.getLatestPanelForUser(lineUserId))
+    || null;
+  const dbMap = labItemAliasService.buildLabItemMapFromPanel(dbPanel || {});
+  dbPanelHadKeys = Object.keys(dbMap);
+  if (canonical && dbMap[canonical]) {
+    return {
+      source: 'db_latest_lab_panel',
+      item: dbMap[canonical],
+      examDate: normalizeText(latestCache?.examDate || dbPanel?.latestExamDate || dbPanel?.examDate || '')
+    };
+  }
+
+  const examDate = normalizeText(latestCache?.examDate || '');
+  if (canonical && examDate) {
+    const row = await labReportStoreService.getLatestItemForUserOnExamDate(lineUserId, canonical, examDate);
+    if (row) {
+      const value = normalizeText(row.value_text || String(row.value_numeric ?? ''));
+      if (value) {
+        return {
+          source: 'db_same_exam_date',
+          item: {
+            label: row.display_name || labItemAliasService.canonicalToLabel(canonical),
+            value,
+            unit: normalizeText(row.unit || '')
+          },
+          examDate: row.exam_date || examDate
+        };
+      }
+    }
+  }
+
+  return {
+    source: 'miss',
+    item: null,
+    examDate: latestCache?.examDate || '',
+    availableKeys,
+    dbPanelHadKeys
+  };
+}
+
 async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   const safe = normalizeText(text);
   if (!safe) return null;
 
-  if (isOverallLabCompareQuestion(safe)) {
-    return buildOverallLabCompareReply(lineUserId);
+  if (isNonLabQuestionForLabQna(safe)) {
+    console.info('[lab-qna] reject', { reason: 'non_lab_question', question: safe });
+    return null;
   }
 
-  const panel = shortMemory?.followUpContext?.labPanel
-    || await contextMemoryService.getLatestLabPanel(lineUserId)
-    || await labDocumentStoreService.getLatestPanelForUser(lineUserId)
-    || null;
-  const latestCache = readLatestLabCache(shortMemory, panel);
-  if (!panel && !latestCache) return null;
+  const memCache = shortMemory?.followUpContext?.latestLabCache;
+  const latestCacheExists = Boolean(memCache && typeof memCache === 'object');
+
+  if (!isStrictLabQnaQuestion(safe)) {
+    console.info('[lab-qna] reject', {
+      reason: 'not_whitelisted_lab_followup',
+      question: safe,
+      latestCacheExists
+    });
+    return null;
+  }
+
+  if (!latestCacheExists) {
+    console.info('[lab-qna] reject', {
+      reason: 'no_latest_lab_cache_session',
+      question: safe,
+      hint: 'need_lab_image_session_short_memory'
+    });
+    return null;
+  }
+
+  const sessionPanel = shortMemory?.followUpContext?.labPanel || null;
+  let latestCache = readLatestLabCache(shortMemory, sessionPanel);
+  if (!latestCache) {
+    console.info('[lab-qna] reject', { reason: 'readLatestLabCache_empty', question: safe });
+    return null;
+  }
 
   const canonicalFromQuestion = labItemAliasService.normalizeLabCanonicalKey(safe);
   const targetName = labFollowupService.normalizeTarget(safe);
-  console.info('[lab-qna] question', {
+  const availableAfterRead = Object.keys(latestCache.items || {});
+
+  console.info('[lab-qna] enter', {
+    reason: 'whitelist_and_lab_image_session',
     userId: lineUserId,
     question: safe,
     normalizedKey: canonicalFromQuestion || '',
-    latestCacheExists: Boolean(latestCache)
+    targetName: targetName || '',
+    latestCacheExists: true,
+    availableKeys: availableAfterRead,
+    rawTextPresent: Boolean(normalizeText(latestCache.rawText || '')),
+    examDate: latestCache.examDate || ''
   });
 
-  if (canonicalFromQuestion && latestCache?.items?.[canonicalFromQuestion]) {
-    const hit = latestCache.items[canonicalFromQuestion];
-    console.info('[lab-qna] cache hit', {
-      userId: lineUserId,
-      normalizedKey: canonicalFromQuestion,
-      matchedLabel: hit?.label || ''
+  if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildReadableInventoryReply(p);
+  }
+
+  if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildExamDateQuickReply(p);
+  }
+
+  const canonical = canonicalFromQuestion
+    || (targetName ? labItemAliasService.normalizeLabCanonicalKey(targetName) : '');
+  if (!canonical || !ALLOWED_CANONICAL_KEYS.has(canonical)) {
+    console.info('[lab-qna] reject', {
+      reason: 'no_allowed_item_key_in_question',
+      question: safe,
+      normalizedKey: canonical || ''
     });
-    return buildValueReply(hit, latestCache.examDate || '');
+    return null;
   }
 
-  if (canonicalFromQuestion && latestCache?.items && !latestCache.items[canonicalFromQuestion]) {
-    console.info('[lab-qna] cache miss', {
+  const resolved = await resolveCanonicalWithFallbacks(lineUserId, canonical, latestCache, sessionPanel);
+  if (resolved.item && resolved.source !== 'miss') {
+    console.info('[lab-qna] resolved', {
       userId: lineUserId,
-      normalizedKey: canonicalFromQuestion,
-      availableKeys: Object.keys(latestCache.items || {})
+      normalizedKey: canonical,
+      source: resolved.source,
+      availableKeys: availableAfterRead
     });
+    return buildValueReply(resolved.item, resolved.examDate || '');
   }
 
-  // 質問から canonical key が取れていれば、targetName が弱くても DB 直接検索を行う
-  if (canonicalFromQuestion) {
-    const latestTwo = await labReportStoreService.getLatestTwoItemsForUser(lineUserId, canonicalFromQuestion);
-    if (latestTwo.length) {
-      const latest = latestTwo[0];
-      const previous = latestTwo[1] || null;
-      const latestLabel = `${latest.value_text || latest.value_numeric}${latest.unit ? ` ${latest.unit}` : ''}`;
-      if (!previous) {
-        return `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel} です。`;
-      }
-      const prevLabel = `${previous.value_text || previous.value_numeric}${previous.unit ? ` ${previous.unit}` : ''}`;
-      const nowNum = Number(latest.value_numeric);
-      const prevNum = Number(previous.value_numeric);
-      if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
-        const delta = Math.round((nowNum - prevNum) * 10) / 10;
-        const tendency = delta > 0 ? '上がり傾向' : delta < 0 ? '下がり傾向' : '横ばい';
-        return [
-          `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel} です。`,
-          `前回 ${previous.exam_date || '前回'} は ${prevLabel} で、差は ${delta > 0 ? '+' : ''}${delta}${latest.unit ? ` ${latest.unit}` : ''}（${tendency}）です。`
-        ].join('\n');
-      }
-      return `${latest.display_name || labItemAliasService.canonicalToLabel(canonicalFromQuestion)} は ${latest.exam_date || '最新'} で ${latestLabel}、前回 ${previous.exam_date || '前回'} は ${prevLabel} です。`;
-    }
-  }
-
-  if (targetName) {
-    const canonical = labReportStoreService.toCanonicalName(targetName);
-    if (canonical) {
-      const latestTwo = await labReportStoreService.getLatestTwoItemsForUser(lineUserId, canonical);
-      if (latestTwo.length) {
-        const latest = latestTwo[0];
-        const previous = latestTwo[1] || null;
-        const latestLabel = `${latest.value_text || latest.value_numeric}${latest.unit ? ` ${latest.unit}` : ''}`;
-        if (!previous) {
-          return `${latest.display_name || targetName} は ${latest.exam_date || '最新'} で ${latestLabel} です。`;
-        }
-        const prevLabel = `${previous.value_text || previous.value_numeric}${previous.unit ? ` ${previous.unit}` : ''}`;
-        const nowNum = Number(latest.value_numeric);
-        const prevNum = Number(previous.value_numeric);
-        if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
-          const delta = Math.round((nowNum - prevNum) * 10) / 10;
-          const tendency = delta > 0 ? '上がり傾向' : delta < 0 ? '下がり傾向' : '横ばい';
-          return [
-            `${latest.display_name || targetName} は ${latest.exam_date || '最新'} で ${latestLabel} です。`,
-            `前回 ${previous.exam_date || '前回'} は ${prevLabel} で、差は ${delta > 0 ? '+' : ''}${delta}${latest.unit ? ` ${latest.unit}` : ''}（${tendency}）です。`
-          ].join('\n');
-        }
-        return `${latest.display_name || targetName} は ${latest.exam_date || '最新'} で ${latestLabel}、前回 ${previous.exam_date || '前回'} は ${prevLabel} です。`;
-      }
-    }
-
-    const history = await contextMemoryService.findLabItemTrend(lineUserId, targetName);
-    if (history.length) {
-      const latest = history[history.length - 1];
-      const previous = history.length >= 2 ? history[history.length - 2] : null;
-      const latestLabel = `${latest.value}${latest.unit ? ` ${latest.unit}` : ''}${latest.flag ? ` ${latest.flag}` : ''}`;
-      if (!previous) return `${targetName} は最新で ${latest.date} に ${latestLabel} です。`;
-
-      const prevLabel = `${previous.value}${previous.unit ? ` ${previous.unit}` : ''}${previous.flag ? ` ${previous.flag}` : ''}`;
-      const nowNum = Number(latest.value);
-      const prevNum = Number(previous.value);
-      if (Number.isFinite(nowNum) && Number.isFinite(prevNum)) {
-        const delta = Math.round((nowNum - prevNum) * 10) / 10;
-        const tendency = delta > 0 ? '高め傾向' : delta < 0 ? '改善傾向' : '横ばい';
-        return [
-          `${targetName} は最新 ${latest.date} で ${latestLabel} です。`,
-          `前回 ${previous.date} は ${prevLabel} なので、差は ${delta > 0 ? '+' : ''}${delta}${latest.unit ? ` ${latest.unit}` : ''}（${tendency}）です。`
-        ].join('\n');
-      }
-      return `${targetName} は最新 ${latest.date} で ${latestLabel}、前回 ${previous.date} は ${prevLabel} です。`;
-    }
-  }
-
-  if (labFollowupService.shouldHandleTrendQuestion(safe)) {
-    const hintCanonical = labReportStoreService.toCanonicalName(safe);
-    if (hintCanonical) {
-      const trendRows = await labReportStoreService.getRecentTrendForUser(lineUserId, hintCanonical, 5);
-      if (trendRows.length >= 2) {
-        const latest = trendRows[0];
-        const oldest = trendRows[trendRows.length - 1];
-        const nowNum = Number(latest.value_numeric);
-        const oldNum = Number(oldest.value_numeric);
-        if (Number.isFinite(nowNum) && Number.isFinite(oldNum)) {
-          const delta = Math.round((nowNum - oldNum) * 10) / 10;
-          const tendency = delta > 0 ? '上がり傾向' : delta < 0 ? '下がり傾向' : '横ばい';
-          const path = [...trendRows]
-            .reverse()
-            .map((row) => `${row.exam_date || '-'} ${row.value_text || row.value_numeric}`)
-            .join(' / ');
-          return [
-            `${latest.display_name || hintCanonical} は全体として ${tendency} です。`,
-            `最新 ${latest.exam_date || '最新'}: ${latest.value_text || latest.value_numeric}${latest.unit ? ` ${latest.unit}` : ''} / 初回 ${oldest.exam_date || '初回'}: ${oldest.value_text || oldest.value_numeric}${oldest.unit ? ` ${oldest.unit}` : ''}`,
-            `流れ: ${path}`
-          ].join('\n');
-        }
-      }
-    }
-
-    const trend = labFollowupService.buildTrendReply(panel || {}, safe);
-    if (trend && !/まだ傾向を安定してまとめ切れていません/.test(trend)) return trend;
-  }
-
-  if (!targetName && !canonicalFromQuestion) return null;
-  if (targetName && panel) {
-    const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
-    return labFollowupService.buildItemReply(panel, targetName, selectedDate);
-  }
-  return buildCloseCandidatesReply(latestCache?.items || {}, targetName || labItemAliasService.canonicalToLabel(canonicalFromQuestion));
+  const label = labItemAliasService.canonicalToLabel(canonical) || canonical;
+  const examPart = resolved.examDate ? `（${resolved.examDate}）` : '';
+  console.info('[lab-qna] miss_all_fallbacks', {
+    userId: lineUserId,
+    normalizedKey: canonical,
+    availableKeys: resolved.availableKeys || [],
+    dbPanelKeysSample: (resolved.dbPanelHadKeys || []).slice(0, 12)
+  });
+  return `今回は検査日${examPart}までは読めていますが、${label} の数値の保存・抽出がまだ十分でないため、この場ではお伝えできません。画像をもう一度送るか、紙の数値を書いてください。`;
 }
 
 module.exports = {

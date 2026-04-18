@@ -157,9 +157,53 @@ function buildLabItemMapFromPanel(panel = {}) {
   return map;
 }
 
+/**
+ * OCR/生テキストから主要項目を拾い、buildLabItemMapFromPanel と同形の map を返す。
+ * DB 保存前の latestLabCache 補完・lab-qna の cache miss フォールバックに使う。
+ */
+function buildLabItemMapFromRawText(rawText = '') {
+  const safe = normalizeText(rawText);
+  if (!safe) return {};
+
+  const out = {};
+  const put = (canonicalKey, label, value, unit) => {
+    const k = normalizeLabCanonicalKey(canonicalKey) || normalizeLabCanonicalKey(label) || canonicalKey;
+    if (!k || out[k]) return;
+    const v = normalizeText(String(value || '')).replace(/,/g, '');
+    if (!v) return;
+    out[k] = {
+      canonicalKey: k,
+      label: label || canonicalToLabel(k),
+      value: v,
+      unit: normalizeText(unit || ''),
+      rawLabel: label || canonicalToLabel(k)
+    };
+  };
+
+  const patterns = [
+    [/LDL(?:[-‐\s]?C)?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'ldl', 'LDL', 'mg/dL'],
+    [/HDL(?:[-‐\s]?C)?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'hdl', 'HDL', 'mg/dL'],
+    [/(?:中性脂肪|トリグリセリド|ＴＧ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'tg', 'TG', 'mg/dL'],
+    [/\bTG\b\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'tg', 'TG', 'mg/dL'],
+    [/(?:HbA1c|HBA1C|ヘモグロビン\s*A1c|グリコヘモグロビン)\s*(?:\([^)]*\))?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'hba1c', 'HbA1c', '%'],
+    [/(?:AST|ＡＳＴ|GOT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'ast', 'AST', 'U/L'],
+    [/(?:ALT|ＡＬＴ|GPT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'alt', 'ALT', 'U/L'],
+    [/(?:空腹時血糖|随時血糖|血糖(?:値)?|BS|GLU|GLUCOSE)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'glu', '血糖', 'mg/dL'],
+    [/(?:CRE(?:ATININE)?|クレアチニン|Cr)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, 'cr', 'クレアチニン', 'mg/dL']
+  ];
+
+  for (const [re, key, label, unit] of patterns) {
+    const m = safe.match(re);
+    if (m) put(key, label, m[1], unit);
+  }
+
+  return out;
+}
+
 module.exports = {
   LAB_ITEM_ALIASES,
   normalizeLabCanonicalKey,
   canonicalToLabel,
-  buildLabItemMapFromPanel
+  buildLabItemMapFromPanel,
+  buildLabItemMapFromRawText
 };
