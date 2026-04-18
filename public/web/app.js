@@ -423,16 +423,35 @@
   }
 
   function summarizeLabRows(rows) {
-    const list = safeArray(rows);
+    const list = safeArray(rows).filter((row) => normalizeText(row.name) || normalizeText(row.value));
     if (!list.length) return { latest: 'まだありません', note: '血液検査', sub: '追加待ち' };
-    const primary = list[0];
-    const rest = list.slice(1, 4).filter((row) => normalizeText(row.name) && normalizeText(row.value));
+    const scoreRow = (row) => {
+      const name = normalizeText(row.name).toUpperCase();
+      const order = ['HBA1C', 'HB1AC', '糖化', 'TG', '中性脂肪', 'LDL', 'HDL', 'AST', 'ALT', 'GTP', '空腹', '血糖', 'WBC'];
+      const idx = order.findIndex((key) => name.includes(key));
+      return idx === -1 ? 99 : idx;
+    };
+    const sorted = list.slice().sort((a, b) => scoreRow(a) - scoreRow(b));
+    const pick = (pred) => sorted.find((row) => pred(normalizeText(row.name)));
+    const hba = pick((n) => /HBA1C|HB1AC|糖化/i.test(n));
+    const tg = pick((n) => /(^|[^A-Z])TG([^A-Z]|$)/i.test(n) || /中性脂肪|トリグリ/i.test(n));
+    const ldl = pick((n) => n.includes('LDL'));
+    const hdl = pick((n) => n.includes('HDL'));
+    const parts = [];
+    if (hba?.value) parts.push(`HbA1c ${hba.value}`);
+    if (tg?.value) parts.push(`TG ${tg.value}`);
+    if (ldl?.value) parts.push(`LDL ${ldl.value}`);
+    if (hdl?.value) parts.push(`HDL ${hdl.value}`);
+    const fallback = sorted[0];
+    const headline = parts.length
+      ? parts.slice(0, 3).join(' / ')
+      : `${normalizeText(fallback.name || '検査')} ${normalizeText(fallback.value || '—')}`.trim();
+    const dateFromNote = String(fallback.note || '').match(/20\d{2}-\d{2}-\d{2}/);
+    const dateLine = dateFromNote ? dateFromNote[0] : '';
     return {
-      latest: normalizeText(primary.value || 'まだありません'),
-      note: normalizeText(primary.name || '血液検査'),
-      sub: rest.length
-        ? rest.map((row) => `${normalizeText(row.name)} ${normalizeText(row.value)}`).join(' · ')
-        : normalizeText(primary.note || '見返しメモなし')
+      latest: headline,
+      note: dateLine ? `最新 ${dateLine}` : '血液検査',
+      sub: list.length > 1 ? `全 ${list.length} 項目（下の一覧で確認）` : normalizeText(fallback.note || '主要指標')
     };
   }
 
@@ -632,13 +651,16 @@
   }
 
   function renderLabPanel(rows) {
-    const items = safeArray(rows);
-    const examHint = items.map((i) => i.note).find((n) => /採血日|検査日/.test(String(n || '')));
-    els.labMeta.textContent = examHint || (items[0] ? `${items[0].name || '検査'} の主要指標です` : 'まだありません');
+    const items = safeArray(rows).filter((row) => normalizeText(row.name) || normalizeText(row.value));
+    const summary = summarizeLabRows(items);
+    els.labMeta.textContent = items.length
+      ? `${summary.latest} / ${summary.note}`
+      : 'まだありません';
     els.labGrid.innerHTML = items.map((item) => `
       <div class="lab-pill">
         <div class="lab-name">${escapeHtml(item.name || '項目')}</div>
         <div class="lab-value">${escapeHtml(item.value)}</div>
+        ${item.note ? `<div class="lab-note muted small">${escapeHtml(item.note)}</div>` : ''}
       </div>
     `).join('');
   }
@@ -1370,6 +1392,7 @@ function renderMessageAttachments(item) {
             .join('')}</ul></div>`;
 
     const athleteInner = `
+      <div class="athlete-card athlete-scope-note"><p class="muted small">このタブは陸上の練習・ペース・フォーム・レース前後の整理専用です。食事の解析・血液検査・体重の記録は「記録」タブや通常のチャットで扱います。</p></div>
       ${athleteNotesCard}
       <div class="athlete-top">
         <div class="athlete-card">

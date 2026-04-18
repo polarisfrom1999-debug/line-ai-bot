@@ -277,6 +277,14 @@ function evaluateCase(testCase, output, previousOutput = '') {
     }
   }
 
+  if (expect.max_morning_opening_hits != null) {
+    const phrase = 'おはようございます。今日のペースで大丈夫です。';
+    const hits = countOccurrences(output, phrase);
+    if (hits > Number(expect.max_morning_opening_hits)) {
+      errors.push(`朝定型フレーズが多すぎ (${hits} > ${expect.max_morning_opening_hits})`);
+    }
+  }
+
   if (expect.max_same_closing_hits != null) {
     const assistantTexts = turns
       .filter((turn) => turn && turn.role === 'assistant')
@@ -322,7 +330,8 @@ function evaluateCase(testCase, output, previousOutput = '') {
     '無料体験を始めます',
     'この形で分かる所だけ送ってください',
     'まずは伴走の土台',
-    '無理のない範囲で'
+    '無理のない範囲で',
+    'おはようございます。今日のペースで大丈夫です。'
   ];
   for (const phrase of repeatedPhrases) {
     if (countOccurrences(output, phrase) >= 2) {

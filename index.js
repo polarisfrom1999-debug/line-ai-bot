@@ -124,18 +124,21 @@ function applyPersonaToneToText(text, ctx) {
   }
 
   const lines = [];
+  const timeBandOpenersOn = process.env.KOKOKARA_TIME_BAND_OPENERS === '1';
   const morningLine = 'おはようございます。今日のペースで大丈夫です。';
   const nightLine = '夜は無理に詰め込まず、整える視点でいきましょう。';
   if (
+    timeBandOpenersOn &&
     ctx.timeBand === 'morning' &&
     /empathy|guided/.test(ctx.responseMode) &&
-    !assistantRepeatGuard.phraseRecentlyUsed(morningLine, recentBodies, 4)
+    !assistantRepeatGuard.phraseRecentlyUsed(morningLine, recentBodies, 12)
   ) {
     lines.push(morningLine);
   } else if (
+    timeBandOpenersOn &&
     ctx.timeBand === 'night' &&
     /empathy|answer|guided/.test(ctx.responseMode) &&
-    !assistantRepeatGuard.phraseRecentlyUsed(nightLine, recentBodies, 4)
+    !assistantRepeatGuard.phraseRecentlyUsed(nightLine, recentBodies, 12)
   ) {
     lines.push(nightLine);
   }
@@ -222,6 +225,27 @@ async function applyGlobalPersonaAdjustments(input, result) {
     'lab_date_select',
     'lab_image',
     'lab_image_pending',
+    'lab_image_retry',
+    'meal_image',
+    'meal_image_retry',
+    'meal_text',
+    'meal_followup',
+    'meal_draft_followup',
+    'meal_announcement',
+    'meal_input_help',
+    'image_route_clarify',
+    'image_route_selected',
+    'image_route_rerun',
+    'image_route_lost',
+    'lab_image_route_hint',
+    'meal_image_route_hint',
+    'motion_image_fallback',
+    'shoe_motion_image',
+    'motion_video',
+    'motion_video_fallback',
+    'conversation_repair',
+    'video_ingest_ng',
+    'image_ingest_ng',
     'pain_thread',
     'care_priority',
     'exercise_record',

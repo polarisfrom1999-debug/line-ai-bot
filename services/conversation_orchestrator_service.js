@@ -133,9 +133,92 @@ function summarizeMealItems(parsedMeal) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   if (!items.length) return '食事';
   const joined = items.slice(0, 2).join('、');
-  if (/カレー/.test(joined)) return 'カレー系の食事';
-  if (/ラーメン|うどん|そば|パスタ/.test(joined)) return '麺系の食事';
-  return joined;
+  if (/カレー/.test(joined)) return 'カレー系のように見える食事';
+  if (/ラーメン|うどん|そば|パスタ/.test(joined)) return '麺類のように見える食事';
+  return `${joined}のように見える食事`;
+}
+
+function formatTokyoYmd() {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
+function enrichLabPanelFromAliases(panel) {
+  if (!panel) return null;
+  const existing = Array.isArray(panel.items) ? panel.items : [];
+  const hasConcrete = existing.some((it) => {
+    const v = normalizeText(it?.value || it?.currentValue || '');
+    const h = Array.isArray(it?.history) ? it.history : [];
+    return Boolean(v) || h.some((row) => normalizeText(row?.value));
+  });
+  if (hasConcrete) return panel;
+  const map = labItemAliasService.buildLabItemMapFromPanel(panel);
+  const derived = Object.values(map || {})
+    .map((e) => ({
+      itemName: e.label || e.rawLabel || '',
+      value: e.value || '',
+      unit: e.unit || '',
+      flag: '',
+      currentValue: e.value || '',
+      history: []
+    }))
+    .filter((it) => normalizeText(it.itemName) && normalizeText(it.value));
+  if (!derived.length) return panel;
+  return { ...panel, items: derived };
+}
+
+function isMealDayScopeQuestion(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/1日のカロリー|一日のカロリー|本日の合計|今日の合計|今日.*総カロリー|総カロリー.*今日|今日.*摂取|今日の摂取|積算|今日何食|何食.*(食べた|なってる|になってる)|食事.*何件|日次|全体のカロリー|本日.*摂取/.test(safe)) return true;
+  if (/訂正.*(1日|一日|本日|今日).*(カロリー|摂取|食事)|(1日|一日|本日|今日).*カロリー.*訂正/.test(safe)) return true;
+  if ((/二食|２食|2食|三食|３食|3食/.test(safe)) && (/カロリー|kcal|キロカロリー|おかし|不自然|多すぎ|おかしい|合って|ずれ|重複/.test(safe))) return true;
+  return false;
+}
+
+function buildMealDayAnomalyNote(mealCount, totals) {
+  const kcal = Number(totals?.kcal || 0);
+  const n = Number(mealCount || 0);
+  if (n >= 1 && n <= 4 && kcal >= 2800) {
+    return '※ 本日の合計が大きめです。食事の重複登録や量の補正がズレていないか、いまの食事ログを一度見直すのがおすすめです。';
+  }
+  if (n === 2 && kcal >= 2200) {
+    return '※ 2食でこの合計はやや高めに見えます。どちらか一方の推定が大きい可能性があるので、気になる食事だけ料理名や量を送ってください。';
+  }
+  return '';
+}
+
+async function maybeHandleMealDayScopeSummary(input, text) {
+  if (input?.messageType !== 'text') return null;
+  const safe = normalizeText(text || input?.rawText || '');
+  if (!isMealDayScopeQuestion(safe)) return null;
+
+  const records = await contextMemoryService.getTodayRecords(input.userId);
+  const replyText = buildTodayMealTotalsAnswer(records, {
+    dayScopeHeader: true,
+    includeAnomalyNote: true
+  });
+  return { replyText };
+}
+
+function maybeHandleConversationFrustrationRepair(input, text) {
+  if (input?.messageType !== 'text') return null;
+  const safe = normalizeText(text || input?.rawText || '');
+  if (!safe) return null;
+  if (labFollowupService.normalizeTarget(safe)) return null;
+  if (isMealDayScopeQuestion(safe)) return null;
+  if (!/(繰り返|同じこと|同じ返事|言い換え(だけ)?|また同じ|同じ文|テンプレ|ロボット|答えてない|ちゃんと答えて|別の話|違う話|修正して|直して|やり直して)/.test(safe)) return null;
+  return {
+    replyText: [
+      'すみません、返し方がループに寄ってしまっていました。',
+      'いまいちばん決めたいことを一つだけ送ってください（例: 「TGは？」「今日の食事の合計を出して」「検査の日付はいつ？」）。',
+      '用途ごとに処理を切り替えて、その質問にだけ答えます。'
+    ].join('\n')
+  };
 }
 
 function getJapanNow() {
@@ -177,8 +260,8 @@ function detectIntent(input, _shortMemory = {}) {
   if (/週間報告|週刊報告|今週のまとめ/.test(text)) return 'weekly_report';
   if (/月間報告|月刊報告|今月のまとめ/.test(text)) return 'monthly_report';
   if (/今日の食事記録|今日の記録|食事記録教えて/.test(text)) return 'today_records';
-  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計/.test(text)) return 'today_meal_totals';
-  if (/積算|今日ここまで|ここまでの合計/.test(text)) return 'today_meal_totals';
+  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計|1日のカロリー|一日のカロリー|本日の合計|今日の合計/.test(text)) return 'today_meal_totals';
+  if (/積算|今日ここまで|ここまでの合計|今日何食|何食.*(食べた|なってる|になってる)|食事.*何件/.test(text)) return 'today_meal_totals';
   if (/栄養バランス|1日の食事の総括|今日の食事の総括|今日の栄養/.test(text)) return 'today_meal_balance';
   if (/最近の食事バランス|2週間の食事バランス|二週間の食事バランス|直近2週間/.test(text)) return 'biweekly_meal_balance';
   if (/今何ポイント|今ポイント|ポイント教えて|ポイントは\??/.test(text)) return 'point_summary';
@@ -490,22 +573,32 @@ function buildTodayRecordsAnswer(records) {
   return lines.join('\n');
 }
 
-function buildTodayMealTotalsAnswer(records) {
+function buildTodayMealTotalsAnswer(records, options = {}) {
   const totals = sumMealNutrition(records);
   const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
   if (!mealCount) {
     return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえればそこから合計を見ていけます。';
   }
 
-  return [
+  const ymd = options.dateLabel || formatTokyoYmd();
+  const header = options.dayScopeHeader
+    ? `本日（${ymd}）の食事記録は ${mealCount} 件です（いま保存されている分から積み上げ直しています）。`
+    : null;
+  const warn = options.includeAnomalyNote ? buildMealDayAnomalyNote(mealCount, totals) : '';
+
+  const lines = [
+    header,
     '📈 本日の合計（積算）',
     '━━━━━━━━━━━━━',
     `🍽️ 食事件数: ${mealCount}件`,
     `🔥 エネルギー: 約${round1(totals.kcal)} kcal`,
     buildMealNutritionLine(totals),
     '━━━━━━━━━━━━━',
-    'このまま次の食事も足していけば、1日の流れを見やすく追えます。'
-  ].join('\n');
+    options.dayScopeHeader ? '数字はDBに残っている食事だけを足し直した結果です。' : 'このまま次の食事も足していけば、1日の流れを見やすく追えます。',
+  ].filter(Boolean);
+
+  if (warn) lines.push('', warn);
+  return lines.join('\n');
 }
 
 function buildTodayMealBalanceAnswer(records) {
@@ -943,7 +1036,12 @@ function buildLabImageReply(lab) {
 
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
-  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(userId) || null;
+  let panel =
+    shortMemory?.followUpContext?.labPanel
+    || await contextMemoryService.getLatestLabPanel(userId)
+    || await labDocumentStoreService.getLatestPanelForUser(userId)
+    || null;
+  panel = enrichLabPanelFromAliases(panel);
   if (!panel) return null;
 
   if (labFollowupService.shouldHandleTrendQuestion(safe)) {
@@ -959,7 +1057,12 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
 
 async function maybeHandleLabDateSelection(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
+  const basePanel =
+    shortMemory?.followUpContext?.labPanel
+    || await contextMemoryService.getLatestLabPanel(input?.userId)
+    || await labDocumentStoreService.getLatestPanelForUser(input?.userId)
+    || null;
+  const panel = enrichLabPanelFromAliases(basePanel);
   if (!panel) return null;
 
   const selectedDate = labFollowupService.extractRequestedDate(safe);
@@ -984,7 +1087,12 @@ async function maybeHandleLabDateSelection(input, shortMemory) {
 
 async function maybeHandleLabSaveAll(input, shortMemory) {
   const safe = normalizeText(input?.rawText || '');
-  const panel = shortMemory?.followUpContext?.labPanel || await labDocumentStoreService.getLatestPanelForUser(input?.userId) || null;
+  const basePanel =
+    shortMemory?.followUpContext?.labPanel
+    || await contextMemoryService.getLatestLabPanel(input?.userId)
+    || await labDocumentStoreService.getLatestPanelForUser(input?.userId)
+    || null;
+  const panel = enrichLabPanelFromAliases(basePanel);
   if (!panel) return null;
   if (!labFollowupService.shouldHandleSaveAll(safe)) return null;
 
@@ -1347,6 +1455,7 @@ async function handleImageByExplicitRoute({ route, input, shortMemory, textHint,
   if (route === 'meal') {
     const mealImageHandled = await maybeHandleMealImage(input, imagePayload);
     if (mealImageHandled?.handled) {
+      await contextMemoryService.saveShortMemory(input.userId, { pendingClarification: null });
       if (mealImageHandled.meal?.recordReady) {
         await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
       }
@@ -1369,10 +1478,12 @@ async function handleImageByExplicitRoute({ route, input, shortMemory, textHint,
   if (route === 'lab') {
     const labImageHandled = await maybeHandleLabImage(input, imagePayload);
     if (labImageHandled?.handled) {
+      await contextMemoryService.saveShortMemory(input.userId, { pendingClarification: null });
+      const labIntent = labImageHandled?.analysis?.labPending ? 'lab_image_pending' : 'lab_image';
       return {
         ok: true,
         replyText: labImageHandled.replyText,
-        internal: { intentType: 'lab_image', responseMode: 'answer' }
+        internal: { intentType: labIntent, responseMode: 'answer' }
       };
     }
     return {
@@ -2353,6 +2464,17 @@ async function orchestrateConversation(input) {
       };
     }
 
+    const frustrationRepair = maybeHandleConversationFrustrationRepair(input, text);
+    if (frustrationRepair?.replyText) {
+      const repairOut = await withSurfaceReply(input, frustrationRepair.replyText, { recentMessages, longMemory }, 'conversation_repair');
+      await appendTurn(input.userId, input.rawText || '', repairOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: repairOut }],
+        internal: { intentType: 'conversation_repair', responseMode: 'answer' }
+      };
+    }
+
     const styleFeedbackHandled = await maybeHandleConversationStyleFeedback(input, text, longMemory, shortMemory);
     if (styleFeedbackHandled) {
       const styleOut = await withSurfaceReply(input, styleFeedbackHandled.replyText, { recentMessages, longMemory }, 'style_feedback');
@@ -2494,12 +2616,15 @@ async function orchestrateConversation(input) {
 
       labImageHandled = await maybeHandleLabImage(input, imagePayload);
       if (labImageHandled?.handled) {
-        const labImgOut = await withSurfaceReply(input, labImageHandled.replyText, { recentMessages, longMemory }, 'lab_image');
+        await contextMemoryService.saveShortMemory(input.userId, { pendingClarification: null });
+        const labIntent = labImageHandled?.analysis?.labPending ? 'lab_image_pending' : 'lab_image';
+        const labImgOut = await withSurfaceReply(input, labImageHandled.replyText, { recentMessages, longMemory }, labIntent);
         await appendTurn(input.userId, input.rawText || '[image]', labImgOut);
-        return { ok: true, replyMessages: [{ type: 'text', text: labImgOut }], internal: { intentType: 'lab_image', responseMode: 'answer' } };
+        return { ok: true, replyMessages: [{ type: 'text', text: labImgOut }], internal: { intentType: labIntent, responseMode: 'answer' } };
       }
       mealImageHandled = await maybeHandleMealImage(input, imagePayload);
       if (mealImageHandled?.handled) {
+        await contextMemoryService.saveShortMemory(input.userId, { pendingClarification: null });
         if (mealImageHandled.meal?.recordReady) {
           await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(mealImageHandled.meal));
         }
@@ -2714,6 +2839,17 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
     }
 
+    const mealDayScopeReply = await maybeHandleMealDayScopeSummary(input, text);
+    if (mealDayScopeReply?.replyText) {
+      const mealDayOut = await withSurfaceReply(input, mealDayScopeReply.replyText, { recentMessages, longMemory }, 'today_meal_totals');
+      await appendTurn(input.userId, input.rawText || '', mealDayOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: mealDayOut }],
+        internal: { intentType: 'today_meal_totals', responseMode: 'answer', mealScope: 'day_scope' }
+      };
+    }
+
     const mealFollowUpHandled = await maybeHandleMealFollowUp(input, refreshedShortMemory);
     if (mealFollowUpHandled) {
       await contextMemoryService.addDailyRecord(
@@ -2830,7 +2966,10 @@ async function orchestrateConversation(input) {
 
     if (intent === 'today_meal_totals') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
-      const replyText = buildTodayMealTotalsAnswer(records);
+      const replyText = buildTodayMealTotalsAnswer(records, {
+        dayScopeHeader: true,
+        includeAnomalyNote: true
+      });
       const mealTotOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_totals');
       await appendTurn(input.userId, input.rawText || '', mealTotOut);
       return { ok: true, replyMessages: [{ type: 'text', text: mealTotOut }], internal: { intentType: 'today_meal_totals', responseMode: 'answer' } };

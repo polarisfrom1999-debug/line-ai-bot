@@ -267,5 +267,58 @@
     ],
     "must_not_repeat_previous": true,
     "max_length": 220
+  },
+  {
+    "id": "morning_greeting_cap_001",
+    "category": "templated",
+    "description": "朝定型の前置きが短文に積み上がりすぎない",
+    "turns": [
+      { "role": "assistant", "text": "おはようございます。今日のペースで大丈夫です。" },
+      { "role": "assistant", "text": "体調の一件だけ一緒に見ましょう。" }
+    ],
+    "expect": {
+      "max_morning_opening_hits": 1
+    }
+  },
+  {
+    "id": "morning_greeting_excess_fixture",
+    "category": "templated",
+    "description": "朝定型の連投は検知される（反例）",
+    "expect_failure": true,
+    "turns": [
+      { "role": "assistant", "text": "おはようございます。今日のペースで大丈夫です。\nよろしく" },
+      { "role": "assistant", "text": "おはようございます。今日のペースで大丈夫です。\n続き" }
+    ],
+    "expect": {
+      "max_morning_opening_hits": 1
+    }
+  },
+  {
+    "id": "meal_day_scope_reply_fixture",
+    "title": "日次食事の件数と積算を明示",
+    "category": "food",
+    "turns": [
+      { "role": "user", "text": "今日何食食べた事になってる？" },
+      { "role": "assistant", "text": "本日（2026-04-18）の食事記録は 2 件です（いま保存されている分から積み上げ直しています）。\n📈 本日の合計（積算）\n━━━━━━━━━━━━━\n🍽️ 食事件数: 2件\n🔥 エネルギー: 約950 kcal\n💪 タンパク質: 30 g\n🍳 脂質: 20 g\n🍞 糖質: 100 g\n━━━━━━━━━━━━━\n数字はDBに残っている食事だけを足し直した結果です。" }
+    ],
+    "must_contain_any": [
+      ["件", "食事"],
+      ["kcal", "カロリー"]
+    ],
+    "max_length": 520
+  },
+  {
+    "id": "conversation_repair_fixture",
+    "category": "loop",
+    "description": "同じ返しへの抗議でルート修復トーン",
+    "turns": [
+      { "role": "user", "text": "また同じこと繰り返してる" },
+      { "role": "assistant", "text": "すみません、返し方がループに寄ってしまっていました。\nいまいちばん決めたいことを一つだけ送ってください" }
+    ],
+    "must_contain_any": [
+      ["ループ"],
+      ["一つだけ"]
+    ],
+    "max_length": 360
   }
 ]

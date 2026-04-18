@@ -35,6 +35,24 @@
     "max_length": 260
   },
   {
+    "id": "blood_lab_followup_tg_from_saved_rows",
+    "title": "保存済みパネルに対する TG 質問で数値へ答える",
+    "category": "blood_test",
+    "turns": [
+      { "role": "user", "text": "TGは？" },
+      { "role": "assistant", "text": "中性脂肪 は、いま読み取れている範囲では 90 mg/dL です。" }
+    ],
+    "must_contain_any": [
+      ["中性脂肪", "TG"],
+      ["90"]
+    ],
+    "must_not_contain": [
+      "画像の種類を",
+      "どれに近いですか"
+    ],
+    "max_length": 240
+  },
+  {
     "id": "blood_practice_not_exercise_log",
     "title": "練習相談を運動記録にしない",
     "category": "intent",

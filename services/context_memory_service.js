@@ -12,6 +12,8 @@ try {
   ensureUser = null;
 }
 
+const labItemAliasService = require('./lab_item_alias_service');
+
 const SNAPSHOT_PATH = process.env.CONTEXT_MEMORY_SNAPSHOT_PATH || path.join(process.cwd(), '.kokokara_context_snapshot.json');
 let snapshotLoaded = false;
 let flushTimer = null;
@@ -846,9 +848,29 @@ async function upsertLabPanel(userId, panel) {
 
   const current = clone(labHistoryStore.get(userId) || []);
   const examDate = normalizeString(panel.examDate || panel.latestExamDate || panel.reportDate || '');
-  const items = (Array.isArray(panel.items) ? panel.items : [])
+  let items = (Array.isArray(panel.items) ? panel.items : [])
     .map(normalizeLabPanelItem)
     .filter((item) => item.itemName && (item.value || item.history.length));
+
+  const hasRawRows =
+    (Array.isArray(panel.rawExtractedItems) && panel.rawExtractedItems.length > 0)
+    || (Array.isArray(panel.structuredRows) && panel.structuredRows.length > 0);
+
+  if (!items.length) {
+    const derivedMap = labItemAliasService.buildLabItemMapFromPanel(panel);
+    const derivedList = Object.values(derivedMap || {});
+    items = derivedList
+      .map((entry) => normalizeLabPanelItem({
+        itemName: entry.label || entry.rawLabel || '',
+        value: entry.value || '',
+        unit: entry.unit || '',
+        flag: '',
+        history: examDate && entry.value
+          ? [{ date: examDate, value: String(entry.value), unit: entry.unit || '', flag: '' }]
+          : []
+      }))
+      .filter((item) => item.itemName && item.value);
+  }
 
   const normalizedPanel = {
     examDate,
@@ -862,8 +884,8 @@ async function upsertLabPanel(userId, panel) {
     rawPayload: panel.rawPayload ? clone(panel.rawPayload) : null
   };
 
-  // 日付だけでも保持して follow-up の文脈で再利用できるようにする。
-  if (!normalizedPanel.items.length && !normalizedPanel.examDate) return null;
+  // 項目が空でも raw 行や検査日があれば保持し、follow-up で別名辞書から拾えるようにする。
+  if (!normalizedPanel.items.length && !normalizedPanel.examDate && !hasRawRows) return null;
 
   let merged = false;
   for (let i = 0; i < current.length; i += 1) {
