@@ -20,12 +20,12 @@
 | **表** | ユーザーに見えるもの。ChatGPT のように自然な短文。まず問いに答える。説明しすぎない。自動返信感を出さない。 |
 | **裏** | 食事解析、血液検査の抽出と保存、運動集計、DB、安全分岐、接続・オンボーディングなど。 |
 
-裏の結果を **そのまま表に出さない**。最終的には **自然文生成レイヤー** で言い換え、温度感を載せる（数値・日付は捏造しない）。
+裏の結果を **そのまま表に出さない** ことを原則とし、必要に応じて **自然文生成レイヤー** で言い換えて温度感を載せる（数値・日付は捏造しない）。レイヤーは運用で ON/OFF できる。
 
 ### 実装上の「最終一段」
 
-- **オーケストレータ**（`services/conversation_orchestrator_service.js`）が、ユーザー向け本文を組み立てたあと `services/conversation_surface_service.js` の `polishDraftToSurface`（内部で `generateNaturalResponse`）を通す経路を主とする。  
-- **ルータ**（`services/chatgpt_conversation_router.js` の `naturalizeResult`）は、上記ですでに自然文化した intent や、`normal`（`buildNormalReply`＝`generateReply` 済み）、`sports_*` などでは **二重に `generateNaturalResponse` を呼ばない**。同一メッセージに対する無駄な API 二重化と、数値の揺れリスクを避けるため。  
+- **オーケストレータ**は組み立てた本文に `conversation_surface_service.polishDraftToSurface` をかけられるが、**既定は OFF**（`KOKOKARA_SURFACE_LAYER_ON=1` のときのみ有効）。  
+- **ルータ**（`chatgpt_conversation_router` の `naturalizeResult`）も表面レイヤー ON 時のみ第2段の `generateNaturalResponse` をかける。OFF 時はオーケストレータの本文をそのまま返す。  
 - 例外・入口メッセージ（`invalid` / `unsupported`）も定型のまま返す。
 
 ## 牛込先生らしさ

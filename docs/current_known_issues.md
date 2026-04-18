@@ -2,11 +2,11 @@
 
 ## 会話レイヤー（自然文ポリッシュ）
 
-- `services/conversation_surface_service.js` が、裏処理の **下書き** を OpenAI 経由で短文の自然文に載せ替える。  
-- **`OPENAI_API_KEY` が無い環境**ではポリッシュは行われず、下書きがそのまま返る。  
-- オフにする場合: 環境変数 **`KOKOKARA_SURFACE_LAYER_OFF=1`**（負荷試験・デバッグ用）。  
-- キーがある本番では **1 メッセージあたり追加の API 呼び出し**が発生する（レイテンシ・コストに注意）。  
-- オーケストレータで表面レイヤー済みの intent は、`chatgpt_conversation_router` の **第2段 naturalize をバイパス**し、自然文生成は原則 **一段**に抑える（`docs/kokokara_design_philosophy.md` の「最終一段」参照）。
+- `services/conversation_surface_service.js` が、有効時のみ裏処理の **下書き** を OpenAI 経由で短文に載せ替える。  
+- **既定は無効**（緊急方針）。有効化は **`KOKOKARA_SURFACE_LAYER_ON=1`** のときだけ。`KOKOKARA_SURFACE_LAYER_OFF=1` でも無効のまま。  
+- **`OPENAI_API_KEY` が無い**、または上記 ON が無い場合はポリッシュせず下書きのまま返す。  
+- ON のときは **1 メッセージあたり追加の API 呼び出し**が発生する（レイテンシ・コストに注意）。  
+- `chatgpt_conversation_router` の **第2段 `naturalizeResult`** も、表面レイヤーが OFF のときは **本文を書き換えない**。
 
 ## スキップされる下書き
 

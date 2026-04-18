@@ -38,6 +38,7 @@ function normalizeMealItemLabel(item) {
 function buildFallbackMeal(reason = 'fallback') {
   return {
     isMealImage: true,
+    confidence: 0.35,
     items: ['食事画像（仮推定）'],
     estimatedNutrition: {
       kcal: 450,
@@ -80,6 +81,9 @@ function normalizeMealData(raw) {
     carbs: normalizeNumber(sourceNutrition.carbs, 50),
   };
 
+  const confFromRaw = Number(raw.confidence);
+  const confidence = Number.isFinite(confFromRaw) ? Math.max(0, Math.min(1, confFromRaw)) : 0.5;
+
   return {
     isMealImage: raw.isMealImage !== false,
     items: items.length ? items : ['食事画像（仮推定）'],
@@ -91,7 +95,7 @@ function normalizeMealData(raw) {
     amountNote: normalizeText(raw.amountNote || ''),
     recordReady: raw.recordReady !== false,
     reason: normalizeText(raw.reason || ''),
-    confidence: normalizeNumber(raw.confidence, 0.7),
+    confidence,
     raw,
   };
 }

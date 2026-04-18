@@ -4,6 +4,7 @@ const conversationOrchestratorService = require('./conversation_orchestrator_ser
 const webLinkCommandService = require('./web_link_command_service');
 const aiChatService = require('./ai_chat_service');
 const contextMemoryService = require('./context_memory_service');
+const conversationSurfaceService = require('./conversation_surface_service');
 
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'sticker', 'audio', 'video', 'file', 'location', 'other']);
 /**
@@ -230,6 +231,9 @@ function buildUnsupportedResult(messageType) {
 
 async function naturalizeResult(normalized, result) {
   const base = result && typeof result === 'object' ? result : { ok: true, replyMessages: [] };
+  if (!conversationSurfaceService.isSurfacePolishEnabled()) {
+    return base;
+  }
   const messages = Array.isArray(base.replyMessages) ? base.replyMessages : [];
   const intentType = normalizeText(base?.internal?.intentType || '');
   const responseMode = normalizeText(base?.internal?.responseMode || '');

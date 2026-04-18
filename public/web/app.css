@@ -912,6 +912,11 @@ textarea { resize: vertical; }
 }
 
 /* --- 伴走（陸上）Phase 1 --- */
+.athlete-page-head {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 8px 4px;
+}
 .athlete-shell {
   max-width: 980px;
   margin: 0 auto;

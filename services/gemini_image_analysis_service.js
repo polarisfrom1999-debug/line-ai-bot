@@ -7,6 +7,7 @@ const MEAL_SCHEMA = {
   type: 'object',
   properties: {
     isMealImage: { type: 'boolean' },
+    confidence: { type: 'number', description: '0〜1。食事である確信度。曖昧なら0.35以下' },
     items: {
       type: 'array',
       items: { type: 'string' },
@@ -23,7 +24,7 @@ const MEAL_SCHEMA = {
     },
     comment: { type: 'string' },
   },
-  required: ['isMealImage', 'items', 'estimated_nutrition', 'comment'],
+  required: ['isMealImage', 'confidence', 'items', 'estimated_nutrition', 'comment'],
 };
 
 function normalizeText(value) {
@@ -39,6 +40,7 @@ function defaultMealFallback(reason = 'fallback') {
   const busy = /503|busy|unavailable|timeout|429/i.test(String(reason || ''));
   return {
     isMealImage: true,
+    confidence: 0.35,
     items: ['食事画像（仮推定）'],
     estimated_nutrition: {
       kcal: 450,
@@ -82,8 +84,12 @@ function normalizeMealObject(raw, fallbackReason = 'normalized_fallback') {
 
   const estimated = raw.estimated_nutrition || {};
 
+  const confRaw = Number(raw.confidence);
+  const confidence = Number.isFinite(confRaw) ? Math.max(0, Math.min(1, confRaw)) : 0.45;
+
   return {
     isMealImage: raw.isMealImage !== false,
+    confidence,
     items: items.length ? items : ['食事画像（仮推定）'],
     estimated_nutrition: {
       kcal: normalizeNumber(estimated.kcal, 450),

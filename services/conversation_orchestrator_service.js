@@ -102,13 +102,13 @@ function pickVariant(seed, variants) {
 
 function buildLabPendingAckReply(panel, userId) {
   const dateHint = panel?.latestExamDate || panel?.examDate
-    ? `検査日っぽいのは「${panel.latestExamDate || panel.examDate}」くらい。`
-    : '検査日はまだはっきりしないかも。';
+    ? `日付や項目名の一部は「${panel.latestExamDate || panel.examDate}」あたりに見えるかもしれません。`
+    : '日付や項目名の一部がまだはっきり読み取りにくいです。';
   const seed = hashText(`${userId}:${panel?.latestExamDate || panel?.examDate || ''}:${Math.floor(Date.now() / 45000)}`);
   return pickVariant(seed, [
-    `うん、届いた。${dateHint}\nTGとか、気になる項目を一文で送って。`,
-    `写真みた。${dateHint}\n「中性脂肪は？」みたいに聞いてくれれば返す。`,
-    `検査の画像ありがとう。${dateHint}\n読めた数値から先に返すね。`,
+    `血液検査の画像として受け取りました。${dateHint}\n読めた部分から進めます。気になる項目（例: 中性脂肪、HbA1c）を一文で送ってください。`,
+    `血液検査の画像ですね。${dateHint}\n寄せて撮れた部分から整理します。「LDLは？」のように聞いても大丈夫です。`,
+    `検査結果の画像として受け取りました。${dateHint}\nはっきり見える数値から返します。項目名を指定してもらえると早いです。`,
   ]);
 }
 
@@ -870,23 +870,24 @@ function buildMealReply(parsedMeal, options = {}) {
   const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
   const todayTotals = options?.todayTotals || null;
 
-  const mealLabel = items.length ? items.join('、') : '内容を確認中';
+  const rawJoin = items.map((it) => normalizeText(it)).filter(Boolean).join('、');
+  const mealLabel = rawJoin
+    ? `ざっくり見ると「${rawJoin}」のように見えます（料理名は見立てで、違っていたら教えてください）。`
+    : '内容の輪郭がまだはっきりしにくいです。';
   const kcal = round1(nut.kcal || 0);
   const protein = round1(nut.protein || 0);
   const fat = round1(nut.fat || 0);
   const carbs = round1(nut.carbs || 0);
-  const comment = normalizeText(parsedMeal?.comment || '') || '今日もひとつ整っていますね😊';
+  const comment = normalizeText(parsedMeal?.comment || '') || '量や写り方によって見え方が変わるので、ずれていたら一言ください。';
 
   const lines = [
-    '📸 お食事の解析が終わりました！✨',
+    'お食事の写真として受け取りました。',
+    '写真だけでは断定しすぎないようにしています。少し見切れている・違う場合は、教えてもらえると助かります。',
     '━━━━━━━━━━━━━',
-    `🍽️ 【メニュー 🥗】: ${mealLabel}`,
-    `🔥 エネルギー: ${kcal} kcal`,
-    `💪 タンパク質: ${protein} g`,
-    `🍳 脂質: ${fat} g`,
-    `🍞 糖質: ${carbs} g`,
+    `見立て（メニュー）: ${mealLabel}`,
+    `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
     '━━━━━━━━━━━━━',
-    `💬 アドバイス: ${comment}`,
+    `ひとこと: ${comment}`,
   ];
 
   if (todayTotals && Number(todayTotals.kcal || 0) > 0) {
@@ -1689,12 +1690,15 @@ async function maybeHandleLabImage(input, imagePayload) {
   }
 }
 
+const MEAL_IMAGE_CONFIDENCE_MIN = Number(process.env.KOKOKARA_MEAL_IMAGE_CONFIDENCE_MIN || 0.56) || 0.56;
+
 async function maybeHandleMealImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
 
   try {
     const meal = await mealAnalysisService.analyzeMealImage(imagePayload);
-    if (!meal?.isMealImage) {
+    const conf = Number(meal?.confidence);
+    if (!meal?.isMealImage || !Number.isFinite(conf) || conf < MEAL_IMAGE_CONFIDENCE_MIN) {
       return { handled: false, analysis: meal || null };
     }
 
@@ -2563,8 +2567,9 @@ async function orchestrateConversation(input) {
       // スコアは検査寄りだが motion フォールバックに落とさない（誤って「動作解析」文面になるのを防ぐ）
       if (routeDecision.isReliable && routeDecision.topRoute === 'lab') {
         const replyText = [
-          '血液検査の画像として受け止めています。',
-          '自動判定が迷ったようなので、同じ写真でもう一度送るか、検査日の近くが読めるように寄せて送ってもらえると助かります。',
+          '血液検査の画像として受け取りました。',
+          'この画像だと日付や項目名の一部が見えにくいかもしれません。読める部分から進めます。',
+          '同じ写真でもう一度送るか、検査日が読めるように寄せてもらえると助かります。',
           '「TGは？」「HbA1cは？」のように項目名で聞いても大丈夫です。'
         ].join('\n');
         const labHintOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'lab_image_route_hint');

@@ -6,6 +6,8 @@ function buildMealExtractPrompt({ rawText = '' } = {}) {
 必ずJSONのみで返してください。説明文やコードブロックは不要です。
 
 【最重要ルール】
+- 「カレー」「ラーメン」「牛丼」など特定料理名は、ルー・麺・丼の具がはっきり写っているときだけ使う。茶色い汁物や丼はシチュー・煮込み・丼物など別の可能性がある
+- confidence は食事写真である確信度。迷いが大きいときは 0.45 以下にする。isMealImage=false のときも confidence を付ける
 - 見えていないものを決めつけない
 - 食材が曖昧な時は、狭い断定名ではなく広い表現にする
 - オクラ / ピーマン / いんげん / きゅうり / 青菜 / 小松菜 / ほうれん草 / ブロッコリー の見分けに自信が低い時は、
@@ -29,9 +31,10 @@ function buildMealExtractPrompt({ rawText = '' } = {}) {
 【出力形式】
 {
   "isMealImage": true,
+  "confidence": 0.72,
   "items": ["料理名"],
   "estimated_nutrition": { "kcal": 0, "protein": 0, "fat": 0, "carbs": 0 },
-  "comment": "短いアドバイス"
+  "comment": "短いアドバイス（断定せず、見立て・たんぱく質などの観点で）"
 }
 
 【補足テキスト】

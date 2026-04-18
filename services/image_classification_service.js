@@ -38,6 +38,7 @@ function scoreImageRoutes({ lab, meal, shoeWear, movement, hintText = '', follow
 
   if (meal?.isMealImage) scores.meal += Math.max(0.6, normalizeScore(meal?.confidence, 0.8));
   if (lab?.isLabImage || lab?.labLike) scores.lab += Math.max(0.6, normalizeScore(lab?.confidence, 0.8));
+  if (lab?.labLike && !lab?.isLabImage) scores.lab += 0.22;
   if (shoeWear?.isShoeWearImage) scores.shoe_wear += Math.max(0.6, normalizeScore(shoeWear?.confidence, 0.8));
   if (movement?.isMovementImage) scores.motion += Math.max(0.6, normalizeScore(movement?.confidence, 0.8));
 

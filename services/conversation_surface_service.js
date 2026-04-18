@@ -11,8 +11,16 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function isSurfaceLayerOff() {
-  return /^1|true|yes$/i.test(String(process.env.KOKOKARA_SURFACE_LAYER_OFF || '').trim());
+/**
+ * 既定は OFF（緊急方針: 自動の「自然文化」で会話を壊さない）。
+ * 明示的に KOKOKARA_SURFACE_LAYER_ON=1/true/yes のときだけ有効。
+ * 互換: KOKOKARA_SURFACE_LAYER_OFF=1 のときは常に無効。
+ */
+function isSurfacePolishEnabled() {
+  if (/^1|true|yes$/i.test(String(process.env.KOKOKARA_SURFACE_LAYER_OFF || '').trim())) {
+    return false;
+  }
+  return /^1|true|yes$/i.test(String(process.env.KOKOKARA_SURFACE_LAYER_ON || '').trim());
 }
 
 function hasOpenAiKey() {
@@ -32,7 +40,7 @@ function shouldSkipPolish(draft, params = {}) {
 
 async function polishDraftToSurface(params = {}) {
   const draft = normalizeText(params.draftReply || params.draft || '');
-  if (!draft || isSurfaceLayerOff() || !hasOpenAiKey() || shouldSkipPolish(draft, params)) {
+  if (!draft || !isSurfacePolishEnabled() || !hasOpenAiKey() || shouldSkipPolish(draft, params)) {
     return draft;
   }
 
@@ -56,5 +64,6 @@ async function polishDraftToSurface(params = {}) {
 
 module.exports = {
   polishDraftToSurface,
-  shouldSkipPolish
+  shouldSkipPolish,
+  isSurfacePolishEnabled
 };
