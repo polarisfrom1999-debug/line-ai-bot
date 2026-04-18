@@ -142,6 +142,67 @@ function sumMealLogs(logs) {
   );
 }
 
+/** DB行を重複排除したうえで kcal / PFC / 件数を集計（集計の唯一の入口） */
+function aggregateMealLogs(logs) {
+  const list = deduplicateMealLogs(Array.isArray(logs) ? logs : []);
+  return sumMealLogs(list);
+}
+
+function tokyoYmdFromIso(iso) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(iso));
+  } catch (_e) {
+    return '';
+  }
+}
+
+/** 東京日付ごとに dedupe 済みログを分類 */
+function groupMealLogsByTokyoDay(logs) {
+  const map = new Map();
+  const list = deduplicateMealLogs(Array.isArray(logs) ? logs : []);
+  for (const log of list) {
+    const d = tokyoYmdFromIso(log.eatenAt);
+    if (!d) continue;
+    if (!map.has(d)) map.set(d, []);
+    map.get(d).push(log);
+  }
+  return map;
+}
+
+/**
+ * DB取得 → dedupe → 集計。ログは呼び出し元の scope 名で出す。
+ */
+async function fetchAggregateMealLogsFromDb(lineUserId, fromYmd, toYmdInclusive, logScope = 'range') {
+  const raw = await getMealLogsByDateRange(lineUserId, fromYmd, toYmdInclusive);
+  const deduped = deduplicateMealLogs(raw);
+  const totals = sumMealLogs(deduped);
+  console.info('[meal] fetched_records_count', { scope: logScope, fromYmd, toYmdInclusive, rawRows: raw.length, dedupedRows: deduped.length });
+  console.info('[meal] total_calculated', { scope: logScope, count: totals.count, kcal: round1(totals.kcal), protein: round1(totals.protein), fat: round1(totals.fat), carbs: round1(totals.carbs) });
+  return { raw, deduped, totals };
+}
+
+function formatMealAggregateReply({ label, ymd, totals }) {
+  const t = totals || { count: 0, kcal: 0, protein: 0, fat: 0, carbs: 0 };
+  const head = label && ymd ? `【${label}（${ymd}）】` : label ? `【${label}】` : '【食事】';
+  return [
+    head,
+    `件数: ${t.count} / 合計 約${round1(t.kcal)} kcal`,
+    `PFC: たんぱく質 約${round1(t.protein)}g / 脂質 約${round1(t.fat)}g / 炭水化物 約${round1(t.carbs)}g`,
+    '（DB meal_logs を再読込して集計しています）'
+  ].join('\n');
+}
+
+/** 詳細一覧（formatMealLogDetails の別名） */
+function formatMealDetailsReply(logs, options = {}) {
+  return formatMealLogDetails(logs, options);
+}
+
 function formatTimeTokyo(iso) {
   if (!iso) return '—';
   try {
@@ -184,7 +245,13 @@ module.exports = {
   deduplicateMealLogs,
   dedupeFingerprint,
   sumMealLogs,
+  aggregateMealLogs,
+  groupMealLogsByTokyoDay,
+  fetchAggregateMealLogsFromDb,
+  formatMealAggregateReply,
   formatMealLogDetails,
+  formatMealDetailsReply,
+  tokyoYmdFromIso,
   normalizeDbRow,
   addOneDayYmd,
 };

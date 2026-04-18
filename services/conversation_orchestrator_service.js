@@ -254,9 +254,12 @@ async function maybeHandleUnifiedMealScopeQuestion(input, text) {
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
 
   if (spec.scope === 'meal_and_exercise') {
-    const logs = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
-    const deduped = mealLogQueryService.deduplicateMealLogs(logs);
-    const msum = mealLogQueryService.sumMealLogs(deduped);
+    const { deduped, totals: msum } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+      input.userId,
+      todayYmd,
+      todayYmd,
+      'unified_meal_and_exercise'
+    );
     const records = await contextMemoryService.getTodayRecords(input.userId);
     let burn = 0;
     for (const ex of records.exercises || []) {
@@ -293,9 +296,12 @@ async function maybeHandleUnifiedMealScopeQuestion(input, text) {
     toYmd = todayYmd;
   }
 
-  const rawLogs = await mealLogQueryService.getMealLogsByDateRange(input.userId, fromYmd, toYmd);
-  const logs = mealLogQueryService.deduplicateMealLogs(rawLogs);
-  const sum = mealLogQueryService.sumMealLogs(logs);
+  const { deduped: logs, totals: sum } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    input.userId,
+    fromYmd,
+    toYmd,
+    `unified_${spec.scope}`
+  );
 
   if (spec.scope === 'last_meal') {
     const one = logs[0];
@@ -339,8 +345,13 @@ async function maybeHandleMealDayScopeSummary(input, text) {
   if (!isMealDayScopeQuestion(safe)) return null;
 
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
-  const raw = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
-  const records = { meals: mealLogsToRecordMeals(raw) };
+  const { deduped } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    input.userId,
+    todayYmd,
+    todayYmd,
+    'meal_day_scope_summary'
+  );
+  const records = { meals: mealLogsToRecordMeals(deduped) };
   const replyText = buildTodayMealTotalsAnswer(records, {
     dayScopeHeader: true,
     includeAnomalyNote: true
@@ -360,6 +371,8 @@ async function maybeHandleMealLogCorrection(input, text) {
     }
     const todayYmd = contextMemoryService.getTokyoTodayYmd();
     const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const delAgg = mealLogQueryService.aggregateMealLogs(rawT);
+    console.info('[meal] recomputed_today_total', { count: delAgg.count, kcal: round1(delAgg.kcal) });
     const totals = { meals: mealLogsToRecordMeals(rawT) };
     return { replyText: ['直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
   }
@@ -375,8 +388,10 @@ async function maybeHandleMealLogCorrection(input, text) {
     const rawYest = await mealLogQueryService.getMealLogsByDateRange(input.userId, y, y);
     const tRec = { meals: mealLogsToRecordMeals(rawToday) };
     const yRec = { meals: mealLogsToRecordMeals(rawYest) };
-    const tSum = mealLogQueryService.sumMealLogs(mealLogQueryService.deduplicateMealLogs(rawToday));
-    const ySum = mealLogQueryService.sumMealLogs(mealLogQueryService.deduplicateMealLogs(rawYest));
+    const tSum = mealLogQueryService.aggregateMealLogs(rawToday);
+    const ySum = mealLogQueryService.aggregateMealLogs(rawYest);
+    console.info('[meal] recomputed_today_total', { count: tSum.count, kcal: round1(tSum.kcal) });
+    console.info('[meal] recomputed_target_day_total', { date: y, count: ySum.count, kcal: round1(ySum.kcal) });
     return {
       replyText: [
         `DBの meal_logs.eaten_at を更新し、直近1件を「${y}」へ移しました（今日の合計からは外れています）。`,
@@ -393,6 +408,8 @@ async function maybeHandleMealLogCorrection(input, text) {
   if (/再計算|合計.*し直し|積算.*し直し|今日の合計.*もう一度|記録を修正して/.test(safe)) {
     const todayYmd = contextMemoryService.getTokyoTodayYmd();
     const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const recalc = mealLogQueryService.aggregateMealLogs(rawT);
+    console.info('[meal] recomputed_today_total', { count: recalc.count, kcal: round1(recalc.kcal) });
     const totals = { meals: mealLogsToRecordMeals(rawT) };
     return { replyText: ['DBを再読込して今日の合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
   }
@@ -831,6 +848,72 @@ function buildTodayMealBalanceAnswer(records) {
   return lines.join('\n');
 }
 
+async function mergeRecentDailyRecordsWithDbMeals(userId, limit) {
+  const days = await contextMemoryService.getRecentDailyRecords(userId, limit);
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -(limit - 1));
+  const raw = await mealLogQueryService.getMealLogsByDateRange(userId, fromYmd, todayYmd);
+  const byDay = mealLogQueryService.groupMealLogsByTokyoDay(raw);
+  console.info('[meal] fetched_records_count', { scope: 'weekly_merge', limit, rawRows: raw.length });
+  return days.map((day) => {
+    const dayLogs = byDay.get(day.date) || [];
+    return {
+      ...day,
+      records: {
+        ...(day.records || {}),
+        meals: mealLogsToRecordMeals(dayLogs)
+      }
+    };
+  });
+}
+
+async function buildBiweeklyMealBalanceAnswerFromDb(userId) {
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -27);
+  const raw = await mealLogQueryService.getMealLogsByDateRange(userId, fromYmd, todayYmd);
+  const logs = mealLogQueryService.deduplicateMealLogs(raw);
+  console.info('[meal] fetched_records_count', { scope: 'biweekly_28d', rawRows: raw.length, dedupedRows: logs.length });
+  const currentStart = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -13);
+  const currentLogs = logs.filter((l) => mealLogQueryService.tokyoYmdFromIso(l.eatenAt) >= currentStart);
+  const prevLogs = logs.filter((l) => mealLogQueryService.tokyoYmdFromIso(l.eatenAt) < currentStart);
+  const currentTotals = mealLogQueryService.aggregateMealLogs(currentLogs);
+  const previousTotals = mealLogQueryService.aggregateMealLogs(prevLogs);
+  console.info('[meal] total_calculated', { scope: 'biweekly_current_14d', count: currentTotals.count, kcal: round1(currentTotals.kcal) });
+  console.info('[meal] total_calculated', { scope: 'biweekly_prev_14d', count: previousTotals.count, kcal: round1(previousTotals.kcal) });
+  const currentDays = 14;
+  const previousDays = 14;
+  const kcalDiff = round1(currentTotals.kcal - previousTotals.kcal);
+  const proteinDiff = round1(currentTotals.protein - previousTotals.protein);
+  const fatDiff = round1(currentTotals.fat - previousTotals.fat);
+  const carbsDiff = round1(currentTotals.carbs - previousTotals.carbs);
+
+  const lines = [
+    '📊 食事バランス比較（直近14日 vs その前14日）※DB meal_logs から再集計',
+    '━━━━━━━━━━━━━',
+    `🍽️ 直近14日: ${currentTotals.count}件`,
+    `🔥 kcal: ${round1(currentTotals.kcal)}（差分 ${kcalDiff >= 0 ? '+' : ''}${kcalDiff}）`,
+    `💪 たんぱく質: ${round1(currentTotals.protein)}g（差分 ${proteinDiff >= 0 ? '+' : ''}${proteinDiff}）`,
+    `🍳 脂質: ${round1(currentTotals.fat)}g（差分 ${fatDiff >= 0 ? '+' : ''}${fatDiff}）`,
+    `🍞 糖質: ${round1(currentTotals.carbs)}g（差分 ${carbsDiff >= 0 ? '+' : ''}${carbsDiff}）`,
+    `📉 1日平均kcal: ${round1(currentTotals.kcal / currentDays)}（前期 ${round1(previousTotals.kcal / previousDays)}）`,
+    '━━━━━━━━━━━━━',
+  ];
+
+  if (!previousTotals.count) {
+    lines.push('💬 比較元の記録がまだ少ないため、今回は直近14日の基準値として見ていきましょう。');
+  } else if (proteinDiff > 10) {
+    lines.push('💬 たんぱく質は前期より積めています。良い流れなので、このまま続けて大丈夫です。');
+  } else if (proteinDiff < -10) {
+    lines.push('💬 たんぱく質がやや下がっているので、卵・魚・肉・大豆を1品足せると戻しやすいです。');
+  } else if (fatDiff > 20) {
+    lines.push('💬 脂質が上がり気味なので、次の1〜2食を軽めにして整えるのが合いやすいです。');
+  } else {
+    lines.push('💬 大きく崩れすぎてはいないので、次の食事で1点だけ整える進め方で十分です。');
+  }
+
+  return lines.join('\n');
+}
+
 function sumNutritionFromDailyRecords(recentDailyRecords = []) {
   const totals = { kcal: 0, protein: 0, fat: 0, carbs: 0, mealCount: 0 };
   for (const day of recentDailyRecords) {
@@ -1223,7 +1306,8 @@ function buildMealRecordPayload(text, parsedMeal, input = {}) {
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
     comment: parsedMeal?.comment || '',
-    sourceLineMessageId: normalizeText(input?.messageId || '')
+    sourceLineMessageId: normalizeText(input?.messageId || ''),
+    dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
   };
 }
 
@@ -1246,7 +1330,8 @@ function buildImageMealRecordPayload(parsedMeal, input = {}) {
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
     comment: parsedMeal?.comment || '',
-    sourceLineMessageId: normalizeText(input?.messageId || '')
+    sourceLineMessageId: normalizeText(input?.messageId || ''),
+    dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
   };
 }
 
@@ -1953,13 +2038,13 @@ async function maybeHandleLabImage(input, imagePayload) {
         rawText: normalizeText(lab?.rawText || ''),
         updatedAt: new Date().toISOString()
       };
-      console.info('[lab-cache] save pending', {
+      console.info('[lab] cache_save_pending', {
         userId: input.userId,
         examDate: latestLabCache.examDate || '',
-        itemKeys: Object.keys(cachedItemMap),
         rawTextPresent: Boolean(normalizeText(lab?.rawText || '')),
         rawExtractedKeyCount: Object.keys(fromRaw).length,
-        panelExtractedKeyCount: Object.keys(fromPanel).length
+        panelExtractedKeyCount: Object.keys(fromPanel).length,
+        mergedItemKeys: Object.keys(cachedItemMap)
       });
       await contextMemoryService.saveShortMemory(input.userId, {
         lastImageType: 'lab_pending',
@@ -2012,16 +2097,16 @@ async function maybeHandleLabImage(input, imagePayload) {
         }
       }
     });
-    const mergedParsed = {
-      ...labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || ''),
-      ...labItemAliasService.buildLabItemMapFromPanel(lab)
-    };
-    console.info('[lab-cache] save parsed', {
+    const fromRawParsed = labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || '');
+    const fromPanelParsed = labItemAliasService.buildLabItemMapFromPanel(lab);
+    const mergedParsed = { ...fromRawParsed, ...fromPanelParsed };
+    console.info('[lab] cache_save_parsed', {
       userId: input.userId,
       examDate: lab?.latestExamDate || lab?.examDate || '',
-      itemKeys: Object.keys(mergedParsed),
       rawTextPresent: Boolean(normalizeText(lab?.rawText || '')),
-      rawExtractedKeyCount: Object.keys(labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || '')).length
+      rawExtractedKeyCount: Object.keys(fromRawParsed).length,
+      panelExtractedKeyCount: Object.keys(fromPanelParsed).length,
+      mergedItemKeys: Object.keys(mergedParsed)
     });
 
     await contextMemoryService.upsertLabPanel(input.userId, lab);
@@ -3178,7 +3263,7 @@ async function orchestrateConversation(input) {
 
     if (intent === 'weekly_report') {
       const records = await contextMemoryService.getTodayRecords(input.userId);
-      const recentDailyRecords = await contextMemoryService.getRecentDailyRecords(input.userId, 7);
+      const recentDailyRecords = await mergeRecentDailyRecordsWithDbMeals(input.userId, 7);
       const replyText = await weeklyReportService.buildWeeklyReport({
         longMemory: await contextMemoryService.getLongMemory(input.userId),
         recentMessages,
@@ -3191,7 +3276,7 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'monthly_report') {
-      const recentDailyRecords = await contextMemoryService.getRecentDailyRecords(input.userId, 31);
+      const recentDailyRecords = await mergeRecentDailyRecordsWithDbMeals(input.userId, 31);
       const replyText = await monthlyReportService.buildMonthlyReport({
         longMemory: await contextMemoryService.getLongMemory(input.userId),
         recentMessages,
@@ -3223,8 +3308,11 @@ async function orchestrateConversation(input) {
     if (intent === 'today_records') {
       const base = await contextMemoryService.getTodayRecords(input.userId);
       const todayYmd = contextMemoryService.getTokyoTodayYmd();
-      const rawLogs = mealLogQueryService.deduplicateMealLogs(
-        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      const { deduped: rawLogs } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+        input.userId,
+        todayYmd,
+        todayYmd,
+        'today_records'
       );
       const merged = { ...base, meals: mealLogsToRecordMeals(rawLogs) };
       const replyText = buildTodayRecordsAnswer(merged);
@@ -3235,8 +3323,11 @@ async function orchestrateConversation(input) {
 
     if (intent === 'today_meal_totals') {
       const todayYmd = contextMemoryService.getTokyoTodayYmd();
-      const rawLogs = mealLogQueryService.deduplicateMealLogs(
-        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      const { deduped: rawLogs } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+        input.userId,
+        todayYmd,
+        todayYmd,
+        'today_meal_totals'
       );
       const records = { meals: mealLogsToRecordMeals(rawLogs) };
       const replyText = buildTodayMealTotalsAnswer(records, {
@@ -3250,8 +3341,11 @@ async function orchestrateConversation(input) {
 
     if (intent === 'today_meal_balance') {
       const todayYmd = contextMemoryService.getTokyoTodayYmd();
-      const rawLogs = mealLogQueryService.deduplicateMealLogs(
-        await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd)
+      const { deduped: rawLogs } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+        input.userId,
+        todayYmd,
+        todayYmd,
+        'today_meal_balance'
       );
       const records = { meals: mealLogsToRecordMeals(rawLogs) };
       const replyText = buildTodayMealBalanceAnswer(records);
@@ -3261,8 +3355,7 @@ async function orchestrateConversation(input) {
     }
 
     if (intent === 'biweekly_meal_balance') {
-      const recentDailyRecords = await contextMemoryService.getRecentDailyRecords(input.userId, 28);
-      const replyText = buildBiweeklyMealBalanceAnswer(recentDailyRecords);
+      const replyText = await buildBiweeklyMealBalanceAnswerFromDb(input.userId);
       const biweeklyOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'biweekly_meal_balance');
       await appendTurn(input.userId, input.rawText || '', biweeklyOut);
       return { ok: true, replyMessages: [{ type: 'text', text: biweeklyOut }], internal: { intentType: 'biweekly_meal_balance', responseMode: 'answer' } };

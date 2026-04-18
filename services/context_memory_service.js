@@ -324,8 +324,16 @@ async function persistDailyRecordToDb(lineUserId, record) {
       const rawModel = {
         ...(typeof record === 'object' ? record : {}),
         sourceLineMessageId: normalizeString(record.sourceLineMessageId || ''),
-        dedupeKey: normalizeString(record.dedupeKey || '')
+        dedupeKey: normalizeString(record.dedupeKey || ''),
+        sourceImageHash: normalizeString(record.sourceImageHash || record.imageHash || '')
       };
+      console.info('[meal] insert_attempt', {
+        userId: lineUserId,
+        eatenAt: eatenAtIso,
+        kcal: Number(record.kcal || record.estimatedNutrition?.kcal || 0) || 0,
+        label: normalizeString(record.summary || record.name || '').slice(0, 48),
+        hasMessageId: Boolean(normalizeString(record.sourceLineMessageId || ''))
+      });
       await supabase.from('meal_logs').insert({
         user_id: user.id,
         eaten_at: eatenAtIso,
@@ -339,6 +347,16 @@ async function persistDailyRecordToDb(lineUserId, record) {
         ai_comment: normalizeString(record.comment || record.amountNote || '食事記録'),
         raw_model_json: rawModel
       });
+      console.info('[meal] saved', { userId: lineUserId });
+      try {
+        const mealLogQueryService = require('./meal_log_query_service');
+        const todayKey = getTodayKey();
+        const raw = await mealLogQueryService.getMealLogsByDateRange(lineUserId, todayKey, todayKey);
+        const totals = mealLogQueryService.aggregateMealLogs(raw);
+        console.info('[meal] recomputed_today_total', { count: totals.count, kcal: totals.kcal });
+      } catch (_e) {
+        /* optional recompute log */
+      }
       return true;
     }
     if (record.type === 'exercise') {
@@ -580,6 +598,7 @@ async function relocateLastMealToTokyoDate(lineUserId, targetYmd) {
     return { ok: false, reason: normalizeString(error?.message || 'update_failed') };
   }
 
+  console.info('[meal] relocate_applied', { userId: lineUserId, mealId: row.id, targetYmd: safeDate });
   clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
   return { ok: true, mealId: row.id, targetYmd: safeDate };
@@ -603,6 +622,7 @@ async function deleteLastMealLog(lineUserId) {
     return { ok: false, reason: normalizeString(error?.message || 'delete_failed') };
   }
 
+  console.info('[meal] delete_last_applied', { userId: lineUserId, mealId: row.id });
   clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
   return { ok: true, mealId: row.id };
@@ -894,24 +914,49 @@ async function isDuplicateMealInsert(lineUserId, record) {
   const user = await resolvePersistentUser(lineUserId);
   if (!user || !supabase) return false;
   const sid = normalizeString(record.sourceLineMessageId || '');
-  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  const dk = normalizeString(record.dedupeKey || '');
+  const imgHash = normalizeString(record.sourceImageHash || record.imageHash || '');
+  const sinceRecent = new Date(Date.now() - 12 * 60 * 1000).toISOString();
+  const sinceLong = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
   const rows = await safeRows(() => supabase
     .from('meal_logs')
     .select('id, raw_model_json, estimated_kcal, meal_label, eaten_at')
     .eq('user_id', user.id)
-    .gte('eaten_at', since)
+    .gte('eaten_at', sinceLong)
     .order('eaten_at', { ascending: false })
-    .limit(15));
-  if (sid) {
-    for (const r of rows) {
-      const raw = r?.raw_model_json && typeof r.raw_model_json === 'object' ? r.raw_model_json : {};
-      if (normalizeString(raw.sourceLineMessageId) === sid) return true;
+    .limit(120));
+  const recent = rows.filter((r) => String(r.eaten_at || '') >= sinceRecent);
+
+  const matchRow = (r) => {
+    const raw = r?.raw_model_json && typeof r.raw_model_json === 'object' ? r.raw_model_json : {};
+    if (sid && normalizeString(raw.sourceLineMessageId) === sid) return 'sourceLineMessageId';
+    if (dk && normalizeString(raw.dedupeKey) === dk) return 'dedupeKey';
+    if (imgHash && normalizeString(raw.sourceImageHash || raw.imageHash) === imgHash) return 'sourceImageHash';
+    return '';
+  };
+
+  for (const r of rows) {
+    const m = matchRow(r);
+    if (m) {
+      console.info('[meal] duplicate_detected', { reason: m, mealLogId: r.id, sourceLineMessageId: sid || null, dedupeKey: dk || null });
+      return true;
     }
   }
+
   const kcal = Number(record.kcal || record.estimatedNutrition?.kcal || 0);
   const label = normalizeString(record.summary || record.name);
   if (!label && !kcal) return false;
-  return rows.some((r) => Number(r.estimated_kcal || 0) === kcal && normalizeString(r.meal_label) === label);
+  const tNew = record.eatenAt ? new Date(record.eatenAt).getTime() : Date.now();
+  for (const r of recent) {
+    if (Number(r.estimated_kcal || 0) === kcal && normalizeString(r.meal_label) === label) {
+      const tOld = new Date(r.eaten_at).getTime();
+      if (Number.isFinite(tNew) && Number.isFinite(tOld) && Math.abs(tNew - tOld) <= 10 * 60 * 1000) {
+        console.info('[meal] duplicate_detected', { reason: 'near_time_same_kcal_label', mealLogId: r.id, kcal, label: label.slice(0, 40) });
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 async function addDailyRecord(userId, record) {
@@ -922,6 +967,7 @@ async function addDailyRecord(userId, record) {
 
   if (record?.type === 'meal') {
     if (await isDuplicateMealInsert(userId, record)) {
+      console.info('[meal] skipped_duplicate', { userId, reason: 'db_or_recent_fingerprint' });
       return {
         ...clone(dailyRecordStore.get(key) || buildDailyRecordBucket()),
         points: await getPoints(userId)

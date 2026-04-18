@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeItemName, collectTrendRows, buildPanelTrendSummary } = require('./lab_trend_service');
+const labItemAliasService = require('./lab_item_alias_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -206,7 +207,13 @@ function extractMetricFromRawText(rawText, targetCanon) {
   return null;
 }
 
+function looksLikeJsonDump(s) {
+  const t = normalizeText(s);
+  return t.startsWith('{') || /"items"\s*:|"examDate"\s*:/.test(t);
+}
+
 function buildReadableInventoryReply(panel) {
+  const exam = normalizeText(panel?.latestExamDate || panel?.examDate || '');
   const items = Array.isArray(panel?.items) ? panel.items : [];
   const lines = items
     .map((it) => {
@@ -214,16 +221,35 @@ function buildReadableInventoryReply(panel) {
       if (!v) return '';
       const u = it.unit ? ` ${it.unit}` : '';
       const f = it.flag ? ` ${it.flag}` : '';
-      return `${normalizeText(it.itemName || '項目')}: ${v}${u}${f}`;
+      return `・${normalizeText(it.itemName || '項目')}: ${v}${u}${f}`;
     })
     .filter(Boolean);
+
   const raw = normalizeText(panel?.rawText || '');
-  const rawClip = raw.length > 600 ? `${raw.slice(0, 600)}…` : raw;
-  const head = lines.length
-    ? ['読み取れている項目（保存済みのパネルから）:', ...lines.slice(0, 24)].join('\n')
-    : 'パネルの項目配列は空ですが、下の raw テキストから拾えるものはあります。';
-  const tail = rawClip ? `\n\n（画像からの生テキスト抜粋）\n${rawClip}` : '';
-  return `${head}${tail}`;
+  const fromMap = labItemAliasService.buildLabItemMapFromRawText(raw);
+  const mapLines = Object.entries(fromMap).map(([, entry]) => {
+    const label = normalizeText(entry?.label || entry?.rawLabel || '');
+    const v = normalizeText(entry?.value || '');
+    const u = entry?.unit ? ` ${entry.unit}` : '';
+    if (!label && !v) return '';
+    return `・${label || '項目'}: ${v}${u}`;
+  }).filter(Boolean);
+
+  const merged = [...lines];
+  for (const ml of mapLines) {
+    if (!merged.some((x) => x === ml || x.replace(/\s/g, '') === ml.replace(/\s/g, ''))) merged.push(ml);
+  }
+
+  const headParts = ['検査結果から読み取れた候補（数値があるものは併記）:'];
+  if (exam) headParts.unshift(`検査日: ${exam}`);
+  if (merged.length) {
+    return [...headParts, ...merged.slice(0, 28)].join('\n');
+  }
+  if (raw && !looksLikeJsonDump(raw)) {
+    const clip = raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
+    return [...headParts, '（項目名の自動認識は難しいですが、テキストから次の抜粋を読み取りました）', clip].join('\n');
+  }
+  return [exam ? `検査日: ${exam}` : '検査日は確認中です。', '数値付きの項目はまだ抽出できていません。画像をもう一度送るか、紙の数値を書いてください。'].join('\n');
 }
 
 function buildExamDateQuickReply(panel) {
