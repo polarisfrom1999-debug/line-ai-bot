@@ -21,7 +21,7 @@ async function ensureDir() {
 
 function defaultState() {
   return {
-    version: 1,
+    version: 2,
     profile: {
       displayName: '',
       grade: 7,
@@ -35,7 +35,45 @@ function defaultState() {
       currentFocus: ''
     },
     dailyByDate: {},
-    trainingByDate: {}
+    trainingByDate: {},
+    parentByDate: {},
+    parentMonthlyByMonth: {},
+    trainerMonthlyByMonth: {},
+    labRecords: [],
+    raceDialogue: {
+      phase: 'idle',
+      preAnswers: {},
+      postAnswers: {},
+      updatedAt: null
+    },
+    successHighlights: [],
+    parentNotesForAthlete: [],
+    weeklyWeights: []
+  };
+}
+
+function normalizeState(parsed) {
+  const d = defaultState();
+  if (!parsed || typeof parsed !== 'object') return d;
+  return {
+    ...d,
+    ...parsed,
+    profile: { ...d.profile, ...(parsed.profile || {}) },
+    dailyByDate: { ...d.dailyByDate, ...(parsed.dailyByDate || {}) },
+    trainingByDate: { ...d.trainingByDate, ...(parsed.trainingByDate || {}) },
+    parentByDate: { ...d.parentByDate, ...(parsed.parentByDate || {}) },
+    parentMonthlyByMonth: { ...d.parentMonthlyByMonth, ...(parsed.parentMonthlyByMonth || {}) },
+    trainerMonthlyByMonth: { ...d.trainerMonthlyByMonth, ...(parsed.trainerMonthlyByMonth || {}) },
+    labRecords: Array.isArray(parsed.labRecords) ? parsed.labRecords : [],
+    raceDialogue: {
+      ...d.raceDialogue,
+      ...(parsed.raceDialogue || {}),
+      preAnswers: { ...(d.raceDialogue.preAnswers || {}), ...((parsed.raceDialogue || {}).preAnswers || {}) },
+      postAnswers: { ...(d.raceDialogue.postAnswers || {}), ...((parsed.raceDialogue || {}).postAnswers || {}) }
+    },
+    successHighlights: Array.isArray(parsed.successHighlights) ? parsed.successHighlights : [],
+    parentNotesForAthlete: Array.isArray(parsed.parentNotesForAthlete) ? parsed.parentNotesForAthlete : [],
+    weeklyWeights: Array.isArray(parsed.weeklyWeights) ? parsed.weeklyWeights : []
   };
 }
 
@@ -45,8 +83,7 @@ async function readState(userId) {
   try {
     const raw = await fs.readFile(fp, 'utf8');
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return defaultState();
-    return { ...defaultState(), ...parsed, profile: { ...defaultState().profile, ...(parsed.profile || {}) } };
+    return normalizeState(parsed);
   } catch (_e) {
     return defaultState();
   }
@@ -55,7 +92,7 @@ async function readState(userId) {
 async function writeState(userId, state) {
   await ensureDir();
   const fp = filePath(userId);
-  const payload = JSON.stringify(state, null, 2);
+  const payload = JSON.stringify(normalizeState(state), null, 2);
   await fs.writeFile(fp, payload, 'utf8');
 }
 
@@ -63,5 +100,6 @@ module.exports = {
   readState,
   writeState,
   defaultState,
+  normalizeState,
   DATA_DIR
 };

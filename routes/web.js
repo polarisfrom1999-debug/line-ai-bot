@@ -10,6 +10,7 @@ const dataService = require('../services/web_portal_data_service');
 const realtimeService = require('../services/web_portal_realtime_service');
 const featureFlags = require('../config/feature_flags');
 const athleteSupportService = require('../services/athlete_support_service');
+const athleteSupportExtendedService = require('../services/athlete_support_extended_service');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } });
 
@@ -653,6 +654,156 @@ router.post('/athlete-support/training-log', requireSession, async (req, res) =>
   } catch (error) {
     console.error('[web] athlete-support training error:', error?.message || error);
     res.status(500).json({ ok: false, error: 'athlete_support_training_failed', message: '練習ログの保存に失敗しました。' });
+  }
+});
+
+router.get('/athlete-support/bundle', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) {
+    return res.status(404).json({ ok: false, error: 'feature_disabled', message: 'この機能はまだ有効になっていません。' });
+  }
+  try {
+    const userId = req.webSession.user.id;
+    const date = req.query.date ? String(req.query.date) : undefined;
+    const home = await athleteSupportService.getHome(userId, { date });
+    const state = await athleteSupportExtendedService.load(userId);
+    const parentNotesSafe = (state.parentNotesForAthlete || []).slice(-15).map((n) => ({
+      id: n.id,
+      summaryForAthlete: n.summaryForAthlete,
+      showToAthlete: n.showToAthlete,
+      createdAt: n.createdAt,
+      usedAi: n.usedAi
+    }));
+    res.json({
+      ok: true,
+      home,
+      parent: athleteSupportExtendedService.buildParentDashboard(state, home.date),
+      trainer: athleteSupportExtendedService.buildTrainerDashboard(state, home.date),
+      race: await athleteSupportExtendedService.getRaceDialogue(userId),
+      labs: {
+        records: state.labRecords || [],
+        compare: athleteSupportExtendedService.labCompare(state)
+      },
+      reminders: athleteSupportExtendedService.buildReminders(state, home.date),
+      highlights: (state.successHighlights || []).slice(-40),
+      parentMonthlyByMonth: state.parentMonthlyByMonth || {},
+      trainerMonthlyByMonth: state.trainerMonthlyByMonth || {},
+      parentNotesForAthlete: parentNotesSafe
+    });
+  } catch (error) {
+    console.error('[web] athlete-support bundle error:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'athlete_support_bundle_failed', message: '伴走データの一括取得に失敗しました。' });
+  }
+});
+
+router.post('/athlete-support/parent/daily', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveParentDaily(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support parent daily:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'parent_daily_failed' });
+  }
+});
+
+router.post('/athlete-support/parent/monthly', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveParentMonthly(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support parent monthly:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'parent_monthly_failed' });
+  }
+});
+
+router.post('/athlete-support/parent/translate', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.translateParentNoteForAthlete(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support translate:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'translate_failed' });
+  }
+});
+
+router.post('/athlete-support/trainer/monthly', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveTrainerMonthly(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support trainer monthly:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'trainer_monthly_failed' });
+  }
+});
+
+router.post('/athlete-support/trainer/weights', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveWeeklyWeights(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support weights:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'weights_failed' });
+  }
+});
+
+router.post('/athlete-support/lab/save', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveLabRecord(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support lab save:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'lab_save_failed' });
+  }
+});
+
+router.delete('/athlete-support/lab/:id', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.deleteLabRecord(req.webSession.user.id, String(req.params.id || ''));
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support lab del:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'lab_delete_failed' });
+  }
+});
+
+router.post('/athlete-support/race-dialogue', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.saveRaceDialogue(req.webSession.user.id, req.body || {});
+    res.json({ ok: true, ...out });
+  } catch (error) {
+    console.error('[web] athlete-support race:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'race_dialogue_failed' });
+  }
+});
+
+router.post('/athlete-support/success/highlight', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).json({ ok: false, error: 'feature_disabled' });
+  try {
+    const out = await athleteSupportExtendedService.addSuccessHighlight(req.webSession.user.id, req.body || {});
+    res.json(out);
+  } catch (error) {
+    console.error('[web] athlete-support success:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'success_failed' });
+  }
+});
+
+router.get('/athlete-support/export/monthly', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) return res.status(404).send('disabled');
+  try {
+    const state = await athleteSupportExtendedService.load(req.webSession.user.id);
+    const html = athleteSupportExtendedService.buildMonthlyPrintHtml(req.webSession.user.id, state);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (error) {
+    console.error('[web] athlete-support export:', error?.message || error);
+    res.status(500).send('export failed');
   }
 });
 

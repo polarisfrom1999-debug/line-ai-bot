@@ -91,7 +91,10 @@
     connectionState: 'disconnected',
     auxPanelOpen: false,
     athleteSupportEnabled: false,
-    athleteSupportData: null
+    athleteSupportData: null,
+    athleteSupportBundle: null,
+    athleteSubview: 'athlete',
+    athleteRootDelegates: false
   };
 
   const els = {
@@ -341,8 +344,8 @@
     });
     renderAuxPanelState();
     if (tabId === 'athlete' && state.athleteSupportEnabled) {
-      if (!state.athleteSupportData) {
-        loadAthleteHome().catch(() => {});
+      if (!state.athleteSupportBundle) {
+        loadAthleteBundle().catch(() => {});
       } else {
         renderAthleteSupport();
       }
@@ -1276,6 +1279,7 @@ function renderMessageAttachments(item) {
   function hideAthleteTab() {
     state.athleteSupportEnabled = false;
     state.athleteSupportData = null;
+    state.athleteSupportBundle = null;
     if (els.athleteTabBtn) els.athleteTabBtn.classList.add('hidden');
     if (state.activeTab === 'athlete') setActiveTab('chat');
   }
@@ -1290,7 +1294,7 @@ function renderMessageAttachments(item) {
       state.athleteSupportEnabled = Boolean(st.enabled);
       if (state.athleteSupportEnabled) {
         if (els.athleteTabBtn) els.athleteTabBtn.classList.remove('hidden');
-        await loadAthleteHome();
+        await loadAthleteBundle();
       } else {
         hideAthleteTab();
       }
@@ -1299,11 +1303,28 @@ function renderMessageAttachments(item) {
     }
   }
 
-  async function loadAthleteHome() {
+  async function loadAthleteBundle() {
     if (!state.sessionToken || !state.athleteSupportEnabled) return;
-    const j = await fetchJson('/api/web/athlete-support/home');
-    state.athleteSupportData = j;
+    const j = await fetchJson('/api/web/athlete-support/bundle');
+    state.athleteSupportBundle = j;
+    state.athleteSupportData = j.home || null;
     renderAthleteSupport();
+  }
+
+  async function downloadAthleteMonthlyPrint() {
+    try {
+      const res = await fetch('/api/web/athlete-support/export/monthly', {
+        credentials: 'include',
+        headers: buildAuthHeaders()
+      });
+      if (!res.ok) throw new Error('print_failed');
+      const blob = await res.blob();
+      const u = URL.createObjectURL(blob);
+      window.open(u, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(u), 60_000);
+    } catch (_e) {
+      window.alert('印刷用ページを開けませんでした。接続を確認してください。');
+    }
   }
 
   function renderAthleteSupport() {
@@ -1340,7 +1361,31 @@ function renderMessageAttachments(item) {
       .map((line) => `<li>${escapeHtml(line)}</li>`)
       .join('');
 
-    els.athleteRoot.innerHTML = `
+    const b = state.athleteSupportBundle;
+    const sub = state.athleteSubview || 'athlete';
+    const tabRows = [
+      ['athlete', '選手'],
+      ['parent', '親'],
+      ['trainer', 'トレーナー'],
+      ['lab', '検査'],
+      ['race', 'レース前後'],
+      ['success', '成功体験'],
+      ['print', '月1印刷']
+    ];
+    const subnav = `<div class="athlete-subnav-wrap"><nav class="athlete-subnav" aria-label="伴走モード">${tabRows
+      .map(([id, lbl]) => `<button type="button" class="athlete-subtab${sub === id ? ' active' : ''}" data-sub="${id}">${lbl}</button>`)
+      .join('')}</nav></div>`;
+
+    const athleteNotesCard =
+      !b || !safeArray(b.parentNotesForAthlete).some((n) => n.showToAthlete)
+        ? ''
+        : `<div class="athlete-card"><h3>親からのやわらかメッセージ（要約）</h3><ul>${safeArray(b.parentNotesForAthlete)
+            .filter((n) => n.showToAthlete)
+            .map((n) => `<li>${escapeHtml(n.summaryForAthlete || '')} <small>${escapeHtml(n.createdAt || '')}</small></li>`)
+            .join('')}</ul></div>`;
+
+    const athleteInner = `
+      ${athleteNotesCard}
       <div class="athlete-top">
         <div class="athlete-card">
           <h3>目標と次の本番</h3>
@@ -1426,43 +1471,166 @@ function renderMessageAttachments(item) {
             <ul>${monthlyAthlete}</ul>
           </div>
           <div>
-            <h4>親向け（Phase 2 で画面分離予定）</h4>
+            <h4>親向け（「親」サブタブにも同系の入力があります）</h4>
             <ul>${monthlyParent}</ul>
           </div>
         </div>
       </div>
     `;
-    bindAthleteFormsOnce();
-  }
 
-  let athleteFormsBound = false;
-  function bindAthleteFormsOnce() {
-    if (athleteFormsBound || !els.athleteRoot) return;
-    athleteFormsBound = true;
-    els.athleteRoot.addEventListener('submit', async (event) => {
-      const form = event.target;
-      if (!(form instanceof HTMLFormElement)) return;
-      event.preventDefault();
-      const fid = form.id;
-      try {
-        if (fid === 'athleteProfileForm') {
-          const body = Object.fromEntries(new FormData(form).entries());
-          await postJson('/api/web/athlete-support/profile', body);
-        } else if (fid === 'athleteDailyForm') {
-          const body = Object.fromEntries(new FormData(form).entries());
-          await postJson('/api/web/athlete-support/daily-condition', body);
-        } else if (fid === 'athleteTrainingForm') {
-          const body = Object.fromEntries(new FormData(form).entries());
-          await postJson('/api/web/athlete-support/training-log', body);
-        } else {
-          return;
-        }
-        await loadAthleteHome();
-      } catch (err) {
-        const msg = normalizeText(err?.message) || '保存に失敗しました';
-        window.alert(msg);
-      }
-    });
+    const monthKey = (d.date || getTodayIso()).slice(0, 7);
+    const pmSaved = (b && b.parentMonthlyByMonth && b.parentMonthlyByMonth[monthKey]) || {};
+    const tmSaved = (b && b.trainerMonthlyByMonth && b.trainerMonthlyByMonth[monthKey]) || {};
+    const weightJson = JSON.stringify((b && b.trainer && b.trainer.weeklyWeights) || [], null, 2);
+
+    const parentInner = !b
+      ? '<p class="muted">読み込み中…</p>'
+      : `<div class="athlete-card"><h3>今日の状態（要約のみ・詳細は選手本人画面）</h3>
+        <ul>${safeArray(b.parent.summaryLines).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+        ${b.parent.menstrualSummaryOnly ? `<p class="muted">${escapeHtml(b.parent.menstrualSummaryOnly)}</p>` : ''}
+        <h4>関わり方ヒント</h4><ul>${safeArray(b.parent.engagementHints).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+        <h4>控えたい声かけ</h4><ul>${safeArray(b.parent.avoidPhrases).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+        ${b.parent.raceHint ? `<p><strong>大会前後</strong> ${escapeHtml(b.parent.raceHint)}</p>` : ''}
+        <h4>今週の成長の芽</h4><ul>${safeArray(b.parent.growthThisWeek).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+    </div>
+    <div class="athlete-card"><h3>親の今日のメモ</h3>
+      <form id="athleteParentDailyForm" class="athlete-form">
+        <input type="hidden" name="date" value="${escapeHtml(d.date)}">
+        <label>親の気分<input name="parentMood"></label>
+        <label>短いメモ<textarea name="parentNote" rows="2"></textarea></label>
+        <label>うまく支えられたこと<input name="supportWin"></label>
+        <label>言いすぎてしまったと感じたこと<input name="overwordReflect"></label>
+        <button type="submit" class="primary-btn small">親の今日分を保存</button>
+      </form>
+    </div>
+    <div class="athlete-card"><h3>親の月1シート（${escapeHtml(monthKey)}）</h3>
+      <form id="athleteParentMonthlyForm" class="athlete-form">
+        <input type="hidden" name="monthKey" value="${escapeHtml(monthKey)}">
+        <label>問い1<textarea name="q1" rows="2">${escapeHtml(pmSaved.q1 || '')}</textarea></label>
+        <label>問い2<textarea name="q2" rows="2">${escapeHtml(pmSaved.q2 || '')}</textarea></label>
+        <label>問い3<textarea name="q3" rows="2">${escapeHtml(pmSaved.q3 || '')}</textarea></label>
+        <label>問い4<textarea name="q4" rows="2">${escapeHtml(pmSaved.q4 || '')}</textarea></label>
+        <button type="submit" class="primary-btn small">月1（親）を保存</button>
+      </form>
+    </div>
+    <div class="athlete-card"><h3>本人向けやわらか要約（原文は本人に見せない）</h3>
+      <form id="athleteParentTranslateForm" class="athlete-form">
+        <label>親メモの原文<textarea name="rawMessage" rows="3"></textarea></label>
+        <label><input type="checkbox" name="showToAthlete" value="1"> 要約を選手タブ「本人向けメッセージ」に表示する</label>
+        <button type="submit" class="primary-btn small">要約を生成して保存</button>
+      </form>
+      <ul>${safeArray(b.parentNotesForAthlete)
+        .filter((n) => n.showToAthlete)
+        .map((n) => `<li>${escapeHtml(n.summaryForAthlete || '')} <small>${escapeHtml(n.createdAt || '')}</small></li>`)
+        .join('')}</ul>
+    </div>`;
+
+    const trainerInner = !b
+      ? '<p class="muted">読み込み中…</p>'
+      : `<div class="athlete-card"><h3>要注意</h3><ul>${safeArray(b.trainer.alerts).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
+      <div class="athlete-card"><h3>傾向サマリ</h3><ul>${safeArray(b.trainer.trends && b.trainer.trends.summary).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+        <p class="muted small">体重は週次JSON（トレーナー管理）。女子のセンシティブ情報の権限分けは運用で。</p>
+      </div>
+      <div class="athlete-card"><h3>週次体重など（JSON）</h3>
+        <form id="athleteTrainerWeightsForm" class="athlete-form">
+          <textarea name="entriesJson" rows="5" class="wide-json">${escapeHtml(weightJson)}</textarea>
+          <button type="submit" class="primary-btn small">体重シリーズを保存</button>
+        </form>
+      </div>
+      <div class="athlete-card"><h3>トレーナー月1（${escapeHtml(monthKey)}）</h3>
+        <form id="athleteTrainerMonthlyForm" class="athlete-form">
+          <input type="hidden" name="monthKey" value="${escapeHtml(monthKey)}">
+          <label>今月の成功<textarea name="success" rows="2">${escapeHtml(tmSaved.success || '')}</textarea></label>
+          <label>今月の課題<textarea name="challenge" rows="2">${escapeHtml(tmSaved.challenge || '')}</textarea></label>
+          <label>親への一言<textarea name="messageToParent" rows="2">${escapeHtml(tmSaved.messageToParent || '')}</textarea></label>
+          <label>来月のテーマ<textarea name="nextTheme" rows="2">${escapeHtml(tmSaved.nextTheme || '')}</textarea></label>
+          <button type="submit" class="primary-btn small">保存</button>
+        </form>
+      </div>`;
+
+    const labs = (b && b.labs && b.labs.records) || [];
+    const labRows = labs
+      .map(
+        (r) =>
+          `<tr><td>${escapeHtml(r.date)}</td><td>${r.hb != null ? escapeHtml(String(r.hb)) : '—'}</td><td>${
+            r.ferritin != null ? escapeHtml(String(r.ferritin)) : '—'
+          }</td><td><button type="button" class="ghost-btn small js-lab-del" data-id="${escapeHtml(r.id)}">削除</button></td></tr>`
+      )
+      .join('');
+    const labInner = !b
+      ? '<p class="muted">読み込み中…</p>'
+      : `<div class="athlete-card"><h3>血液検査メモ</h3><p>${escapeHtml((b.labs && b.labs.compare && b.labs.compare.message) || '')}</p>
+        <table class="athlete-table"><thead><tr><th>日付</th><th>Hb</th><th>Ferritin</th><th></th></tr></thead><tbody>${labRows}</tbody></table>
+        <form id="athleteLabForm" class="athlete-form"><h4>追加・更新</h4>
+          <input name="id" placeholder="既存idなら更新">
+          <label>検査日<input name="date" value="${escapeHtml(d.date)}"></label>
+          <label>Hb<input name="hb" type="number" step="0.1"></label>
+          <label>フェリチン<input name="ferritin" type="number" step="0.1"></label>
+          <label>Fe<input name="fe" type="number" step="0.1"></label>
+          <label>TIBC<input name="tibc" type="number" step="0.1"></label>
+          <label>TSAT<input name="tsat"></label>
+          <label>医師コメント<textarea name="doctorNote" rows="2"></textarea></label>
+          <label>サプリ<textarea name="supplementNote" rows="1"></textarea></label>
+          <label>再検査予定<input name="nextReviewDue"></label>
+          <button type="submit" class="primary-btn small">保存</button>
+        </form></div>`;
+
+    const race = (b && b.race) || {};
+    const rp = safeArray(race.preQuestions);
+    const rqPost = safeArray(race.postQuestions);
+    const raceInner = !b
+      ? '<p class="muted">読み込み中…</p>'
+      : `<div class="athlete-card"><h3>レース前後の対話（phase: ${escapeHtml(race.phase || '')}）</h3>
+        <form id="athleteRaceForm" class="athlete-form">
+          <label>フェーズ<select name="phase"><option value="pre"${race.phase === 'post' ? '' : ' selected'}>前</option><option value="post"${
+            race.phase === 'post' ? ' selected' : ''
+          }>後</option></select></label>
+          <label>質問ID<input name="questionId" placeholder="q1 / p1"></label>
+          <label>回答<textarea name="answer" rows="2"></textarea></label>
+          <button type="submit" class="primary-btn small">1問保存</button>
+        </form>
+        <form id="athleteRaceResetForm" class="athlete-form">
+          <input type="hidden" name="action" value="reset">
+          <button type="submit" class="ghost-btn small">対話をリセット</button>
+        </form>
+        <p class="muted small">前: ${rp.map((x) => escapeHtml(x.text)).join(' / ')}</p>
+        <p class="muted small">後: ${rqPost.map((x) => escapeHtml(x.text)).join(' / ')}</p>
+      </div>`;
+
+    const hi = (b && b.highlights) || [];
+    const successInner = !b
+      ? '<p class="muted">読み込み中…</p>'
+      : `<div class="athlete-card"><h3>成功体験メモ（三者）</h3><ul>${hi
+          .slice()
+          .reverse()
+          .map((h) => `<li><strong>${escapeHtml(h.who)}</strong> ${escapeHtml(h.text)} <small>${escapeHtml(h.createdAt || '')}</small></li>`)
+          .join('')}</ul>
+        <form id="athleteSuccessForm" class="athlete-form">
+          <label>who<select name="who"><option value="athlete">選手</option><option value="parent">親</option><option value="trainer">トレーナー</option></select></label>
+          <label>内容<textarea name="text" rows="2"></textarea></label>
+          <button type="submit" class="primary-btn small">追加</button>
+        </form>
+      </div>`;
+
+    const printInner = `<div class="athlete-card"><h3>月1シート（印刷）</h3><p class="muted">ブラウザ印刷で PDF 保存できます。</p><button type="button" class="primary-btn small" id="athletePrintBtn">印刷用ページを開く</button></div>`;
+
+    const remindersHtml =
+      !b || !safeArray(b.reminders).length
+        ? ''
+        : `<div class="athlete-card athlete-reminders"><h3>大会・季節リマインド</h3><ul>${safeArray(b.reminders)
+            .map((x) => `<li>${escapeHtml(x)}</li>`)
+            .join('')}</ul></div>`;
+
+    const innerMap = {
+      athlete: remindersHtml + athleteInner,
+      parent: remindersHtml + parentInner,
+      trainer: remindersHtml + trainerInner,
+      lab: labInner,
+      race: raceInner,
+      success: successInner,
+      print: remindersHtml + printInner
+    };
+    els.athleteRoot.innerHTML = subnav + (innerMap[sub] || athleteInner);
   }
 
   async function postJson(url, payload, useAuth = true) {
@@ -1488,6 +1656,125 @@ function renderMessageAttachments(item) {
       throw err;
     }
     return json;
+  }
+
+  function formFieldsToObject(form) {
+    const fd = new FormData(form);
+    const out = {};
+    for (const [k, v] of fd.entries()) {
+      if (Object.prototype.hasOwnProperty.call(out, k)) {
+        if (!Array.isArray(out[k])) out[k] = [out[k], v];
+        else out[k].push(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+
+  async function handleAthletePanelDelegatedSubmit(event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !els.athleteRoot || !els.athleteRoot.contains(form)) return;
+    const id = form.id || '';
+    const tracked = new Set([
+      'athleteProfileForm',
+      'athleteDailyForm',
+      'athleteTrainingForm',
+      'athleteParentDailyForm',
+      'athleteParentMonthlyForm',
+      'athleteParentTranslateForm',
+      'athleteTrainerMonthlyForm',
+      'athleteTrainerWeightsForm',
+      'athleteLabForm',
+      'athleteRaceForm',
+      'athleteRaceResetForm',
+      'athleteSuccessForm'
+    ]);
+    if (!tracked.has(id)) return;
+    event.preventDefault();
+    if (!state.sessionToken || !state.athleteSupportEnabled) return;
+    try {
+      if (id === 'athleteProfileForm') {
+        await postJson('/api/web/athlete-support/profile', formFieldsToObject(form));
+      } else if (id === 'athleteDailyForm') {
+        await postJson('/api/web/athlete-support/daily-condition', formFieldsToObject(form));
+      } else if (id === 'athleteTrainingForm') {
+        await postJson('/api/web/athlete-support/training-log', formFieldsToObject(form));
+      } else if (id === 'athleteParentDailyForm') {
+        await postJson('/api/web/athlete-support/parent/daily', formFieldsToObject(form));
+      } else if (id === 'athleteParentMonthlyForm') {
+        await postJson('/api/web/athlete-support/parent/monthly', formFieldsToObject(form));
+      } else if (id === 'athleteParentTranslateForm') {
+        const raw = formFieldsToObject(form);
+        const cb = form.querySelector('input[name="showToAthlete"]');
+        await postJson('/api/web/athlete-support/parent/translate', {
+          ...raw,
+          showToAthlete: Boolean(cb && cb.checked)
+        });
+      } else if (id === 'athleteTrainerMonthlyForm') {
+        await postJson('/api/web/athlete-support/trainer/monthly', formFieldsToObject(form));
+      } else if (id === 'athleteTrainerWeightsForm') {
+        const raw = formFieldsToObject(form);
+        const text = String(raw.entriesJson || '').trim();
+        let entries = [];
+        if (text) {
+          entries = JSON.parse(text);
+          if (!Array.isArray(entries)) throw new Error('体重JSONは配列にしてください');
+        }
+        await postJson('/api/web/athlete-support/trainer/weights', { entries });
+      } else if (id === 'athleteLabForm') {
+        await postJson('/api/web/athlete-support/lab/save', formFieldsToObject(form));
+      } else if (id === 'athleteRaceForm') {
+        await postJson('/api/web/athlete-support/race-dialogue', formFieldsToObject(form));
+      } else if (id === 'athleteRaceResetForm') {
+        await postJson('/api/web/athlete-support/race-dialogue', { action: 'reset' });
+      } else if (id === 'athleteSuccessForm') {
+        await postJson('/api/web/athlete-support/success/highlight', formFieldsToObject(form));
+      }
+      await loadAthleteBundle();
+    } catch (err) {
+      const msg = normalizeText(err?.message || '');
+      window.alert(msg || '保存できませんでした');
+    }
+  }
+
+  async function handleAthletePanelDelegatedClick(event) {
+    if (!els.athleteRoot || !els.athleteRoot.contains(event.target)) return;
+    const subBtn = event.target.closest('.athlete-subtab');
+    if (subBtn) {
+      const next = subBtn.getAttribute('data-sub');
+      if (next && state.athleteSubview !== next) {
+        state.athleteSubview = next;
+        renderAthleteSupport();
+      }
+      return;
+    }
+    if (event.target.closest('#athletePrintBtn')) {
+      await downloadAthleteMonthlyPrint();
+      return;
+    }
+    const del = event.target.closest('.js-lab-del');
+    if (del) {
+      const lid = del.getAttribute('data-id');
+      if (!lid || !window.confirm('この検査記録を削除しますか？')) return;
+      try {
+        const res = await fetch(`/api/web/athlete-support/lab/${encodeURIComponent(lid)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: buildAuthHeaders()
+        });
+        let json = {};
+        if ((res.headers.get('content-type') || '').includes('application/json')) {
+          try {
+            json = await res.json();
+          } catch (_e) {}
+        }
+        if (!res.ok) throw new Error(json.message || json.error || `HTTP ${res.status}`);
+        await loadAthleteBundle();
+      } catch (err) {
+        window.alert(normalizeText(err?.message) || '削除できませんでした');
+      }
+    }
   }
 
   async function postForm(url, formData) {
@@ -1736,6 +2023,12 @@ function renderMessageAttachments(item) {
     els.quickActionFocusBtn.addEventListener('click', () => {
       els.composerInput.focus();
     });
+
+    if (els.athleteRoot && !state.athleteRootDelegates) {
+      state.athleteRootDelegates = true;
+      els.athleteRoot.addEventListener('submit', handleAthletePanelDelegatedSubmit);
+      els.athleteRoot.addEventListener('click', handleAthletePanelDelegatedClick);
+    }
 
     window.addEventListener('resize', () => renderRecords());
   }
