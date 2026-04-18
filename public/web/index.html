@@ -55,9 +55,10 @@
     </section>
 
     <nav class="compact-nav" aria-label="主要タブ">
-      <div class="tab-group">
+      <div class="tab-group" id="mainTabGroup">
         <button class="tab-btn active" data-tab="chat" type="button">チャット</button>
         <button class="tab-btn" data-tab="records" type="button">記録</button>
+        <button class="tab-btn hidden" data-tab="athlete" type="button" id="athleteTabBtn">伴走（陸上）</button>
       </div>
       <div class="toolbar-group">
         <div class="range-chip-group js-range-group" id="globalRangeGroup">
@@ -202,6 +203,18 @@
               <div class="lab-grid" id="labGrid"></div>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="athletePanel" aria-label="中1女子800m1500m伴走">
+        <div class="athlete-shell" id="athleteRoot">
+          <div class="panel-head compact">
+            <div>
+              <h2>伴走（陸上）</h2>
+              <p>中1・女子・800m / 1500m・東京都のロードマップを軸にした日々の伴走（β）。既存のチャット・記録とは別に保存されます。</p>
+            </div>
+          </div>
+          <p class="athlete-placeholder muted">接続後、サーバーで機能が有効な場合に表示が出ます。</p>
         </div>
       </section>
     </main>

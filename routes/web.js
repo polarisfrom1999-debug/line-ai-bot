@@ -8,6 +8,8 @@ const conversationSummaryService = require('../services/conversation_summary_ser
 const authService = require('../services/web_portal_auth_service');
 const dataService = require('../services/web_portal_data_service');
 const realtimeService = require('../services/web_portal_realtime_service');
+const featureFlags = require('../config/feature_flags');
+const athleteSupportService = require('../services/athlete_support_service');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } });
 
@@ -582,6 +584,75 @@ router.get('/records/labs/list', requireSession, async (req, res) => {
   } catch (error) {
     console.error('[web] records labs list error:', error?.message || error);
     res.status(500).json({ ok: false, error: 'records_labs_list_failed', message: '血液検査一覧を取得できませんでした。' });
+  }
+});
+
+function athleteSupportEnabled() {
+  return Boolean(featureFlags.ENABLE_ATHLETE_SUPPORT_WEB);
+}
+
+router.get('/athlete-support/status', requireSession, (req, res) => {
+  res.json({
+    ok: true,
+    enabled: athleteSupportEnabled(),
+    mode: 'athlete_support_j1_female_800_1500_tokyo'
+  });
+});
+
+router.get('/athlete-support/home', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) {
+    return res.status(404).json({ ok: false, error: 'feature_disabled', message: 'この機能はまだ有効になっていません。' });
+  }
+  try {
+    const userId = req.webSession.user.id;
+    const date = req.query.date ? String(req.query.date) : undefined;
+    const home = await athleteSupportService.getHome(userId, { date });
+    res.json({ ok: true, ...home });
+  } catch (error) {
+    console.error('[web] athlete-support home error:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'athlete_support_home_failed', message: '伴走データの取得に失敗しました。' });
+  }
+});
+
+router.post('/athlete-support/profile', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) {
+    return res.status(404).json({ ok: false, error: 'feature_disabled', message: 'この機能はまだ有効になっていません。' });
+  }
+  try {
+    const userId = req.webSession.user.id;
+    const home = await athleteSupportService.saveProfile(userId, req.body || {});
+    res.json({ ok: true, ...home });
+  } catch (error) {
+    console.error('[web] athlete-support profile error:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'athlete_support_profile_failed', message: 'プロフィールの保存に失敗しました。' });
+  }
+});
+
+router.post('/athlete-support/daily-condition', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) {
+    return res.status(404).json({ ok: false, error: 'feature_disabled', message: 'この機能はまだ有効になっていません。' });
+  }
+  try {
+    const userId = req.webSession.user.id;
+    const home = await athleteSupportService.saveDailyCondition(userId, req.body || {});
+    res.json({ ok: true, ...home });
+  } catch (error) {
+    console.error('[web] athlete-support condition error:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'athlete_support_condition_failed', message: '体調の保存に失敗しました。' });
+  }
+});
+
+router.post('/athlete-support/training-log', requireSession, async (req, res) => {
+  if (!athleteSupportEnabled()) {
+    return res.status(404).json({ ok: false, error: 'feature_disabled', message: 'この機能はまだ有効になっていません。' });
+  }
+  try {
+    const userId = req.webSession.user.id;
+    const home = await athleteSupportService.saveTrainingLog(userId, req.body || {});
+    res.json({ ok: true, ...home });
+  } catch (error) {
+    console.error('[web] athlete-support training error:', error?.message || error);
+    res.status(500).json({ ok: false, error: 'athlete_support_training_failed', message: '練習ログの保存に失敗しました。' });
   }
 });
 

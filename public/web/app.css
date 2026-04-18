@@ -289,6 +289,12 @@ textarea { resize: vertical; }
   color: #fff;
   font-weight: 800;
 }
+.primary-btn.small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
 .plus-btn {
   width: 42px;
   min-width: 42px;
@@ -903,4 +909,132 @@ textarea { resize: vertical; }
   .send-btn { grid-column: auto; min-height: 38px; padding: 0 12px; }
   .plus-btn { width: 38px; min-width: 38px; height: 38px; }
   .meal-total-box { min-width: 0; text-align: left; margin-top: 8px; }
+}
+
+/* --- 伴走（陸上）Phase 1 --- */
+.athlete-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 8px 24px;
+}
+.athlete-placeholder { padding: 12px 0; }
+.athlete-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.athlete-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  box-shadow: var(--card-shadow);
+}
+.athlete-card h3 { margin: 0 0 8px; font-size: 1.05rem; color: var(--text); }
+.athlete-card h4 { margin: 12px 0 6px; font-size: 0.92rem; color: var(--muted); }
+.echo-card { background: linear-gradient(165deg, rgba(206, 176, 208, 0.2), var(--surface)); }
+.echo-pre {
+  white-space: pre-wrap;
+  font-family: var(--font);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  margin: 0;
+  color: var(--text);
+}
+.reassurance {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.athlete-form label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.athlete-form input,
+.athlete-form textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+.athlete-form .primary-btn.small { margin-top: 10px; }
+.athlete-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.menu-meaning {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.menu-meaning li {
+  margin-bottom: 8px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.menu-meaning span {
+  display: inline-block;
+  min-width: 4.5em;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.roadmap-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  counter-reset: rm;
+}
+.roadmap-item {
+  position: relative;
+  padding: 12px 12px 12px 36px;
+  border-left: 2px solid var(--border);
+  margin-left: 10px;
+}
+.roadmap-item::before {
+  counter-increment: rm;
+  content: counter(rm);
+  position: absolute;
+  left: -11px;
+  top: 14px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+}
+.roadmap-item.roadmap-em {
+  border-left-color: var(--primary);
+}
+.roadmap-item.roadmap-em::before {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary-strong);
+}
+.roadmap-title { font-weight: 600; }
+.roadmap-meta { font-size: 0.82rem; color: var(--muted); }
+.roadmap-note { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.5; }
+.monthly-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.muted.small { font-size: 0.85rem; }
+@media (max-width: 900px) {
+  .athlete-top,
+  .athlete-grid-2,
+  .monthly-split { grid-template-columns: 1fr; }
 }

@@ -89,7 +89,9 @@
     pendingQuickAction: '',
     sessionToken: localStorage.getItem(WEB_TOKEN_KEY) || '',
     connectionState: 'disconnected',
-    auxPanelOpen: false
+    auxPanelOpen: false,
+    athleteSupportEnabled: false,
+    athleteSupportData: null
   };
 
   const els = {
@@ -106,9 +108,13 @@
     themePanel: document.getElementById('themePanel'),
     rangeGroups: Array.from(document.querySelectorAll('.js-range-group')),
     tabButtons: Array.from(document.querySelectorAll('.tab-btn')),
+    athleteTabBtn: document.getElementById('athleteTabBtn'),
+    athletePanel: document.getElementById('athletePanel'),
+    athleteRoot: document.getElementById('athleteRoot'),
     tabPanels: {
       chat: document.getElementById('chatPanel'),
-      records: document.getElementById('recordsPanel')
+      records: document.getElementById('recordsPanel'),
+      athlete: document.getElementById('athletePanel')
     },
     chatLog: document.getElementById('chatLog'),
     chatHeadStatus: document.getElementById('chatHeadStatus'),
@@ -325,9 +331,22 @@
   function setActiveTab(tabId) {
     state.activeTab = tabId;
     if (tabId !== 'chat' && state.auxPanelOpen) state.auxPanelOpen = false;
-    els.tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tabId));
-    Object.entries(els.tabPanels).forEach(([key, panel]) => panel.classList.toggle('active', key === tabId));
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      if (btn.classList.contains('hidden')) return;
+      btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+    Object.entries(els.tabPanels).forEach(([key, panel]) => {
+      if (!panel) return;
+      panel.classList.toggle('active', key === tabId);
+    });
     renderAuxPanelState();
+    if (tabId === 'athlete' && state.athleteSupportEnabled) {
+      if (!state.athleteSupportData) {
+        loadAthleteHome().catch(() => {});
+      } else {
+        renderAthleteSupport();
+      }
+    }
   }
 
   function setRecordTab(tabId) {
@@ -1243,6 +1262,207 @@ function renderMessageAttachments(item) {
     renderConnection();
     renderChat();
     renderRecords();
+    if (state.activeTab === 'athlete' && state.athleteSupportEnabled) renderAthleteSupport();
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function hideAthleteTab() {
+    state.athleteSupportEnabled = false;
+    state.athleteSupportData = null;
+    if (els.athleteTabBtn) els.athleteTabBtn.classList.add('hidden');
+    if (state.activeTab === 'athlete') setActiveTab('chat');
+  }
+
+  async function loadAthleteSupportGate() {
+    if (!state.sessionToken) {
+      hideAthleteTab();
+      return;
+    }
+    try {
+      const st = await fetchJson('/api/web/athlete-support/status');
+      state.athleteSupportEnabled = Boolean(st.enabled);
+      if (state.athleteSupportEnabled) {
+        if (els.athleteTabBtn) els.athleteTabBtn.classList.remove('hidden');
+        await loadAthleteHome();
+      } else {
+        hideAthleteTab();
+      }
+    } catch (_err) {
+      hideAthleteTab();
+    }
+  }
+
+  async function loadAthleteHome() {
+    if (!state.sessionToken || !state.athleteSupportEnabled) return;
+    const j = await fetchJson('/api/web/athlete-support/home');
+    state.athleteSupportData = j;
+    renderAthleteSupport();
+  }
+
+  function renderAthleteSupport() {
+    if (!els.athleteRoot) return;
+    if (!state.athleteSupportEnabled || !state.athleteSupportData) {
+      els.athleteRoot.innerHTML = '<p class="athlete-placeholder muted">この接続では伴走（陸上）が有効になっていません。</p>';
+      return;
+    }
+    const d = state.athleteSupportData;
+    const p = d.profile || {};
+    const c = d.condition || {};
+    const t = d.training || {};
+    const m = d.menu || {};
+    const echo = d.echo || {};
+    const days = d.daysToNextCompetition;
+    const daysLine = days == null ? '—' : `${days} 日`;
+    const md = d.monthlyDialogue || {};
+
+    const roadmapHtml = safeArray(d.roadmap)
+      .map(
+        (step) => `
+        <li class="roadmap-item${step.emphasis ? ' roadmap-em' : ''}">
+          <div class="roadmap-title">${escapeHtml(step.label)}</div>
+          <div class="roadmap-meta">${escapeHtml(step.season)}</div>
+          <p class="roadmap-note">${escapeHtml(step.note)}</p>
+        </li>`
+      )
+      .join('');
+
+    const monthlyAthlete = safeArray(md.athlete)
+      .map((line) => `<li>${escapeHtml(line)}</li>`)
+      .join('');
+    const monthlyParent = safeArray(md.parent)
+      .map((line) => `<li>${escapeHtml(line)}</li>`)
+      .join('');
+
+    els.athleteRoot.innerHTML = `
+      <div class="athlete-top">
+        <div class="athlete-card">
+          <h3>目標と次の本番</h3>
+          <p class="muted small">次の大会日はプロフィールで設定すると、ここにカウントダウンが出ます。</p>
+          <p><strong>次の本番まで:</strong> ${escapeHtml(daysLine)}</p>
+          <form id="athleteProfileForm" class="athlete-form">
+            <label>表示名<input name="displayName" value="${escapeHtml(p.displayName)}" autocomplete="nickname" maxlength="60"></label>
+            <label>800m 目標（任意）<input name="targetTime800" value="${escapeHtml(p.targetTime800)}" placeholder="例 2:20"></label>
+            <label>1500m 目標（任意）<input name="targetTime1500" value="${escapeHtml(p.targetTime1500)}" placeholder="例 4:45"></label>
+            <label>次の大会名<input name="nextCompetitionName" value="${escapeHtml(p.nextCompetitionName)}"></label>
+            <label>次の大会日（YYYY-MM-DD）<input name="nextCompetitionDate" value="${escapeHtml(p.nextCompetitionDate)}" pattern="\\d{4}-\\d{2}-\\d{2}"></label>
+            <label>今のフォーカス<textarea name="currentFocus" rows="2" maxlength="400">${escapeHtml(p.currentFocus)}</textarea></label>
+            <button type="submit" class="primary-btn small">プロフィールを保存</button>
+          </form>
+        </div>
+        <div class="athlete-card echo-card">
+          <h3>今日の返し（意味づけ）</h3>
+          <p>${escapeHtml(echo.summary || '')}</p>
+          <h4>練習の意味</h4>
+          <pre class="echo-pre">${escapeHtml(echo.meaning || '')}</pre>
+          <h4>今日の成功体験の芽</h4>
+          <p>${escapeHtml(echo.successMoment || '')}</p>
+          <h4>明日への一言</h4>
+          <p>${escapeHtml(echo.tomorrowLine || '')}</p>
+          <p class="reassurance">${safeArray(d.reassurance).map((x) => escapeHtml(x)).join(' / ')}</p>
+        </div>
+      </div>
+
+      <div class="athlete-card">
+        <h3>今日の提案メニューと「なぜ」</h3>
+        <p><strong>${escapeHtml(m.menu || '')}</strong></p>
+        <ul class="menu-meaning">
+          <li><span>目的</span> ${escapeHtml(m.purpose || '')}</li>
+          <li><span>つくる力</span> ${escapeHtml(m.builds || '')}</li>
+          <li><span>見どころ</span> ${escapeHtml(m.keyPoint || '')}</li>
+          <li><span>つながり</span> ${escapeHtml(m.bridgeHint || '')}</li>
+        </ul>
+      </div>
+
+      <div class="athlete-grid-2">
+        <div class="athlete-card">
+          <h3>体調（軽く）</h3>
+          <form id="athleteDailyForm" class="athlete-form">
+            <input type="hidden" name="date" value="${escapeHtml(d.date)}">
+            <label>睡眠<input name="sleep" value="${escapeHtml(c.sleep)}" placeholder="例 7h"></label>
+            <label>疲労<input name="fatigue" value="${escapeHtml(c.fatigue)}" placeholder="低/中/高"></label>
+            <label>脚の痛み<input name="legPain" value="${escapeHtml(c.legPain)}" placeholder="なし/軽い/あり"></label>
+            <label>気分<input name="mood" value="${escapeHtml(c.mood)}" placeholder="上向き/ふつう/下向き"></label>
+            <label>月経の感じ（本人のみ・詳細は書かなくてOK）<input name="menstrual" value="${escapeHtml(c.menstrual)}" placeholder="なし/あり/つらめ など"></label>
+            <label>食欲<input name="appetite" value="${escapeHtml(c.appetite)}"></label>
+            <label>体の感じ<input name="bodyFeel" value="${escapeHtml(c.bodyFeel)}"></label>
+            <label>練習の手応え<input name="practiceFeel" value="${escapeHtml(c.practiceFeel)}"></label>
+            <label>今日のひとこと<textarea name="noteShort" rows="2" maxlength="400">${escapeHtml(c.noteShort)}</textarea></label>
+            <label>深く書く欄（任意）<textarea name="noteDeep" rows="3" maxlength="2000">${escapeHtml(c.noteDeep)}</textarea></label>
+            <button type="submit" class="primary-btn small">体調を保存</button>
+          </form>
+        </div>
+        <div class="athlete-card">
+          <h3>練習メモ（意味づけ）</h3>
+          <form id="athleteTrainingForm" class="athlete-form">
+            <input type="hidden" name="date" value="${escapeHtml(d.date)}">
+            <label>実施メニュー<textarea name="menu" rows="2" maxlength="400">${escapeHtml(t.menu || m.menu || '')}</textarea></label>
+            <label>今日の目的<textarea name="purpose" rows="2" maxlength="400">${escapeHtml(t.purpose || m.purpose || '')}</textarea></label>
+            <label>つくる力<textarea name="whatItBuilds" rows="2" maxlength="400">${escapeHtml(t.whatItBuilds || m.builds || '')}</textarea></label>
+            <label>見どころ<textarea name="keyPoint" rows="2" maxlength="400">${escapeHtml(t.keyPoint || m.keyPoint || '')}</textarea></label>
+            <label>RPE（0〜10）<input name="rpe" type="number" min="0" max="10" step="1" value="${t.rpe != null ? escapeHtml(String(t.rpe)) : ''}"></label>
+            <label>振り返り<textarea name="selfComment" rows="3" maxlength="2000">${escapeHtml(t.selfComment)}</textarea></label>
+            <button type="submit" class="primary-btn small">練習ログを保存</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="athlete-card">
+        <h3>年間ロードマップ（東京都・中1女子 800/1500）</h3>
+        <ol class="roadmap-list">${roadmapHtml}</ol>
+      </div>
+
+      <div class="athlete-card">
+        <h3>月1の対話ヒント（${escapeHtml(md.title || '')}）</h3>
+        <div class="monthly-split">
+          <div>
+            <h4>選手向け</h4>
+            <ul>${monthlyAthlete}</ul>
+          </div>
+          <div>
+            <h4>親向け（Phase 2 で画面分離予定）</h4>
+            <ul>${monthlyParent}</ul>
+          </div>
+        </div>
+      </div>
+    `;
+    bindAthleteFormsOnce();
+  }
+
+  let athleteFormsBound = false;
+  function bindAthleteFormsOnce() {
+    if (athleteFormsBound || !els.athleteRoot) return;
+    athleteFormsBound = true;
+    els.athleteRoot.addEventListener('submit', async (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      event.preventDefault();
+      const fid = form.id;
+      try {
+        if (fid === 'athleteProfileForm') {
+          const body = Object.fromEntries(new FormData(form).entries());
+          await postJson('/api/web/athlete-support/profile', body);
+        } else if (fid === 'athleteDailyForm') {
+          const body = Object.fromEntries(new FormData(form).entries());
+          await postJson('/api/web/athlete-support/daily-condition', body);
+        } else if (fid === 'athleteTrainingForm') {
+          const body = Object.fromEntries(new FormData(form).entries());
+          await postJson('/api/web/athlete-support/training-log', body);
+        } else {
+          return;
+        }
+        await loadAthleteHome();
+      } catch (err) {
+        const msg = normalizeText(err?.message) || '保存に失敗しました';
+        window.alert(msg);
+      }
+    });
   }
 
   async function postJson(url, payload, useAuth = true) {
@@ -1393,12 +1613,19 @@ function renderMessageAttachments(item) {
 
   function bindEvents() {
     els.toggleThemePanelBtn.addEventListener('click', toggleThemePanel);
-    els.tabButtons.forEach((btn) => btn.addEventListener('click', () => {
-      setActiveTab(btn.dataset.tab);
-      if (btn.dataset.tab === 'chat') {
-        requestAnimationFrame(() => scrollComposerIntoView());
-      }
-    }));
+    const mainTabGroup = document.getElementById('mainTabGroup');
+    if (mainTabGroup) {
+      mainTabGroup.addEventListener('click', (event) => {
+        const btn = event.target.closest('.tab-btn');
+        if (!btn || btn.classList.contains('hidden')) return;
+        const tab = btn.dataset.tab;
+        if (!tab) return;
+        setActiveTab(tab);
+        if (tab === 'chat') {
+          requestAnimationFrame(() => scrollComposerIntoView());
+        }
+      });
+    }
     if (els.goRecordsBtn) {
       els.goRecordsBtn.addEventListener('click', () => {
         setActiveTab('records');
@@ -1460,6 +1687,9 @@ function renderMessageAttachments(item) {
         renderAll();
         renderChat({ stickBottom: true });
         scrollComposerIntoView();
+        try {
+          await loadAthleteSupportGate();
+        } catch (_e2) {}
       } catch (err) {
         state.sessionToken = '';
         localStorage.removeItem(WEB_TOKEN_KEY);
@@ -1473,6 +1703,9 @@ function renderMessageAttachments(item) {
     els.refreshBtn.addEventListener('click', async () => {
       await refreshForRange(state.rangeDays, true);
       renderAll();
+      try {
+        await loadAthleteSupportGate();
+      } catch (_e) {}
     });
 
     els.disconnectBtn.addEventListener('click', () => {
@@ -1481,6 +1714,7 @@ function renderMessageAttachments(item) {
       state.sessionToken = '';
       state.connectionState = 'disconnected';
       localStorage.removeItem(WEB_TOKEN_KEY);
+      hideAthleteTab();
       renderConnection();
       window.dispatchEvent(new CustomEvent('kokokara:web-disconnect'));
     });
@@ -1547,6 +1781,9 @@ function renderMessageAttachments(item) {
     if (state.sessionToken) {
       renderChat({ stickBottom: true });
       requestAnimationFrame(() => scrollComposerIntoView());
+      try {
+        await loadAthleteSupportGate();
+      } catch (_e3) {}
     }
   }
 
