@@ -1,0 +1,70 @@
+{
+  "real_image_unknown_shaped": {
+    "description": "v1 が非検査でも v2 行シグナルだけある実画像系（従来 unknown / not_lab_like になりやすい）",
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "itemsStructured": [],
+      "rawText": "",
+      "examDates": [],
+      "patientName": "",
+      "facilityName": "",
+      "printDate": "",
+      "analysisConfidence": { "rows": 4, "v2_confidence": 0.15 }
+    },
+    "expectedReasonIncludes": "table_like_rows"
+  },
+  "print_date_only": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "rawText": "",
+      "printDate": "2025-04-01"
+    },
+    "expectedReasonIncludes": "print_date"
+  },
+  "raw_text_only": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "rawText": "血液検査の結果通知です"
+    },
+    "expectedReasonIncludes": "raw_text_lab_lexicon"
+  },
+  "table_like_layout_only": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "rawText": "検査項目\t結果\t単位\t基準値\nLDL\t\tmg/dL\t-\nHDL\t\tmg/dL\t-\nAST\t\tU/L\t-\nALT\t\tU/L\t-",
+      "analysisConfidence": { "rows": 0 }
+    },
+    "expectedReasonIncludes": "table_like_raw"
+  },
+  "candidate_item_names_only": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [
+        { "itemName": "LDLコレステロール", "value": "", "unit": "" },
+        { "itemName": "HDLコレステロール", "value": "", "unit": "" }
+      ],
+      "rawText": ""
+    },
+    "expectedReasonIncludes": "candidate_item_names"
+  },
+  "name_fragments_only": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "rawText": "",
+      "patientName": "山田",
+      "facilityName": "○○内科"
+    },
+    "expectedReasonIncludes": "patient_name_fragment"
+  }
+}

@@ -3,6 +3,7 @@
 const assert = require('assert');
 const followupQuery = require('../services/v2/queries/followup_query_service');
 const mealFollowup = require('../services/v2/followups/meal_followup_resolver_service');
+const labTentative = require('../services/v2/lab_tentative_escalation_service');
 
 async function runLabBroadChecks() {
   const input = { userId: 'smoke-user', messageType: 'text', rawText: '' };
@@ -25,6 +26,30 @@ async function runLabBroadChecks() {
   }
 }
 
+async function runLabTentativeZeroItemChecks() {
+  const input = { userId: 'smoke-user-tent', messageType: 'text', rawText: '' };
+  const printOnlyPanel = { isLabImage: false, labLike: false, items: [], rawText: '', printDate: '2025-03-24' };
+  const rawOnlyPanel = { isLabImage: false, labLike: false, items: [], rawText: '血液検査のお知らせです' };
+  const candidateNamesPanel = {
+    isLabImage: false,
+    labLike: false,
+    items: [{ itemName: 'AST', value: '', unit: '' }],
+    rawText: '',
+  };
+  assert(labTentative.shouldAcceptTentativeLabSession(printOnlyPanel), 'print_date → tentative');
+  assert(labTentative.shouldAcceptTentativeLabSession(rawOnlyPanel), 'raw_text → tentative');
+  assert(labTentative.shouldAcceptTentativeLabSession(candidateNamesPanel), 'candidate names → tentative');
+
+  const phrases = ['検査結果でわかるのある？', '他に読めたのは？', 'この結果どう見える？'];
+  for (const panel of [printOnlyPanel, rawOnlyPanel, candidateNamesPanel]) {
+    const shortMemory = { followUpContext: { labPanel: panel } };
+    for (const p of phrases) {
+      const out = await followupQuery.resolveFollowupV2({ input, text: p, shortMemory });
+      assert(out && out.replyText, `tentative zero-item followup rejected: ${p}`);
+    }
+  }
+}
+
 function runMealIntentChecks() {
   const cases = [
     ['麺だけゼロ', 'set_component_zero'],
@@ -43,6 +68,7 @@ function runMealIntentChecks() {
 async function main() {
   runMealIntentChecks();
   await runLabBroadChecks();
+  await runLabTentativeZeroItemChecks();
   console.log('smoke_phase2_followup_intents: ok');
 }
 

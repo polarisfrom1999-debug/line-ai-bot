@@ -1,9 +1,15 @@
 'use strict';
 
+const labTentativeEscalation = require('./lab_tentative_escalation_service');
+
 function summarizeLab(panel = {}) {
   return {
     isLabImageStrict: Boolean(panel?.isLabImage),
-    isLabImageTentative: Boolean(panel?.labLike || panel?.isLabImage),
+    isLabImageTentative: Boolean(
+      panel?.labLike
+        || panel?.isLabImage
+        || labTentativeEscalation.getTentativePromotionSignals(panel).reasons.length > 0
+    ),
     examDate: panel?.latestExamDate || panel?.examDate || '',
     examDates: Array.isArray(panel?.examDates) ? panel.examDates.length : 0,
     itemCount: Array.isArray(panel?.items) ? panel.items.length : 0,

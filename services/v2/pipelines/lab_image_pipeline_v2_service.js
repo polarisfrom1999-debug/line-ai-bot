@@ -6,20 +6,10 @@ const labFollowupService = require('../../lab_followup_service');
 const contextMemoryService = require('../../context_memory_service');
 const activeContextService = require('../../active_context_service');
 const labSessionRepository = require('../../../repositories/lab_session_repository');
+const labTentativeEscalation = require('../lab_tentative_escalation_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
-}
-
-function hasTentativeLabSignal(lab = {}) {
-  if (!lab || typeof lab !== 'object') return false;
-  if (normalizeText(lab?.printDate || '')) return true;
-  if (normalizeText(lab?.patientName || '')) return true;
-  if (normalizeText(lab?.facilityName || '')) return true;
-  if (Array.isArray(lab?.examDates) && lab.examDates.length) return true;
-  if (Array.isArray(lab?.items) && lab.items.length) return true;
-  if (normalizeText(lab?.rawText || '').length >= 20) return true;
-  return false;
 }
 
 function buildLatestLabCache({ input, imagePayload, lab }) {
@@ -48,8 +38,16 @@ async function handleLabImageV2({ input, imagePayload }) {
   const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
   const lab = ingest?.panel || null;
   if (!lab) return { handled: false, reason: 'no_lab_panel', analysis: null };
-  if (!lab?.isLabImage && !lab?.labLike && !hasTentativeLabSignal(lab)) {
+  if (!labTentativeEscalation.shouldAcceptTentativeLabSession(lab)) {
     return { handled: false, reason: 'not_lab_like', analysis: lab };
+  }
+
+  const promotionSignals = labTentativeEscalation.getTentativePromotionSignals(lab);
+  if (promotionSignals.reasons.length) {
+    console.info('[v2-lab] tentative_promotion', {
+      userId: input.userId,
+      reasons: promotionSignals.reasons,
+    });
   }
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
@@ -87,7 +85,16 @@ async function handleLabImageV2({ input, imagePayload }) {
     rawText: lab?.rawText || '',
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
     isLabImageStrict: Boolean(lab?.isLabImage),
-    isLabImageTentative: Boolean(lab?.labLike || hasTentativeLabSignal(lab) || rawText.length > 0 || candidateItemNamesCount > 0 || candidateExamDatesCount > 0 || printDateDetected || patientNameDetected || facilityNameDetected),
+    isLabImageTentative: Boolean(
+      lab?.labLike
+        || labTentativeEscalation.shouldAcceptTentativeLabSession(lab)
+        || rawText.length > 0
+        || candidateItemNamesCount > 0
+        || candidateExamDatesCount > 0
+        || printDateDetected
+        || patientNameDetected
+        || facilityNameDetected
+    ),
     expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
   }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 

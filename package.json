@@ -14,6 +14,7 @@
     "smoke:lab-followup-regression": "node scripts/lab_followup_regression_cases.js",
     "smoke:phase2-migration-db": "node scripts/smoke_phase2_migration_db.js",
     "smoke:phase2-followup-intents": "node scripts/smoke_phase2_followup_intents.js",
+    "smoke:lab-tentative-promotion": "node scripts/lab_tentative_promotion_regression.js",
     "smoke:v2-image-ingress": "node scripts/smoke_v2_image_ingress.js",
     "smoke:v2-repositories": "node scripts/smoke_v2_repositories.js",
     "smoke:v2-session-followup": "node scripts/smoke_v2_session_followup.js",

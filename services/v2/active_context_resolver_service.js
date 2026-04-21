@@ -31,11 +31,12 @@ function buildLabPanelFromMemory(shortMemory = {}, active = null) {
 }
 
 function isBroadLabFollowup(safe) {
-  return /わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目は|他の項目で確認出来たのは|他の検査結果で読めたのは/.test(safe);
+  const s = normalizeText(safe).replace(/？/g, '?');
+  return /わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目は|他の項目で確認出来たのは|他の検査結果で読めたのは|検査結果でわかるのある|この結果どう見える|異常ありそう/.test(s);
 }
 
 async function resolveActiveContextFollowup({ input, text, shortMemory = {} }) {
-  const safe = normalizeText(text || input?.rawText || '');
+  const safe = normalizeText(text || input?.rawText || '').replace(/？/g, '?');
   if (!safe) return null;
 
   const active = await activeContextService.getActiveContext(input.userId, shortMemory);

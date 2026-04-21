@@ -54,7 +54,7 @@ function buildPanelFromPersistedSessions(activeSession = null, labSession = null
 }
 
 async function resolveFollowupV2({ input, text, shortMemory = {} }) {
-  const safe = normalizeText(text || input?.rawText || '');
+  const safe = normalizeText(text || input?.rawText || '').replace(/？/g, '?');
   if (!safe || input?.messageType !== 'text') return null;
 
   const active = await activeContextService.getActiveContext(input.userId, shortMemory).catch(() => null);

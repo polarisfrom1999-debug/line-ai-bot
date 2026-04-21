@@ -247,14 +247,49 @@ function buildReadableInventoryReply(panel) {
     if (!merged.some((x) => x === ml || x.replace(/\s/g, '') === ml.replace(/\s/g, ''))) merged.push(ml);
   }
 
+  const nameOnlyLines = [];
+  for (const it of items) {
+    const nm = normalizeText(it?.itemName || it?.name || '');
+    const v = normalizeText(it?.value || it?.currentValue || '');
+    if (nm && !v) nameOnlyLines.push(`・${nm}: （数値はまだ確定できていません）`);
+  }
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
+  for (const block of structured) {
+    const nm = normalizeText(block?.name_normalized || block?.name_original || '');
+    if (!nm) continue;
+    const hasVal = Array.isArray(block?.results)
+      && block.results.some((r) => normalizeText(r?.value || ''));
+    if (hasVal) continue;
+    const line = `・${nm}: （数値はまだ確定できていません）`;
+    if (!nameOnlyLines.some((x) => x.includes(nm))) nameOnlyLines.push(line);
+  }
+
+  const hintLines = [];
+  const pd = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  if (pd) hintLines.push(`印刷日の候補: ${pd}`);
+  const pn = normalizeText(panel?.patientName || panel?.patient_name || '');
+  if (pn) hintLines.push(`氏名らしき文字列: ${pn}`);
+  const fc = normalizeText(panel?.facilityName || panel?.facility_name || '');
+  if (fc) hintLines.push(`施設名らしき文字列: ${fc}`);
+  const dateCandidates = collectAvailableDates(panel);
+  if (dateCandidates.length) hintLines.push(`日付候補: ${dateCandidates.join(' / ')}`);
+
   const headParts = ['検査結果から読み取れた候補（数値があるものは併記）:'];
   if (exam) headParts.unshift(`検査日: ${exam}`);
   if (merged.length) {
     return [...headParts, ...merged.slice(0, 28)].join('\n');
   }
+  if (nameOnlyLines.length) {
+    const tail = hintLines.length ? ['', 'そのほか読めた断片:', ...hintLines] : [];
+    return [...headParts, ...nameOnlyLines.slice(0, 24), ...tail].join('\n');
+  }
   if (raw && !looksLikeJsonDump(raw)) {
     const clip = raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
-    return [...headParts, '（項目名の自動認識は難しいですが、テキストから次の抜粋を読み取りました）', clip].join('\n');
+    const tail = hintLines.length ? ['', 'そのほか:', ...hintLines] : [];
+    return [...headParts, '（項目名の自動認識は難しいですが、テキストから次の抜粋を読み取りました）', clip, ...tail].join('\n');
+  }
+  if (hintLines.length) {
+    return ['数値付きの項目はまだ抽出できていませんが、次の断片は拾えています:', ...hintLines].join('\n');
   }
   return [exam ? `検査日: ${exam}` : '検査日は確認中です。', '数値付きの項目はまだ抽出できていません。画像をもう一度送るか、紙の数値を書いてください。'].join('\n');
 }
