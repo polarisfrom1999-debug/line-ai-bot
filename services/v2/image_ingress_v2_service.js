@@ -90,17 +90,19 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
     mealPipeline.handleMealImageV2({ input, imagePayload }),
   ]);
 
-  compareLogger.logImagePipelineResult({
-    userId: input.userId,
-    sourceImageId: normalizeText(imagePayload?.id || input?.messageId || ''),
-    labPanel: labResult?.analysis || null,
-    meal: mealResult?.analysis || null,
-  });
-
   const kind = imageKindClassifier.classifyImageKind({
     textHint,
     labPanel: labResult?.analysis || null,
     meal: mealResult?.analysis || null,
+  });
+  compareLogger.logImagePipelineResult({
+    userId: input.userId,
+    sourceImageId: normalizeText(imagePayload?.id || input?.messageId || ''),
+    routeKind: kind,
+    labPanel: labResult?.analysis || null,
+    meal: mealResult?.analysis || null,
+    labPersistence: labResult?.persistence || null,
+    mealPersistence: mealResult?.persistence || null,
   });
 
   if (kind === 'lab' && labResult?.handled) {

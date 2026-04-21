@@ -2,7 +2,8 @@
 
 function summarizeLab(panel = {}) {
   return {
-    isLabImage: Boolean(panel?.isLabImage || panel?.labLike),
+    isLabImageStrict: Boolean(panel?.isLabImage),
+    isLabImageTentative: Boolean(panel?.labLike || panel?.isLabImage),
     examDate: panel?.latestExamDate || panel?.examDate || '',
     examDates: Array.isArray(panel?.examDates) ? panel.examDates.length : 0,
     itemCount: Array.isArray(panel?.items) ? panel.items.length : 0,
@@ -21,12 +22,15 @@ function summarizeMeal(meal = {}) {
   };
 }
 
-function logImagePipelineResult({ userId, sourceImageId, labPanel = null, meal = null }) {
+function logImagePipelineResult({ userId, sourceImageId, routeKind = '', labPanel = null, meal = null, labPersistence = null, mealPersistence = null }) {
   console.info('[v2-image] ingress_result', {
     userId,
     sourceImageId: sourceImageId || '',
+    routeKind: routeKind || '',
     lab: labPanel ? summarizeLab(labPanel) : null,
     meal: meal ? summarizeMeal(meal) : null,
+    labPersistence: labPersistence || null,
+    mealPersistence: mealPersistence || null,
   });
 }
 
