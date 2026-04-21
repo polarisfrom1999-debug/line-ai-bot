@@ -3,6 +3,7 @@
 const pointsService = require('./points_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const contextMemoryService = require('./context_memory_service');
+const mealLogQueryService = require('./meal_log_query_service');
 
 function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
@@ -40,7 +41,8 @@ async function buildAdminSummary(lineUserId) {
   const activeMonthDays = month.filter((day) => ['meals', 'exercises', 'weights', 'labs'].some((key) => Array.isArray(day?.records?.[key]) && day.records[key].length)).length;
   const latestDay = month[month.length - 1] || null;
   const latestWeight = latestDay?.records?.weights?.slice(-1)[0] || null;
-  const latestMealCount = latestDay?.records?.meals?.length || 0;
+  const latestMealTotals = mealLogQueryService.aggregateLegacyMealRecords(latestDay?.records?.meals);
+  const latestMealCount = Number(latestMealTotals.count || 0);
   const latestExerciseCount = latestDay?.records?.exercises?.length || 0;
   const streak = computeConsecutiveDays(month);
 
@@ -54,7 +56,7 @@ async function buildAdminSummary(lineUserId) {
     `直近7日: ${activeWeekDays}日アクティブ`,
     `直近31日: ${activeMonthDays}日アクティブ / 継続 ${streak}日`,
     latestDay
-      ? `最新日の内訳: 食事 ${latestMealCount}件 / 運動 ${latestExerciseCount}件${latestWeight?.weight != null ? ` / 体重 ${round1(latestWeight.weight)}kg` : ''}`
+      ? `最新日の内訳: 食事 ${latestMealCount}件（dedupe後） / 運動 ${latestExerciseCount}件${latestWeight?.weight != null ? ` / 体重 ${round1(latestWeight.weight)}kg` : ''}`
       : '最新日の内訳: まだ記録なし',
     pointsService.buildPointSummary(totalPoints),
     '特典管理: ポイント残高と継続日数を基準に、整骨院特典の利用判断へつなげられる状態です。'

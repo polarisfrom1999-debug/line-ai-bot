@@ -147,6 +147,20 @@ function containsQuestionTone(text) {
   return /教えて|知りたい|覚えてる|なんだっけ|ですか|ますか|かな\??|\?$|？$/.test(normalizeText(text));
 }
 
+/** 食事そのものではなく、訂正・誤送信説明・削除依頼を示す文 */
+function isMealMetaOrCorrectionText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+
+  if (/同じ写真|同じ画像|何枚も|何個も|重複/.test(safe)) return true;
+  if (/間違えて送|誤って送|誤送信|ミス送信/.test(safe)) return true;
+  if (/一個だけ|一つだけ|1個だけ|1つだけ|食べたのは(一個|一つ|1個|1つ)/.test(safe)) return true;
+  if (/削除して|消して|取り消して|記録しないで|カウントしないで|加算しないで/.test(safe)) return true;
+  if (/食事じゃない|ごはんじゃない|記録ミス|訂正/.test(safe)) return true;
+
+  return false;
+}
+
 /** 食事「記録」にすべきでない否定・嗜好・非摂取の文 */
 function isMealNegationOrNonRecordText(text) {
   const safe = normalizeText(text);
@@ -286,6 +300,7 @@ function buildMealComment(nutrition) {
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
+  if (isMealMetaOrCorrectionText(safe)) return false;
   if (isMealNegationOrNonRecordText(safe)) return false;
   if (containsQuestionTone(safe)) return false;
   if (/使い方|送り方|メニュー|コマンド|設定|タイプ変更|雰囲気変更/.test(safe)) return false;
@@ -299,7 +314,7 @@ function looksLikeMealText(text) {
 
 function parseMealText(text) {
   const safe = normalizeText(text);
-  if (!safe || isMealNegationOrNonRecordText(safe)) {
+  if (!safe || isMealMetaOrCorrectionText(safe) || isMealNegationOrNonRecordText(safe)) {
     return {
       confidence: 0.05,
       items: [],
@@ -420,4 +435,5 @@ module.exports = {
   buildMealImageReplyText,
   parseMealText,
   isMealNegationOrNonRecordText,
+  isMealMetaOrCorrectionText,
 };

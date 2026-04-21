@@ -364,7 +364,7 @@ async function maybeHandleMealLogCorrection(input, text) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe) return null;
 
-  if (/さっきの食事を(消して|削除|取り消し)|この食事を(消して|削除)|直近の食事を(消して|削除)|一つ前の食事を(消して|削除)|食事を削除して|記録を削除/.test(safe)) {
+  if (/(さっき|この|直近|一つ前|ひとつ前)?の?食事を(消して|削除|取り消し)|食事を削除して|食事は削除して(下さい|ください)?|記録を削除|消して|記録しないで/.test(safe)) {
     const res = await contextMemoryService.deleteLastMealLog(input.userId);
     if (!res.ok) {
       return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
@@ -412,6 +412,12 @@ async function maybeHandleMealLogCorrection(input, text) {
     console.info('[meal] recomputed_today_total', { count: recalc.count, kcal: round1(recalc.kcal) });
     const totals = { meals: mealLogsToRecordMeals(rawT) };
     return { replyText: ['DBを再読込して今日の合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+  }
+
+  if (mealAnalysisService.isMealMetaOrCorrectionText(safe)) {
+    return {
+      replyText: '了解です。これは食事としては保存せず、訂正扱いにします。削除したい対象がある場合は「この食事を削除して」または「直近の食事を削除して」と送ってください。'
+    };
   }
 
   return null;
@@ -918,12 +924,12 @@ function sumNutritionFromDailyRecords(recentDailyRecords = []) {
   const totals = { kcal: 0, protein: 0, fat: 0, carbs: 0, mealCount: 0 };
   for (const day of recentDailyRecords) {
     const records = day?.records || {};
-    const dayTotals = sumMealNutrition(records);
+    const dayTotals = mealLogQueryService.aggregateLegacyMealRecords(records?.meals);
     totals.kcal += Number(dayTotals.kcal || 0);
     totals.protein += Number(dayTotals.protein || 0);
     totals.fat += Number(dayTotals.fat || 0);
     totals.carbs += Number(dayTotals.carbs || 0);
-    totals.mealCount += Array.isArray(records?.meals) ? records.meals.length : 0;
+    totals.mealCount += Number(dayTotals.count || 0);
   }
   return totals;
 }
@@ -1124,6 +1130,7 @@ function detectExerciseRecord(text) {
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe || containsQuestionTone(safe)) return false;
+  if (mealAnalysisService.isMealMetaOrCorrectionText(safe)) return false;
   if (mealAnalysisService.isMealNegationOrNonRecordText(safe)) return false;
   if (isMealAnnouncementText(safe)) return false;
   if (/使い方|送り方|メニュー|コマンド/.test(safe)) return false;
@@ -2195,6 +2202,7 @@ async function maybeHandleMealImage(input, imagePayload) {
 
 async function maybeHandleMealText(input) {
   const text = normalizeText(input?.rawText || '');
+  if (mealAnalysisService.isMealMetaOrCorrectionText(text)) return null;
   if (!looksLikeMealText(text)) return null;
 
   const parsedMeal = mealAnalysisService.parseMealText(text);
@@ -2385,12 +2393,13 @@ async function maybeHandleExerciseCalorieQuestion(input, text, longMemoryLatest)
 
 function buildAdminCheckReply({ longMemory, records, points }) {
   const latestWeight = Array.isArray(records?.weights) && records.weights.length ? records.weights[records.weights.length - 1] : null;
+  const mealTotals = mealLogQueryService.aggregateLegacyMealRecords(records?.meals);
   const lines = [
     '管理確認メモです。',
     `ユーザー: ${sanitizePreferredName(longMemory?.preferredName || '') || '未設定'}`,
     latestWeight ? `最新体組成: 体重 ${latestWeight.weight || '-'}kg${latestWeight.bodyFat != null ? ` / 体脂肪率 ${latestWeight.bodyFat}%` : ''}` : null,
     longMemory?.goal ? `目標: ${longMemory.goal}` : null,
-    `最新日の内訳: 食事 ${(records?.meals || []).length}件 / 運動 ${(records?.exercises || []).length}件 / 体重 ${(records?.weights || []).length}件`,
+    `最新日の内訳: 食事 ${mealTotals.count}件（dedupe後） / 運動 ${(records?.exercises || []).length}件 / 体重 ${(records?.weights || []).length}件`,
     `現在ポイント: ${points}pt`,
     '継続・特典判定の土台としてこのまま見ていけます。',
   ];
@@ -2403,6 +2412,7 @@ async function maybeStoreSimpleRecords(userId, text) {
     // 人の状態ケアを優先し、低余力時は自動記録を急がない
     return;
   }
+  if (mealAnalysisService.isMealMetaOrCorrectionText(text)) return;
   if (mealAnalysisService.isMealNegationOrNonRecordText(text)) return;
   const mealParsed = looksLikeMealText(text) && !containsQuestionTone(text) && !isMealAnnouncementText(text)
     ? mealAnalysisService.parseMealText(text)

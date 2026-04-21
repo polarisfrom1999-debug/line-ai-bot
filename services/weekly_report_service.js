@@ -1,6 +1,7 @@
 'use strict';
 
 const pointsService = require('./points_service');
+const mealLogQueryService = require('./meal_log_query_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -11,13 +12,13 @@ function round1(value) {
 }
 
 function sumNutrition(meals) {
-  return (Array.isArray(meals) ? meals : []).reduce((acc, meal) => {
-    acc.kcal += Number(meal?.kcal || meal?.estimatedNutrition?.kcal || 0);
-    acc.protein += Number(meal?.protein || meal?.estimatedNutrition?.protein || 0);
-    acc.fat += Number(meal?.fat || meal?.estimatedNutrition?.fat || 0);
-    acc.carbs += Number(meal?.carbs || meal?.estimatedNutrition?.carbs || 0);
-    return acc;
-  }, { kcal: 0, protein: 0, fat: 0, carbs: 0 });
+  const totals = mealLogQueryService.aggregateLegacyMealRecords(meals);
+  return {
+    kcal: Number(totals.kcal || 0),
+    protein: Number(totals.protein || 0),
+    fat: Number(totals.fat || 0),
+    carbs: Number(totals.carbs || 0),
+  };
 }
 
 function flattenRecentRecords(recentDailyRecords) {

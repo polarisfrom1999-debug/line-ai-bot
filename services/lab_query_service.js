@@ -22,7 +22,7 @@ function isNonLabQuestionForLabQna(safe) {
   if (/体重|体脂肪/.test(safe)) return true;
   if (/週間報告|月間報告|今週の食|週間.*食|週間.*カロリー/.test(safe)) return true;
   if (/データがおかしい|おかしくないか|ずれてる|重複|件数がおかしい/.test(safe)) return true;
-  if (/削除して|記録を修正|再計算|昨日の分|昨晩|一昨日/.test(safe)) return true;
+  if (/記録を修正|再計算|昨日の分|昨晩|一昨日/.test(safe)) return true;
   if ((/詳細|内訳|一覧/.test(safe)) && !/(血液|検査|LDL|TG|HbA1c|脂質|肝|腎|項目|中性脂肪)/i.test(safe)) return true;
   return false;
 }
