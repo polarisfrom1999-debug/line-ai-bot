@@ -3205,12 +3205,26 @@ async function orchestrateConversation(input) {
       const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text });
       if (ingressV2?.handled) {
         const tag = normalizeText(ingressV2.intentType || 'image_v2');
+        const persistence = ingressV2?.persistence && typeof ingressV2.persistence === 'object'
+          ? ingressV2.persistence
+          : null;
+        if (persistence) {
+          console.info('[v2-image] persistence_status', {
+            userId: input.userId,
+            intentType: tag,
+            ...persistence
+          });
+        }
         const surfaced = await withSurfaceReply(input, ingressV2.replyText, { recentMessages, longMemory }, tag);
         await appendTurn(input.userId, input.rawText || '[image]', surfaced);
         return {
           ok: true,
           replyMessages: [{ type: 'text', text: surfaced }],
-          internal: { intentType: tag, responseMode: /_ng$/.test(tag) ? 'answer' : 'record' }
+          internal: {
+            intentType: tag,
+            responseMode: /_ng$/.test(tag) ? 'answer' : 'record',
+            persistence: persistence || undefined
+          }
         };
       }
     }
