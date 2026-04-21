@@ -378,6 +378,11 @@ function mealDeletionIntent(safe) {
   return false;
 }
 
+function buildMealDeleteCommandId(userId, safe) {
+  const minuteBucket = Math.floor(Date.now() / (60 * 1000));
+  return `${normalizeText(userId)}:${normalizeText(safe).slice(0, 80)}:${minuteBucket}`;
+}
+
 async function resolveMealDeletionTargetIds(userId, safe) {
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
   let fromYmd = todayYmd;
@@ -446,12 +451,31 @@ async function maybeHandleMealLogCorrection(input, text) {
   }
 
   if (mealDeletionIntent(safe)) {
+    const commandId = buildMealDeleteCommandId(input.userId, safe);
+    const sm = await contextMemoryService.getShortMemory(input.userId);
+    if (normalizeText(sm?.mealDeleteGuard?.lastCommandId || '') === commandId) {
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+      const totals = { meals: mealLogsToRecordMeals(rawT) };
+      const agg = mealLogQueryService.aggregateMealLogs(rawT);
+      return {
+        replyText: [
+          '同じ削除指示はすでに反映済みです（idempotent guard）。',
+          `現在の今日集計: ${agg.count}件 / 約${round1(agg.kcal)} kcal`,
+          '',
+          buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })
+        ].join('\n')
+      };
+    }
     const { ids, reason } = await resolveMealDeletionTargetIds(input.userId, safe);
     if (ids.length) {
       const res = await contextMemoryService.deleteMealLogsByIds(input.userId, ids);
       if (!res.ok || !res.deleted) {
         return { replyText: '削除の指示は受け取りましたが、DB側の更新に失敗しました。少し時間をあけて、もう一度「〇時〇分の分を削除」「ストロベリーミルク2枚削除」のように送ってください。' };
       }
+      await contextMemoryService.saveShortMemory(input.userId, {
+        mealDeleteGuard: { lastCommandId: commandId, updatedAt: new Date().toISOString() }
+      });
       const todayYmd = contextMemoryService.getTokyoTodayYmd();
       const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
       const totals = { meals: mealLogsToRecordMeals(rawT) };
@@ -466,6 +490,9 @@ async function maybeHandleMealLogCorrection(input, text) {
       };
     }
     if (/(直近の食事|この食事を|一つ前の食事|ひとつ前の食事).*(削除|消して)|記録を削除/.test(safe)) {
+      const beforeYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawBefore = await mealLogQueryService.getMealLogsByDateRange(input.userId, beforeYmd, beforeYmd);
+      const beforeAgg = mealLogQueryService.aggregateMealLogs(rawBefore);
       const res = await contextMemoryService.deleteLastMealLog(input.userId);
       if (!res.ok) {
         return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
@@ -473,9 +500,19 @@ async function maybeHandleMealLogCorrection(input, text) {
       const todayYmd = contextMemoryService.getTokyoTodayYmd();
       const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
       const delAgg = mealLogQueryService.aggregateMealLogs(rawT);
+      await contextMemoryService.saveShortMemory(input.userId, {
+        mealDeleteGuard: { lastCommandId: commandId, updatedAt: new Date().toISOString() }
+      });
       console.info('[meal] recomputed_today_total', { count: delAgg.count, kcal: round1(delAgg.kcal) });
       const totals = { meals: mealLogsToRecordMeals(rawT) };
-      return { replyText: ['直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+      return {
+        replyText: [
+          '直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。',
+          `差分: ${beforeAgg.count}件→${delAgg.count}件 / 約${round1(beforeAgg.kcal)}→約${round1(delAgg.kcal)} kcal`,
+          '',
+          buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })
+        ].join('\n')
+      };
     }
   }
 

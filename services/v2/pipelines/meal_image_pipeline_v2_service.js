@@ -108,6 +108,12 @@ async function handleMealImageV2({ input, imagePayload }) {
         isMealImage: Boolean(meal?.isMealImage),
         confidence: Number(meal?.confidence || 0),
         items: Array.isArray(meal?.items) ? meal.items : [],
+        sourceImageId: normalizeText(imagePayload?.id || ''),
+        geminiRaw: meal?.raw || null,
+        adoptedNutrition: meal?.estimatedNutrition || {},
+        mealCandidates: Array.isArray(meal?.items) ? meal.items : [],
+        selectedLabel: Array.isArray(meal?.items) ? (meal.items[0] || '') : '',
+        expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
       }
     }).then((res) => {
       analyzedEventSaved = Boolean(res?.ok);

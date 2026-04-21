@@ -60,7 +60,7 @@ async function resolveActiveContextFollowup({ input, text, shortMemory = {} }) {
   }
 
   if (/^meal_/.test(type)) {
-    if (/ゼロ|0kcal|0 kcal|食べてない|食べなかった|キャンセル|取り消し|削除して|消して/.test(safe)) {
+    if (/ゼロ|0kcal|0 kcal|食べてない|食べなかった|キャンセル|取り消し|削除して|消して|同じ写真送ってしまった|一個だけ|一部だけ食べた/.test(safe)) {
       const del = await contextMemoryService.deleteLastMealLog(input.userId);
       if (!del?.ok) {
         return {
@@ -75,6 +75,18 @@ async function resolveActiveContextFollowup({ input, text, shortMemory = {} }) {
         intentType: 'v2_active_meal_followup',
         replyText: ['了解です。直近の食事記録を取り消しました。', '', buildTodayMealTotalsAnswerFromRows(rows)].join('\n')
       };
+    }
+    if (/その夕食のカロリー|最後の食事のカロリー|その麺カロリー|カロリーは\??/.test(safe)) {
+      const today = contextMemoryService.getTokyoTodayYmd();
+      const rows = await mealLogQueryService.getMealLogsByDateRange(input.userId, today, today);
+      const latest = (Array.isArray(rows) ? rows : [])[0] || null;
+      if (latest) {
+        return {
+          intentType: 'v2_active_meal_followup',
+          replyText: `直近の食事「${normalizeText(latest.mealLabel || '食事')}」は約${Number(latest.kcal || 0).toFixed(1)} kcal です。`
+        };
+      }
+      return { intentType: 'v2_active_meal_followup', replyText: '直近の食事記録が見つかりませんでした。' };
     }
   }
 
