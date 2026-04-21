@@ -31,6 +31,13 @@ function normalizeDateToken(token) {
   return '';
 }
 
+function normalizeFlag(value) {
+  const safe = normalizeText(value).toUpperCase();
+  if (safe === 'H' || safe === 'HIGH') return 'H';
+  if (safe === 'L' || safe === 'LOW') return 'L';
+  return '';
+}
+
 function normalizeTarget(text) {
   const safe = normalizeText(text).toUpperCase();
   if (safe.includes('LDL/HDL')) return 'LDL/HDL比';
@@ -260,6 +267,46 @@ function buildExamDateQuickReply(panel) {
   return '検査日はまだパネルに入っていません。画像をもう一度送るか、「〇〇年〇月〇日」と日付を送ってください。';
 }
 
+function buildPatientNameReply(panel) {
+  const name = normalizeText(panel?.patientName || panel?.patient_name || '');
+  return name ? `患者名は「${name}」です。` : '患者名はこの画像からは確定できませんでした。';
+}
+
+function buildFacilityNameReply(panel) {
+  const facility = normalizeText(panel?.facilityName || panel?.facility_name || '');
+  return facility ? `医療機関名は「${facility}」です。` : '病院名・クリニック名はこの画像からは確定できませんでした。';
+}
+
+function buildPrintDateReply(panel) {
+  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  return printDate ? `印刷日は ${printDate} です。` : '印刷日はこの画像からは確定できませんでした。';
+}
+
+function buildLatestDateReply(panel) {
+  const dates = collectAvailableDates(panel);
+  const latest = dates[dates.length - 1] || normalizeDateToken(panel?.latestExamDate || panel?.examDate || '');
+  if (!latest) return '検査日の候補はまだ確定できていません。';
+  return `一番新しい検査日は ${latest} です。`;
+}
+
+function buildAbnormalItemsReply(panel) {
+  const out = [];
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  for (const item of items) {
+    const history = Array.isArray(item?.history) ? item.history : [];
+    const latestFlagged = history.slice().reverse().find((row) => normalizeFlag(row?.flag));
+    if (latestFlagged) {
+      out.push(`・${item.itemName || '項目'}: ${latestFlagged.date} ${latestFlagged.value}${latestFlagged.unit ? ` ${latestFlagged.unit}` : ''} ${normalizeFlag(latestFlagged.flag)}`);
+      continue;
+    }
+    if (normalizeFlag(item?.flag)) {
+      out.push(`・${item.itemName || '項目'}: ${item.value}${item.unit ? ` ${item.unit}` : ''} ${normalizeFlag(item.flag)}`);
+    }
+  }
+  if (!out.length) return '今回読み取れた範囲では、H/L フラグ付きの項目は見当たりませんでした。';
+  return ['H/L フラグ付きの項目です。', ...out].join('\n');
+}
+
 function buildItemReply(panel, targetName, selectedDate) {
   const row = findValueForDate(panel, targetName, selectedDate);
   if (!row) {
@@ -362,5 +409,10 @@ module.exports = {
   shouldHandleSaveAll,
   buildReadableInventoryReply,
   buildExamDateQuickReply,
+  buildPatientNameReply,
+  buildFacilityNameReply,
+  buildPrintDateReply,
+  buildLatestDateReply,
+  buildAbnormalItemsReply,
   extractMetricFromRawText,
 };

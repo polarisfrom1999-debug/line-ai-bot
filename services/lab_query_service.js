@@ -32,6 +32,11 @@ function isNonLabQuestionForLabQna(safe) {
  */
 function isStrictLabQnaQuestion(safe) {
   if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) return true;
+  if (/患者名|氏名/.test(safe)) return true;
+  if (/病院名|医院名|クリニック名|医療機関/.test(safe)) return true;
+  if (/印刷日|発行日|出力日/.test(safe)) return true;
+  if (/一番新しい日付|最新日|最新の検査日/.test(safe)) return true;
+  if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safe)) return true;
   if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) return true;
   const nt = labFollowupService.normalizeTarget(safe);
   if (nt && ALLOWED_FOLLOW_TARGETS.has(nt)) return true;
@@ -106,7 +111,13 @@ function syntheticPanelFromSession(shortMemory, latestCache) {
     items,
     rawText: normalizeText(latestCache?.rawText || base.rawText || ''),
     examDate: latestCache?.examDate || base.examDate,
-    latestExamDate: latestCache?.examDate || base.latestExamDate || base.examDate
+    latestExamDate: latestCache?.examDate || base.latestExamDate || base.examDate,
+    patientName: normalizeText(latestCache?.patientName || base.patientName || ''),
+    facilityName: normalizeText(latestCache?.facilityName || base.facilityName || ''),
+    printDate: normalizeText(latestCache?.printDate || base.printDate || ''),
+    examDates: Array.isArray(latestCache?.examDates) && latestCache.examDates.length
+      ? latestCache.examDates
+      : (Array.isArray(base?.examDates) ? base.examDates : [])
   };
 }
 
@@ -228,6 +239,31 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) {
     const p = syntheticPanelFromSession(shortMemory, latestCache);
     return labFollowupService.buildReadableInventoryReply(p);
+  }
+
+  if (/患者名|氏名/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildPatientNameReply(p);
+  }
+
+  if (/病院名|医院名|クリニック名|医療機関/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildFacilityNameReply(p);
+  }
+
+  if (/印刷日|発行日|出力日/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildPrintDateReply(p);
+  }
+
+  if (/一番新しい日付|最新日|最新の検査日/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildLatestDateReply(p);
+  }
+
+  if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildAbnormalItemsReply(p);
   }
 
   if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) {

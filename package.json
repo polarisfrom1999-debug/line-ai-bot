@@ -10,6 +10,8 @@
     "smoke:symptom-core": "node scripts/symptom_core_smoke_inputs.js",
     "smoke:homecare-core": "node scripts/homecare_core_smoke_inputs.js",
     "smoke:image-processor-load": "node scripts/image_processor_load_smoke.js",
+    "smoke:lab-pipeline-compare": "node scripts/lab_pipeline_regression_compare.js",
+    "smoke:lab-followup-regression": "node scripts/lab_followup_regression_cases.js",
     "quality:check": "node scripts/run_conversation_quality_check.js",
     "manual:word": "node scripts/generate_word_manual.js"
   },

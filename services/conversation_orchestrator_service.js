@@ -1504,6 +1504,21 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   if (/他に(?:は)?読めた|他に取れた|拾えてる項目|読めた記録|他の項目|記録を教えて/.test(safe)) {
     return labFollowupService.buildReadableInventoryReply(panel);
   }
+  if (/患者名|氏名/.test(safe)) {
+    return labFollowupService.buildPatientNameReply(panel);
+  }
+  if (/病院名|医院名|クリニック名|医療機関/.test(safe)) {
+    return labFollowupService.buildFacilityNameReply(panel);
+  }
+  if (/印刷日|発行日|出力日/.test(safe)) {
+    return labFollowupService.buildPrintDateReply(panel);
+  }
+  if (/一番新しい日付|最新日|最新の検査日/.test(safe)) {
+    return labFollowupService.buildLatestDateReply(panel);
+  }
+  if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safe)) {
+    return labFollowupService.buildAbnormalItemsReply(panel);
+  }
   if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) {
     return labFollowupService.buildExamDateQuickReply(panel);
   }
@@ -2184,7 +2199,11 @@ async function maybeHandleLabImage(input, imagePayload) {
         examDate: lab?.latestExamDate || lab?.examDate || '',
         items: cachedItemMap,
         rawText: normalizeText(lab?.rawText || ''),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        patientName: normalizeText(lab?.patientName || ''),
+        facilityName: normalizeText(lab?.facilityName || ''),
+        printDate: normalizeText(lab?.printDate || ''),
+        examDates: Array.isArray(lab?.examDates) ? lab.examDates : []
       };
       console.info('[lab] cache_save_pending', {
         userId: input.userId,
@@ -2241,7 +2260,11 @@ async function maybeHandleLabImage(input, imagePayload) {
             ...labItemAliasService.buildLabItemMapFromPanel(lab)
           },
           rawText: normalizeText(lab?.rawText || ''),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          patientName: normalizeText(lab?.patientName || ''),
+          facilityName: normalizeText(lab?.facilityName || ''),
+          printDate: normalizeText(lab?.printDate || ''),
+          examDates: Array.isArray(lab?.examDates) ? lab.examDates : []
         }
       }
     });
@@ -3156,7 +3179,11 @@ async function orchestrateConversation(input) {
           examDate: labPanel?.latestExamDate || labPanel?.examDate || '',
           items: cachedItemMap,
           rawText: normalizeText(labPanel?.rawText || ''),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          patientName: normalizeText(labPanel?.patientName || ''),
+          facilityName: normalizeText(labPanel?.facilityName || ''),
+          printDate: normalizeText(labPanel?.printDate || ''),
+          examDates: Array.isArray(labPanel?.examDates) ? labPanel.examDates : []
         };
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: 'lab_pending',
