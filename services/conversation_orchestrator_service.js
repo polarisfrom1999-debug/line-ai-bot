@@ -3208,11 +3208,15 @@ async function orchestrateConversation(input) {
         const persistence = ingressV2?.persistence && typeof ingressV2.persistence === 'object'
           ? ingressV2.persistence
           : null;
+        const persistenceRetry = ingressV2?.persistenceRetry && typeof ingressV2.persistenceRetry === 'object'
+          ? ingressV2.persistenceRetry
+          : null;
         if (persistence) {
           console.info('[v2-image] persistence_status', {
             userId: input.userId,
             intentType: tag,
-            ...persistence
+            ...persistence,
+            ...(persistenceRetry || {})
           });
         }
         const surfaced = await withSurfaceReply(input, ingressV2.replyText, { recentMessages, longMemory }, tag);
@@ -3223,7 +3227,8 @@ async function orchestrateConversation(input) {
           internal: {
             intentType: tag,
             responseMode: /_ng$/.test(tag) ? 'answer' : 'record',
-            persistence: persistence || undefined
+            persistence: persistence || undefined,
+            persistenceRetry: persistenceRetry || undefined
           }
         };
       }
