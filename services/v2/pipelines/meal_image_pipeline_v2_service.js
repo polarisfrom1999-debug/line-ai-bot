@@ -3,6 +3,7 @@
 const mealAnalysisService = require('../../meal_analysis_service');
 const contextMemoryService = require('../../context_memory_service');
 const activeContextService = require('../../active_context_service');
+const mealCaptureRepository = require('../../../repositories/meal_capture_repository');
 
 const MEAL_IMAGE_CONFIDENCE_MIN = Number(process.env.KOKOKARA_MEAL_IMAGE_CONFIDENCE_MIN || 0.56) || 0.56;
 
@@ -89,8 +90,40 @@ async function handleMealImageV2({ input, imagePayload }) {
     }
   });
 
+  const captureSession = await mealCaptureRepository.createMealCaptureSession({
+    userId: input.userId,
+    sourceChannel: 'line',
+    sourceMessageId: normalizeText(input?.messageId || ''),
+    sourceImageId: normalizeText(imagePayload?.id || ''),
+    status: 'active',
+    expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
+  }).catch(() => ({ ok: false }));
+  if (captureSession?.ok && captureSession?.session?.id) {
+    await mealCaptureRepository.appendMealCaptureEvent({
+      sessionId: captureSession.session.id,
+      userId: input.userId,
+      eventKind: 'analyzed',
+      payload: {
+        isMealImage: Boolean(meal?.isMealImage),
+        confidence: Number(meal?.confidence || 0),
+        items: Array.isArray(meal?.items) ? meal.items : [],
+      }
+    }).catch(() => null);
+  }
+
   if (meal?.recordReady) {
     await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input));
+    if (captureSession?.ok && captureSession?.session?.id) {
+      await mealCaptureRepository.appendMealCaptureEvent({
+        sessionId: captureSession.session.id,
+        userId: input.userId,
+        eventKind: 'record_saved',
+        payload: {
+          kcal: Number(meal?.estimatedNutrition?.kcal || 0),
+          dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
+        }
+      }).catch(() => null);
+    }
   }
 
   return { handled: true, analysis: meal, replyText: buildMealReply(meal), intentType: 'meal_image' };

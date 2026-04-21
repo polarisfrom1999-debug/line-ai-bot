@@ -13,6 +13,7 @@
     "smoke:lab-pipeline-compare": "node scripts/lab_pipeline_regression_compare.js",
     "smoke:lab-followup-regression": "node scripts/lab_followup_regression_cases.js",
     "smoke:v2-image-ingress": "node scripts/smoke_v2_image_ingress.js",
+    "smoke:v2-repositories": "node scripts/smoke_v2_repositories.js",
     "smoke:v2-session-followup": "node scripts/smoke_v2_session_followup.js",
     "quality:check": "node scripts/run_conversation_quality_check.js",
     "manual:word": "node scripts/generate_word_manual.js"

@@ -5,6 +5,7 @@ const labItemAliasService = require('../../lab_item_alias_service');
 const labFollowupService = require('../../lab_followup_service');
 const contextMemoryService = require('../../context_memory_service');
 const activeContextService = require('../../active_context_service');
+const labSessionRepository = require('../../../repositories/lab_session_repository');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -53,6 +54,23 @@ async function handleLabImageV2({ input, imagePayload }) {
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
   const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
+  await labSessionRepository.createLabSession({
+    userId: input.userId,
+    sourceImageId: normalizeText(imagePayload?.id || ''),
+    sourceMessageId: normalizeText(input?.messageId || ''),
+    status: hasItems ? 'active' : 'tentative',
+    patientName: lab?.patientName || '',
+    facilityName: lab?.facilityName || '',
+    printDate: lab?.printDate || '',
+    examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+    parsedItems: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []),
+    rawText: lab?.rawText || '',
+    confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
+    isLabImageStrict: Boolean(lab?.isLabImage),
+    isLabImageTentative: Boolean(lab?.labLike || hasTentativeLabSignal(lab)),
+    expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
+  }).catch(() => null);
+
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: hasItems ? 'lab' : 'lab_pending',
     followUpContext: {
