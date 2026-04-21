@@ -102,6 +102,60 @@ async function generateJsonFromImage({
   };
 }
 
+/**
+ * Formal contract for structured image extraction.
+ * @param {Object} args
+ * @param {Object} args.imagePayload
+ * @param {string} args.prompt
+ * @param {Object} args.schema
+ * @param {string} [args.domain]
+ * @param {string} [args.model]
+ * @param {number} [args.temperature]
+ * @param {number} [args.maxOutputTokens]
+ * @returns {Promise<{ok:boolean, json:Object, text:string, model:string|null, raw:any, error?:{code:string,message:string}}>}
+ */
+async function generateStructuredImageJson({
+  imagePayload,
+  prompt,
+  schema,
+  domain = '',
+  model,
+  temperature = 0.2,
+  maxOutputTokens = 1200,
+} = {}) {
+  try {
+    const result = await generateJsonFromImage({
+      prompt,
+      imagePayload,
+      schema,
+      model,
+      temperature,
+      maxOutputTokens,
+    });
+    return {
+      ok: true,
+      json: result?.parsed && typeof result.parsed === 'object' ? result.parsed : {},
+      text: normalizeText(JSON.stringify(result?.parsed || {})),
+      model: result?.model || null,
+      raw: result?.raw || null,
+      domain: normalizeText(domain),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      json: {},
+      text: '',
+      model: null,
+      raw: null,
+      domain: normalizeText(domain),
+      error: {
+        code: 'STRUCTURED_IMAGE_JSON_FAILED',
+        message: normalizeText(error?.message || 'structured_image_json_failed')
+      }
+    };
+  }
+}
+
 async function dispatchGemini(input = {}, maybeImagePart = null) {
   if (Array.isArray(input)) {
     const prompt = normalizeText(input[0]);
@@ -169,6 +223,7 @@ module.exports = {
   generateJsonOnly: geminiCore.generateJsonOnly,
   generateTextFromImage,
   generateJsonFromImage,
+  generateStructuredImageJson,
   dispatchGemini,
   default: dispatchGemini,
 };

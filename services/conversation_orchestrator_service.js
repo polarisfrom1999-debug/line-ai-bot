@@ -436,6 +436,12 @@ async function maybeHandleMealLogCorrection(input, text) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe) return null;
 
+  if (mealAnalysisService.isMealNegationOrNonRecordText(safe) || /(間違えた|誤送信|同じ写真送ってしまった|食べてないよ|これは食べてない)/.test(safe)) {
+    return {
+      replyText: '了解です。これは食事として保存しません。必要なら「この食事を削除して」や「10時58分の分を削除して」のように対象を指定してください。'
+    };
+  }
+
   if (mealDeletionIntent(safe)) {
     const { ids, reason } = await resolveMealDeletionTargetIds(input.userId, safe);
     if (ids.length) {
@@ -2196,14 +2202,19 @@ async function maybeHandleLabImage(input, imagePayload) {
       const fromPanel = labItemAliasService.buildLabItemMapFromPanel(lab || {});
       const cachedItemMap = { ...fromRaw, ...fromPanel };
       const latestLabCache = {
+        userId: input.userId,
+        sourceImageId: normalizeText(imagePayload?.id || ''),
+        sourceMessageId: normalizeText(input?.messageId || ''),
         examDate: lab?.latestExamDate || lab?.examDate || '',
+        examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
         items: cachedItemMap,
         rawText: normalizeText(lab?.rawText || ''),
         updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
         patientName: normalizeText(lab?.patientName || ''),
         facilityName: normalizeText(lab?.facilityName || ''),
         printDate: normalizeText(lab?.printDate || ''),
-        examDates: Array.isArray(lab?.examDates) ? lab.examDates : []
       };
       console.info('[lab] cache_save_pending', {
         userId: input.userId,
@@ -2254,17 +2265,22 @@ async function maybeHandleLabImage(input, imagePayload) {
         availableLabDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
         labPanel: lab,
         latestLabCache: {
+          userId: input.userId,
+          sourceImageId: normalizeText(imagePayload?.id || ''),
+          sourceMessageId: normalizeText(input?.messageId || ''),
           examDate: lab.latestExamDate || lab.examDate || '',
+          examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
           items: {
             ...labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || ''),
             ...labItemAliasService.buildLabItemMapFromPanel(lab)
           },
           rawText: normalizeText(lab?.rawText || ''),
           updatedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
           patientName: normalizeText(lab?.patientName || ''),
           facilityName: normalizeText(lab?.facilityName || ''),
-          printDate: normalizeText(lab?.printDate || ''),
-          examDates: Array.isArray(lab?.examDates) ? lab.examDates : []
+          printDate: normalizeText(lab?.printDate || '')
         }
       }
     });
@@ -3176,14 +3192,19 @@ async function orchestrateConversation(input) {
         const labPanel = labImageHandled.analysis;
         const cachedItemMap = labItemAliasService.buildLabItemMapFromPanel(labPanel || {});
         const latestLabCache = {
+          userId: input.userId,
+          sourceImageId: normalizeText(imagePayload?.id || ''),
+          sourceMessageId: normalizeText(input?.messageId || ''),
           examDate: labPanel?.latestExamDate || labPanel?.examDate || '',
+          examDates: Array.isArray(labPanel?.examDates) ? labPanel.examDates : [],
           items: cachedItemMap,
           rawText: normalizeText(labPanel?.rawText || ''),
           updatedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
           patientName: normalizeText(labPanel?.patientName || ''),
           facilityName: normalizeText(labPanel?.facilityName || ''),
-          printDate: normalizeText(labPanel?.printDate || ''),
-          examDates: Array.isArray(labPanel?.examDates) ? labPanel.examDates : []
+          printDate: normalizeText(labPanel?.printDate || '')
         };
         await contextMemoryService.saveShortMemory(input.userId, {
           lastImageType: 'lab_pending',

@@ -86,6 +86,9 @@ function buildPendingPanel(classification, extraction) {
   const bestExamDate = resolveBestExamDate(classification, extraction);
   const latestExamDate = bestExamDate || examDates[examDates.length - 1] || reportDate || '';
   const documentKind = normalizeText(classification?.documentType || extraction?.documentType || 'unknown');
+  const mergedRaw = [classification?.rawText, extraction?.rawText].filter(Boolean).join('\n');
+  const labKeywordHit = /血液|検査|採血|中性脂肪|TG|LDL|HDL|HbA1c|AST|ALT/i.test(mergedRaw);
+  const isLikelyLab = documentKind !== 'chat_screenshot' && (documentKind !== 'unknown' || labKeywordHit || (Array.isArray(extraction?.rows) && extraction.rows.length > 0));
   const issues = [
     ...(Array.isArray(classification?.issues) ? classification.issues : []),
     ...(Array.isArray(extraction?.issues) ? extraction.issues : [])
@@ -94,8 +97,8 @@ function buildPendingPanel(classification, extraction) {
   return {
     source: 'image',
     intakeKind: 'lab_image',
-    isLabImage: documentKind !== 'chat_screenshot' && documentKind !== 'unknown',
-    labLike: documentKind !== 'chat_screenshot' && documentKind !== 'unknown',
+    isLabImage: isLikelyLab,
+    labLike: isLikelyLab,
     reportDate,
     examDate: latestExamDate,
     latestExamDate,
@@ -108,7 +111,7 @@ function buildPendingPanel(classification, extraction) {
     issues,
     confidence: Number(extraction?.confidence || classification?.confidence || 0) || 0.3,
     trendSummary: '',
-    rawText: [classification?.rawText, extraction?.rawText].filter(Boolean).join('\n'),
+    rawText: mergedRaw,
     rawPayload: extraction?.rawPayload || null,
     promptVersion: extraction?.promptVersion || '',
     ignoredReason: '',

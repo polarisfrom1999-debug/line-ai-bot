@@ -252,9 +252,12 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       model: builder.preferredModel,
       temperature: builder.temperature
     });
-    ok = Boolean(dispatch?.ok);
+    if (!dispatch?.ok) {
+      throw new Error(dispatch?.error?.message || 'structured_image_dispatch_failed');
+    }
+    ok = true;
     payload = dispatch?.json || {};
-    rawText = sanitizeGeminiText(dispatch?.text || '');
+    rawText = sanitizeGeminiText(dispatch?.text || JSON.stringify(dispatch?.json || {}));
   } catch (dispatchError) {
     console.error('[lab_structured_extract_service] builder dispatch failed:', dispatchError?.message || dispatchError);
     const result = await geminiImageAnalysisService.analyzeImage({
