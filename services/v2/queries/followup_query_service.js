@@ -12,7 +12,7 @@ function normalizeText(value) {
 }
 
 function isBroadLabIntent(safe) {
-  return /わかるのは|何の項目がありましたか|数値で読めたのは|患者名は|クリニック名は|病院名は|日付は|検査項目は|何が読み取れた|他の項目で確認出来たのは|他の検査結果で読めたのは|TGは|LDLは|HDLは|HbA1cは/.test(safe);
+  return /わかるのは|何の項目がありましたか|数値で読めたのは|患者名は|クリニック名は|病院名は|日付は|検査項目は|何が読み取れた|他の項目で確認出来たのは|他の検査結果で読めたのは|TGは|LDLは|HDLは|HbA1cは|この経過から問題ある\?|検査結果でわかるのある\?|他に読めたのは\?|異常ありそう\?|この結果どう見える\?/.test(safe);
 }
 
 function sanitizeLabItems(items = []) {
@@ -63,13 +63,20 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
     text: safe,
     activeContext: active
   });
-  if (mealReply?.replyText) return mealReply;
+  if (mealReply?.replyText) {
+    console.info('[v2-followup] followup_intent_resolved', { userId: input.userId, intent: mealReply.intentType || 'meal_followup' });
+    return mealReply;
+  }
 
   const activeReply = await activeContextResolver.resolveActiveContextFollowup({ input, text: safe, shortMemory });
-  if (activeReply?.replyText) return activeReply;
+  if (activeReply?.replyText) {
+    console.info('[v2-followup] followup_intent_resolved', { userId: input.userId, intent: activeReply.intentType || 'active_followup' });
+    return activeReply;
+  }
 
   const panel = buildLatestLabPanel(shortMemory);
   if (panel && isBroadLabIntent(safe)) {
+    console.info('[v2-followup] followup_intent_resolved', { userId: input.userId, intent: 'v2_lab_broad_followup' });
     return {
       intentType: 'v2_lab_broad_followup',
       replyText: labFollowupService.buildReadableInventoryReply(panel)
@@ -84,7 +91,7 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
     if (/病院名|医院名|クリニック名|医療機関/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildFacilityNameReply(persistedPanel) };
     if (/印刷日/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildPrintDateReply(persistedPanel) };
     if (/日付|検査日|採血日/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildExamDateQuickReply(persistedPanel) };
-    if (/わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildReadableInventoryReply(persistedPanel) };
+    if (/わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目|問題ある|異常ありそう|この結果どう見える|経過/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildReadableInventoryReply(persistedPanel) };
     const target = labFollowupService.normalizeTarget(safe);
     if (target) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildItemReply(persistedPanel, target, persistedPanel?.latestExamDate || '') };
   }

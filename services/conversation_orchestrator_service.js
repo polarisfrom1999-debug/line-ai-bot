@@ -2556,6 +2556,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     amountNote: text,
     estimatedNutrition: adjustedNutrition
   };
+  const deltaNutrition = adjustedNutrition;
 
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
   const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(

@@ -30,9 +30,10 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
   if (!safe || !/^meal_/.test(normalizeText(activeContext?.type || ''))) return null;
   const intent = detectMealCorrectionIntent(safe);
   if (!intent) return null;
+  console.info('[v2-followup] correction_intent_resolved', { userId: input.userId, intent, text: safe.slice(0, 80) });
 
   if (intent === 'set_component_zero' || intent === 'mark_component_not_eaten') {
-    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'set_zero' });
+    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'set_zero' }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
     const totals = await buildTodayTotals(input.userId);
     return {
@@ -41,7 +42,7 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
     };
   }
   if (intent === 'set_component_fraction') {
-    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'partial', ratio: 0.5 });
+    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'partial', ratio: 0.5 }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
     const totals = await buildTodayTotals(input.userId);
     return {
@@ -63,8 +64,10 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
     if (!latest) return { intentType: 'meal_followup_correction', replyText: '直近の食事記録が見つかりませんでした。' };
     return { intentType: 'meal_followup_correction', replyText: `直近の食事は約${Number(latest.kcal || 0).toFixed(1)} kcalです。` };
   }
-  // delete/relocate は既存 correction resolver へ委譲
-  if (intent === 'delete_entire_record' || intent === 'relocate_entire_record') return null;
+  // delete/relocate は既存 correction resolver へ委譲（意図を固定して再解釈しない）
+  if (intent === 'delete_entire_record' || intent === 'relocate_entire_record') {
+    return { intentType: 'meal_followup_route_to_correction', replyText: '' };
+  }
   return null;
 }
 

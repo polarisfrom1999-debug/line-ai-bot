@@ -53,6 +53,26 @@ async function handleLabImageV2({ input, imagePayload }) {
   }
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
+  const rawText = normalizeText(lab?.rawText || '');
+  const rawMap = labItemAliasService.buildLabItemMapFromRawText(rawText);
+  const candidateItemNamesCount = Math.max(
+    Array.isArray(lab?.items) ? lab.items.length : 0,
+    Object.keys(rawMap || {}).length
+  );
+  const candidateExamDatesCount = Array.isArray(lab?.examDates) ? lab.examDates.length : 0;
+  const patientNameDetected = Boolean(normalizeText(lab?.patientName || ''));
+  const facilityNameDetected = Boolean(normalizeText(lab?.facilityName || ''));
+  const printDateDetected = Boolean(normalizeText(lab?.printDate || ''));
+  console.info('[v2-lab] extraction_minimums', {
+    userId: input.userId,
+    extracted_text_length: rawText.length,
+    candidate_exam_dates_count: candidateExamDatesCount,
+    candidate_item_names_count: candidateItemNamesCount,
+    patient_name_detected: patientNameDetected,
+    facility_name_detected: facilityNameDetected,
+    print_date_detected: printDateDetected,
+  });
+
   const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
   const persist = await labSessionRepository.createLabSession({
     userId: input.userId,
@@ -67,7 +87,7 @@ async function handleLabImageV2({ input, imagePayload }) {
     rawText: lab?.rawText || '',
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
     isLabImageStrict: Boolean(lab?.isLabImage),
-    isLabImageTentative: Boolean(lab?.labLike || hasTentativeLabSignal(lab)),
+    isLabImageTentative: Boolean(lab?.labLike || hasTentativeLabSignal(lab) || rawText.length > 0 || candidateItemNamesCount > 0 || candidateExamDatesCount > 0 || printDateDetected || patientNameDetected || facilityNameDetected),
     expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
   }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 
