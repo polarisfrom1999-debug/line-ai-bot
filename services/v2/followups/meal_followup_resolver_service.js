@@ -9,8 +9,9 @@ function normalizeText(value) {
 
 function detectMealCorrectionIntent(safe) {
   if (/麺.*ゼロ|ゼロカロリー|0kcal|0 kcal|この麺はゼロ/.test(safe)) return 'set_component_zero';
-  if (/半分食べた|一部だけ食べた|半分だけ/.test(safe)) return 'mark_component_partial';
+  if (/半分食べた|一部だけ食べた|半分だけ/.test(safe)) return 'set_component_fraction';
   if (/食べてない|食べなかった|この麺は食べてない/.test(safe)) return 'mark_component_not_eaten';
+  if (/再計算|再計算して|計算し直し|recalc/.test(safe)) return 'recalc_meal';
   if (/削除して|消して/.test(safe)) return 'delete_entire_record';
   if (/昨日の食事|昨日にして|昨晩の分/.test(safe)) return 'relocate_entire_record';
   if (/カロリーは\?|夕食のカロリー|最後の食事のカロリー/.test(safe)) return 'ask_component_kcal';
@@ -39,13 +40,20 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
       replyText: `対象食事を0kcal補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
     };
   }
-  if (intent === 'mark_component_partial') {
+  if (intent === 'set_component_fraction') {
     const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'partial', ratio: 0.5 });
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
     const totals = await buildTodayTotals(input.userId);
     return {
       intentType: 'meal_followup_correction',
       replyText: `対象食事を半量補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+    };
+  }
+  if (intent === 'recalc_meal') {
+    const totals = await buildTodayTotals(input.userId);
+    return {
+      intentType: 'meal_followup_correction',
+      replyText: `再計算しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
     };
   }
   if (intent === 'ask_component_kcal') {

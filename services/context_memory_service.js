@@ -626,9 +626,32 @@ async function adjustLastMealNutrition(lineUserId, adjust = {}) {
     return { ok: false, reason: normalizeString(error?.message || 'update_failed') };
   }
 
+  const verify = await safeMaybeSingle(() => supabase
+    .from('meal_logs')
+    .select('id, estimated_kcal, protein_g, fat_g, carbs_g')
+    .eq('id', row.id)
+    .eq('user_id', user.id)
+    .limit(1)
+    .maybeSingle(), null);
+  if (!verify?.id) return { ok: false, reason: 'read_after_write_not_found' };
+  const afterRead = {
+    kcal: Number(verify.estimated_kcal || 0),
+    protein: Number(verify.protein_g || 0),
+    fat: Number(verify.fat_g || 0),
+    carbs: Number(verify.carbs_g || 0)
+  };
+  if (
+    Math.abs(afterRead.kcal - Number(next.kcal || 0)) > 0.11
+    || Math.abs(afterRead.protein - Number(next.protein || 0)) > 0.11
+    || Math.abs(afterRead.fat - Number(next.fat || 0)) > 0.11
+    || Math.abs(afterRead.carbs - Number(next.carbs || 0)) > 0.11
+  ) {
+    return { ok: false, reason: 'read_after_write_mismatch', mealId: row.id, expected: next, actual: afterRead };
+  }
+
   clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
-  return { ok: true, mealId: row.id, before, after: next, mode };
+  return { ok: true, mealId: row.id, before, after: afterRead, mode };
 }
 
 function popLastMealFromDailyBucket(lineUserId, dateKey) {

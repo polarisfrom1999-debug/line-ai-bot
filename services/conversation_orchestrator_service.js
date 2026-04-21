@@ -3064,6 +3064,18 @@ async function orchestrateConversation(input) {
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
     const text = normalizeText(input.rawText || '');
+    if (input?.messageType === 'text') {
+      const topFollowup = await followupQueryV2Service.resolveFollowupV2({
+        input,
+        text,
+        shortMemory
+      });
+      if (topFollowup?.replyText) {
+        const topOut = await withSurfaceReply(input, topFollowup.replyText, { recentMessages, longMemory }, topFollowup.intentType || 'v2_followup_top');
+        await appendTurn(input.userId, input.rawText || '', topOut);
+        return { ok: true, replyMessages: [{ type: 'text', text: topOut }], internal: { intentType: topFollowup.intentType || 'v2_followup_top', responseMode: 'answer' } };
+      }
+    }
     let intent = detectIntent(input, shortMemory);
     intent = adjustIntentForFollowupContext(intent, text, shortMemory);
 
@@ -3514,17 +3526,6 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
-
-    const v2FollowupReply = await followupQueryV2Service.resolveFollowupV2({
-      input,
-      text,
-      shortMemory: refreshedShortMemory
-    });
-    if (v2FollowupReply?.replyText) {
-      const v2FollowOut = await withSurfaceReply(input, v2FollowupReply.replyText, { recentMessages, longMemory }, v2FollowupReply.intentType || 'v2_followup');
-      await appendTurn(input.userId, input.rawText || '', v2FollowOut);
-      return { ok: true, replyMessages: [{ type: 'text', text: v2FollowOut }], internal: { intentType: v2FollowupReply.intentType || 'v2_followup', responseMode: 'answer' } };
-    }
 
     const activeContextReply = await maybeHandleActiveContextFollowUp(input, text, refreshedShortMemory);
     if (activeContextReply?.replyText) {

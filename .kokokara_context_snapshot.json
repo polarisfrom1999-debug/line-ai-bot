@@ -19,7 +19,17 @@
         "completedSteps": [],
         "answers": {}
       },
-      "activeContext": null
+      "activeContext": {
+        "type": "lab_followup_session",
+        "payload": {
+          "labPanel": {
+            "patientName": "test"
+          }
+        },
+        "createdAt": "2026-04-21T15:38:35.478+00:00",
+        "expiresAt": "2026-04-21T15:43:35.477+00:00",
+        "status": "active"
+      }
     }
   },
   "longMemoryStore": {},

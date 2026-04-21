@@ -11,6 +11,25 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function isBroadLabIntent(safe) {
+  return /わかるのは|何の項目がありましたか|数値で読めたのは|患者名は|クリニック名は|病院名は|日付は|検査項目は|何が読み取れた|他の項目で確認出来たのは|他の検査結果で読めたのは|TGは|LDLは|HDLは|HbA1cは/.test(safe);
+}
+
+function sanitizeLabItems(items = []) {
+  return (Array.isArray(items) ? items : []).map((it) => ({
+    itemName: normalizeText(it?.itemName || it?.name || it?.name_normalized || ''),
+    value: normalizeText(it?.value || ''),
+    unit: normalizeText(it?.unit || ''),
+    flag: normalizeText(it?.flag || ''),
+    history: Array.isArray(it?.history) ? it.history.map((h) => ({
+      date: normalizeText(h?.date || ''),
+      value: normalizeText(h?.value || ''),
+      unit: normalizeText(h?.unit || ''),
+      flag: normalizeText(h?.flag || ''),
+    })) : []
+  }));
+}
+
 function buildLatestLabPanel(shortMemory = {}) {
   return shortMemory?.activeContext?.payload?.labPanel
     || shortMemory?.followUpContext?.labPanel
@@ -26,7 +45,7 @@ function buildPanelFromPersistedSessions(activeSession = null, labSession = null
     facilityName: normalizeText(labSession.facility_name || ''),
     printDate: normalizeText(labSession.print_date || ''),
     examDates: Array.isArray(labSession.exam_dates_json) ? labSession.exam_dates_json : [],
-    items: Array.isArray(labSession.parsed_items_json) ? labSession.parsed_items_json : [],
+    items: sanitizeLabItems(labSession.parsed_items_json),
     rawText: normalizeText(labSession.raw_text || ''),
     latestExamDate: Array.isArray(labSession.exam_dates_json) && labSession.exam_dates_json.length
       ? String(labSession.exam_dates_json[labSession.exam_dates_json.length - 1] || '')
@@ -50,7 +69,7 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   if (activeReply?.replyText) return activeReply;
 
   const panel = buildLatestLabPanel(shortMemory);
-  if (panel && /わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め/.test(safe)) {
+  if (panel && isBroadLabIntent(safe)) {
     return {
       intentType: 'v2_lab_broad_followup',
       replyText: labFollowupService.buildReadableInventoryReply(panel)
@@ -60,12 +79,12 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   const persistedActive = await sessionStateRepository.getLatestActiveSessionByTypes(input.userId, ['lab_followup_session', 'lab_image_session']);
   const persistedLab = await labSessionRepository.getLatestLabSession(input.userId);
   const persistedPanel = buildPanelFromPersistedSessions(persistedActive, persistedLab);
-  if (persistedPanel && /患者名|氏名|病院名|医院名|クリニック名|医療機関|印刷日|日付|検査日|採血日|TG|LDL|HDL|HbA1c|わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め/.test(safe)) {
+  if (persistedPanel && isBroadLabIntent(safe)) {
     if (/患者名|氏名/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildPatientNameReply(persistedPanel) };
     if (/病院名|医院名|クリニック名|医療機関/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildFacilityNameReply(persistedPanel) };
     if (/印刷日/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildPrintDateReply(persistedPanel) };
     if (/日付|検査日|採血日/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildExamDateQuickReply(persistedPanel) };
-    if (/わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildReadableInventoryReply(persistedPanel) };
+    if (/わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目/.test(safe)) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildReadableInventoryReply(persistedPanel) };
     const target = labFollowupService.normalizeTarget(safe);
     if (target) return { intentType: 'v2_lab_followup_l2', replyText: labFollowupService.buildItemReply(persistedPanel, target, persistedPanel?.latestExamDate || '') };
   }

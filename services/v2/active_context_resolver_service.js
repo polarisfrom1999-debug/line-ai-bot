@@ -31,7 +31,7 @@ function buildLabPanelFromMemory(shortMemory = {}, active = null) {
 }
 
 function isBroadLabFollowup(safe) {
-  return /わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め/.test(safe);
+  return /わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目は|他の項目で確認出来たのは|他の検査結果で読めたのは/.test(safe);
 }
 
 async function resolveActiveContextFollowup({ input, text, shortMemory = {} }) {
