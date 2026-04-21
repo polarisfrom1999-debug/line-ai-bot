@@ -1,0 +1,33 @@
+{
+  "shortMemoryStore": {
+    "smoke-user": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": null,
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": null
+    }
+  },
+  "longMemoryStore": {},
+  "userStateStore": {},
+  "recentMessageStore": {},
+  "dailyRecordStore": {},
+  "weeklySurveyStore": {},
+  "monthlySurveyStore": {},
+  "pointsStore": {},
+  "labHistoryStore": {}
+}

@@ -50,6 +50,7 @@ const conversationFactResolverService = require('./conversation_fact_resolver_se
 const labQueryService = require('./lab_query_service');
 const mealLogQueryService = require('./meal_log_query_service');
 const activeContextService = require('./active_context_service');
+const imageIngressV2Service = require('./v2/image_ingress_v2_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -3197,6 +3198,20 @@ async function orchestrateConversation(input) {
       const mealAnnOut = await withSurfaceReply(input, mealAnnouncementHandled.replyText, { recentMessages, longMemory }, 'meal_announcement');
       await appendTurn(input.userId, input.rawText || '', mealAnnOut);
       return { ok: true, replyMessages: [{ type: 'text', text: mealAnnOut }], internal: mealAnnouncementHandled.internal };
+    }
+
+    if (input?.messageType === 'image') {
+      const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text });
+      if (ingressV2?.handled) {
+        const tag = normalizeText(ingressV2.intentType || 'image_v2');
+        const surfaced = await withSurfaceReply(input, ingressV2.replyText, { recentMessages, longMemory }, tag);
+        await appendTurn(input.userId, input.rawText || '[image]', surfaced);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: surfaced }],
+          internal: { intentType: tag, responseMode: /_ng$/.test(tag) ? 'answer' : 'record' }
+        };
+      }
     }
 
     let imagePayload = null;
