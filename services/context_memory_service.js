@@ -569,6 +569,68 @@ async function fetchLatestMealLogRow(lineUserId) {
     .maybeSingle(), null);
 }
 
+async function adjustLastMealNutrition(lineUserId, adjust = {}) {
+  const user = await resolvePersistentUser(lineUserId);
+  if (!user || !supabase) return { ok: false, reason: 'no_user' };
+  const row = await fetchLatestMealLogRow(lineUserId);
+  if (!row?.id) return { ok: false, reason: 'no_db_meal' };
+
+  const before = {
+    kcal: Number(row.estimated_kcal || 0),
+    protein: Number(row.protein_g || 0),
+    fat: Number(row.fat_g || 0),
+    carbs: Number(row.carbs_g || 0)
+  };
+  const mode = normalizeString(adjust.mode || 'replace');
+  const ratio = Number(adjust.ratio || 1);
+  const overrideKcal = adjust.kcal != null ? Number(adjust.kcal) : null;
+  const next = { ...before };
+
+  if (mode === 'set_zero') {
+    next.kcal = 0;
+  } else if (mode === 'partial') {
+    const safeRatio = Number.isFinite(ratio) && ratio > 0 && ratio <= 1 ? ratio : 0.5;
+    next.kcal = Math.round((before.kcal * safeRatio) * 10) / 10;
+    next.protein = Math.round((before.protein * safeRatio) * 10) / 10;
+    next.fat = Math.round((before.fat * safeRatio) * 10) / 10;
+    next.carbs = Math.round((before.carbs * safeRatio) * 10) / 10;
+  } else if (mode === 'replace' && Number.isFinite(overrideKcal)) {
+    next.kcal = Math.max(0, Math.round(overrideKcal * 10) / 10);
+  }
+
+  const raw = row?.raw_model_json && typeof row.raw_model_json === 'object'
+    ? { ...row.raw_model_json }
+    : {};
+  raw.correction = {
+    mode,
+    ratio: Number.isFinite(ratio) ? ratio : null,
+    appliedAt: nowIso(),
+    before,
+    after: next
+  };
+
+  try {
+    const { error } = await supabase
+      .from('meal_logs')
+      .update({
+        estimated_kcal: next.kcal,
+        protein_g: next.protein,
+        fat_g: next.fat,
+        carbs_g: next.carbs,
+        raw_model_json: raw
+      })
+      .eq('id', row.id)
+      .eq('user_id', user.id);
+    if (error) return { ok: false, reason: normalizeString(error.message || 'update_failed') };
+  } catch (error) {
+    return { ok: false, reason: normalizeString(error?.message || 'update_failed') };
+  }
+
+  clearUserDailyRecordCache(lineUserId);
+  scheduleSnapshotFlush();
+  return { ok: true, mealId: row.id, before, after: next, mode };
+}
+
 function popLastMealFromDailyBucket(lineUserId, dateKey) {
   ensureSnapshotLoaded();
   const key = `${lineUserId}:${dateKey}`;
@@ -643,7 +705,7 @@ async function deleteLastMealLog(lineUserId) {
 
 async function deleteMealLogsByIds(lineUserId, ids = []) {
   const user = await resolvePersistentUser(lineUserId);
-  const idList = [...new Set((Array.isArray(ids) ? ids : []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
+  const idList = [...new Set((Array.isArray(ids) ? ids : []).map((x) => normalizeString(x)).filter(Boolean))];
   if (!user || !supabase || !idList.length) {
     return { ok: false, deleted: 0, reason: !user ? 'no_user' : 'no_ids' };
   }
@@ -1327,4 +1389,6 @@ module.exports = {
   relocateLastMealToTokyoDate,
   deleteLastMealLog,
   deleteMealLogsByIds
+  ,
+  adjustLastMealNutrition
 };

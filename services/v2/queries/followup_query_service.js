@@ -1,9 +1,11 @@
 'use strict';
 
 const activeContextResolver = require('../active_context_resolver_service');
+const activeContextService = require('../../active_context_service');
 const labFollowupService = require('../../lab_followup_service');
 const sessionStateRepository = require('../../../repositories/session_state_repository');
 const labSessionRepository = require('../../../repositories/lab_session_repository');
+const mealFollowupResolverService = require('../followups/meal_followup_resolver_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -35,6 +37,14 @@ function buildPanelFromPersistedSessions(activeSession = null, labSession = null
 async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe || input?.messageType !== 'text') return null;
+
+  const active = await activeContextService.getActiveContext(input.userId, shortMemory).catch(() => null);
+  const mealReply = await mealFollowupResolverService.resolveMealFollowupFromSession({
+    input,
+    text: safe,
+    activeContext: active
+  });
+  if (mealReply?.replyText) return mealReply;
 
   const activeReply = await activeContextResolver.resolveActiveContextFollowup({ input, text: safe, shortMemory });
   if (activeReply?.replyText) return activeReply;
