@@ -98,6 +98,7 @@ async function handleMealImageV2({ input, imagePayload }) {
     status: 'active',
     expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
   }).catch(() => ({ ok: false }));
+  let analyzedEventSaved = false;
   if (captureSession?.ok && captureSession?.session?.id) {
     await mealCaptureRepository.appendMealCaptureEvent({
       sessionId: captureSession.session.id,
@@ -108,9 +109,12 @@ async function handleMealImageV2({ input, imagePayload }) {
         confidence: Number(meal?.confidence || 0),
         items: Array.isArray(meal?.items) ? meal.items : [],
       }
+    }).then((res) => {
+      analyzedEventSaved = Boolean(res?.ok);
     }).catch(() => null);
   }
 
+  let recordSavedEvent = false;
   if (meal?.recordReady) {
     await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input));
     if (captureSession?.ok && captureSession?.session?.id) {
@@ -122,11 +126,28 @@ async function handleMealImageV2({ input, imagePayload }) {
           kcal: Number(meal?.estimatedNutrition?.kcal || 0),
           dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
         }
+      }).then((res) => {
+        recordSavedEvent = Boolean(res?.ok);
       }).catch(() => null);
     }
   }
 
-  return { handled: true, analysis: meal, replyText: buildMealReply(meal), intentType: 'meal_image' };
+  const persistedOk = Boolean(captureSession?.ok && analyzedEventSaved);
+  const replyBase = buildMealReply(meal);
+  const replyText = persistedOk
+    ? replyBase
+    : [replyBase, '', '※解析結果は返答しましたが、保存確認が未完了のため、必要なら同じ画像を再送してください。'].join('\n');
+  return {
+    handled: true,
+    analysis: meal,
+    replyText,
+    intentType: 'meal_image',
+    persistence: {
+      captureSessionSaved: Boolean(captureSession?.ok),
+      analyzedEventSaved,
+      recordSavedEvent
+    }
+  };
 }
 
 module.exports = {

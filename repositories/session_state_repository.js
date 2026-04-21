@@ -66,6 +66,38 @@ async function getLatestActiveSession(userId) {
   }
 }
 
+async function getLatestActiveSessionByTypes(userId, sessionTypes = []) {
+  const safeUserId = normalizeText(userId);
+  if (!supabase || !safeUserId) return null;
+  const safeTypes = (Array.isArray(sessionTypes) ? sessionTypes : [])
+    .map((x) => normalizeText(x))
+    .filter(Boolean);
+  if (!safeTypes.length) return getLatestActiveSession(userId);
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('session_state')
+      .select('session_type,payload_jsonb,created_at,expires_at,status')
+      .eq('user_id', safeUserId)
+      .eq('status', 'active')
+      .in('session_type', safeTypes)
+      .or(`expires_at.is.null,expires_at.gte.${now}`)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      type: normalizeText(data.session_type),
+      payload: safeJson(data.payload_jsonb),
+      createdAt: data.created_at || '',
+      expiresAt: data.expires_at || '',
+      status: data.status || 'active',
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function closeActiveSessions(userId, reason = 'cleared') {
   const safeUserId = normalizeText(userId);
   if (!supabase || !safeUserId) return { ok: false, reason: 'missing_supabase_or_user' };
@@ -90,5 +122,6 @@ async function closeActiveSessions(userId, reason = 'cleared') {
 module.exports = {
   upsertActiveSession,
   getLatestActiveSession,
+  getLatestActiveSessionByTypes,
   closeActiveSessions,
 };

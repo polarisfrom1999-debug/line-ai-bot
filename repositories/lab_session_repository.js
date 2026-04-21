@@ -53,6 +53,26 @@ async function createLabSession(params = {}) {
   }
 }
 
+async function getLatestLabSession(userId) {
+  if (!supabase) return null;
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('lab_sessions')
+      .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at')
+      .eq('user_id', safeUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  } catch (_error) {
+    return null;
+  }
+}
+
 module.exports = {
   createLabSession,
+  getLatestLabSession,
 };

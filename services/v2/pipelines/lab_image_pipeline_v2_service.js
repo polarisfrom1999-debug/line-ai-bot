@@ -54,7 +54,7 @@ async function handleLabImageV2({ input, imagePayload }) {
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
   const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
-  await labSessionRepository.createLabSession({
+  const persist = await labSessionRepository.createLabSession({
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
     sourceMessageId: normalizeText(input?.messageId || ''),
@@ -69,7 +69,7 @@ async function handleLabImageV2({ input, imagePayload }) {
     isLabImageStrict: Boolean(lab?.isLabImage),
     isLabImageTentative: Boolean(lab?.labLike || hasTentativeLabSignal(lab)),
     expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
-  }).catch(() => null);
+  }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: hasItems ? 'lab' : 'lab_pending',
@@ -92,8 +92,17 @@ async function handleLabImageV2({ input, imagePayload }) {
     payload: { labPanel: lab }
   });
 
-  const replyText = labFollowupService.buildLabImageReply(lab);
-  return { handled: true, analysis: lab, replyText, intentType: hasItems ? 'lab_image' : 'lab_image_pending' };
+  const replyBase = labFollowupService.buildLabImageReply(lab);
+  const replyText = persist?.ok
+    ? replyBase
+    : [replyBase, '', '※画像の読み取り結果は受け取りましたが、保存確認が未完了です。続けて「TGは？」「患者名は？」で確認できます。'].join('\n');
+  return {
+    handled: true,
+    analysis: lab,
+    replyText,
+    intentType: hasItems ? 'lab_image' : 'lab_image_pending',
+    persistence: { labSessionSaved: Boolean(persist?.ok), reason: persist?.reason || '' }
+  };
 }
 
 module.exports = {

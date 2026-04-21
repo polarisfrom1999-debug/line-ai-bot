@@ -55,16 +55,36 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
   });
 
   if (kind === 'lab' && labResult?.handled) {
-    return { handled: true, intentType: labResult.intentType || 'lab_image', replyText: labResult.replyText };
+    return {
+      handled: true,
+      intentType: labResult.intentType || 'lab_image',
+      replyText: labResult.replyText,
+      persistence: labResult?.persistence || null
+    };
   }
   if (kind === 'meal' && mealResult?.handled) {
-    return { handled: true, intentType: mealResult.intentType || 'meal_image', replyText: mealResult.replyText };
+    return {
+      handled: true,
+      intentType: mealResult.intentType || 'meal_image',
+      replyText: mealResult.replyText,
+      persistence: mealResult?.persistence || null
+    };
   }
   if (labResult?.handled) {
-    return { handled: true, intentType: labResult.intentType || 'lab_image', replyText: labResult.replyText };
+    return {
+      handled: true,
+      intentType: labResult.intentType || 'lab_image',
+      replyText: labResult.replyText,
+      persistence: labResult?.persistence || null
+    };
   }
   if (mealResult?.handled) {
-    return { handled: true, intentType: mealResult.intentType || 'meal_image', replyText: mealResult.replyText };
+    return {
+      handled: true,
+      intentType: mealResult.intentType || 'meal_image',
+      replyText: mealResult.replyText,
+      persistence: mealResult?.persistence || null
+    };
   }
 
   return {
