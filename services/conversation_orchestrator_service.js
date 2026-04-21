@@ -51,6 +51,7 @@ const labQueryService = require('./lab_query_service');
 const mealLogQueryService = require('./meal_log_query_service');
 const activeContextService = require('./active_context_service');
 const imageIngressV2Service = require('./v2/image_ingress_v2_service');
+const followupQueryV2Service = require('./v2/queries/followup_query_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -3457,6 +3458,17 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
+
+    const v2FollowupReply = await followupQueryV2Service.resolveFollowupV2({
+      input,
+      text,
+      shortMemory: refreshedShortMemory
+    });
+    if (v2FollowupReply?.replyText) {
+      const v2FollowOut = await withSurfaceReply(input, v2FollowupReply.replyText, { recentMessages, longMemory }, v2FollowupReply.intentType || 'v2_followup');
+      await appendTurn(input.userId, input.rawText || '', v2FollowOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: v2FollowOut }], internal: { intentType: v2FollowupReply.intentType || 'v2_followup', responseMode: 'answer' } };
+    }
 
     const activeContextReply = await maybeHandleActiveContextFollowUp(input, text, refreshedShortMemory);
     if (activeContextReply?.replyText) {
