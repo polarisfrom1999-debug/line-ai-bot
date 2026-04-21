@@ -148,6 +148,25 @@ function aggregateMealLogs(logs) {
   return sumMealLogs(list);
 }
 
+/**
+ * オーケストレータの legacy meal オブジェクト配列をログ形に寄せて aggregate する。
+ */
+function aggregateLegacyMealRecords(meals) {
+  const rows = (Array.isArray(meals) ? meals : []).map((m) => ({
+    eatenAt: m.createdAt || m.eatenAt || '',
+    mealLabel: normalizeText(m.summary || m.name || '食事'),
+    foodItems: Array.isArray(m.food_items) ? m.food_items : (Array.isArray(m.items) ? m.items : []),
+    kcal: Number(m.kcal || m.estimatedNutrition?.kcal || 0),
+    protein: Number(m.protein || m.estimatedNutrition?.protein || 0),
+    fat: Number(m.fat || m.estimatedNutrition?.fat || 0),
+    carbs: Number(m.carbs || m.estimatedNutrition?.carbs || 0),
+    confidence: m.confidence != null ? Number(m.confidence) : null,
+    sourceLineMessageId: normalizeText(m.sourceLineMessageId || ''),
+    dedupeKey: normalizeText(m.dedupeKey || '')
+  }));
+  return aggregateMealLogs(rows);
+}
+
 function tokyoYmdFromIso(iso) {
   if (!iso) return '';
   try {
@@ -246,6 +265,7 @@ module.exports = {
   dedupeFingerprint,
   sumMealLogs,
   aggregateMealLogs,
+  aggregateLegacyMealRecords,
   groupMealLogsByTokyoDay,
   fetchAggregateMealLogsFromDb,
   formatMealAggregateReply,

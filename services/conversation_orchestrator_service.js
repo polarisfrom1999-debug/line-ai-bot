@@ -795,8 +795,8 @@ function buildTodayRecordsAnswer(records) {
 }
 
 function buildTodayMealTotalsAnswer(records, options = {}) {
-  const totals = sumMealNutrition(records);
-  const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
+  const totals = mealLogQueryService.aggregateLegacyMealRecords(records?.meals);
+  const mealCount = totals.count;
   if (!mealCount) {
     return 'いま保存データ（今日付け）を読み直したところ、食事は0件でした。食べた記録を送るか、「昨日の分です」と直近1件を昨日へ移せます。';
   }
@@ -823,11 +823,11 @@ function buildTodayMealTotalsAnswer(records, options = {}) {
 }
 
 function buildTodayMealBalanceAnswer(records) {
-  const mealCount = Array.isArray(records?.meals) ? records.meals.length : 0;
+  const totals = mealLogQueryService.aggregateLegacyMealRecords(records?.meals);
+  const mealCount = totals.count;
   if (!mealCount) {
     return '今日はまだ食事記録が見当たらないので、食べたものや写真を送ってもらえれば栄養バランスも見ていけます。';
   }
-  const totals = sumMealNutrition(records);
   const lines = [
     '🥗 今日ここまでの栄養バランス',
     '━━━━━━━━━━━━━',
@@ -1201,8 +1201,13 @@ async function maybeHandleMealDraftQuestion(input, shortMemory) {
       : null;
   if (!meal) return null;
 
-  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
-  const todayTotals = sumMealNutrition(todayRecords);
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const { totals: todayTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    input.userId,
+    todayYmd,
+    todayYmd,
+    'meal_draft_followup'
+  );
   return {
     replyText: buildMealDraftFollowUpReply(meal, todayTotals, text),
     meal,
@@ -1274,9 +1279,13 @@ function buildMealReply(parsedMeal, options = {}) {
     `ひとこと: ${comment}`,
   ];
 
-  if (todayTotals && Number(todayTotals.kcal || 0) > 0) {
+  if (todayTotals && Number(todayTotals.kcal || 0) + Number(todayTotals.protein || 0) + Number(todayTotals.fat || 0) + Number(todayTotals.carbs || 0) > 0) {
     lines.push('');
-    lines.push('📈 本日の合計（積算）');
+    if (options?.todayTotalsIncludePending) {
+      lines.push('📈 今日の目安（DBに保存済みの食事＋いまのこの内容の見立て）');
+    } else {
+      lines.push('📈 本日の合計（DB meal_logs から再集計）');
+    }
     lines.push('┈┈┈┈┈┈┈┈┈┈┈┈┈');
     lines.push(`🔥 エネルギー: ${round1(todayTotals.kcal)} kcal`);
     lines.push(`💪 タンパク質: ${round1(todayTotals.protein)} g`);
@@ -2140,13 +2149,24 @@ async function maybeHandleMealImage(input, imagePayload) {
       return { handled: false, analysis: meal || null };
     }
 
-    const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
-    const todayTotals = sumMealNutrition(todayRecords);
-    todayTotals.kcal += Number(meal?.estimatedNutrition?.kcal || 0);
-    todayTotals.protein += Number(meal?.estimatedNutrition?.protein || 0);
-    todayTotals.fat += Number(meal?.estimatedNutrition?.fat || 0);
-    todayTotals.carbs += Number(meal?.estimatedNutrition?.carbs || 0);
-    const replyText = buildMealReply(meal, { todayTotals });
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+      input.userId,
+      todayYmd,
+      todayYmd,
+      'meal_image_reply'
+    );
+    const mk = Number(meal?.estimatedNutrition?.kcal || 0);
+    const mp = Number(meal?.estimatedNutrition?.protein || 0);
+    const mf = Number(meal?.estimatedNutrition?.fat || 0);
+    const mc = Number(meal?.estimatedNutrition?.carbs || 0);
+    const todayTotals = {
+      kcal: round1(dbTotals.kcal + mk),
+      protein: round1(dbTotals.protein + mp),
+      fat: round1(dbTotals.fat + mf),
+      carbs: round1(dbTotals.carbs + mc)
+    };
+    const replyText = buildMealReply(meal, { todayTotals, todayTotalsIncludePending: true });
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'meal',
@@ -2180,13 +2200,24 @@ async function maybeHandleMealText(input) {
   const parsedMeal = mealAnalysisService.parseMealText(text);
   if (Number(parsedMeal?.confidence || 0) < 0.4) return null;
 
-  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
-  const todayTotals = sumMealNutrition(todayRecords);
-  todayTotals.kcal += Number(parsedMeal?.estimatedNutrition?.kcal || 0);
-  todayTotals.protein += Number(parsedMeal?.estimatedNutrition?.protein || 0);
-  todayTotals.fat += Number(parsedMeal?.estimatedNutrition?.fat || 0);
-  todayTotals.carbs += Number(parsedMeal?.estimatedNutrition?.carbs || 0);
-  const replyText = buildMealReply(parsedMeal, { todayTotals });
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    input.userId,
+    todayYmd,
+    todayYmd,
+    'meal_text_reply'
+  );
+  const mk = Number(parsedMeal?.estimatedNutrition?.kcal || 0);
+  const mp = Number(parsedMeal?.estimatedNutrition?.protein || 0);
+  const mf = Number(parsedMeal?.estimatedNutrition?.fat || 0);
+  const mc = Number(parsedMeal?.estimatedNutrition?.carbs || 0);
+  const todayTotals = {
+    kcal: round1(dbTotals.kcal + mk),
+    protein: round1(dbTotals.protein + mp),
+    fat: round1(dbTotals.fat + mf),
+    carbs: round1(dbTotals.carbs + mc)
+  };
+  const replyText = buildMealReply(parsedMeal, { todayTotals, todayTotalsIncludePending: true });
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -2229,20 +2260,18 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     estimatedNutrition: adjustedNutrition
   };
 
-  const deltaNutrition = {
-    kcal: round1(adjustedNutrition.kcal - Number(base.kcal || 0)),
-    protein: round1(adjustedNutrition.protein - Number(base.protein || 0)),
-    fat: round1(adjustedNutrition.fat - Number(base.fat || 0)),
-    carbs: round1(adjustedNutrition.carbs - Number(base.carbs || 0))
-  };
-
-  const todayRecords = await contextMemoryService.getTodayRecords(input.userId);
-  const todayTotals = sumMealNutrition(todayRecords);
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    input.userId,
+    todayYmd,
+    todayYmd,
+    'meal_followup_adjust'
+  );
   const correctedTotals = {
-    kcal: round1((todayTotals?.kcal || 0) + deltaNutrition.kcal),
-    protein: round1((todayTotals?.protein || 0) + deltaNutrition.protein),
-    fat: round1((todayTotals?.fat || 0) + deltaNutrition.fat),
-    carbs: round1((todayTotals?.carbs || 0) + deltaNutrition.carbs)
+    kcal: round1(dbTotals.kcal + adjustedNutrition.kcal),
+    protein: round1(dbTotals.protein + adjustedNutrition.protein),
+    fat: round1(dbTotals.fat + adjustedNutrition.fat),
+    carbs: round1(dbTotals.carbs + adjustedNutrition.carbs)
   };
 
   await contextMemoryService.saveShortMemory(input.userId, {
@@ -2258,7 +2287,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
       `🍽️ この食事は ざっくり 約${round1(adjustedNutrition.kcal)}kcal くらいです。`,
       buildMealNutritionLine(adjustedNutrition || {}),
       '',
-      '📈 修正後の本日の合計（積算）',
+      '📈 修正後の今日の目安（DB保存済み＋この食事の見立て）',
       '━━━━━━━━━━━━━',
       `🔥 エネルギー: 約${round1(correctedTotals.kcal)} kcal`,
       buildMealNutritionLine(correctedTotals || {}),

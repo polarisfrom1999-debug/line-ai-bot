@@ -92,6 +92,7 @@ async function routeCapture(context) {
   }
 
   const captureType = detectCaptureTypeFromText(text);
+  console.info('[route] capture_text', { captureType, textPreview: text.slice(0, 100) });
   if (captureType === 'none') {
     return {
       captureType,
