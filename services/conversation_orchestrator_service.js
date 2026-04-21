@@ -359,22 +359,115 @@ async function maybeHandleMealDayScopeSummary(input, text) {
   return { replyText };
 }
 
+function parseTokyoHourMinuteFromText(safe) {
+  const m = String(safe || '').match(/(\d{1,2})\s*時(?:\s*(\d{1,2})\s*分?)?/);
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = m[2] != null && m[2] !== '' ? Number(m[2]) : null;
+  if (!Number.isFinite(hour) || hour < 0 || hour > 23) return null;
+  if (minute != null && (!Number.isFinite(minute) || minute < 0 || minute > 59)) return null;
+  return { hour, minute };
+}
+
+function mealDeletionIntent(safe) {
+  if (/(削除して|削除してください|消して下さい|消してください|取り消し|食事を削除|食事は削除|記録を削除|枚の写真削除|枚削除)/.test(safe)) return true;
+  if (/消して/.test(safe) && /(食事|記録|写真|枚|のやつ|のもの)/.test(safe)) return true;
+  return false;
+}
+
+async function resolveMealDeletionTargetIds(userId, safe) {
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  let fromYmd = todayYmd;
+  let toYmd = todayYmd;
+  if (/一昨日/.test(safe)) {
+    fromYmd = toYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -2);
+  } else if (/昨日|昨晩/.test(safe)) {
+    fromYmd = toYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -1);
+  }
+
+  const raw = await mealLogQueryService.getMealLogsByDateRange(userId, fromYmd, toYmd);
+  const rows = mealLogQueryService.deduplicateMealLogs(raw);
+  if (!rows.length) return { ids: [], reason: 'no_rows' };
+
+  const hm = parseTokyoHourMinuteFromText(safe);
+  if (hm && mealDeletionIntent(safe)) {
+    const matchTime = (log) => {
+      const t = mealLogQueryService.formatTimeTokyo(log.eatenAt);
+      const parts = String(t || '').split(':');
+      const th = Number(parts[0]);
+      const tm = Number(parts[1] || 0);
+      if (!Number.isFinite(th)) return false;
+      if (th !== hm.hour) return false;
+      if (hm.minute == null) return true;
+      return Math.abs(tm - hm.minute) <= 8;
+    };
+    let candidates = rows.filter(matchTime);
+    if (candidates.length > 1) {
+      const metaPref = candidates.filter((r) => mealAnalysisService.isMealMetaOrCorrectionText(normalizeText(r.mealLabel || '')));
+      if (metaPref.length) candidates = metaPref;
+    }
+    const pick = candidates.sort((a, b) => String(b.eatenAt || '').localeCompare(String(a.eatenAt || '')))[0];
+    if (pick?.id) return { ids: [pick.id], reason: 'tokyo_time_match' };
+  }
+
+  if (mealDeletionIntent(safe) && /ストロベリーミルク|ストロベリー\s*ミルク/i.test(safe)) {
+    const nm = safe.match(/(\d+)\s*枚/);
+    const n = nm ? Math.max(1, Math.min(15, Number(nm[1]))) : 1;
+    const hits = rows.filter((r) => /ストロベリーミルク/i.test(normalizeText(r.mealLabel || '')));
+    const ids = hits.slice(0, n).map((r) => r.id).filter(Boolean);
+    if (ids.length) return { ids, reason: 'strawberry_repeat' };
+  }
+
+  if (mealDeletionIntent(safe) && mealAnalysisService.isMealMetaOrCorrectionText(safe)) {
+    const bad = rows.filter((r) => mealAnalysisService.isMealMetaOrCorrectionText(normalizeText(r.mealLabel || '')));
+    if (bad.length) return { ids: bad.map((r) => r.id), reason: 'meta_meal_label' };
+  }
+
+  if (mealDeletionIntent(safe) && /(直近|一つ前|ひとつ前|この)\s*の?食事/.test(safe)) {
+    const id = rows[0]?.id;
+    if (id) return { ids: [id], reason: 'explicit_latest' };
+  }
+
+  return { ids: [], reason: 'unresolved' };
+}
+
 async function maybeHandleMealLogCorrection(input, text) {
   if (input?.messageType !== 'text') return null;
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe) return null;
 
-  if (/(さっき|この|直近|一つ前|ひとつ前)?の?食事を(消して|削除|取り消し)|食事を削除して|食事は削除して(下さい|ください)?|記録を削除|消して|記録しないで/.test(safe)) {
-    const res = await contextMemoryService.deleteLastMealLog(input.userId);
-    if (!res.ok) {
-      return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
+  if (mealDeletionIntent(safe)) {
+    const { ids, reason } = await resolveMealDeletionTargetIds(input.userId, safe);
+    if (ids.length) {
+      const res = await contextMemoryService.deleteMealLogsByIds(input.userId, ids);
+      if (!res.ok || !res.deleted) {
+        return { replyText: '削除の指示は受け取りましたが、DB側の更新に失敗しました。少し時間をあけて、もう一度「〇時〇分の分を削除」「ストロベリーミルク2枚削除」のように送ってください。' };
+      }
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+      const totals = { meals: mealLogsToRecordMeals(rawT) };
+      const delAgg = mealLogQueryService.aggregateMealLogs(rawT);
+      console.info('[meal] recomputed_today_total', { count: delAgg.count, kcal: round1(delAgg.kcal), deleteReason: reason });
+      return {
+        replyText: [
+          `対象の食事をDBから${res.deleted}件削除しました（${reason}）。`,
+          '',
+          buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true }),
+        ].join('\n')
+      };
     }
-    const todayYmd = contextMemoryService.getTokyoTodayYmd();
-    const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
-    const delAgg = mealLogQueryService.aggregateMealLogs(rawT);
-    console.info('[meal] recomputed_today_total', { count: delAgg.count, kcal: round1(delAgg.kcal) });
-    const totals = { meals: mealLogsToRecordMeals(rawT) };
-    return { replyText: ['直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+    if (/(直近の食事|この食事を|一つ前の食事|ひとつ前の食事).*(削除|消して)|記録を削除/.test(safe)) {
+      const res = await contextMemoryService.deleteLastMealLog(input.userId);
+      if (!res.ok) {
+        return { replyText: `保存データを読み直しましたが、直近の食事1件が見つかりませんでした（内訳: ${res.reason}）。もう一度食事を送るか、いつの分かを書いてください。` };
+      }
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+      const delAgg = mealLogQueryService.aggregateMealLogs(rawT);
+      console.info('[meal] recomputed_today_total', { count: delAgg.count, kcal: round1(delAgg.kcal) });
+      const totals = { meals: mealLogsToRecordMeals(rawT) };
+      return { replyText: ['直近の食事1件をDBから削除し、今日の分を再読込して合計を出し直しました。', '', buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })].join('\n') };
+    }
   }
 
   if (/昨日の分|昨晩の食事|昨晩の分|これは昨晩|昨日食べた|昨日にして|昨日だった|日付は昨日|前の日の分|一つ前の日|食事.*昨日/.test(safe)) {
@@ -415,8 +508,29 @@ async function maybeHandleMealLogCorrection(input, text) {
   }
 
   if (mealAnalysisService.isMealMetaOrCorrectionText(safe)) {
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const rawToday = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+    const rows = mealLogQueryService.deduplicateMealLogs(rawToday);
+    const junkIds = rows
+      .filter((r) => mealAnalysisService.isMealMetaOrCorrectionText(normalizeText(r.mealLabel || '')))
+      .map((r) => r.id)
+      .filter(Boolean);
+    if (junkIds.length) {
+      const res = await contextMemoryService.deleteMealLogsByIds(input.userId, junkIds);
+      if (res.deleted) {
+        const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+        const totals = { meals: mealLogsToRecordMeals(rawT) };
+        return {
+          replyText: [
+            `訂正の説明文だけが食事ログに残っていた${res.deleted}件をDBから取り除きました。`,
+            '',
+            buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true }),
+          ].join('\n')
+        };
+      }
+    }
     return {
-      replyText: '了解です。これは食事としては保存せず、訂正扱いにします。削除したい対象がある場合は「この食事を削除して」または「直近の食事を削除して」と送ってください。'
+      replyText: '了解です。これは食事としては保存していません。もし一覧に誤った行が残っている場合は「〇時〇分の分を削除」か「ストロベリーミルク2枚削除」のように送ってください。'
     };
   }
 
@@ -1262,6 +1376,7 @@ function buildMealReply(parsedMeal, options = {}) {
   const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
   const todayTotals = options?.todayTotals || null;
   const conf = Number(parsedMeal?.confidence || 0);
+  const replyMode = options?.mealReplyMode === 'text' ? 'text' : 'image';
 
   const rawJoin = items.map((it) => normalizeText(it)).filter(Boolean).join('、');
   const hedgeLowConf = conf > 0 && conf < 0.7;
@@ -1270,21 +1385,38 @@ function buildMealReply(parsedMeal, options = {}) {
       ? `画像の自信度がまだ高くないので、「${rawJoin}」っぽく見える、くらいに受け取ってください（違っていたら教えてください）。`
       : `ざっくり見ると「${rawJoin}」のように見えます（料理名は見立てで、違っていたら教えてください）。`)
     : '内容の輪郭がまだはっきりしにくいです。';
+  const textMealLabel = rawJoin
+    ? (hedgeLowConf
+      ? `いまの文章からは「${rawJoin}」っぽい、くらいに受け止めています（違っていたら教えてください）。`
+      : `いまの文章からは「${rawJoin}」くらいの内容として受け止めています（違っていたら教えてください）。`)
+    : '文章だけだと品目がまだはっきりしにくいです。';
   const kcal = round1(nut.kcal || 0);
   const protein = round1(nut.protein || 0);
   const fat = round1(nut.fat || 0);
   const carbs = round1(nut.carbs || 0);
   const comment = normalizeText(parsedMeal?.comment || '') || '量や写り方によって見え方が変わるので、ずれていたら一言ください。';
 
-  const lines = [
-    'お食事の写真として受け取りました。',
-    '写真だけでは断定しすぎないようにしています。少し見切れている・違う場合は、教えてもらえると助かります。',
-    '━━━━━━━━━━━━━',
-    `見立て（メニュー）: ${mealLabel}`,
-    `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
-    '━━━━━━━━━━━━━',
-    `ひとこと: ${comment}`,
-  ];
+  const headLines = replyMode === 'text'
+    ? [
+      'テキストで食事の内容を受け取りました。',
+      '文章だけでは断定しすぎないようにしています。足りない所があれば、一言足してもらえると助かります。',
+      '━━━━━━━━━━━━━',
+      `見立て（メニュー）: ${textMealLabel}`,
+      `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
+      '━━━━━━━━━━━━━',
+      `ひとこと: ${comment}`,
+    ]
+    : [
+      'お食事の写真として受け取りました。',
+      '写真だけでは断定しすぎないようにしています。少し見切れている・違う場合は、教えてもらえると助かります。',
+      '━━━━━━━━━━━━━',
+      `見立て（メニュー）: ${mealLabel}`,
+      `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
+      '━━━━━━━━━━━━━',
+      `ひとこと: ${comment}`,
+    ];
+
+  const lines = [...headLines];
 
   if (todayTotals && Number(todayTotals.kcal || 0) + Number(todayTotals.protein || 0) + Number(todayTotals.fat || 0) + Number(todayTotals.carbs || 0) > 0) {
     lines.push('');
@@ -2150,7 +2282,8 @@ async function maybeHandleMealImage(input, imagePayload) {
   if (input?.messageType !== 'image' || !imagePayload?.ok) return { handled: false, analysis: null };
 
   try {
-    const meal = await mealAnalysisService.analyzeMealImage(imagePayload);
+    const caption = normalizeText(input?.rawText || '');
+    const meal = await mealAnalysisService.analyzeMealImage(imagePayload, input.userId, caption);
     const conf = Number(meal?.confidence);
     if (!meal?.isMealImage || !Number.isFinite(conf) || conf < MEAL_IMAGE_CONFIDENCE_MIN) {
       return { handled: false, analysis: meal || null };
@@ -2173,7 +2306,7 @@ async function maybeHandleMealImage(input, imagePayload) {
       fat: round1(dbTotals.fat + mf),
       carbs: round1(dbTotals.carbs + mc)
     };
-    const replyText = buildMealReply(meal, { todayTotals, todayTotalsIncludePending: true });
+    const replyText = buildMealReply(meal, { todayTotals, todayTotalsIncludePending: true, mealReplyMode: 'image' });
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'meal',
@@ -2225,7 +2358,7 @@ async function maybeHandleMealText(input) {
     fat: round1(dbTotals.fat + mf),
     carbs: round1(dbTotals.carbs + mc)
   };
-  const replyText = buildMealReply(parsedMeal, { todayTotals, todayTotalsIncludePending: true });
+  const replyText = buildMealReply(parsedMeal, { todayTotals, todayTotalsIncludePending: true, mealReplyMode: 'text' });
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -3304,6 +3437,7 @@ async function orchestrateConversation(input) {
       const records = await contextMemoryService.getTodayRecords(input.userId);
       const recentDailyRecords = await mergeRecentDailyRecordsWithDbMeals(input.userId, 7);
       const replyText = await weeklyReportService.buildWeeklyReport({
+        lineUserId: input.userId,
         longMemory: await contextMemoryService.getLongMemory(input.userId),
         recentMessages,
         todayRecords: records,
@@ -3317,6 +3451,7 @@ async function orchestrateConversation(input) {
     if (intent === 'monthly_report') {
       const recentDailyRecords = await mergeRecentDailyRecordsWithDbMeals(input.userId, 31);
       const replyText = await monthlyReportService.buildMonthlyReport({
+        lineUserId: input.userId,
         longMemory: await contextMemoryService.getLongMemory(input.userId),
         recentMessages,
         recentDailyRecords

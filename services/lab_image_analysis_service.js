@@ -55,6 +55,20 @@ function resolveBestExamDate(classification, extraction) {
   add(extraction?.reportDate, 30);
   add(classification?.reportDate, 25);
 
+  /** 帳票の「履歴列」などで極端に古い日付だけが残るのを避ける（新しめの候補があるときは8年以上古い日付を捨てる） */
+  const yearOf = (d) => {
+    const m = String(d || '').match(/^(\d{4})-/);
+    return m ? Number(m[1]) : 0;
+  };
+  const keys = [...weighted.keys()];
+  const maxY = Math.max(0, ...keys.map(yearOf));
+  if (maxY >= 2015) {
+    for (const k of keys) {
+      const y = yearOf(k);
+      if (y && maxY - y >= 8) weighted.delete(k);
+    }
+  }
+
   if (!weighted.size) return '';
   const sorted = [...weighted.entries()]
     .sort((a, b) => {

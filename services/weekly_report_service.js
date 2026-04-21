@@ -2,6 +2,7 @@
 
 const pointsService = require('./points_service');
 const mealLogQueryService = require('./meal_log_query_service');
+const contextMemoryService = require('./context_memory_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -176,8 +177,9 @@ async function buildWeeklyReport(params) {
   const recentDailyRecords = Array.isArray(params?.recentDailyRecords) ? params.recentDailyRecords : [];
   const todayRecords = params?.todayRecords || {};
   const totalPoints = Number(params?.totalPoints || 0);
+  const lineUserId = normalizeText(params?.lineUserId || '');
 
-  const allRecords = recentDailyRecords.length
+  let allRecords = recentDailyRecords.length
     ? flattenRecentRecords(recentDailyRecords)
     : {
         meals: Array.isArray(todayRecords?.meals) ? todayRecords.meals : [],
@@ -186,6 +188,32 @@ async function buildWeeklyReport(params) {
         labs: Array.isArray(todayRecords?.labs) ? todayRecords.labs : [],
         activeDays: ['meals', 'exercises', 'weights', 'labs'].some((key) => Array.isArray(todayRecords?.[key]) && todayRecords[key].length) ? 1 : 0
       };
+
+  /** 週次の食事件数・kcal は DB meal_logs の同一集合（dedupe後）に揃え、日次系と定義を合わせる */
+  if (lineUserId) {
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -6);
+    const { deduped } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+      lineUserId,
+      fromYmd,
+      todayYmd,
+      'weekly_report_meals'
+    );
+    const legacyMeals = deduped.map((log) => ({
+      mealType: 'unknown',
+      kcal: log.kcal,
+      protein: log.protein,
+      fat: log.fat,
+      carbs: log.carbs,
+      estimatedNutrition: {
+        kcal: log.kcal,
+        protein: log.protein,
+        fat: log.fat,
+        carbs: log.carbs
+      }
+    }));
+    allRecords = { ...allRecords, meals: legacyMeals };
+  }
 
   const signals = collectMessageSignals(recentMessages);
   const lines = [

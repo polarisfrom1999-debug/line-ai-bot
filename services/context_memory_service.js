@@ -315,6 +315,19 @@ async function persistDailyRecordToDb(lineUserId, record) {
   const now = nowIso();
   try {
     if (record.type === 'meal') {
+      const mealAnalysisService = require('./meal_analysis_service');
+      const labelProbe = [
+        normalizeString(record.summary || record.name || ''),
+        ...(Array.isArray(record.items) ? record.items : []),
+        ...(Array.isArray(record.food_items) ? record.food_items : [])
+      ].join(' ');
+      if (mealAnalysisService.isMealMetaOrCorrectionText(labelProbe)) {
+        console.info('[meal] insert_blocked_meta_text', {
+          userId: lineUserId,
+          label: normalizeString(record.summary || record.name || '').slice(0, 80)
+        });
+        return false;
+      }
       const eatenAtIso = record.eatenAt
         ? new Date(record.eatenAt).toISOString()
         : now;
@@ -626,6 +639,29 @@ async function deleteLastMealLog(lineUserId) {
   clearUserDailyRecordCache(lineUserId);
   scheduleSnapshotFlush();
   return { ok: true, mealId: row.id };
+}
+
+async function deleteMealLogsByIds(lineUserId, ids = []) {
+  const user = await resolvePersistentUser(lineUserId);
+  const idList = [...new Set((Array.isArray(ids) ? ids : []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!user || !supabase || !idList.length) {
+    return { ok: false, deleted: 0, reason: !user ? 'no_user' : 'no_ids' };
+  }
+  let deleted = 0;
+  try {
+    for (const id of idList) {
+      const { error } = await supabase.from('meal_logs').delete().eq('id', id).eq('user_id', user.id);
+      if (!error) deleted += 1;
+    }
+  } catch (error) {
+    return { ok: false, deleted, reason: normalizeString(error?.message || 'delete_failed') };
+  }
+  if (deleted > 0) {
+    console.info('[meal] delete_by_ids_applied', { userId: lineUserId, deleted, ids: idList });
+    clearUserDailyRecordCache(lineUserId);
+    scheduleSnapshotFlush();
+  }
+  return { ok: deleted > 0, deleted, mealIds: idList };
 }
 
 function clearUserDailyRecordCache(lineUserId) {
@@ -1289,5 +1325,6 @@ module.exports = {
   getTokyoTodayYmd: () => getTodayKey(),
   addCalendarDaysToTokyoYmd,
   relocateLastMealToTokyoDate,
-  deleteLastMealLog
+  deleteLastMealLog,
+  deleteMealLogsByIds
 };

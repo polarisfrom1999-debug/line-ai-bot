@@ -2,6 +2,7 @@
 
 const pointsService = require('./points_service');
 const mealLogQueryService = require('./meal_log_query_service');
+const contextMemoryService = require('./context_memory_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -135,8 +136,35 @@ async function buildMonthlyReport(params) {
   const recentMessages = Array.isArray(params?.recentMessages) ? params.recentMessages : [];
   const recentDailyRecords = Array.isArray(params?.recentDailyRecords) ? params.recentDailyRecords : [];
   const totalPoints = Number(params?.totalPoints || 0);
+  const lineUserId = normalizeText(params?.lineUserId || '');
 
-  const allRecords = flattenRecentRecords(recentDailyRecords);
+  let allRecords = flattenRecentRecords(recentDailyRecords);
+
+  /** 月次の食事集計も DB meal_logs（直近31日・dedupe後）に揃える */
+  if (lineUserId) {
+    const todayYmd = contextMemoryService.getTokyoTodayYmd();
+    const fromYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -30);
+    const { deduped } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+      lineUserId,
+      fromYmd,
+      todayYmd,
+      'monthly_report_meals'
+    );
+    const legacyMeals = deduped.map((log) => ({
+      mealType: 'unknown',
+      kcal: log.kcal,
+      protein: log.protein,
+      fat: log.fat,
+      carbs: log.carbs,
+      estimatedNutrition: {
+        kcal: log.kcal,
+        protein: log.protein,
+        fat: log.fat,
+        carbs: log.carbs
+      }
+    }));
+    allRecords = { ...allRecords, meals: legacyMeals };
+  }
   const signals = collectMessageSignals(recentMessages);
 
   const lines = [

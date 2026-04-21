@@ -150,6 +150,7 @@ function aggregateMealLogs(logs) {
 
 /**
  * オーケストレータの legacy meal オブジェクト配列をログ形に寄せて aggregate する。
+ * DB の meal_logs と同じ dedupeFingerprint 規則で合算するため、日次・週次・admin の「件数・kcal」整合に使う。
  */
 function aggregateLegacyMealRecords(meals) {
   const rows = (Array.isArray(meals) ? meals : []).map((m) => ({

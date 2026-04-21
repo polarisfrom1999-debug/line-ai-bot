@@ -152,10 +152,10 @@ function isMealMetaOrCorrectionText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
 
-  if (/同じ写真|同じ画像|何枚も|何個も|重複/.test(safe)) return true;
-  if (/間違えて送|誤って送|誤送信|ミス送信/.test(safe)) return true;
-  if (/一個だけ|一つだけ|1個だけ|1つだけ|食べたのは(一個|一つ|1個|1つ)/.test(safe)) return true;
-  if (/削除して|消して|取り消して|記録しないで|カウントしないで|加算しないで/.test(safe)) return true;
+  if (/同じ写真|同じ画像|同じ.*写真|写真.*(\d+)\s*枚|何枚も|何個も|重複|複数枚|２枚|2枚|3枚|二枚|三枚/.test(safe)) return true;
+  if (/間違えて送|誤って送|誤送信|ミス送信|送りすぎ|送ってしまった|送っちゃった/.test(safe)) return true;
+  if (/一個だけ|一つだけ|1個だけ|1つだけ|食べたのは(一個|一つ|1個|1つ)|食べたのは.*だけ/.test(safe)) return true;
+  if (/削除して|消して|取り消して|記録しないで|カウントしないで|加算しないで|もう食事ではない|食事ではない/.test(safe)) return true;
   if (/食事じゃない|ごはんじゃない|記録ミス|訂正/.test(safe)) return true;
 
   return false;
