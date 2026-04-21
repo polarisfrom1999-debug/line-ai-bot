@@ -38,6 +38,7 @@ function isStrictLabQnaQuestion(safe) {
   if (/一番新しい日付|最新日|最新の検査日/.test(safe)) return true;
   if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safe)) return true;
   if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) return true;
+  if (/わかるのは|何の項目がありましたか|数値で読めたのは|他に何が読み取れた/.test(safe)) return true;
   const nt = labFollowupService.normalizeTarget(safe);
   if (nt && ALLOWED_FOLLOW_TARGETS.has(nt)) return true;
   const k = labItemAliasService.normalizeLabCanonicalKey(safe);
@@ -204,19 +205,20 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
     return null;
   }
 
-  if (!latestCacheExists) {
-    console.info('[lab-qna] reject', {
-      reason: 'no_latest_lab_cache_session',
-      question: safe,
-      hint: 'need_lab_image_session_short_memory'
-    });
-    return null;
+  let sessionPanel = shortMemory?.followUpContext?.labPanel || null;
+  if (!sessionPanel) {
+    sessionPanel = (await contextMemoryService.getLatestLabPanel(lineUserId))
+      || (await labDocumentStoreService.getLatestPanelForUser(lineUserId))
+      || null;
   }
-
-  const sessionPanel = shortMemory?.followUpContext?.labPanel || null;
   let latestCache = readLatestLabCache(shortMemory, sessionPanel);
   if (!latestCache) {
-    console.info('[lab-qna] reject', { reason: 'readLatestLabCache_empty', question: safe });
+    console.info('[lab-qna] reject', {
+      reason: 'readLatestLabCache_empty',
+      question: safe,
+      latestCacheExists,
+      hint: 'need_lab_image_or_panel'
+    });
     return null;
   }
 

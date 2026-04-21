@@ -1,6 +1,7 @@
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
+const sessionStateRepository = require('../repositories/session_state_repository');
 
 const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
 
@@ -33,6 +34,12 @@ async function setActiveContext(userId, context = {}, baseShortMemory = null) {
   } else {
     await contextMemoryService.saveShortMemory(userId, { activeContext });
   }
+  await sessionStateRepository.upsertActiveSession({
+    userId,
+    sessionType: type,
+    payload,
+    expiresAt
+  }).catch(() => null);
   return activeContext;
 }
 
@@ -42,9 +49,11 @@ async function clearActiveContext(userId, baseShortMemory = null) {
     const next = { ...baseShortMemory };
     delete next.activeContext;
     await contextMemoryService.saveShortMemory(userId, next);
+    await sessionStateRepository.closeActiveSessions(userId, 'cleared_from_short_memory').catch(() => null);
     return;
   }
   await contextMemoryService.saveShortMemory(userId, { activeContext: null });
+  await sessionStateRepository.closeActiveSessions(userId, 'cleared').catch(() => null);
 }
 
 async function getActiveContext(userId, baseShortMemory = null) {
@@ -53,7 +62,14 @@ async function getActiveContext(userId, baseShortMemory = null) {
     ? baseShortMemory
     : await contextMemoryService.getShortMemory(userId);
   const active = shortMemory?.activeContext;
-  if (!active || !active.type) return null;
+  if (!active || !active.type) {
+    const persisted = await sessionStateRepository.getLatestActiveSession(userId).catch(() => null);
+    if (persisted?.type) {
+      await contextMemoryService.saveShortMemory(userId, { activeContext: persisted }).catch(() => null);
+      return persisted;
+    }
+    return null;
+  }
   const exp = Date.parse(active.expiresAt || '');
   if (Number.isFinite(exp) && exp < Date.now()) {
     await clearActiveContext(userId, shortMemory);
