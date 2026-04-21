@@ -49,6 +49,7 @@ const webLinkCommandService = require('./web_link_command_service');
 const conversationFactResolverService = require('./conversation_fact_resolver_service');
 const labQueryService = require('./lab_query_service');
 const mealLogQueryService = require('./meal_log_query_service');
+const activeContextService = require('./active_context_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -1493,6 +1494,67 @@ function buildLabImageReply(lab) {
   return labFollowupService.buildLabImageReply(lab);
 }
 
+function hasTentativeLabSignal(lab = {}) {
+  if (!lab || typeof lab !== 'object') return false;
+  if (normalizeText(lab?.printDate || '')) return true;
+  if (normalizeText(lab?.patientName || '')) return true;
+  if (normalizeText(lab?.facilityName || '')) return true;
+  if (Array.isArray(lab?.examDates) && lab.examDates.length) return true;
+  if (Array.isArray(lab?.items) && lab.items.length) return true;
+  if (normalizeText(lab?.rawText || '').length >= 20) return true;
+  return false;
+}
+
+async function maybeHandleActiveContextFollowUp(input, text, shortMemory = {}) {
+  const safe = normalizeText(text || input?.rawText || '');
+  if (!safe) return null;
+  const active = await activeContextService.getActiveContext(input.userId, shortMemory);
+  if (!active?.type) return null;
+
+  const type = normalizeText(active.type);
+  if (/^lab_/.test(type)) {
+    const panel = active?.payload?.labPanel
+      || shortMemory?.followUpContext?.labPanel
+      || null;
+    if (!panel) return null;
+    if (/患者名|氏名/.test(safe)) return { intentType: 'active_lab_followup', replyText: labFollowupService.buildPatientNameReply(panel) };
+    if (/病院名|医院名|クリニック名|医療機関/.test(safe)) return { intentType: 'active_lab_followup', replyText: labFollowupService.buildFacilityNameReply(panel) };
+    if (/印刷日|発行日|出力日/.test(safe)) return { intentType: 'active_lab_followup', replyText: labFollowupService.buildPrintDateReply(panel) };
+    if (/日付|検査日|採血日|一番新しい日付|最新日/.test(safe)) return { intentType: 'active_lab_followup', replyText: labFollowupService.buildExamDateQuickReply(panel) };
+    if (/他に|何が読み取れ|読み取れた/.test(safe)) return { intentType: 'active_lab_followup', replyText: labFollowupService.buildReadableInventoryReply(panel) };
+    const target = labFollowupService.normalizeTarget(safe);
+    if (target) {
+      const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
+      return { intentType: 'active_lab_followup', replyText: labFollowupService.buildItemReply(panel, target, selectedDate) };
+    }
+    return null;
+  }
+
+  if (/^meal_/.test(type)) {
+    if (/ゼロ|0kcal|0 kcal|食べてない|食べなかった|キャンセル|取り消し/.test(safe)) {
+      const del = await contextMemoryService.deleteLastMealLog(input.userId);
+      if (del?.ok) {
+        const todayYmd = contextMemoryService.getTokyoTodayYmd();
+        const rawT = await mealLogQueryService.getMealLogsByDateRange(input.userId, todayYmd, todayYmd);
+        const totals = { meals: mealLogsToRecordMeals(rawT) };
+        await activeContextService.clearActiveContext(input.userId, shortMemory);
+        return {
+          intentType: 'active_meal_followup',
+          replyText: [
+            '了解です。直前の食事記録を取り消して、0kcal扱いにしました。',
+            '',
+            buildTodayMealTotalsAnswer(totals, { dayScopeHeader: true, includeAnomalyNote: true })
+          ].join('\n')
+        };
+      }
+      return { intentType: 'active_meal_followup', replyText: '了解です。0kcal扱いにしたい対象の食事を特定できなかったため、「この食事を削除して」と送ってください。' };
+    }
+    return null;
+  }
+
+  return null;
+}
+
 async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
   const safe = normalizeText(text);
   let panel =
@@ -2193,7 +2255,7 @@ async function maybeHandleLabImage(input, imagePayload) {
     const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
     const lab = ingest?.panel || null;
     const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
-    if (!lab?.isLabImage && !lab?.labLike) {
+    if (!lab?.isLabImage && !lab?.labLike && !hasTentativeLabSignal(lab)) {
       return { handled: false, analysis: lab || null };
     }
 
@@ -2239,6 +2301,10 @@ async function maybeHandleLabImage(input, imagePayload) {
           latestLabCache
         }
       });
+      await activeContextService.setActiveContext(input.userId, {
+        type: 'lab_image_session',
+        payload: { labPanel: lab }
+      });
       try {
         if (lab) await contextMemoryService.upsertLabPanel(input.userId, lab);
       } catch (error) {
@@ -2283,6 +2349,10 @@ async function maybeHandleLabImage(input, imagePayload) {
           printDate: normalizeText(lab?.printDate || '')
         }
       }
+    });
+    await activeContextService.setActiveContext(input.userId, {
+      type: 'lab_followup_session',
+      payload: { labPanel: lab }
     });
     const fromRawParsed = labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || '');
     const fromPanelParsed = labItemAliasService.buildLabItemMapFromPanel(lab);
@@ -2359,6 +2429,10 @@ async function maybeHandleMealImage(input, imagePayload) {
         extracted: meal
       }
     });
+    await activeContextService.setActiveContext(input.userId, {
+      type: 'meal_image_session',
+      payload: { parsedMeal: meal }
+    });
 
     return {
       handled: true,
@@ -2404,6 +2478,10 @@ async function maybeHandleMealText(input) {
       recordType: 'meal_record',
       extracted: parsedMeal
     }
+  });
+  await activeContextService.setActiveContext(input.userId, {
+    type: 'meal_followup_session',
+    payload: { parsedMeal }
   });
 
   return {
@@ -3364,6 +3442,13 @@ async function orchestrateConversation(input) {
     }
 
     const refreshedShortMemory = await contextMemoryService.getShortMemory(input.userId);
+
+    const activeContextReply = await maybeHandleActiveContextFollowUp(input, text, refreshedShortMemory);
+    if (activeContextReply?.replyText) {
+      const activeOut = await withSurfaceReply(input, activeContextReply.replyText, { recentMessages, longMemory }, activeContextReply.intentType || 'active_followup');
+      await appendTurn(input.userId, input.rawText || '', activeOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: activeOut }], internal: { intentType: activeContextReply.intentType || 'active_followup', responseMode: 'answer' } };
+    }
 
     const mealLogCorrection = await maybeHandleMealLogCorrection(input, text);
     if (mealLogCorrection?.replyText) {

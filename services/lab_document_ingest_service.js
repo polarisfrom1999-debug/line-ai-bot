@@ -44,14 +44,14 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     };
   }
 
-  const mode = String(process.env.KOKOKARA_LAB_PIPELINE_MODE || 'shadow_v2').trim();
+  const mode = String(process.env.KOKOKARA_LAB_PIPELINE_MODE || 'v2').trim();
   const [panelV1, panelV2] = await Promise.all([
     labImageAnalysisService.analyzeLabImage(imagePayload),
     labImageAnalysisV2Service.analyzeLabImageV2(imagePayload, { sourceImageId: imagePayload?.id || '' })
   ]);
   const comparison = buildPipelineComparison(panelV1, panelV2);
   console.info('[lab-pipeline] compare_v1_v2', { userId, mode, ...comparison });
-  const panel = mode === 'v2' ? panelV2 : panelV1;
+  const panel = panelV2;
   if (mode !== 'v2') {
     panel.patientName = panel.patientName || panelV2.patientName || '';
     panel.facilityName = panel.facilityName || panelV2.facilityName || '';
