@@ -99,21 +99,35 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '画像の取得に失敗しました。もう一度送ってください。'
     };
   }
-  const selectedDomain = decideImageDomain({ textHint });
+  const [meal, labIngest] = await Promise.all([
+    mealAnalysisService.analyzeMealImage(imagePayload, input.userId, normalizeText(textHint)).catch(() => null),
+    labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload }).catch(() => null),
+  ]);
+  const lab = labIngest?.panel || null;
+  const domainDecision = decideImageDomain({ textHint, meal, lab });
+  const selectedDomain = domainDecision?.selectedDomain || 'unknown';
+
   if (selectedDomain === 'unknown') {
-    console.info('[v2-image] route_selected', { userId: input.userId, routeKind: 'unknown', domain: 'unknown' });
+    console.info('[v2-image] route_selected', {
+      userId: input.userId,
+      routeKind: 'unknown',
+      domain: 'unknown',
+      gemini_result_present: Boolean(domainDecision?.geminiResultPresent),
+      candidate_domain: domainDecision?.candidateDomain || 'unknown',
+      confidence: Number(domainDecision?.confidence || 0),
+      reject_reason: domainDecision?.rejectReason || 'unknown'
+    });
     return {
       handled: true,
       intentType: 'newflow_image_unknown',
-      replyText: '画像を受け取りました。食事画像か血液検査画像かを一言添えて送ってください。'
+      replyText: '画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。'
     };
   }
-  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: selectedDomain, domain: selectedDomain });
+  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: selectedDomain, domain: selectedDomain, confidence: Number(domainDecision?.confidence || 0) });
 
   if (selectedDomain === 'meal') {
-    const meal = await mealAnalysisService.analyzeMealImage(imagePayload, input.userId, normalizeText(textHint));
     if (!meal || meal?.isMealImage === false) {
-      return { handled: true, intentType: 'newflow_meal_image_ng', replyText: '食事画像として判定できませんでした。食事の写真なら「食事」と添えて再送してください。' };
+      return { handled: true, intentType: 'newflow_meal_image_ng', replyText: '食事画像として判定できませんでした。料理全体が見える画像をもう一度送ってください。' };
     }
     const canonicalSaved = await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input)).catch(() => false);
     if (!canonicalSaved) {
@@ -134,10 +148,8 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     return { handled: true, intentType: 'newflow_meal_image', replyText: buildMealReply(meal) };
   }
 
-  const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
-  const lab = ingest?.panel || null;
   if (!lab || typeof lab !== 'object') {
-    return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査結果画像なら「血液検査」と添えて再送してください。' };
+    return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査票全体が見える画像をもう一度送ってください。' };
   }
   const persist = await labSessionRepository.createLabSession({
     userId: input.userId,
