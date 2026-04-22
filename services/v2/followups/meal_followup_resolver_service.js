@@ -4,6 +4,7 @@ const contextMemoryService = require('../../context_memory_service');
 const mealLogQueryService = require('../../meal_log_query_service');
 const mealCaptureRepository = require('../../../repositories/meal_capture_repository');
 const canonicalMealRepository = require('../../../repositories/canonical_meal_repository');
+const phaseeReachabilityService = require('../../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -67,6 +68,7 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe || !/^meal_/.test(normalizeText(activeContext?.type || ''))) return null;
   console.info('[phasee-old] old_meal_correction_reached', { userId: input?.userId || '', text: safe.slice(0, 60) });
+  phaseeReachabilityService.recordReachability('old_meal_correction_reached', ['services/v2/followups/meal_followup_resolver_service.js'], { text: safe.slice(0, 60) }).catch(() => null);
   const intent = detectMealCorrectionIntent(safe);
   if (!intent) return null;
   console.info('[v2-followup] correction_intent_resolved', { userId: input.userId, intent, text: safe.slice(0, 80) });

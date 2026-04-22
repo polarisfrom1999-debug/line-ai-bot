@@ -4,6 +4,7 @@ const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 const classifier = require('./lab_document_classifier_service');
 const geminiDispatchService = require('./gemini_dispatch_service');
 const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
+const phaseeReachabilityService = require('./phasee_reachability_service');
 
 const KEY_TO_ITEM_NAME = {
   ast_got: 'AST',
@@ -263,6 +264,10 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       userId: normalizeText(meta?.userId || ''),
       reason: 'structured_dispatch_failed'
     });
+    phaseeReachabilityService.recordReachability('old_local_parser_reached', ['services/lab_structured_extract_service.js'], {
+      userId: normalizeText(meta?.userId || ''),
+      reason: 'structured_dispatch_failed'
+    }).catch(() => null);
     console.error('[lab_structured_extract_service] builder dispatch failed:', dispatchError?.message || dispatchError);
     const result = await geminiImageAnalysisService.analyzeImage({
       imagePayload,

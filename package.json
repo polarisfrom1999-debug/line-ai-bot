@@ -18,6 +18,7 @@
     "smoke:v2-image-ingress": "node scripts/smoke_v2_image_ingress.js",
     "smoke:v2-repositories": "node scripts/smoke_v2_repositories.js",
     "smoke:v2-session-followup": "node scripts/smoke_v2_session_followup.js",
+    "ops:phasee-daily-report": "node scripts/phasee_daily_reachability_report.js",
     "quality:check": "node scripts/run_conversation_quality_check.js",
     "manual:word": "node scripts/generate_word_manual.js"
   },

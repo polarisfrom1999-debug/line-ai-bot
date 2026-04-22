@@ -54,3 +54,18 @@ Validation after rollback:
 - Daily: monitor old/new route counts by tag.
 - Weekly: verify old route counts trending to zero.
 - Before code deletion: attach 14-day zero-count evidence.
+
+## 5) Daily aggregation fields
+
+Daily aggregation source: `phasee_route_reachability_daily`
+
+Required fields:
+- `tag`
+- `day` (`day_ymd`)
+- `count`
+- `last_seen` (`last_seen_at`)
+- `zero_day_count` (computed by daily report)
+- `files`
+
+Run:
+- `npm run ops:phasee-daily-report`

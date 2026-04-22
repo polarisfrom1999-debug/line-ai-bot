@@ -2,6 +2,7 @@
 
 const labSessionRepository = require('../../repositories/lab_session_repository');
 const canonicalMealRepository = require('../../repositories/canonical_meal_repository');
+const phaseeReachabilityService = require('../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -39,12 +40,20 @@ function toLabPanel(labSession) {
 async function getCanonicalLabPanel(userId) {
   const latest = await labSessionRepository.getLatestLabSession(userId).catch(() => null);
   console.info('[phasee-new] canonical_lab_reached', { userId: normalizeText(userId), found: Boolean(latest?.id) });
+  phaseeReachabilityService.recordReachability('canonical_lab_reached', ['services/newflow/canonical_fallback_service.js'], {
+    userId: normalizeText(userId),
+    found: Boolean(latest?.id)
+  }).catch(() => null);
   return toLabPanel(latest);
 }
 
 async function getCanonicalMeal(userId) {
   const meal = await canonicalMealRepository.getLatestCanonicalMeal(userId);
   console.info('[phasee-new] canonical_meal_reached', { userId: normalizeText(userId), found: Boolean(meal?.id) });
+  phaseeReachabilityService.recordReachability('canonical_meal_reached', ['services/newflow/canonical_fallback_service.js'], {
+    userId: normalizeText(userId),
+    found: Boolean(meal?.id)
+  }).catch(() => null);
   return meal;
 }
 

@@ -703,6 +703,180 @@
         "createdAt": "2026-04-22T09:58:09.808Z",
         "expiresAt": "2026-04-22T11:58:09.808Z"
       }
+    },
+    "phasee-new-1776853435106": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776853439637_yp405h",
+        "text": "対象食事を半量補正しました。今日の合計は 1件 / 約225.0 kcal です。",
+        "sourceUserText": "半分食べた",
+        "at": "2026-04-22T10:23:59.638Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "phasee-old-1776853439638": {
+      "lastTopic": null,
+      "lastImageType": "meal",
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": true,
+          "items": [
+            "食事画像（仮推定）"
+          ],
+          "estimatedNutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "estimated_nutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "comment": "記録を続けられているのが一番の強みです。",
+          "imageKind": "meal_photo",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "reason": "Request failed with status code 400",
+          "confidence": 0.72,
+          "raw": {
+            "isMealImage": true,
+            "confidence": 0.35,
+            "items": [
+              "食事画像（仮推定）"
+            ],
+            "estimated_nutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "comment": "一時的に自動推定モードで動作しています。",
+            "reason": "Request failed with status code 400"
+          }
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776853442676_vp2ogh",
+        "text": "対象食事を半量補正しました。今日の合計は 1件 / 約225.0 kcal です。",
+        "sourceUserText": "半分食べた",
+        "at": "2026-04-22T10:24:02.676Z"
+      },
+      "followUpContext": {
+        "source": "image",
+        "imageType": "meal",
+        "extractedMeal": {
+          "isMealImage": true,
+          "items": [
+            "食事画像（仮推定）"
+          ],
+          "estimatedNutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "estimated_nutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "comment": "記録を続けられているのが一番の強みです。",
+          "imageKind": "meal_photo",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "reason": "Request failed with status code 400",
+          "confidence": 0.72,
+          "raw": {
+            "isMealImage": true,
+            "confidence": 0.35,
+            "items": [
+              "食事画像（仮推定）"
+            ],
+            "estimated_nutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "comment": "一時的に自動推定モードで動作しています。",
+            "reason": "Request failed with status code 400"
+          }
+        }
+      },
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_image_session",
+        "payload": {
+          "sourceImageId": "m-1776853439638-1",
+          "sourceMessageId": "m-1776853439638-1",
+          "rawGeminiJson": {
+            "isMealImage": true,
+            "confidence": 0.35,
+            "items": [
+              "食事画像（仮推定）"
+            ],
+            "estimated_nutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "comment": "一時的に自動推定モードで動作しています。",
+            "reason": "Request failed with status code 400"
+          },
+          "mealCandidates": [
+            "食事画像（仮推定）"
+          ],
+          "selectedLabel": "食事画像（仮推定）",
+          "kcalEstimate": 450,
+          "macros": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "componentNutrition": [],
+          "confidence": 0.72,
+          "createdAt": "2026-04-22T10:24:01.512Z",
+          "expiresAt": "2026-04-22T12:24:01.512Z"
+        },
+        "createdAt": "2026-04-22T10:24:02.604Z",
+        "expiresAt": "2026-04-22T12:24:02.604Z"
+      }
     }
   },
   "longMemoryStore": {
@@ -1155,6 +1329,56 @@
       "selectedPlan": "",
       "onboardingCompleted": false,
       "height": ""
+    },
+    "phasee-new-1776853435106": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "phasee-old-1776853439638": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
     }
   },
   "userStateStore": {
@@ -1355,6 +1579,28 @@
       "recallStyle": "direct",
       "lastEmotionTone": "neutral",
       "updatedAt": "2026-04-22T09:58:06.888Z"
+    },
+    "phasee-new-1776853435106": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T10:23:56.215Z"
+    },
+    "phasee-old-1776853439638": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T10:23:59.807Z"
     }
   },
   "recentMessageStore": {
@@ -2015,6 +2261,58 @@
         "messageId": "1776851889898_4akgjg",
         "createdAt": "2026-04-22T09:58:09.899Z"
       }
+    ],
+    "phasee-new-1776853435106": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T10:23:59.051Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776853439051_mselo7",
+        "createdAt": "2026-04-22T10:23:59.051Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べた",
+        "messageId": "",
+        "createdAt": "2026-04-22T10:23:59.637Z"
+      },
+      {
+        "role": "assistant",
+        "content": "対象食事を半量補正しました。今日の合計は 1件 / 約225.0 kcal です。",
+        "messageId": "1776853439637_yp405h",
+        "createdAt": "2026-04-22T10:23:59.638Z"
+      }
+    ],
+    "phasee-old-1776853439638": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T10:24:02.142Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n記録を続けられているのが一番の強みです。",
+        "messageId": "1776853442142_i87l62",
+        "createdAt": "2026-04-22T10:24:02.142Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べた",
+        "messageId": "",
+        "createdAt": "2026-04-22T10:24:02.676Z"
+      },
+      {
+        "role": "assistant",
+        "content": "対象食事を半量補正しました。今日の合計は 1件 / 約225.0 kcal です。",
+        "messageId": "1776853442676_vp2ogh",
+        "createdAt": "2026-04-22T10:24:02.676Z"
+      }
     ]
   },
   "dailyRecordStore": {
@@ -2124,7 +2422,9 @@
     "phasee-new-1776851797999": 1,
     "phasee-old-1776851803084": 1,
     "phasee-new-1776851882216": 1,
-    "phasee-old-1776851886706": 1
+    "phasee-old-1776851886706": 1,
+    "phasee-new-1776853435106": 1,
+    "phasee-old-1776853439638": 1
   },
   "labHistoryStore": {}
 }

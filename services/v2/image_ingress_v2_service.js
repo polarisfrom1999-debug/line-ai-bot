@@ -6,6 +6,7 @@ const labPipeline = require('./pipelines/lab_image_pipeline_v2_service');
 const mealPipeline = require('./pipelines/meal_image_pipeline_v2_service');
 const imageKindClassifier = require('./image_kind_classifier_service');
 const compareLogger = require('./pipeline_compare_logger_service');
+const phaseeReachabilityService = require('../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -53,7 +54,6 @@ async function applyPersistenceRetryState(userId, intentType, replyText, persist
     updatedAt: new Date().toISOString()
   };
   await contextMemoryService.saveShortMemory(userId, { imagePersistenceRetry: nextRetry }).catch(() => null);
-  console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'image_unclassified' });
   return {
     replyText: `${replyText || ''}${buildRetrySuffix(nextCount, intentType)}`.trim(),
     retry: { count: nextCount, confirmed: false }
@@ -63,6 +63,7 @@ async function applyPersistenceRetryState(userId, intentType, replyText, persist
 async function handleImageIngressV2({ input, textHint = '' } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
   console.info('[phasee-old] old_image_ingress_reached', { userId: input?.userId || '', messageType: input?.messageType || '' });
+  phaseeReachabilityService.recordReachability('old_image_ingress_reached', ['services/v2/image_ingress_v2_service.js'], { userId: input?.userId || '' }).catch(() => null);
 
   let ingested = null;
   if (input?.webImagePayload?.buffer) {
@@ -80,6 +81,7 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
   }
   if (!ingested?.ok) {
     console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'image_ingest_failed' });
+    phaseeReachabilityService.recordReachability('old_reject_first_path', ['services/v2/image_ingress_v2_service.js'], { reason: 'image_ingest_failed' }).catch(() => null);
     return {
       handled: true,
       intentType: 'image_ingest_ng',
@@ -183,6 +185,8 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
     };
   }
 
+  console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'image_unclassified' });
+  phaseeReachabilityService.recordReachability('old_reject_first_path', ['services/v2/image_ingress_v2_service.js'], { reason: 'image_unclassified' }).catch(() => null);
   return {
     // 旧 reject-first 系の終端（分類不能時）
     // 新本流切替後にここがゼロ到達なら削除候補化

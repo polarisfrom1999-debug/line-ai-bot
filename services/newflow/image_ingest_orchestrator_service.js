@@ -7,6 +7,7 @@ const mealAnalysisService = require('../meal_analysis_service');
 const labDocumentIngestService = require('../lab_document_ingest_service');
 const labSessionRepository = require('../../repositories/lab_session_repository');
 const contextMemoryService = require('../context_memory_service');
+const phaseeReachabilityService = require('../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -86,6 +87,10 @@ async function resolveImagePayload(input) {
 async function handleImageIngest({ input, textHint = '' } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
   console.info('[phasee-new] new_image_ingress_reached', { userId: input?.userId || '', textHint: normalizeText(textHint).slice(0, 40) });
+  phaseeReachabilityService.recordReachability('new_image_ingress_reached', ['services/newflow/image_ingest_orchestrator_service.js'], {
+    userId: input?.userId || '',
+    textHint: normalizeText(textHint).slice(0, 40)
+  }).catch(() => null);
   const imagePayload = await resolveImagePayload(input);
   if (!imagePayload) {
     return {

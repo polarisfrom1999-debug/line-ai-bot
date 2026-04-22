@@ -2,6 +2,7 @@
 
 const activeContextResolver = require('../active_context_resolver_service');
 const activeContextService = require('../../active_context_service');
+const phaseeReachabilityService = require('../../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -20,6 +21,7 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   const safe = normalizeText(text || input?.rawText || '').replace(/？/g, '?');
   if (!safe || input?.messageType !== 'text') return null;
   console.info('[phasee-old] old_followup_reached', { userId: input?.userId || '', text: safe.slice(0, 60) });
+  phaseeReachabilityService.recordReachability('old_followup_reached', ['services/v2/queries/followup_query_service.js'], { text: safe.slice(0, 60) }).catch(() => null);
 
   const status = await activeContextService.getActiveContextStatus(input.userId, shortMemory).catch(() => ({ context: null, expired: false }));
   if (status?.expired) {
@@ -36,6 +38,7 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   if (activeReply?.replyText) {
     if (!isIntentCompatibleWithContext(active.type, activeReply.intentType || '')) {
       console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'context_response_mismatch' });
+      phaseeReachabilityService.recordReachability('old_reject_first_path', ['services/v2/queries/followup_query_service.js'], { reason: 'context_response_mismatch' }).catch(() => null);
       console.error('[v2-error] reason=context_response_mismatch fallback=domain_guard_block', {
         userId: input.userId,
         context_type: active.type,

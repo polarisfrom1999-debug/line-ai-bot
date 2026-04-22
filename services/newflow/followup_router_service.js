@@ -5,6 +5,7 @@ const responseBuilderService = require('./response_builder_service');
 const canonicalFallbackService = require('./canonical_fallback_service');
 const { resolveLabFollowup } = require('./resolvers/lab_followup_resolver_service');
 const { resolveMealFollowup, resolveCanonicalMealFollowup } = require('./resolvers/meal_followup_resolver_service');
+const phaseeReachabilityService = require('../phasee_reachability_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -34,6 +35,10 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   const safeText = normalizeText(text || input?.rawText || '');
   if (!safeText || input?.messageType !== 'text') return null;
   console.info('[phasee-new] new_followup_router_reached', { userId: input?.userId || '', text: safeText.slice(0, 60) });
+  phaseeReachabilityService.recordReachability('new_followup_router_reached', ['services/newflow/followup_router_service.js'], {
+    userId: input?.userId || '',
+    text: safeText.slice(0, 60)
+  }).catch(() => null);
 
   const status = await activeContextStoreService.getActiveContext(input?.userId);
   const active = status?.context;
