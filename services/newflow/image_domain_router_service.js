@@ -1,76 +1,153 @@
 'use strict';
 
+const geminiDispatchService = require('../gemini_dispatch_service');
+
+const IMAGE_DOMAIN_SCHEMA_VERSION = 'image-domain-v1';
+const IMAGE_DOMAIN_CONFIDENCE_THRESHOLD = 0.5;
+const IMAGE_DOMAIN_SCHEMA = {
+  type: 'object',
+  properties: {
+    schema_version: { type: 'string' },
+    domain: { type: 'string', enum: ['meal', 'lab', 'unknown'] },
+    confidence: { type: 'number' },
+    meal_evidence: {
+      type: 'object',
+      properties: {
+        is_food_photo: { type: 'boolean' },
+        dish_count: { type: 'number' },
+        has_tableware_or_plate: { type: 'boolean' },
+        nutrition_estimation_possible: { type: 'boolean' }
+      },
+      required: ['is_food_photo', 'dish_count', 'has_tableware_or_plate', 'nutrition_estimation_possible']
+    },
+    lab_evidence: {
+      type: 'object',
+      properties: {
+        is_lab_report: { type: 'boolean' },
+        has_test_item_rows: { type: 'boolean' },
+        has_reference_range_or_units: { type: 'boolean' },
+        has_exam_date_or_patient_fields: { type: 'boolean' }
+      },
+      required: ['is_lab_report', 'has_test_item_rows', 'has_reference_range_or_units', 'has_exam_date_or_patient_fields']
+    },
+    reason_codes: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'string' }
+  },
+  required: ['schema_version', 'domain', 'confidence', 'meal_evidence', 'lab_evidence', 'reason_codes', 'notes']
+};
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function classifyByTextHint(textHint) {
-  const hint = normalizeText(textHint);
-  if (!hint) return 'unknown';
-  if (/食事|ごはん|朝食|昼食|夕食|食べた|カロリー|麺|meal/i.test(hint)) return 'meal';
-  if (/血液|検査|採血|検査結果|LDL|HDL|HbA1c|TG|中性脂肪|lab/i.test(hint)) return 'lab';
-  return 'unknown';
+function normalizeConfidence(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  if (num < 0) return 0;
+  if (num > 1) return 1;
+  return num;
 }
 
-function mealGeminiSignal(meal = null) {
-  if (!meal || typeof meal !== 'object') return { present: false, confidence: 0, on: false };
-  const confidence = Number(meal?.confidence || 0) || 0;
-  const fallbackMeal = Boolean(
-    normalizeText(meal?.reason)
-    || (Array.isArray(meal?.items) && meal.items.length === 1 && normalizeText(meal.items[0]) === '食事画像（仮推定）')
-  );
-  const on = meal?.isMealImage !== false && !fallbackMeal;
-  return { present: true, confidence, on };
+function sumMealEvidence(mealEvidence = {}) {
+  return Number(Boolean(mealEvidence?.is_food_photo))
+    + Number(Boolean(mealEvidence?.has_tableware_or_plate))
+    + Number(Boolean(mealEvidence?.nutrition_estimation_possible))
+    + (Number(mealEvidence?.dish_count || 0) > 0 ? 1 : 0);
 }
 
-function labGeminiSignal(lab = null) {
-  if (!lab || typeof lab !== 'object') return { present: false, confidence: 0, on: false };
-  const confidence = Number(lab?.analysisConfidence?.v2_confidence || 0)
-    || Number(lab?.analysisConfidence?.classifier_confidence || 0)
-    || 0;
-  const on = Boolean(
-    lab?.isLabImage
-    || lab?.labLike
-    || (Array.isArray(lab?.items) && lab.items.length > 0)
-    || Number(lab?.analysisConfidence?.rows || 0) > 0
-  );
-  return { present: true, confidence, on };
+function sumLabEvidence(labEvidence = {}) {
+  return Number(Boolean(labEvidence?.is_lab_report))
+    + Number(Boolean(labEvidence?.has_test_item_rows))
+    + Number(Boolean(labEvidence?.has_reference_range_or_units))
+    + Number(Boolean(labEvidence?.has_exam_date_or_patient_fields));
 }
 
-function decideImageDomain({ textHint = '', forcedDomain = '', meal = null, lab = null } = {}) {
-  const forced = normalizeText(forcedDomain).toLowerCase();
-  if (forced === 'meal' || forced === 'lab' || forced === 'unknown') {
-    return { selectedDomain: forced, candidateDomain: forced, confidence: 1, geminiResultPresent: false, rejectReason: '' };
+function buildPrompt() {
+  return [
+    'あなたは画像のドメイン判定専用モジュールです。',
+    '画像を見て、meal / lab / unknown のいずれかを JSON で返してください。',
+    'テキスト入力ヒントは使わず、画像情報のみで判定してください。',
+    'meal は料理写真、lab は血液検査結果票、unknown はどちらとも判定できない場合のみ選択します。',
+    '必ず schema_version=image-domain-v1 を含めてください。'
+  ].join('\n');
+}
+
+function defaultUnknownDecision(rejectReason) {
+  return {
+    routeKind: 'unknown',
+    confidence: 0,
+    source: 'gemini_structured',
+    candidateDomain: 'unknown',
+    rejectReason,
+    geminiResultPresent: false,
+    adopted: false,
+    evidence: { mealSignals: 0, labSignals: 0, schemaVersion: IMAGE_DOMAIN_SCHEMA_VERSION }
+  };
+}
+
+function isValidDomain(value) {
+  return value === 'meal' || value === 'lab' || value === 'unknown';
+}
+
+async function decideImageDomain({ imagePayload } = {}) {
+  if (!imagePayload?.buffer && !imagePayload?.data && !imagePayload?.inlineData?.data) {
+    return defaultUnknownDecision('gemini_error');
+  }
+  const gemini = await geminiDispatchService.generateStructuredImageJson({
+    imagePayload,
+    prompt: buildPrompt(),
+    schema: IMAGE_DOMAIN_SCHEMA,
+    domain: 'image_domain',
+    temperature: 0,
+    maxOutputTokens: 600
+  });
+  if (!gemini?.ok) {
+    return defaultUnknownDecision('gemini_error');
   }
 
-  const mealSig = mealGeminiSignal(meal);
-  const labSig = labGeminiSignal(lab);
-  const geminiResultPresent = Boolean(mealSig.present || labSig.present);
-  const candidateDomain = mealSig.confidence >= labSig.confidence ? 'meal' : 'lab';
-
-  if (mealSig.on && !labSig.on) {
-    return { selectedDomain: 'meal', candidateDomain: 'meal', confidence: mealSig.confidence, geminiResultPresent, rejectReason: '' };
+  const json = gemini?.json && typeof gemini.json === 'object' ? gemini.json : null;
+  if (!json) {
+    return { ...defaultUnknownDecision('schema_invalid'), geminiResultPresent: true };
   }
-  if (labSig.on && !mealSig.on) {
-    return { selectedDomain: 'lab', candidateDomain: 'lab', confidence: labSig.confidence, geminiResultPresent, rejectReason: '' };
+  const schemaVersion = normalizeText(json?.schema_version);
+  const candidateDomain = normalizeText(json?.domain).toLowerCase();
+  const confidence = normalizeConfidence(json?.confidence);
+  const mealSignals = sumMealEvidence(json?.meal_evidence);
+  const labSignals = sumLabEvidence(json?.lab_evidence);
+  const schemaValid = schemaVersion === IMAGE_DOMAIN_SCHEMA_VERSION && isValidDomain(candidateDomain);
+  if (!schemaValid) {
+    return {
+      routeKind: 'unknown',
+      confidence,
+      source: 'gemini_structured',
+      candidateDomain: isValidDomain(candidateDomain) ? candidateDomain : 'unknown',
+      rejectReason: 'schema_invalid',
+      geminiResultPresent: true,
+      adopted: false,
+      evidence: { mealSignals, labSignals, schemaVersion: schemaVersion || IMAGE_DOMAIN_SCHEMA_VERSION }
+    };
   }
-  if (mealSig.on && labSig.on) {
-    if (mealSig.confidence >= labSig.confidence) {
-      return { selectedDomain: 'meal', candidateDomain: 'meal', confidence: mealSig.confidence, geminiResultPresent, rejectReason: '' };
-    }
-    return { selectedDomain: 'lab', candidateDomain: 'lab', confidence: labSig.confidence, geminiResultPresent, rejectReason: '' };
-  }
-
-  const textDomain = classifyByTextHint(textHint);
-  if (textDomain !== 'unknown') {
-    return { selectedDomain: textDomain, candidateDomain, confidence: 0.35, geminiResultPresent, rejectReason: 'gemini_no_positive_signal_text_hint_used' };
+  if (candidateDomain === 'unknown' || confidence < IMAGE_DOMAIN_CONFIDENCE_THRESHOLD) {
+    return {
+      routeKind: 'unknown',
+      confidence,
+      source: 'gemini_structured',
+      candidateDomain,
+      rejectReason: 'insufficient_evidence',
+      geminiResultPresent: true,
+      adopted: false,
+      evidence: { mealSignals, labSignals, schemaVersion }
+    };
   }
   return {
-    selectedDomain: 'unknown',
+    routeKind: candidateDomain,
+    confidence,
+    source: 'gemini_structured',
     candidateDomain,
-    confidence: Math.max(mealSig.confidence, labSig.confidence, 0),
-    geminiResultPresent,
-    rejectReason: geminiResultPresent ? 'gemini_signals_below_threshold' : 'gemini_result_missing'
+    rejectReason: '',
+    geminiResultPresent: true,
+    adopted: true,
+    evidence: { mealSignals, labSignals, schemaVersion }
   };
 }
 

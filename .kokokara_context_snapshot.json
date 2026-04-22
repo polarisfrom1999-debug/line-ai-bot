@@ -1002,6 +1002,106 @@
         "completedSteps": [],
         "answers": {}
       }
+    },
+    "line-final-1776873554174": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776873561276_o6h89n",
+        "text": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T15:59:21.277Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "proof-meal-1776873615310": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776873618878_ksonon",
+        "text": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T16:00:18.879Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "proof-lab-1776873618879": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776873620899_kczkiz",
+        "text": "血液検査画像として受け取りました。\n検査日は確認中です。\n「TGは？」「患者名は？」「異常がある項目は？」のように聞いてください。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T16:00:20.899Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "proof-unknown-1776873620899": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776873621035_a18r3c",
+        "text": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T16:00:21.035Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -1629,6 +1729,106 @@
       "selectedPlan": "",
       "onboardingCompleted": false,
       "height": ""
+    },
+    "line-final-1776873554174": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "proof-meal-1776873615310": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "proof-lab-1776873618879": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "proof-unknown-1776873620899": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
     }
   },
   "userStateStore": {
@@ -1906,6 +2106,50 @@
       "recallStyle": "direct",
       "lastEmotionTone": "neutral",
       "updatedAt": "2026-04-22T15:49:39.266Z"
+    },
+    "line-final-1776873554174": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.3000000000000003,
+      "relationshipScore": 0.03,
+      "relationshipStage": "coach",
+      "totalTurns": 3,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T15:59:19.760Z"
+    },
+    "proof-meal-1776873615310": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T16:00:16.144Z"
+    },
+    "proof-lab-1776873618879": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T16:00:19.030Z"
+    },
+    "proof-unknown-1776873620899": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T16:00:21.033Z"
     }
   },
   "recentMessageStore": {
@@ -2892,6 +3136,110 @@
         "messageId": "1776872983267_d0wp72",
         "createdAt": "2026-04-22T15:49:43.267Z"
       }
+    ],
+    "line-final-1776873554174": [
+      {
+        "role": "user",
+        "content": "血液検査画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T15:59:17.408Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776873557408_tqh4vh",
+        "createdAt": "2026-04-22T15:59:17.408Z"
+      },
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-04-22T15:59:18.040Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776873558039_ujspmz",
+        "createdAt": "2026-04-22T15:59:18.040Z"
+      },
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T15:59:19.530Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776873559529_m1lbqf",
+        "createdAt": "2026-04-22T15:59:19.530Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T15:59:19.679Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776873559679_e9xunz",
+        "createdAt": "2026-04-22T15:59:19.679Z"
+      },
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T15:59:21.276Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776873561276_o6h89n",
+        "createdAt": "2026-04-22T15:59:21.276Z"
+      }
+    ],
+    "proof-meal-1776873615310": [
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T16:00:18.879Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776873618878_ksonon",
+        "createdAt": "2026-04-22T16:00:18.879Z"
+      }
+    ],
+    "proof-lab-1776873618879": [
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T16:00:20.899Z"
+      },
+      {
+        "role": "assistant",
+        "content": "血液検査画像として受け取りました。\n検査日は確認中です。\n「TGは？」「患者名は？」「異常がある項目は？」のように聞いてください。",
+        "messageId": "1776873620899_kczkiz",
+        "createdAt": "2026-04-22T16:00:20.899Z"
+      }
+    ],
+    "proof-unknown-1776873620899": [
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T16:00:21.035Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776873621035_a18r3c",
+        "createdAt": "2026-04-22T16:00:21.035Z"
+      }
     ]
   },
   "dailyRecordStore": {
@@ -3230,6 +3578,54 @@
       "exercises": [],
       "weights": [],
       "labs": []
+    },
+    "proof-meal-1776873615310:2026-04-23": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-04-23",
+          "name": "食事画像（仮推定）",
+          "summary": "食事画像（仮推定）",
+          "items": [
+            "食事画像（仮推定）"
+          ],
+          "food_items": [
+            "食事画像（仮推定）"
+          ],
+          "estimatedNutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "kcal": 450,
+          "protein": 20,
+          "fat": 12,
+          "carbs": 50,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.6,
+          "comment": "記録を続けられているのが一番の強みです。",
+          "sourceLineMessageId": "msg-meal",
+          "dedupeKey": "msg:msg-meal",
+          "sourceImageHash": "msg-meal",
+          "raw_model_json": {
+            "correction": null,
+            "adoptedNutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "sourceLineMessageId": "msg-meal",
+            "dedupeKey": "msg:msg-meal"
+          },
+          "createdAt": "2026-04-22T16:00:18.081Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
     }
   },
   "weeklySurveyStore": {},
@@ -3248,7 +3644,8 @@
     "line-final-1776864279674": 1,
     "line-final-1776865766644": 1,
     "line-final-1776872920714": 1,
-    "line-final-1776872970179": 1
+    "line-final-1776872970179": 1,
+    "proof-meal-1776873615310": 1
   },
   "labHistoryStore": {}
 }

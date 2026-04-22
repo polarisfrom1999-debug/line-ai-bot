@@ -99,13 +99,8 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '画像の取得に失敗しました。もう一度送ってください。'
     };
   }
-  const [meal, labIngest] = await Promise.all([
-    mealAnalysisService.analyzeMealImage(imagePayload, input.userId, normalizeText(textHint)).catch(() => null),
-    labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload }).catch(() => null),
-  ]);
-  const lab = labIngest?.panel || null;
-  const domainDecision = decideImageDomain({ textHint, meal, lab });
-  const selectedDomain = domainDecision?.selectedDomain || 'unknown';
+  const domainDecision = await decideImageDomain({ imagePayload, userId: input.userId, messageId: input.messageId });
+  const selectedDomain = domainDecision?.routeKind || 'unknown';
 
   if (selectedDomain === 'unknown') {
     console.info('[v2-image] route_selected', {
@@ -115,7 +110,8 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       gemini_result_present: Boolean(domainDecision?.geminiResultPresent),
       candidate_domain: domainDecision?.candidateDomain || 'unknown',
       confidence: Number(domainDecision?.confidence || 0),
-      reject_reason: domainDecision?.rejectReason || 'unknown'
+      reject_reason: domainDecision?.rejectReason || 'unknown',
+      adopted: Boolean(domainDecision?.adopted)
     });
     return {
       handled: true,
@@ -123,9 +119,16 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。'
     };
   }
-  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: selectedDomain, domain: selectedDomain, confidence: Number(domainDecision?.confidence || 0) });
+  console.info('[v2-image] route_selected', {
+    userId: input.userId,
+    routeKind: selectedDomain,
+    domain: selectedDomain,
+    confidence: Number(domainDecision?.confidence || 0),
+    adopted: Boolean(domainDecision?.adopted)
+  });
 
   if (selectedDomain === 'meal') {
+    const meal = await mealAnalysisService.analyzeMealImage(imagePayload, input.userId, '').catch(() => null);
     if (!meal || meal?.isMealImage === false) {
       return { handled: true, intentType: 'newflow_meal_image_ng', replyText: '食事画像として判定できませんでした。料理全体が見える画像をもう一度送ってください。' };
     }
@@ -148,6 +151,8 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     return { handled: true, intentType: 'newflow_meal_image', replyText: buildMealReply(meal) };
   }
 
+  const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload }).catch(() => null);
+  const lab = ingest?.panel || null;
   if (!lab || typeof lab !== 'object') {
     return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査票全体が見える画像をもう一度送ってください。' };
   }
