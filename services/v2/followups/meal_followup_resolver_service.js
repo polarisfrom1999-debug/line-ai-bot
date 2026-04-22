@@ -2,6 +2,7 @@
 
 const contextMemoryService = require('../../context_memory_service');
 const mealLogQueryService = require('../../meal_log_query_service');
+const mealCaptureRepository = require('../../../repositories/meal_capture_repository');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -16,6 +17,23 @@ function detectMealCorrectionIntent(safe) {
   if (/昨日の食事|昨日にして|昨晩の分/.test(safe)) return 'relocate_entire_record';
   if (/カロリーは\?|夕食のカロリー|最後の食事のカロリー/.test(safe)) return 'ask_component_kcal';
   return '';
+}
+
+function extractComponentName(safe) {
+  const hit = (safe || '').match(/([^\s、。]+)\s*(だけ|は|を)?\s*(ゼロ|0kcal|0 kcal|食べてない|半分)/);
+  return normalizeText(hit?.[1] || '');
+}
+
+async function appendCorrectionEvent(userId, payload = {}) {
+  const latest = await mealCaptureRepository.getLatestMealCaptureSession(userId);
+  if (!latest?.id) return false;
+  const res = await mealCaptureRepository.appendMealCaptureEvent({
+    sessionId: latest.id,
+    userId,
+    eventKind: 'correction',
+    payload,
+  }).catch(() => ({ ok: false }));
+  return Boolean(res?.ok);
 }
 
 async function buildTodayTotals(userId) {
@@ -33,21 +51,49 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
   console.info('[v2-followup] correction_intent_resolved', { userId: input.userId, intent, text: safe.slice(0, 80) });
 
   if (intent === 'set_component_zero' || intent === 'mark_component_not_eaten') {
-    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'set_zero' }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
+    const componentName = extractComponentName(safe);
+    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, {
+      mode: componentName ? 'component_zero' : 'set_zero',
+      componentName
+    }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
+    await appendCorrectionEvent(input.userId, {
+      correction: 'component_zero',
+      componentName: componentName || '',
+      before: res.before || {},
+      after: res.after || {},
+      reason: 'followup_component_zero'
+    });
     const totals = await buildTodayTotals(input.userId);
     return {
       intentType: 'meal_followup_correction',
-      replyText: `対象食事を0kcal補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+      replyText: componentName
+        ? `「${componentName}」のみ0kcal補正しました。他の要素は維持しています。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+        : `対象食事を0kcal補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
     };
   }
   if (intent === 'set_component_fraction') {
-    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, { mode: 'partial', ratio: 0.5 }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
+    const componentName = extractComponentName(safe);
+    const res = await contextMemoryService.adjustLastMealNutrition(input.userId, {
+      mode: componentName ? 'component_ratio' : 'partial',
+      ratio: 0.5,
+      componentName
+    }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
+    await appendCorrectionEvent(input.userId, {
+      correction: 'component_ratio',
+      ratio: 0.5,
+      componentName: componentName || '',
+      before: res.before || {},
+      after: res.after || {},
+      reason: 'followup_component_half'
+    });
     const totals = await buildTodayTotals(input.userId);
     return {
       intentType: 'meal_followup_correction',
-      replyText: `対象食事を半量補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+      replyText: componentName
+        ? `「${componentName}」のみ半量補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+        : `対象食事を半量補正しました。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
     };
   }
   if (intent === 'recalc_meal') {

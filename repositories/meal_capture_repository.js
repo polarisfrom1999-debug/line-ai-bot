@@ -62,7 +62,27 @@ async function appendMealCaptureEvent(params = {}) {
   }
 }
 
+async function getLatestMealCaptureSession(userId) {
+  if (!supabase) return null;
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('meal_capture_sessions')
+      .select('id,user_id,status,source_image_id,updated_at,expires_at')
+      .eq('user_id', safeUserId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  } catch (_error) {
+    return null;
+  }
+}
+
 module.exports = {
   createMealCaptureSession,
   appendMealCaptureEvent,
+  getLatestMealCaptureSession,
 };

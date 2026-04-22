@@ -562,8 +562,9 @@ async function fetchLatestMealLogRow(lineUserId) {
   if (!user || !supabase) return null;
   return safeMaybeSingle(() => supabase
     .from('meal_logs')
-    .select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g, raw_model_json')
+    .select('id, eaten_at, meal_label, food_items, estimated_kcal, protein_g, fat_g, carbs_g, raw_model_json, deleted_at')
     .eq('user_id', user.id)
+    .is('deleted_at', null)
     .order('eaten_at', { ascending: false })
     .limit(1)
     .maybeSingle(), null);
@@ -583,6 +584,7 @@ async function adjustLastMealNutrition(lineUserId, adjust = {}) {
   };
   const mode = normalizeString(adjust.mode || 'replace');
   const ratio = Number(adjust.ratio || 1);
+  const componentName = normalizeString(adjust.componentName || adjust.component || '');
   const overrideKcal = adjust.kcal != null ? Number(adjust.kcal) : null;
   const next = { ...before };
 
@@ -596,6 +598,18 @@ async function adjustLastMealNutrition(lineUserId, adjust = {}) {
     next.carbs = Math.round((before.carbs * safeRatio) * 10) / 10;
   } else if (mode === 'replace' && Number.isFinite(overrideKcal)) {
     next.kcal = Math.max(0, Math.round(overrideKcal * 10) / 10);
+  } else if (mode === 'component_ratio' || mode === 'component_zero') {
+    const items = Array.isArray(row?.food_items) ? row.food_items.map((x) => normalizeString(x)).filter(Boolean) : [];
+    const target = componentName || (items[0] || '');
+    const safeRatio = mode === 'component_zero' ? 0 : (Number.isFinite(ratio) && ratio >= 0 && ratio <= 1 ? ratio : 0.5);
+    const share = items.length > 0 ? (1 / items.length) : 1;
+    const reduce = 1 - safeRatio;
+    const delta = share * reduce;
+    next.kcal = Math.max(0, Math.round((before.kcal * (1 - delta)) * 10) / 10);
+    next.protein = Math.max(0, Math.round((before.protein * (1 - delta)) * 10) / 10);
+    next.fat = Math.max(0, Math.round((before.fat * (1 - delta)) * 10) / 10);
+    next.carbs = Math.max(0, Math.round((before.carbs * (1 - delta)) * 10) / 10);
+    adjust.componentName = target;
   }
 
   const raw = row?.raw_model_json && typeof row.raw_model_json === 'object'
@@ -606,7 +620,8 @@ async function adjustLastMealNutrition(lineUserId, adjust = {}) {
     ratio: Number.isFinite(ratio) ? ratio : null,
     appliedAt: nowIso(),
     before,
-    after: next
+    after: next,
+    componentName: componentName || normalizeString(adjust.componentName || '')
   };
 
   try {
@@ -714,7 +729,11 @@ async function deleteLastMealLog(lineUserId) {
   const row = await fetchLatestMealLogRow(lineUserId);
   if (!row?.id) return { ok: false, reason: 'no_db_meal' };
   try {
-    const { error } = await supabase.from('meal_logs').delete().eq('id', row.id);
+    const { error } = await supabase
+      .from('meal_logs')
+      .update({ deleted_at: nowIso(), deleted_reason: 'user_request' })
+      .eq('id', row.id)
+      .eq('user_id', user.id);
     if (error) return { ok: false, reason: normalizeString(error.message || 'delete_failed') };
   } catch (error) {
     return { ok: false, reason: normalizeString(error?.message || 'delete_failed') };
@@ -735,7 +754,11 @@ async function deleteMealLogsByIds(lineUserId, ids = []) {
   let deleted = 0;
   try {
     for (const id of idList) {
-      const { error } = await supabase.from('meal_logs').delete().eq('id', id).eq('user_id', user.id);
+      const { error } = await supabase
+        .from('meal_logs')
+        .update({ deleted_at: nowIso(), deleted_reason: 'bulk_user_request' })
+        .eq('id', id)
+        .eq('user_id', user.id);
       if (!error) deleted += 1;
     }
   } catch (error) {

@@ -32,6 +32,7 @@ const inputGatewayService = require('./services/input_gateway_service');
 const webRouter = require('./routes/web');
 const featureFlags = require('./config/feature_flags');
 const assistantRepeatGuard = require('./services/assistant_repeat_guard');
+const sessionStateRepository = require('./repositories/session_state_repository');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -513,4 +514,15 @@ app.post('/webhook', async (req, res) => {
 const port = Number(process.env.PORT || 10000);
 app.listen(port, () => {
   console.log(`server listening on ${port}`);
+  sessionStateRepository.verifySessionStateSchema()
+    .then((result) => {
+      if (result?.ok) {
+        console.log('[v2-context] session_state_schema_verify ok');
+      } else {
+        console.error(`[v2-error] reason=session_state_schema_verify_failed fallback=startup_warn_only detail=${String(result?.reason || 'unknown')}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`[v2-error] reason=session_state_schema_verify_exception fallback=startup_warn_only detail=${String(error?.message || error || 'unknown')}`);
+    });
 });

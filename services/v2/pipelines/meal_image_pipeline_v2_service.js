@@ -13,6 +13,11 @@ function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
 }
 
+function getSessionTtlMs() {
+  const fromEnv = Number(process.env.V2_IMAGE_SESSION_TTL_MS || 2 * 60 * 60 * 1000);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : (2 * 60 * 60 * 1000);
+}
+
 function buildImageMealRecordPayload(parsedMeal, input = {}) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
   const itemLabel = items.length ? items.join('、') : '食事写真';
@@ -74,19 +79,23 @@ async function handleMealImageV2({ input, imagePayload }) {
       extracted: meal
     }
   });
+  const ttlMs = getSessionTtlMs();
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   await activeContextService.setActiveContext(input.userId, {
     type: 'meal_image_session',
+    ttlMs,
     payload: {
       sourceImageId: normalizeText(imagePayload?.id || ''),
       sourceMessageId: normalizeText(input?.messageId || ''),
-      rawAnalysis: meal?.raw || null,
+      rawGeminiJson: meal?.raw || null,
       mealCandidates: Array.isArray(meal?.items) ? meal.items : [],
       selectedLabel: Array.isArray(meal?.items) ? (meal.items[0] || '') : '',
       kcalEstimate: Number(meal?.estimatedNutrition?.kcal || 0),
       macros: meal?.estimatedNutrition || {},
+      componentNutrition: Array.isArray(meal?.raw?.components) ? meal.raw.components : [],
       confidence: Number(meal?.confidence || 0),
       createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
+      expiresAt
     }
   });
 
@@ -96,7 +105,7 @@ async function handleMealImageV2({ input, imagePayload }) {
     sourceMessageId: normalizeText(input?.messageId || ''),
     sourceImageId: normalizeText(imagePayload?.id || ''),
     status: 'active',
-    expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
+    expiresAt
   }).catch(() => ({ ok: false }));
   let analyzedEventSaved = false;
   if (captureSession?.ok && captureSession?.session?.id) {
@@ -113,7 +122,7 @@ async function handleMealImageV2({ input, imagePayload }) {
         adoptedNutrition: meal?.estimatedNutrition || {},
         mealCandidates: Array.isArray(meal?.items) ? meal.items : [],
         selectedLabel: Array.isArray(meal?.items) ? (meal.items[0] || '') : '',
-        expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
+        expiresAt
       }
     }).then((res) => {
       analyzedEventSaved = Boolean(res?.ok);
@@ -139,6 +148,7 @@ async function handleMealImageV2({ input, imagePayload }) {
   }
 
   const persistedOk = Boolean(captureSession?.ok && analyzedEventSaved);
+  console.info('[v2-image] route', { userId: input.userId, routeKind: 'meal', domain: 'meal' });
   const replyBase = buildMealReply(meal);
   const replyText = persistedOk
     ? replyBase

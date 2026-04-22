@@ -11,14 +11,13 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function getSessionTtlMs() {
+  const fromEnv = Number(process.env.V2_IMAGE_SESSION_TTL_MS || 2 * 60 * 60 * 1000);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : (2 * 60 * 60 * 1000);
+}
+
 function shouldAcceptLabPanelFromGemini(lab) {
-  if (!lab || typeof lab !== 'object') return false;
-  return Boolean(
-    lab.isLabImage
-    || lab.labLike
-    || (Array.isArray(lab.items) && lab.items.length > 0)
-    || Number(lab?.analysisConfidence?.rows || 0) > 0
-  );
+  return Boolean(lab && typeof lab === 'object');
 }
 
 function buildLatestLabCache({ input, imagePayload, lab }) {
@@ -46,9 +45,6 @@ async function handleLabImageV2({ input, imagePayload }) {
   const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
   const lab = ingest?.panel || null;
   if (!lab) return { handled: false, reason: 'no_lab_panel', analysis: null };
-  if (!shouldAcceptLabPanelFromGemini(lab)) {
-    return { handled: false, reason: 'gemini_not_lab_document', analysis: lab };
-  }
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
   const rawText = normalizeText(lab?.rawText || '');
@@ -71,6 +67,8 @@ async function handleLabImageV2({ input, imagePayload }) {
   });
 
   const hasItems = Array.isArray(lab?.items) && lab.items.length > 0;
+  const ttlMs = getSessionTtlMs();
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   const persist = await labSessionRepository.createLabSession({
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
@@ -84,26 +82,17 @@ async function handleLabImageV2({ input, imagePayload }) {
     rawText: lab?.rawText || '',
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
     isLabImageStrict: Boolean(lab?.isLabImage),
-    isLabImageTentative: Boolean(
-      lab?.labLike
-        || shouldAcceptLabPanelFromGemini(lab)
-        || rawText.length > 0
-        || candidateItemNamesCount > 0
-        || candidateExamDatesCount > 0
-        || printDateDetected
-        || patientNameDetected
-        || facilityNameDetected
-    ),
+    isLabImageTentative: true,
     geminiRaw: lab?.geminiRaw || null,
     structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
-    expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
+    expiresAt,
   }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: hasItems ? 'lab' : 'lab_pending',
     followUpContext: {
       source: 'image',
-      imageType: hasItems ? 'lab' : 'lab_pending',
+      imageType: 'lab',
       intakeKind: lab?.intakeKind || 'lab_image',
       extractedItems: Array.isArray(lab?.items) ? lab.items : [],
       examDate: lab?.examDate || '',
@@ -117,8 +106,14 @@ async function handleLabImageV2({ input, imagePayload }) {
   await contextMemoryService.upsertLabPanel(input.userId, lab).catch(() => null);
   await activeContextService.setActiveContext(input.userId, {
     type: hasItems ? 'lab_followup_session' : 'lab_image_session',
-    payload: { labPanel: lab }
+    ttlMs,
+    payload: {
+      labPanel: lab,
+      sourceImageId: normalizeText(imagePayload?.id || ''),
+      rawGeminiJson: lab?.geminiRaw || lab?.structuredJson || lab?.rawPayload || null
+    }
   });
+  console.info('[v2-image] route', { userId: input.userId, routeKind: 'lab', domain: 'lab' });
 
   const replyBase = labFollowupService.buildLabImageReply(lab);
   const replyText = persist?.ok

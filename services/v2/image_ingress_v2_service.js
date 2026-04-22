@@ -85,16 +85,30 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
   }
 
   const imagePayload = ingested.payload;
-  const [labResult, mealResult] = await Promise.all([
-    labPipeline.handleLabImageV2({ input, imagePayload }),
-    mealPipeline.handleMealImageV2({ input, imagePayload }),
-  ]);
+  const hintKind = imageKindClassifier.classifyImageKind({
+    textHint,
+    labPanel: null,
+    meal: null,
+  });
+  let labResult = null;
+  let mealResult = null;
+  if (hintKind === 'lab') {
+    labResult = await labPipeline.handleLabImageV2({ input, imagePayload });
+  } else if (hintKind === 'meal') {
+    mealResult = await mealPipeline.handleMealImageV2({ input, imagePayload });
+  } else {
+    labResult = await labPipeline.handleLabImageV2({ input, imagePayload });
+    if (!labResult?.handled) {
+      mealResult = await mealPipeline.handleMealImageV2({ input, imagePayload });
+    }
+  }
 
   const kind = imageKindClassifier.classifyImageKind({
     textHint,
     labPanel: labResult?.analysis || null,
     meal: mealResult?.analysis || null,
   });
+  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: kind, domain: kind === 'unknown' ? 'unknown' : kind });
   compareLogger.logImagePipelineResult({
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || input?.messageId || ''),
