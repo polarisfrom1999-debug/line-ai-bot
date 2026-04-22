@@ -3099,7 +3099,7 @@ async function orchestrateConversation(input) {
           text,
           imageFollowupOnly: !generalFollowupOn
         });
-        if (newFlowFollowup?.replyText) {
+        if (newFlowFollowup?.replyText || newFlowFollowup?.blockLegacyFollowup) {
           const topOut = await withSurfaceReply(input, newFlowFollowup.replyText, { recentMessages, longMemory }, newFlowFollowup.intentType || 'newflow_followup');
           await appendTurn(input.userId, input.rawText || '', topOut);
           return {
@@ -3108,8 +3108,8 @@ async function orchestrateConversation(input) {
             internal: { intentType: newFlowFollowup.intentType || 'newflow_followup', responseMode: 'answer' }
           };
         }
-        if (imageFollowupOn && !generalFollowupOn && newFlowFollowup?.blockLegacyFollowup) {
-          const guardedOut = await withSurfaceReply(input, newFlowFollowup.replyText || '前の画像の続きとして扱うため、もう一度目的を短く送ってください。', { recentMessages, longMemory }, 'newflow_followup_block_legacy');
+        if (imageFollowupOn && !generalFollowupOn) {
+          const guardedOut = await withSurfaceReply(input, '前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。', { recentMessages, longMemory }, 'newflow_followup_block_legacy');
           await appendTurn(input.userId, input.rawText || '', guardedOut);
           return {
             ok: true,

@@ -47,9 +47,9 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     const isGeneral = looksLikeGeneralConversation(safeText);
     if (imageFollowupOnly && isGeneral) {
       return {
-        intentType: 'newflow_followup_general_passthrough',
-        replyText: '',
-        blockLegacyFollowup: false
+        intentType: 'newflow_followup_block_legacy',
+        replyText: '前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。',
+        blockLegacyFollowup: true
       };
     }
   }
