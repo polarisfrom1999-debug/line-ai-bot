@@ -5,6 +5,8 @@ const activeContextStoreService = require('./active_context_store_service');
 const imageIngestService = require('../image_ingest_service');
 const mealAnalysisService = require('../meal_analysis_service');
 const labDocumentIngestService = require('../lab_document_ingest_service');
+const labSessionRepository = require('../../repositories/lab_session_repository');
+const contextMemoryService = require('../context_memory_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -26,6 +28,37 @@ function buildMealReply(meal) {
     `目安: ${kcal} kcal / P ${protein}g / F ${fat}g / C ${carbs}g`,
     '必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。'
   ].join('\n');
+}
+
+function buildImageMealRecordPayload(parsedMeal, input = {}) {
+  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
+  const itemLabel = items.length ? items.join('、') : '食事写真';
+  return {
+    type: 'meal',
+    date: new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
+    name: itemLabel,
+    summary: itemLabel,
+    items,
+    food_items: items,
+    estimatedNutrition: parsedMeal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 },
+    kcal: Number(parsedMeal?.estimatedNutrition?.kcal || 0),
+    protein: Number(parsedMeal?.estimatedNutrition?.protein || 0),
+    fat: Number(parsedMeal?.estimatedNutrition?.fat || 0),
+    carbs: Number(parsedMeal?.estimatedNutrition?.carbs || 0),
+    amountRatio: Number(parsedMeal?.amountRatio || 1),
+    amountNote: parsedMeal?.amountNote || '',
+    confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
+    comment: parsedMeal?.comment || '',
+    sourceLineMessageId: normalizeText(input?.messageId || ''),
+    dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : ''),
+    sourceImageHash: normalizeText(input?.messageId || ''),
+    raw_model_json: {
+      correction: null,
+      adoptedNutrition: parsedMeal?.estimatedNutrition || {},
+      sourceLineMessageId: normalizeText(input?.messageId || ''),
+      dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : ''),
+    }
+  };
 }
 
 function buildLabReply(lab = {}) {
@@ -83,6 +116,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         meal
       }
     }).catch(() => null);
+    await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input)).catch(() => null);
     return { handled: true, intentType: 'newflow_meal_image', replyText: buildMealReply(meal) };
   }
 
@@ -98,6 +132,24 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       sourceMessageId: normalizeText(input?.messageId || ''),
       labPanel: lab
     }
+  }).catch(() => null);
+  await labSessionRepository.createLabSession({
+    userId: input.userId,
+    sourceImageId: normalizeText(imagePayload?.id || ''),
+    sourceMessageId: normalizeText(input?.messageId || ''),
+    status: Array.isArray(lab?.items) && lab.items.length > 0 ? 'active' : 'tentative',
+    patientName: lab?.patientName || '',
+    facilityName: lab?.facilityName || '',
+    printDate: lab?.printDate || '',
+    examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+    parsedItems: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []),
+    rawText: lab?.rawText || '',
+    confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
+    isLabImageStrict: Boolean(lab?.isLabImage),
+    isLabImageTentative: true,
+    geminiRaw: lab?.geminiRaw || null,
+    structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
+    expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
   }).catch(() => null);
   return { handled: true, intentType: 'newflow_lab_image', replyText: buildLabReply(lab) };
 }

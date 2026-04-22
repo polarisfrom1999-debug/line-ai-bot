@@ -1,8 +1,10 @@
 'use strict';
 
 const activeContextStoreService = require('./active_context_store_service');
-const labFollowupService = require('../lab_followup_service');
-const mealFollowupResolverService = require('../v2/followups/meal_followup_resolver_service');
+const responseBuilderService = require('./response_builder_service');
+const canonicalFallbackService = require('./canonical_fallback_service');
+const { resolveLabFollowup } = require('./resolvers/lab_followup_resolver_service');
+const { resolveMealFollowup, resolveCanonicalMealFollowup } = require('./resolvers/meal_followup_resolver_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -12,6 +14,14 @@ function looksLikeGeneralConversation(text) {
   const safe = normalizeText(text);
   if (!safe) return true;
   return !/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|麺|カロリー|半分|食べてない|0kcal|食事)/i.test(safe);
+}
+
+function inferDomainFromText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return 'unknown';
+  if (/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|採血|印刷日|異常)/i.test(safe)) return 'lab';
+  if (/(食事|麺|カロリー|半分|食べてない|0kcal|削除できた|削除した|補正)/i.test(safe)) return 'meal';
+  return 'unknown';
 }
 
 /**
@@ -25,51 +35,56 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   if (!safeText || input?.messageType !== 'text') return null;
 
   const status = await activeContextStoreService.getActiveContext(input?.userId);
+  const active = status?.context;
+  const hasActiveImageSession = Boolean(active?.domain && /_image_session$/.test(normalizeText(active.type || active.domain || '')));
+  if (hasActiveImageSession) {
+    const isGeneral = looksLikeGeneralConversation(safeText);
+    if (imageFollowupOnly && isGeneral) return null;
+  }
+
+  // 1) active session 有効なら session参照（最優先）
+  if (hasActiveImageSession && !status?.expired) {
+    if (/^lab_/.test(normalizeText(active.type || active.domain || ''))) {
+      return resolveLabFollowup(safeText, active?.payload?.labPanel || null);
+    }
+    if (/^meal_/.test(normalizeText(active.type || active.domain || ''))) {
+      return resolveMealFollowup({ input, text: safeText, activeContext: active });
+    }
+    return null;
+  }
+
+  // 2) session がTTL切れなら canonical参照
   if (status?.expired) {
+    const inferred = inferDomainFromText(safeText);
+    if (inferred === 'lab') {
+      const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
+      if (panel) return resolveLabFollowup(safeText, panel);
+      return { intentType: 'newflow_context_expired', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
+    }
+    if (inferred === 'meal') {
+      const canonicalMeal = await canonicalFallbackService.getCanonicalMeal(input?.userId);
+      const mealReply = resolveCanonicalMealFollowup(safeText, canonicalMeal);
+      if (mealReply?.replyText) return mealReply;
+      return { intentType: 'newflow_context_expired', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
+    }
     return {
       intentType: 'newflow_context_expired',
-      replyText: '前の画像は保持期限が切れています。もう一度送ってください。'
+      replyText: responseBuilderService.buildTtlExpiredReply()
     };
   }
 
-  const active = status?.context;
-  if (!active?.domain) return null;
-  const isGeneral = looksLikeGeneralConversation(safeText);
-  if (imageFollowupOnly && isGeneral) return null;
-  if (!/_image_session$/.test(normalizeText(active.type || active.domain || ''))) return null;
-
-  if (/^lab_/.test(normalizeText(active.type || active.domain || ''))) {
-    const panel = active?.payload?.labPanel || null;
-    if (!panel) return null;
-    if (/患者名|氏名/.test(safeText)) return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildPatientNameReply(panel) };
-    if (/病院名|医院名|クリニック名|医療機関/.test(safeText)) return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildFacilityNameReply(panel) };
-    if (/印刷日|発行日|出力日/.test(safeText)) return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildPrintDateReply(panel) };
-    if (/日付|検査日|採血日|一番新しい日付|最新日/.test(safeText)) return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildExamDateQuickReply(panel) };
-    if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safeText)) return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildAbnormalItemsReply(panel) };
-    if (/わかるのは|何の項目|読み取れた項目|数値で読め|他に何が|他に読め|検査項目は|他の項目で確認出来たのは|他の検査結果で読めたのは|検査結果でわかるのある|この結果どう見える|異常ありそう/.test(safeText)) {
-      return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildReadableInventoryReply(panel) };
-    }
-    const target = labFollowupService.normalizeTarget(safeText);
-    if (target) {
-      const selectedDate = panel?.latestExamDate || panel?.examDate || '';
-      return { intentType: 'newflow_lab_followup', replyText: labFollowupService.buildItemReply(panel, target, selectedDate) };
-    }
-    return {
-      intentType: 'newflow_lab_followup',
-      replyText: 'この画像で確認できる範囲でお答えします。項目名（例: TG, LDL, HbA1c）を指定してもう一度聞いてください。'
-    };
+  // 3) active なしでも canonicalで答えられるものは答える
+  const inferred = inferDomainFromText(safeText);
+  if (inferred === 'lab') {
+    const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
+    if (panel) return resolveLabFollowup(safeText, panel);
+    return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
-  if (/^meal_/.test(normalizeText(active.type || active.domain || ''))) {
-    const mealReply = await mealFollowupResolverService.resolveMealFollowupFromSession({
-      input,
-      text: safeText,
-      activeContext: active
-    });
+  if (inferred === 'meal') {
+    const canonicalMeal = await canonicalFallbackService.getCanonicalMeal(input?.userId);
+    const mealReply = resolveCanonicalMealFollowup(safeText, canonicalMeal);
     if (mealReply?.replyText) return mealReply;
-    return {
-      intentType: 'newflow_meal_followup',
-      replyText: 'この食事画像の補正として処理します。「麺だけ0kcal」「半分食べた」「食べてない」のように指定してください。'
-    };
+    return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
   return null;
 }

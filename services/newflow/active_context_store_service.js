@@ -5,6 +5,8 @@ const sessionStateRepository = require('../../repositories/session_state_reposit
 const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_CONTEXT_CACHE = new Map();
+const RECENT_EXPIRED_MARKER = new Map();
+const EXPIRED_MARKER_TTL_MS = 10 * 60 * 1000;
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -61,6 +63,7 @@ async function setActiveContext(userId, context = {}) {
       expires_at: expiresAt
     });
   }
+  RECENT_EXPIRED_MARKER.delete(safeUserId);
   return { ok: Boolean(up?.ok), expiresAt, reason: up?.reason || '' };
 }
 
@@ -72,6 +75,7 @@ async function getActiveContext(userId) {
     const memExpMs = Date.parse(fromMemory.expiresAt || '');
     if (Number.isFinite(memExpMs) && memExpMs < Date.now()) {
       ACTIVE_CONTEXT_CACHE.delete(safeUserId);
+      RECENT_EXPIRED_MARKER.set(safeUserId, Date.now());
       return { context: null, expired: true };
     }
     return {
@@ -88,7 +92,21 @@ async function getActiveContext(userId) {
     };
   }
   const row = await sessionStateRepository.getLatestActiveSession(safeUserId).catch(() => null);
-  if (!row?.type) return { context: null, expired: false };
+  if (!row?.type) {
+    const latestAny = await sessionStateRepository.getLatestSessionIncludingExpired(safeUserId).catch(() => null);
+    const anyExpMs = Date.parse(latestAny?.expiresAt || '');
+    if (latestAny?.id && Number.isFinite(anyExpMs) && anyExpMs < Date.now()) {
+      await sessionStateRepository.markSessionClosedById(latestAny.id, 'newflow_expired').catch(() => null);
+      RECENT_EXPIRED_MARKER.set(safeUserId, Date.now());
+      return { context: null, expired: true };
+    }
+    const markerAt = Number(RECENT_EXPIRED_MARKER.get(safeUserId) || 0);
+    if (markerAt && (Date.now() - markerAt) <= EXPIRED_MARKER_TTL_MS) {
+      return { context: null, expired: true };
+    }
+    RECENT_EXPIRED_MARKER.delete(safeUserId);
+    return { context: null, expired: false };
+  }
   const expMs = Date.parse(row.expiresAt || '');
   if (Number.isFinite(expMs) && expMs < Date.now()) {
     if (row?.id) {
@@ -96,6 +114,7 @@ async function getActiveContext(userId) {
     } else {
       await sessionStateRepository.closeActiveSessions(safeUserId, 'newflow_expired').catch(() => null);
     }
+    RECENT_EXPIRED_MARKER.set(safeUserId, Date.now());
     return { context: null, expired: true };
   }
   return {
@@ -116,6 +135,7 @@ async function closeActiveContext(userId, reason = 'closed') {
   const safeUserId = normalizeText(userId);
   if (!safeUserId) return { ok: false, reason: 'missing_user' };
   ACTIVE_CONTEXT_CACHE.delete(safeUserId);
+  RECENT_EXPIRED_MARKER.delete(safeUserId);
   return sessionStateRepository.closeActiveSessions(safeUserId, normalizeText(reason) || 'closed');
 }
 

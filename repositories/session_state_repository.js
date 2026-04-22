@@ -168,6 +168,35 @@ async function verifySessionStateSchema() {
   }
 }
 
+async function getLatestSessionIncludingExpired(userId) {
+  const safeUserId = normalizeText(userId);
+  if (!supabase || !safeUserId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('session_state')
+      .select('id,session_type,payload_jsonb,created_at,updated_at,expires_at,status,source_image_id,raw_gemini_json')
+      .eq('user_id', safeUserId)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      id: data.id || null,
+      type: normalizeText(data.session_type),
+      payload: safeJson(data.payload_jsonb),
+      createdAt: data.created_at || '',
+      updatedAt: data.updated_at || '',
+      expiresAt: data.expires_at || '',
+      status: data.status || 'active',
+      sourceImageId: normalizeText(data.source_image_id || ''),
+      rawGeminiJson: data.raw_gemini_json && typeof data.raw_gemini_json === 'object' ? data.raw_gemini_json : null,
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
 module.exports = {
   upsertActiveSession,
   getLatestActiveSession,
@@ -175,4 +204,5 @@ module.exports = {
   closeActiveSessions,
   markSessionClosedById,
   verifySessionStateSchema,
+  getLatestSessionIncludingExpired,
 };
