@@ -115,41 +115,6 @@ function collectRowsFromRawPayload(panel = {}) {
   return rawRows;
 }
 
-function buildRowsFromRawText({ reportId, userId, examDate, rawText = '' }) {
-  const safe = normalizeText(rawText);
-  if (!safe) return [];
-  const patterns = [
-    { canonical: 'TG', display: '中性脂肪', regex: /(?:^|[\s、,;:：])(?:TG|中性脂肪|ＴＧ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'TG', display: '中性脂肪', regex: /(?:TG|中性脂肪|ＴＧ)\s*[:：＝=]\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'HBA1C', display: 'HbA1c', regex: /(?:HbA1c|HBA1C|ヘモグロビン\s*A1c|グリコヘモグロビン)\s*(?:\([^)]*\))?\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: '%' },
-    { canonical: 'LDL', display: 'LDL', regex: /(?:LDL|ＬＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'HDL', display: 'HDL', regex: /(?:HDL|ＨＤＬ)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' },
-    { canonical: 'WBC', display: '白血球', regex: /(?:WBC|ＷＢＣ|白血球(?:数)?)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: '/μL' },
-    { canonical: 'AST', display: 'AST', regex: /(?:AST|ＡＳＴ|GOT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'U/L' },
-    { canonical: 'ALT', display: 'ALT', regex: /(?:ALT|ＡＬＴ|GPT)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'U/L' },
-    { canonical: 'GLU', display: '血糖', regex: /(?:空腹時血糖|随時血糖|血糖(?:値)?|BS|GLU|GLUCOSE)\s*[:：＝=]?\s*(-?\d+(?:\.\d+)?)/i, unit: 'mg/dL' }
-  ];
-  const rows = [];
-  for (const p of patterns) {
-    const m = safe.match(p.regex);
-    if (!m) continue;
-    const valueText = normalizeText(m[1]);
-    if (!valueText) continue;
-    rows.push({
-      report_id: reportId,
-      user_id: userId,
-      exam_date: examDate,
-      canonical_name: p.canonical,
-      display_name: p.display,
-      value_numeric: parseNumeric(valueText),
-      value_text: valueText,
-      unit: p.unit,
-      raw_label: p.display
-    });
-  }
-  return rows;
-}
-
 async function saveLabReport({ userId, panel, imageUrl = null }) {
   const safeUserId = normalizeText(userId);
   if (!safeUserId || !panel) return null;
@@ -201,14 +166,6 @@ async function saveLabReport({ userId, panel, imageUrl = null }) {
       userId: safeUserId,
       examDate,
       rows: collectRowsFromRawPayload(panel)
-    });
-  }
-  if (!rows.length) {
-    rows = buildRowsFromRawText({
-      reportId,
-      userId: safeUserId,
-      examDate,
-      rawText: panel?.rawText || ''
     });
   }
 

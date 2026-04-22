@@ -1630,6 +1630,13 @@ async function maybeAnswerLabFollowUp(userId, text, shortMemory) {
     return labFollowupService.buildExamDateQuickReply(panel);
   }
 
+  if (/悪い値|危ない値|異常そう|問題ありそう|大丈夫そう/.test(safe)) {
+    return labFollowupService.buildAbnormalItemsReply(panel);
+  }
+  if (/数値全部|ぜんぶ教えて|全部.*教え|一覧.*数値|数値を.*並べ/.test(safe)) {
+    return labFollowupService.buildNaturalAllValuesReply(panel);
+  }
+
   const targetName = labFollowupService.normalizeTarget(safe);
   if (!targetName) return null;
 

@@ -6,15 +6,23 @@ const labFollowupService = require('../../lab_followup_service');
 const contextMemoryService = require('../../context_memory_service');
 const activeContextService = require('../../active_context_service');
 const labSessionRepository = require('../../../repositories/lab_session_repository');
-const labTentativeEscalation = require('../lab_tentative_escalation_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function shouldAcceptLabPanelFromGemini(lab) {
+  if (!lab || typeof lab !== 'object') return false;
+  return Boolean(
+    lab.isLabImage
+    || lab.labLike
+    || (Array.isArray(lab.items) && lab.items.length > 0)
+    || Number(lab?.analysisConfidence?.rows || 0) > 0
+  );
+}
+
 function buildLatestLabCache({ input, imagePayload, lab }) {
   const itemMap = {
-    ...labItemAliasService.buildLabItemMapFromRawText(lab?.rawText || ''),
     ...labItemAliasService.buildLabItemMapFromPanel(lab || {}),
   };
   return {
@@ -38,24 +46,15 @@ async function handleLabImageV2({ input, imagePayload }) {
   const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload });
   const lab = ingest?.panel || null;
   if (!lab) return { handled: false, reason: 'no_lab_panel', analysis: null };
-  if (!labTentativeEscalation.shouldAcceptTentativeLabSession(lab)) {
-    return { handled: false, reason: 'not_lab_like', analysis: lab };
-  }
-
-  const promotionSignals = labTentativeEscalation.getTentativePromotionSignals(lab);
-  if (promotionSignals.reasons.length) {
-    console.info('[v2-lab] tentative_promotion', {
-      userId: input.userId,
-      reasons: promotionSignals.reasons,
-    });
+  if (!shouldAcceptLabPanelFromGemini(lab)) {
+    return { handled: false, reason: 'gemini_not_lab_document', analysis: lab };
   }
 
   const latestLabCache = buildLatestLabCache({ input, imagePayload, lab });
   const rawText = normalizeText(lab?.rawText || '');
-  const rawMap = labItemAliasService.buildLabItemMapFromRawText(rawText);
   const candidateItemNamesCount = Math.max(
     Array.isArray(lab?.items) ? lab.items.length : 0,
-    Object.keys(rawMap || {}).length
+    Object.keys(labItemAliasService.buildLabItemMapFromPanel(lab || {}) || {}).length
   );
   const candidateExamDatesCount = Array.isArray(lab?.examDates) ? lab.examDates.length : 0;
   const patientNameDetected = Boolean(normalizeText(lab?.patientName || ''));
@@ -87,7 +86,7 @@ async function handleLabImageV2({ input, imagePayload }) {
     isLabImageStrict: Boolean(lab?.isLabImage),
     isLabImageTentative: Boolean(
       lab?.labLike
-        || labTentativeEscalation.shouldAcceptTentativeLabSession(lab)
+        || shouldAcceptLabPanelFromGemini(lab)
         || rawText.length > 0
         || candidateItemNamesCount > 0
         || candidateExamDatesCount > 0
@@ -95,6 +94,8 @@ async function handleLabImageV2({ input, imagePayload }) {
         || patientNameDetected
         || facilityNameDetected
     ),
+    geminiRaw: lab?.geminiRaw || null,
+    structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
     expiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString(),
   }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 
@@ -134,4 +135,5 @@ async function handleLabImageV2({ input, imagePayload }) {
 
 module.exports = {
   handleLabImageV2,
+  shouldAcceptLabPanelFromGemini,
 };

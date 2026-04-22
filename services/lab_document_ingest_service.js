@@ -62,14 +62,19 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
   }
   panel.pipelineComparison = comparison;
   panel.pipelineMode = mode;
-  if (panel?.isLabImage || panel?.labLike) {
-    await labDocumentStoreService.storePanelForPayload(userId, imagePayload, panel);
-    // 1画像=1検査データとして、完璧でなくても exam_date と読めた値を保存する。
+  await labDocumentStoreService.storePanelForPayload(userId, imagePayload, panel).catch(() => null);
+  const geminiLabLike = Boolean(
+    panel?.isLabImage
+    || panel?.labLike
+    || (Array.isArray(panel?.items) && panel.items.length > 0)
+    || Number(panel?.analysisConfidence?.rows || 0) > 0
+  );
+  if (geminiLabLike) {
     await labReportStoreService.saveLabReport({
       userId,
       panel,
       imageUrl: imagePayload?.url || null
-    });
+    }).catch(() => null);
   }
 
   return {

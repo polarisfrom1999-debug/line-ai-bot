@@ -35,6 +35,8 @@ async function createLabSession(params = {}) {
     confidence: Number(params.confidence || 0) || 0,
     is_lab_image_strict: Boolean(params.isLabImageStrict),
     is_lab_image_tentative: Boolean(params.isLabImageTentative),
+    gemini_raw: params.geminiRaw != null ? params.geminiRaw : null,
+    structured_json: params.structuredJson != null ? params.structuredJson : null,
     created_at: now,
     updated_at: now,
     expires_at: params.expiresAt || null,
@@ -60,7 +62,7 @@ async function getLatestLabSession(userId) {
   try {
     const { data, error } = await supabase
       .from('lab_sessions')
-      .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at')
+      .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at')
       .eq('user_id', safeUserId)
       .order('created_at', { ascending: false })
       .limit(1)

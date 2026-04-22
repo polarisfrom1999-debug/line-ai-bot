@@ -10,9 +10,6 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
-const ALLOWED_FOLLOW_TARGETS = new Set(['LDL', 'HDL', 'HbA1c', '中性脂肪', 'AST', 'ALT', '血糖', 'クレアチニン']);
-const ALLOWED_CANONICAL_KEYS = new Set(['ldl', 'hdl', 'tg', 'hba1c', 'ast', 'alt', 'glu', 'cr']);
-
 /**
  * lab-qna に入れてはいけない一般会話・他ドメイン
  */
@@ -24,25 +21,6 @@ function isNonLabQuestionForLabQna(safe) {
   if (/データがおかしい|おかしくないか|ずれてる|重複|件数がおかしい/.test(safe)) return true;
   if (/記録を修正|再計算|昨日の分|昨晩|一昨日/.test(safe)) return true;
   if ((/詳細|内訳|一覧/.test(safe)) && !/(血液|検査|LDL|TG|HbA1c|脂質|肝|腎|項目|中性脂肪)/i.test(safe)) return true;
-  return false;
-}
-
-/**
- * lab-qna に通す血液検査 follow-up のみ（ホワイトリスト）
- */
-function isStrictLabQnaQuestion(safe) {
-  if (/日付は|いつ[？?]|検査日|採血日は/.test(safe)) return true;
-  if (/患者名|氏名/.test(safe)) return true;
-  if (/病院名|医院名|クリニック名|医療機関/.test(safe)) return true;
-  if (/印刷日|発行日|出力日/.test(safe)) return true;
-  if (/一番新しい日付|最新日|最新の検査日/.test(safe)) return true;
-  if (/異常がついている項目|異常項目|H\/L|ハイフラグ|ローフラグ/.test(safe)) return true;
-  if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) return true;
-  if (/わかるのは|何の項目がありましたか|数値で読めたのは|他に何が読み取れた/.test(safe)) return true;
-  const nt = labFollowupService.normalizeTarget(safe);
-  if (nt && ALLOWED_FOLLOW_TARGETS.has(nt)) return true;
-  const k = labItemAliasService.normalizeLabCanonicalKey(safe);
-  if (k && ALLOWED_CANONICAL_KEYS.has(k)) return true;
   return false;
 }
 
@@ -69,15 +47,6 @@ function readLatestLabCache(shortMemory = {}, panel = null) {
       };
     }
     const raw = normalizeText(cached.rawText || panel?.rawText || '');
-    const fromRaw = raw ? labItemAliasService.buildLabItemMapFromRawText(raw) : {};
-    if (Object.keys(fromRaw).length > 0) {
-      return {
-        ...cached,
-        examDate: normalizeText(cached.examDate || panel?.latestExamDate || panel?.examDate || ''),
-        items: { ...fromRaw },
-        rawText: raw
-      };
-    }
     if (panelKeys.length > 0) {
       return {
         ...cached,
@@ -134,15 +103,6 @@ async function resolveCanonicalWithFallbacks(lineUserId, canonical, latestCache,
     };
   }
 
-  const rawOnly = labItemAliasService.buildLabItemMapFromRawText(latestCache?.rawText || '');
-  if (canonical && rawOnly[canonical]) {
-    return {
-      source: 'latestCache.rawText_reparse',
-      item: rawOnly[canonical],
-      examDate: latestCache?.examDate || ''
-    };
-  }
-
   const dbPanel = (await contextMemoryService.getLatestLabPanel(lineUserId))
     || (await labDocumentStoreService.getLatestPanelForUser(lineUserId))
     || null;
@@ -196,15 +156,6 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   const memCache = shortMemory?.followUpContext?.latestLabCache;
   const latestCacheExists = Boolean(memCache && typeof memCache === 'object');
 
-  if (!isStrictLabQnaQuestion(safe)) {
-    console.info('[lab-qna] reject', {
-      reason: 'not_whitelisted_lab_followup',
-      question: safe,
-      latestCacheExists
-    });
-    return null;
-  }
-
   let sessionPanel = shortMemory?.followUpContext?.labPanel || null;
   if (!sessionPanel) {
     sessionPanel = (await contextMemoryService.getLatestLabPanel(lineUserId))
@@ -212,14 +163,21 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
       || null;
   }
   let latestCache = readLatestLabCache(shortMemory, sessionPanel);
+  if (!latestCache && sessionPanel && typeof sessionPanel === 'object') {
+    const pm = labItemAliasService.buildLabItemMapFromPanel(sessionPanel);
+    latestCache = {
+      items: pm,
+      examDate: normalizeText(sessionPanel?.latestExamDate || sessionPanel?.examDate || ''),
+      rawText: normalizeText(sessionPanel?.rawText || ''),
+      patientName: normalizeText(sessionPanel?.patientName || ''),
+      facilityName: normalizeText(sessionPanel?.facilityName || ''),
+      printDate: normalizeText(sessionPanel?.printDate || ''),
+      examDates: Array.isArray(sessionPanel?.examDates) ? sessionPanel.examDates : [],
+    };
+  }
   if (!latestCache) {
-    console.info('[lab-qna] reject', {
-      reason: 'readLatestLabCache_empty',
-      question: safe,
-      latestCacheExists,
-      hint: 'need_lab_image_or_panel'
-    });
-    return null;
+    console.info('[lab-qna] miss', { reason: 'no_lab_context', question: safe, latestCacheExists });
+    return 'この会話にはまだ検査データがつながっていないみたい。検査の画像を送ってもらえる？ひとことで「検査」と添えてもらえると助かるよ。';
   }
 
   const canonicalFromQuestion = labItemAliasService.normalizeLabCanonicalKey(safe);
@@ -227,7 +185,6 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   const availableAfterRead = Object.keys(latestCache.items || {});
 
   console.info('[lab-qna] enter', {
-    reason: 'whitelist_and_lab_image_session',
     userId: lineUserId,
     question: safe,
     normalizedKey: canonicalFromQuestion || '',
@@ -237,6 +194,15 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
     rawTextPresent: Boolean(normalizeText(latestCache.rawText || '')),
     examDate: latestCache.examDate || ''
   });
+
+  if (/悪い値|危ない値|異常そう|問題ありそう|大丈夫そう/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildAbnormalItemsReply(p);
+  }
+  if (/数値全部|ぜんぶ教えて|全部.*教え|一覧.*数値|数値を.*並べ/.test(safe)) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildNaturalAllValuesReply(p);
+  }
 
   if (/読み取れた記録|他に読めたのは|他に読めた|拾えてる項目|他に(?:は)?読め/.test(safe)) {
     const p = syntheticPanelFromSession(shortMemory, latestCache);
@@ -275,13 +241,9 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
 
   const canonical = canonicalFromQuestion
     || (targetName ? labItemAliasService.normalizeLabCanonicalKey(targetName) : '');
-  if (!canonical || !ALLOWED_CANONICAL_KEYS.has(canonical)) {
-    console.info('[lab-qna] reject', {
-      reason: 'no_allowed_item_key_in_question',
-      question: safe,
-      normalizedKey: canonical || ''
-    });
-    return null;
+  if (!canonical) {
+    const p = syntheticPanelFromSession(shortMemory, latestCache);
+    return labFollowupService.buildReadableInventoryReply(p);
   }
 
   const resolved = await resolveCanonicalWithFallbacks(lineUserId, canonical, latestCache, sessionPanel);

@@ -233,19 +233,8 @@ function buildReadableInventoryReply(panel) {
     .filter(Boolean);
 
   const raw = normalizeText(panel?.rawText || '');
-  const fromMap = labItemAliasService.buildLabItemMapFromRawText(raw);
-  const mapLines = Object.entries(fromMap).map(([, entry]) => {
-    const label = normalizeText(entry?.label || entry?.rawLabel || '');
-    const v = normalizeText(entry?.value || '');
-    const u = entry?.unit ? ` ${entry.unit}` : '';
-    if (!label && !v) return '';
-    return `・${label || '項目'}: ${v}${u}`;
-  }).filter(Boolean);
 
   const merged = [...lines];
-  for (const ml of mapLines) {
-    if (!merged.some((x) => x === ml || x.replace(/\s/g, '') === ml.replace(/\s/g, ''))) merged.push(ml);
-  }
 
   const nameOnlyLines = [];
   for (const it of items) {
@@ -292,6 +281,25 @@ function buildReadableInventoryReply(panel) {
     return ['数値付きの項目はまだ抽出できていませんが、次の断片は拾えています:', ...hintLines].join('\n');
   }
   return [exam ? `検査日: ${exam}` : '検査日は確認中です。', '数値付きの項目はまだ抽出できていません。画像をもう一度送るか、紙の数値を書いてください。'].join('\n');
+}
+
+/** 数値一覧の依頼: JSON は出さず自然文のみ */
+function buildNaturalAllValuesReply(panel) {
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  const lines = [];
+  for (const it of items) {
+    const nm = normalizeText(it?.itemName || it?.name || '');
+    const v = normalizeText(it?.value || it?.currentValue || '');
+    if (!nm) continue;
+    const u = it.unit ? ` ${it.unit}` : '';
+    const f = it.flag ? ` ${it.flag}` : '';
+    if (v) lines.push(`・${nm}: ${v}${u}${f}`);
+    else lines.push(`・${nm}: 数値はこの画像ではまだ拾えきれていないみたい`);
+  }
+  if (lines.length) {
+    return ['この画像からうかがえる数値だけ、静かに並べるね。', ...lines.slice(0, 26)].join('\n');
+  }
+  return buildReadableInventoryReply(panel);
 }
 
 function buildExamDateQuickReply(panel) {
@@ -449,5 +457,6 @@ module.exports = {
   buildPrintDateReply,
   buildLatestDateReply,
   buildAbnormalItemsReply,
+  buildNaturalAllValuesReply,
   extractMetricFromRawText,
 };

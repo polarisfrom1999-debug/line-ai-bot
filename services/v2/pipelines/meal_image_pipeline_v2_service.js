@@ -5,8 +5,6 @@ const contextMemoryService = require('../../context_memory_service');
 const activeContextService = require('../../active_context_service');
 const mealCaptureRepository = require('../../../repositories/meal_capture_repository');
 
-const MEAL_IMAGE_CONFIDENCE_MIN = Number(process.env.KOKOKARA_MEAL_IMAGE_CONFIDENCE_MIN || 0.56) || 0.56;
-
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -57,9 +55,11 @@ function buildMealReply(meal) {
 async function handleMealImageV2({ input, imagePayload }) {
   const caption = normalizeText(input?.rawText || '');
   const meal = await mealAnalysisService.analyzeMealImage(imagePayload, input.userId, caption);
-  const conf = Number(meal?.confidence || 0);
-  if (!meal?.isMealImage || !Number.isFinite(conf) || conf < MEAL_IMAGE_CONFIDENCE_MIN) {
-    return { handled: false, reason: 'not_meal_like', analysis: meal || null };
+  if (!meal || typeof meal !== 'object') {
+    return { handled: false, reason: 'no_meal_analysis', analysis: null };
+  }
+  if (meal.isMealImage === false) {
+    return { handled: false, reason: 'gemini_not_meal_image', analysis: meal };
   }
 
   await contextMemoryService.saveShortMemory(input.userId, {

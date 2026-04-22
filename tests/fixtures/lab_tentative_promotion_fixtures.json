@@ -1,6 +1,6 @@
 {
   "real_image_unknown_shaped": {
-    "description": "v1 が非検査でも v2 行シグナルだけある実画像系（従来 unknown / not_lab_like になりやすい）",
+    "description": "Gemini 構造化で行だけ拾えているケース（isLabImage 未確定でも rows で受理）",
     "panel": {
       "isLabImage": false,
       "labLike": false,
@@ -13,36 +13,37 @@
       "printDate": "",
       "analysisConfidence": { "rows": 4, "v2_confidence": 0.15 }
     },
-    "expectedReasonIncludes": "table_like_rows"
+    "expectedAccept": true
   },
   "print_date_only": {
+    "description": "Gemini が検査帳票と判定したあと（フラグ真）で印刷日のみ",
     "panel": {
-      "isLabImage": false,
-      "labLike": false,
+      "isLabImage": true,
+      "labLike": true,
       "items": [],
       "rawText": "",
       "printDate": "2025-04-01"
     },
-    "expectedReasonIncludes": "print_date"
+    "expectedAccept": true
   },
   "raw_text_only": {
     "panel": {
-      "isLabImage": false,
-      "labLike": false,
+      "isLabImage": true,
+      "labLike": true,
       "items": [],
       "rawText": "血液検査の結果通知です"
     },
-    "expectedReasonIncludes": "raw_text_lab_lexicon"
+    "expectedAccept": true
   },
   "table_like_layout_only": {
     "panel": {
-      "isLabImage": false,
-      "labLike": false,
+      "isLabImage": true,
+      "labLike": true,
       "items": [],
       "rawText": "検査項目\t結果\t単位\t基準値\nLDL\t\tmg/dL\t-\nHDL\t\tmg/dL\t-\nAST\t\tU/L\t-\nALT\t\tU/L\t-",
       "analysisConfidence": { "rows": 0 }
     },
-    "expectedReasonIncludes": "table_like_raw"
+    "expectedAccept": true
   },
   "candidate_item_names_only": {
     "panel": {
@@ -54,17 +55,27 @@
       ],
       "rawText": ""
     },
-    "expectedReasonIncludes": "candidate_item_names"
+    "expectedAccept": true
   },
   "name_fragments_only": {
     "panel": {
-      "isLabImage": false,
-      "labLike": false,
+      "isLabImage": true,
+      "labLike": true,
       "items": [],
       "rawText": "",
       "patientName": "山田",
       "facilityName": "○○内科"
     },
-    "expectedReasonIncludes": "patient_name_fragment"
+    "expectedAccept": true
+  },
+  "gemini_rejects_non_lab": {
+    "panel": {
+      "isLabImage": false,
+      "labLike": false,
+      "items": [],
+      "rawText": "",
+      "analysisConfidence": { "rows": 0 }
+    },
+    "expectedAccept": false
   }
 }

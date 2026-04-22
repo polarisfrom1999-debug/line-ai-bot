@@ -1,15 +1,17 @@
 'use strict';
 
-const labTentativeEscalation = require('./lab_tentative_escalation_service');
+function normalizeText(value) {
+  return String(value || '').trim();
+}
 
 function summarizeLab(panel = {}) {
+  const geminiTentative = Boolean(
+    Number(panel?.analysisConfidence?.rows || 0) > 0
+    || normalizeText(panel?.rawText || '').length > 0
+  );
   return {
     isLabImageStrict: Boolean(panel?.isLabImage),
-    isLabImageTentative: Boolean(
-      panel?.labLike
-        || panel?.isLabImage
-        || labTentativeEscalation.getTentativePromotionSignals(panel).reasons.length > 0
-    ),
+    isLabImageTentative: Boolean(panel?.labLike || panel?.isLabImage || geminiTentative),
     examDate: panel?.latestExamDate || panel?.examDate || '',
     examDates: Array.isArray(panel?.examDates) ? panel.examDates.length : 0,
     itemCount: Array.isArray(panel?.items) ? panel.items.length : 0,

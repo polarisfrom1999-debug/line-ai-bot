@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 const fixtures = require('../tests/fixtures/lab_tentative_promotion_fixtures.json');
-const labTentative = require('../services/v2/lab_tentative_escalation_service');
+const labPipeline = require('../services/v2/pipelines/lab_image_pipeline_v2_service');
 const imageKindClassifier = require('../services/v2/image_kind_classifier_service');
 const labFollowup = require('../services/lab_followup_service');
 const followupQuery = require('../services/v2/queries/followup_query_service');
@@ -13,17 +13,16 @@ const activeContextResolver = require('../services/v2/active_context_resolver_se
 
 function assertFixture(name, entry) {
   const panel = entry.panel;
-  const { reasons } = labTentative.getTentativePromotionSignals(panel);
-  assert(
-    reasons.includes(entry.expectedReasonIncludes),
-    `${name}: expected reason "${entry.expectedReasonIncludes}" in [${reasons.join(', ')}]`
-  );
-  assert(
-    labTentative.shouldAcceptTentativeLabSession(panel),
-    `${name}: shouldAcceptTentativeLabSession`
-  );
-  const route = imageKindClassifier.classifyImageKind({ textHint: '', labPanel: panel, meal: { isMealImage: false } });
-  assert.strictEqual(route, 'lab', `${name}: routeKind should be lab, got ${route}`);
+  const got = labPipeline.shouldAcceptLabPanelFromGemini(panel);
+  assert.strictEqual(got, entry.expectedAccept !== false, `${name}: shouldAcceptLabPanelFromGemini`);
+  if (entry.expectedAccept !== false) {
+    const route = imageKindClassifier.classifyImageKind({
+      textHint: '',
+      labPanel: panel,
+      meal: { isMealImage: false },
+    });
+    assert.strictEqual(route, 'lab', `${name}: routeKind should be lab, got ${route}`);
+  }
 }
 
 function assertInventoryNonEmpty(panel, label) {
@@ -100,6 +99,19 @@ async function main() {
 
   const fragPanel = fixtures.name_fragments_only.panel;
   assertInventoryNonEmpty(fragPanel, 'name_fragments');
+
+  const allPanel = {
+    isLabImage: true,
+    labLike: true,
+    items: [
+      { itemName: 'LDL', value: '120', unit: 'mg/dL' },
+      { itemName: 'HDL', value: '61', unit: 'mg/dL' },
+    ],
+    rawText: '',
+  };
+  const allReply = labFollowup.buildNaturalAllValuesReply(allPanel);
+  assert(!/\{/.test(allReply), 'natural all values must not look like JSON');
+  assert(/LDL|120|HDL|61/.test(allReply), `all values reply: ${allReply}`);
 
   await runFollowupPhrases(printPanel, 'print_date_only');
   await runFollowupPhrases(rawPanel, 'raw_text_only');

@@ -3,7 +3,7 @@
 const assert = require('assert');
 const followupQuery = require('../services/v2/queries/followup_query_service');
 const mealFollowup = require('../services/v2/followups/meal_followup_resolver_service');
-const labTentative = require('../services/v2/lab_tentative_escalation_service');
+const labPipeline = require('../services/v2/pipelines/lab_image_pipeline_v2_service');
 
 async function runLabBroadChecks() {
   const input = { userId: 'smoke-user', messageType: 'text', rawText: '' };
@@ -28,17 +28,17 @@ async function runLabBroadChecks() {
 
 async function runLabTentativeZeroItemChecks() {
   const input = { userId: 'smoke-user-tent', messageType: 'text', rawText: '' };
-  const printOnlyPanel = { isLabImage: false, labLike: false, items: [], rawText: '', printDate: '2025-03-24' };
-  const rawOnlyPanel = { isLabImage: false, labLike: false, items: [], rawText: '血液検査のお知らせです' };
+  const printOnlyPanel = { isLabImage: true, labLike: true, items: [], rawText: '', printDate: '2025-03-24' };
+  const rawOnlyPanel = { isLabImage: true, labLike: true, items: [], rawText: '血液検査のお知らせです' };
   const candidateNamesPanel = {
     isLabImage: false,
     labLike: false,
     items: [{ itemName: 'AST', value: '', unit: '' }],
     rawText: '',
   };
-  assert(labTentative.shouldAcceptTentativeLabSession(printOnlyPanel), 'print_date → tentative');
-  assert(labTentative.shouldAcceptTentativeLabSession(rawOnlyPanel), 'raw_text → tentative');
-  assert(labTentative.shouldAcceptTentativeLabSession(candidateNamesPanel), 'candidate names → tentative');
+  assert(labPipeline.shouldAcceptLabPanelFromGemini(printOnlyPanel), 'gemini lab + print_date → accept');
+  assert(labPipeline.shouldAcceptLabPanelFromGemini(rawOnlyPanel), 'gemini lab + raw → accept');
+  assert(labPipeline.shouldAcceptLabPanelFromGemini(candidateNamesPanel), 'candidate item names → accept');
 
   const phrases = ['検査結果でわかるのある？', '他に読めたのは？', 'この結果どう見える？'];
   for (const panel of [printOnlyPanel, rawOnlyPanel, candidateNamesPanel]) {

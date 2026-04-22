@@ -2,24 +2,10 @@
 
 const classifierService = require('./lab_document_classifier_service');
 const extractService = require('./lab_structured_extract_service');
-const labImageAnalysisService = require('./lab_image_analysis_service');
 const labItemAliasService = require('./lab_item_alias_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
-}
-
-function detectFacilityName(rawText = '') {
-  const lines = normalizeText(rawText).split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-  const hit = lines.find((line) => /(病院|医院|クリニック|診療所|メディカル|センター)/.test(line));
-  return normalizeText(hit || '');
-}
-
-function detectPrintDate(rawText = '') {
-  const lines = normalizeText(rawText).split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-  const hit = lines.find((line) => /印刷日|発行日|出力日/.test(line));
-  if (!hit) return '';
-  return classifierService.normalizeDateToken(hit);
 }
 
 function detectPageInfo(rawText = '') {
@@ -133,16 +119,39 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
   const examDateEntries = buildExamDateEntries(extraction, rows);
   const structuredItems = buildStructuredItems(rows);
   const latestExamDate = examDateEntries[examDateEntries.length - 1]?.normalized_date || extraction?.latestExamDate || '';
-  const v1Fallback = await labImageAnalysisService.analyzeLabImage(imagePayload);
+  const isChatShot = classification?.documentType === 'chat_screenshot';
+  const geminiSaysDocument = Boolean(classification?.isLabDocument);
+  const hasStructuredRows = rows.length > 0;
+  const isLabImage = Boolean((geminiSaysDocument && !isChatShot) || hasStructuredRows);
+  const labLike = Boolean(isLabImage || hasStructuredRows);
+
+  const structuredJson = extraction?.rawPayload && typeof extraction.rawPayload === 'object'
+    ? extraction.rawPayload
+    : null;
+  const geminiRaw = {
+    classifier: {
+      isLabDocument: classification?.isLabDocument,
+      documentType: classification?.documentType,
+      confidence: classification?.confidence,
+      rawText: normalizeText(classification?.rawText || ''),
+    },
+    extraction: {
+      ok: Boolean(extraction?.ok),
+      documentType: extraction?.documentType || '',
+      confidence: extraction?.confidence,
+      rawText: normalizeText(extraction?.rawText || ''),
+      rowCount: rows.length,
+    },
+  };
 
   return {
     source: 'image',
     intakeKind: 'blood_test',
-    isLabImage: Boolean(v1Fallback?.isLabImage || v1Fallback?.labLike),
-    labLike: Boolean(v1Fallback?.labLike || v1Fallback?.isLabImage),
+    isLabImage,
+    labLike,
     patientName: normalizeText(extraction?.patientName || classification?.patientName || ''),
-    facilityName: detectFacilityName(rawText),
-    printDate: detectPrintDate(rawText),
+    facilityName: '',
+    printDate: normalizeText(classifierService.normalizeDateToken(classification?.reportDate || '')),
     pageInfo: detectPageInfo(rawText),
     examDate: latestExamDate,
     latestExamDate,
@@ -152,9 +161,16 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     itemsStructured: structuredItems,
     rawText: normalizeText(rawText),
     rawPayload: extraction?.rawPayload || null,
+    structuredJson,
+    geminiRaw,
+    geminiClassification: {
+      isLabDocument: Boolean(classification?.isLabDocument),
+      documentType: classification?.documentType || '',
+      confidence: Number(classification?.confidence || 0) || 0,
+    },
     analysisConfidence: {
       v2_confidence: Number(extraction?.confidence || 0) || 0,
-      v1_confidence: Number(v1Fallback?.confidence || 0) || 0,
+      classifier_confidence: Number(classification?.confidence || 0) || 0,
       rows: rows.length
     },
     sourceImageId: normalizeText(opts?.sourceImageId || '')
