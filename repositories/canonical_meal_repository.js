@@ -29,16 +29,19 @@ async function getLatestCanonicalMeal(lineUserId) {
       .maybeSingle();
     if (error || !data) return null;
     const raw = data.raw_model_json && typeof data.raw_model_json === 'object' ? data.raw_model_json : {};
+    const adopted = raw?.adoptedNutrition && typeof raw.adoptedNutrition === 'object'
+      ? raw.adoptedNutrition
+      : {};
     return {
       id: data.id || null,
       eatenAt: data.eaten_at || '',
       mealLabel: normalizeText(data.meal_label || '食事'),
       foodItems: Array.isArray(data.food_items) ? data.food_items.map((x) => normalizeText(x)).filter(Boolean) : [],
       adoptedNutrition: {
-        kcal: Number(data.estimated_kcal || 0),
-        protein: Number(data.protein_g || 0),
-        fat: Number(data.fat_g || 0),
-        carbs: Number(data.carbs_g || 0),
+        kcal: Number(adopted.kcal != null ? adopted.kcal : data.estimated_kcal || 0),
+        protein: Number(adopted.protein != null ? adopted.protein : data.protein_g || 0),
+        fat: Number(adopted.fat != null ? adopted.fat : data.fat_g || 0),
+        carbs: Number(adopted.carbs != null ? adopted.carbs : data.carbs_g || 0),
       },
       correction: raw?.correction && typeof raw.correction === 'object' ? raw.correction : null,
       rawModelJson: raw,

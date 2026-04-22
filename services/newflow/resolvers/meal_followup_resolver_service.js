@@ -17,14 +17,14 @@ function resolveCanonicalMealFollowup(text, canonicalMeal = null) {
   if (/カロリー|kcal|何キロカロリー/.test(safeText)) {
     return {
       intentType: 'newflow_meal_followup',
-      replyText: `直近の食事「${normalizeText(canonicalMeal.mealLabel || '食事')}」は約${round1(canonicalMeal?.adoptedNutrition?.kcal || 0)} kcalです。`
+      replyText: `今確認できる範囲では、直近の食事「${normalizeText(canonicalMeal.mealLabel || '食事')}」は約${round1(canonicalMeal?.adoptedNutrition?.kcal || 0)} kcalです。`
     };
   }
   if (/補正|修正|半分|食べてない|0kcal|ゼロ/.test(safeText) && canonicalMeal?.correction) {
     const mode = normalizeText(canonicalMeal?.correction?.mode || '補正');
     return {
       intentType: 'newflow_meal_followup',
-      replyText: `直近の食事には「${mode}」補正が反映されています。必要なら同じ画像を再送して追加補正できます。`
+      replyText: `今確認できる範囲では、直近の食事に「${mode}」補正が反映されています。必要なら同じ画像を再送して追加補正できます。`
     };
   }
   return null;

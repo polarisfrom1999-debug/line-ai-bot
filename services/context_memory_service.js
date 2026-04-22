@@ -623,6 +623,12 @@ async function adjustLastMealNutrition(lineUserId, adjust = {}) {
     after: next,
     componentName: componentName || normalizeString(adjust.componentName || '')
   };
+  raw.adoptedNutrition = {
+    kcal: Number(next.kcal || 0),
+    protein: Number(next.protein || 0),
+    fat: Number(next.fat || 0),
+    carbs: Number(next.carbs || 0)
+  };
 
   try {
     const { error } = await supabase

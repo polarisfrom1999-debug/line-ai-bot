@@ -5,7 +5,7 @@ function buildTtlExpiredReply() {
 }
 
 function buildCanonicalInsufficientReply() {
-  return '手元の記録だけでは確認しきれないため、もう一度画像を送ってください。';
+  return '今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。';
 }
 
 function buildLabGenericReply() {

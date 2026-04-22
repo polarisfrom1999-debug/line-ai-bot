@@ -3,6 +3,7 @@
 const contextMemoryService = require('../../context_memory_service');
 const mealLogQueryService = require('../../meal_log_query_service');
 const mealCaptureRepository = require('../../../repositories/meal_capture_repository');
+const canonicalMealRepository = require('../../../repositories/canonical_meal_repository');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -43,6 +44,25 @@ async function buildTodayTotals(userId) {
   return { count: Number(agg?.count || 0), kcal: Number(agg?.kcal || 0) };
 }
 
+function isClose(a, b, eps = 0.11) {
+  return Math.abs(Number(a || 0) - Number(b || 0)) <= eps;
+}
+
+async function verifyCanonicalAfterAdjust(userId, expectedAfter = {}) {
+  const canonical = await canonicalMealRepository.getLatestCanonicalMeal(userId).catch(() => null);
+  if (!canonical?.id) return { ok: false, reason: 'canonical_not_found' };
+  const actual = canonical?.adoptedNutrition || {};
+  const ok = isClose(actual.kcal, expectedAfter.kcal)
+    && isClose(actual.protein, expectedAfter.protein)
+    && isClose(actual.fat, expectedAfter.fat)
+    && isClose(actual.carbs, expectedAfter.carbs);
+  return {
+    ok,
+    reason: ok ? '' : 'canonical_read_after_write_mismatch',
+    canonical
+  };
+}
+
 async function resolveMealFollowupFromSession({ input, text, activeContext }) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe || !/^meal_/.test(normalizeText(activeContext?.type || ''))) return null;
@@ -57,6 +77,10 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
       componentName
     }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
+    const canonicalCheck = await verifyCanonicalAfterAdjust(input.userId, res.after || {});
+    if (!canonicalCheck.ok) {
+      return { intentType: 'meal_followup_correction', replyText: '補正を反映中です。結果を確定するため、もう一度同じ補正を送ってください。' };
+    }
     await appendCorrectionEvent(input.userId, {
       correction: 'component_zero',
       componentName: componentName || '',
@@ -80,6 +104,10 @@ async function resolveMealFollowupFromSession({ input, text, activeContext }) {
       componentName
     }).catch((error) => ({ ok: false, reason: error?.message || 'adjust_exception' }));
     if (!res?.ok) return { intentType: 'meal_followup_correction', replyText: '補正対象の食事を特定できませんでした。' };
+    const canonicalCheck = await verifyCanonicalAfterAdjust(input.userId, res.after || {});
+    if (!canonicalCheck.ok) {
+      return { intentType: 'meal_followup_correction', replyText: '補正を反映中です。結果を確定するため、もう一度同じ補正を送ってください。' };
+    }
     await appendCorrectionEvent(input.userId, {
       correction: 'component_ratio',
       ratio: 0.5,

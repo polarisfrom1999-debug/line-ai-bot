@@ -19,7 +19,7 @@ function looksLikeGeneralConversation(text) {
 function inferDomainFromText(text) {
   const safe = normalizeText(text);
   if (!safe) return 'unknown';
-  if (/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|採血|印刷日|異常)/i.test(safe)) return 'lab';
+  if (/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|採血|印刷日|異常|変化|推移)/i.test(safe)) return 'lab';
   if (/(食事|麺|カロリー|半分|食べてない|0kcal|削除できた|削除した|補正)/i.test(safe)) return 'meal';
   return 'unknown';
 }
