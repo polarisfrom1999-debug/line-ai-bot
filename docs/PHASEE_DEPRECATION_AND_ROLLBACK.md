@@ -69,3 +69,30 @@ Required fields:
 
 Run:
 - `npm run ops:phasee-daily-report`
+
+## 6) Migration apply and verification steps
+
+1. Apply migration SQL once:
+   - `sql/phasee_route_reachability_daily.sql`
+   - Apply in Supabase SQL Editor (or your DB migration pipeline).
+2. Verify migration (read-only):
+   - `npm run ops:phasee-verify-migration`
+3. Optional write verification:
+   - PowerShell: `$env:PHASEE_VERIFY_WRITE='1'; npm run ops:phasee-verify-migration`
+   - This inserts a one-off marker row to confirm write access.
+
+## 7) Daily operation playbook
+
+1. Ensure app is running with reachability tags enabled.
+2. Run daily report:
+   - `npm run ops:phasee-daily-report`
+3. Archive report output to operations log storage.
+4. Review fields per tag:
+   - `tag`
+   - `day`
+   - `count`
+   - `last_seen`
+   - `zero_day_count`
+   - `files`
+5. Only when `zero_day_count >= 14`, mark route as deletion candidate.
+6. Do not delete code in the same day as candidate marking; require review approval.
