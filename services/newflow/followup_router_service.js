@@ -33,6 +33,7 @@ function inferDomainFromText(text) {
 async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   const safeText = normalizeText(text || input?.rawText || '');
   if (!safeText || input?.messageType !== 'text') return null;
+  console.info('[phasee-new] new_followup_router_reached', { userId: input?.userId || '', text: safeText.slice(0, 60) });
 
   const status = await activeContextStoreService.getActiveContext(input?.userId);
   const active = status?.context;

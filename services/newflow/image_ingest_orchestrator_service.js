@@ -85,6 +85,7 @@ async function resolveImagePayload(input) {
 
 async function handleImageIngest({ input, textHint = '' } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
+  console.info('[phasee-new] new_image_ingress_reached', { userId: input?.userId || '', textHint: normalizeText(textHint).slice(0, 40) });
   const imagePayload = await resolveImagePayload(input);
   if (!imagePayload) {
     return {

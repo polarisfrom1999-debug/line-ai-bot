@@ -38,11 +38,14 @@ function toLabPanel(labSession) {
 
 async function getCanonicalLabPanel(userId) {
   const latest = await labSessionRepository.getLatestLabSession(userId).catch(() => null);
+  console.info('[phasee-new] canonical_lab_reached', { userId: normalizeText(userId), found: Boolean(latest?.id) });
   return toLabPanel(latest);
 }
 
 async function getCanonicalMeal(userId) {
-  return canonicalMealRepository.getLatestCanonicalMeal(userId);
+  const meal = await canonicalMealRepository.getLatestCanonicalMeal(userId);
+  console.info('[phasee-new] canonical_meal_reached', { userId: normalizeText(userId), found: Boolean(meal?.id) });
+  return meal;
 }
 
 module.exports = {

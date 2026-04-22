@@ -66,6 +66,7 @@ async function verifyCanonicalAfterAdjust(userId, expectedAfter = {}) {
 async function resolveMealFollowupFromSession({ input, text, activeContext }) {
   const safe = normalizeText(text || input?.rawText || '');
   if (!safe || !/^meal_/.test(normalizeText(activeContext?.type || ''))) return null;
+  console.info('[phasee-old] old_meal_correction_reached', { userId: input?.userId || '', text: safe.slice(0, 60) });
   const intent = detectMealCorrectionIntent(safe);
   if (!intent) return null;
   console.info('[v2-followup] correction_intent_resolved', { userId: input.userId, intent, text: safe.slice(0, 80) });

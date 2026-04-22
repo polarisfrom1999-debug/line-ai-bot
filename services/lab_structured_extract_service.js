@@ -259,6 +259,10 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     payload = dispatch?.json || {};
     rawText = sanitizeGeminiText(dispatch?.text || JSON.stringify(dispatch?.json || {}));
   } catch (dispatchError) {
+    console.info('[phasee-old] old_local_parser_reached', {
+      userId: normalizeText(meta?.userId || ''),
+      reason: 'structured_dispatch_failed'
+    });
     console.error('[lab_structured_extract_service] builder dispatch failed:', dispatchError?.message || dispatchError);
     const result = await geminiImageAnalysisService.analyzeImage({
       imagePayload,

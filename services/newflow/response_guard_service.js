@@ -25,9 +25,11 @@ function containsBlockedInternalText(text) {
 function guardReplyText(text) {
   const safe = normalizeText(text);
   if (!safe) return { blocked: false, text: '' };
+  console.info('[phasee-new] response_guard_reached', { blocked: false });
   if (!containsBlockedInternalText(safe)) {
     return { blocked: false, text: safe };
   }
+  console.info('[phasee-new] response_guard_reached', { blocked: true, sample: safe.slice(0, 80) });
   return { blocked: true, text: SAFE_FALLBACK };
 }
 

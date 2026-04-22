@@ -19,6 +19,7 @@ function isIntentCompatibleWithContext(contextType, intentType) {
 async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   const safe = normalizeText(text || input?.rawText || '').replace(/？/g, '?');
   if (!safe || input?.messageType !== 'text') return null;
+  console.info('[phasee-old] old_followup_reached', { userId: input?.userId || '', text: safe.slice(0, 60) });
 
   const status = await activeContextService.getActiveContextStatus(input.userId, shortMemory).catch(() => ({ context: null, expired: false }));
   if (status?.expired) {
@@ -34,6 +35,7 @@ async function resolveFollowupV2({ input, text, shortMemory = {} }) {
   const activeReply = await activeContextResolver.resolveActiveContextFollowup({ input, text: safe, shortMemory });
   if (activeReply?.replyText) {
     if (!isIntentCompatibleWithContext(active.type, activeReply.intentType || '')) {
+      console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'context_response_mismatch' });
       console.error('[v2-error] reason=context_response_mismatch fallback=domain_guard_block', {
         userId: input.userId,
         context_type: active.type,

@@ -53,6 +53,7 @@ async function applyPersistenceRetryState(userId, intentType, replyText, persist
     updatedAt: new Date().toISOString()
   };
   await contextMemoryService.saveShortMemory(userId, { imagePersistenceRetry: nextRetry }).catch(() => null);
+  console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'image_unclassified' });
   return {
     replyText: `${replyText || ''}${buildRetrySuffix(nextCount, intentType)}`.trim(),
     retry: { count: nextCount, confirmed: false }
@@ -61,6 +62,7 @@ async function applyPersistenceRetryState(userId, intentType, replyText, persist
 
 async function handleImageIngressV2({ input, textHint = '' } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
+  console.info('[phasee-old] old_image_ingress_reached', { userId: input?.userId || '', messageType: input?.messageType || '' });
 
   let ingested = null;
   if (input?.webImagePayload?.buffer) {
@@ -77,6 +79,7 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
     ingested = await imageIngestService.ingestLineImage(input);
   }
   if (!ingested?.ok) {
+    console.info('[phasee-old] old_reject_first_path', { userId: input?.userId || '', reason: 'image_ingest_failed' });
     return {
       handled: true,
       intentType: 'image_ingest_ng',
@@ -181,6 +184,9 @@ async function handleImageIngressV2({ input, textHint = '' } = {}) {
   }
 
   return {
+    // 旧 reject-first 系の終端（分類不能時）
+    // 新本流切替後にここがゼロ到達なら削除候補化
+    // （運用可視化のためログを残す）
     handled: true,
     intentType: 'image_unclassified',
     replyText: '画像を受け取りました。食事画像か血液検査画像かを一言添えて再送していただけると判定しやすくなります。'
