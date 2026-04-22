@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 const followupQuery = require('../services/v2/queries/followup_query_service');
-const mealFollowup = require('../services/v2/followups/meal_followup_resolver_service');
+const mealFollowup = require('../services/newflow/meal_correction_service');
 const labPipeline = require('../services/v2/pipelines/lab_image_pipeline_v2_service');
 
 async function runLabBroadChecks() {

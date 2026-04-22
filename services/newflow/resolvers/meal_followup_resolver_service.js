@@ -1,6 +1,6 @@
 'use strict';
 
-const v2MealFollowupResolver = require('../../v2/followups/meal_followup_resolver_service');
+const mealCorrectionService = require('../meal_correction_service');
 const responseBuilderService = require('../response_builder_service');
 
 function normalizeText(value) {
@@ -32,12 +32,15 @@ function resolveCanonicalMealFollowup(text, canonicalMeal = null) {
 
 async function resolveMealFollowup({ input, text, activeContext }) {
   const safeText = normalizeText(text || input?.rawText || '');
-  const mealReply = await v2MealFollowupResolver.resolveMealFollowupFromSession({
+  const mealReply = await mealCorrectionService.resolveMealFollowupFromSession({
     input,
     text: safeText,
     activeContext,
   });
   if (mealReply?.replyText) return mealReply;
+  if (mealReply?.intentType === 'newflow_meal_route_to_correction') {
+    return { intentType: 'newflow_meal_route_to_correction', replyText: '了解です。続けて操作内容を送ってください。' };
+  }
   return { intentType: 'newflow_meal_followup', replyText: responseBuilderService.buildMealGenericReply() };
 }
 

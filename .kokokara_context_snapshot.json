@@ -1102,6 +1102,81 @@
         "completedSteps": [],
         "answers": {}
       }
+    },
+    "line-final-1776899999926": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776900006994_7jp7jj",
+        "text": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T23:20:06.995Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-corr-1776900019348": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776900019963_lybbbk",
+        "text": "補正対象の食事を特定できませんでした。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-22T23:20:19.963Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-corr-1776900047507": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776900048620_eezx4k",
+        "text": "補正対象の食事を特定できませんでした。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-22T23:20:48.620Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -1829,6 +1904,81 @@
       "selectedPlan": "",
       "onboardingCompleted": false,
       "height": ""
+    },
+    "line-final-1776899999926": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-corr-1776900019348": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-corr-1776900047507": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
     }
   },
   "userStateStore": {
@@ -2150,6 +2300,17 @@
       "recallStyle": "direct",
       "lastEmotionTone": "neutral",
       "updatedAt": "2026-04-22T16:00:21.033Z"
+    },
+    "line-final-1776899999926": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.3000000000000003,
+      "relationshipScore": 0.03,
+      "relationshipStage": "coach",
+      "totalTurns": 3,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T23:20:05.766Z"
     }
   },
   "recentMessageStore": {
@@ -3239,6 +3400,96 @@
         "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
         "messageId": "1776873621035_a18r3c",
         "createdAt": "2026-04-22T16:00:21.035Z"
+      }
+    ],
+    "line-final-1776899999926": [
+      {
+        "role": "user",
+        "content": "血液検査画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:03.083Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776900003083_9e2zla",
+        "createdAt": "2026-04-22T23:20:03.084Z"
+      },
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:04.195Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776900004195_0fbz1c",
+        "createdAt": "2026-04-22T23:20:04.195Z"
+      },
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:05.529Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776900005529_kaz8uu",
+        "createdAt": "2026-04-22T23:20:05.529Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:05.712Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776900005712_bgdhj4",
+        "createdAt": "2026-04-22T23:20:05.712Z"
+      },
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:06.994Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776900006994_7jp7jj",
+        "createdAt": "2026-04-22T23:20:06.994Z"
+      }
+    ],
+    "meal-corr-1776900019348": [
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:19.963Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776900019963_lybbbk",
+        "createdAt": "2026-04-22T23:20:19.963Z"
+      }
+    ],
+    "meal-corr-1776900047507": [
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T23:20:48.620Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776900048620_eezx4k",
+        "createdAt": "2026-04-22T23:20:48.620Z"
       }
     ]
   },

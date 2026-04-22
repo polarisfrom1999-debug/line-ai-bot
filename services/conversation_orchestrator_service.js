@@ -3118,15 +3118,17 @@ async function orchestrateConversation(input) {
           };
         }
       }
-      const topFollowup = await followupQueryV2Service.resolveFollowupV2({
-        input,
-        text,
-        shortMemory
-      });
-      if (topFollowup?.replyText) {
-        const topOut = await withSurfaceReply(input, topFollowup.replyText, { recentMessages, longMemory }, topFollowup.intentType || 'v2_followup_top');
-        await appendTurn(input.userId, input.rawText || '', topOut);
-        return { ok: true, replyMessages: [{ type: 'text', text: topOut }], internal: { intentType: topFollowup.intentType || 'v2_followup_top', responseMode: 'answer' } };
+      if (!archOn) {
+        const topFollowup = await followupQueryV2Service.resolveFollowupV2({
+          input,
+          text,
+          shortMemory
+        });
+        if (topFollowup?.replyText) {
+          const topOut = await withSurfaceReply(input, topFollowup.replyText, { recentMessages, longMemory }, topFollowup.intentType || 'v2_followup_top');
+          await appendTurn(input.userId, input.rawText || '', topOut);
+          return { ok: true, replyMessages: [{ type: 'text', text: topOut }], internal: { intentType: topFollowup.intentType || 'v2_followup_top', responseMode: 'answer' } };
+        }
       }
     }
     let intent = detectIntent(input, shortMemory);

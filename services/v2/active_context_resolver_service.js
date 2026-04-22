@@ -2,7 +2,7 @@
 
 const activeContextService = require('../active_context_service');
 const labFollowupService = require('../lab_followup_service');
-const mealFollowupResolverService = require('./followups/meal_followup_resolver_service');
+const mealCorrectionService = require('../newflow/meal_correction_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -46,7 +46,7 @@ async function resolveActiveContextFollowup({ input, text }) {
   }
 
   if (/^meal_/.test(type)) {
-    return mealFollowupResolverService.resolveMealFollowupFromSession({
+    return mealCorrectionService.resolveMealFollowupFromSession({
       input,
       text: safe,
       activeContext: active
