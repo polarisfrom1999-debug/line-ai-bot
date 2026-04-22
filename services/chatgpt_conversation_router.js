@@ -299,6 +299,18 @@ async function naturalizeResult(normalized, result) {
 
 async function routeConversation(input) {
   const normalized = normalizeConversationInput(input);
+  const arch = /^1|true|yes|on$/i.test(String(process.env.ENABLE_NEW_FLOW_ARCH || '').trim());
+  const imageIngest = /^1|true|yes|on$/i.test(String(process.env.ENABLE_NEW_FLOW_IMAGE_INGEST || '').trim()) || arch;
+  const imageFollowup = /^1|true|yes|on$/i.test(String(process.env.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP || '').trim()) || arch;
+  console.log('[NEW_FLOW_ACTIVE] router_entry', {
+    traceId: normalized.traceId,
+    userId: normalized.userId || '',
+    messageType: normalized.messageType,
+    arch,
+    imageIngest,
+    imageFollowup,
+    renderGitCommit: String(process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_SHA || '')
+  });
 
   if (!normalized.userId) {
     return naturalizeResult(normalized, {

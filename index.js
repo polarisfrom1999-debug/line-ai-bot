@@ -35,6 +35,26 @@ const assistantRepeatGuard = require('./services/assistant_repeat_guard');
 const sessionStateRepository = require('./repositories/session_state_repository');
 const responseGuardService = require('./services/newflow/response_guard_service');
 
+function buildNewFlowRuntimeStatus() {
+  const arch = runtimeFlag('ENABLE_NEW_FLOW_ARCH', featureFlags.ENABLE_NEW_FLOW_ARCH);
+  const imageIngest = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST) || arch;
+  const imageFollowup = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP) || arch;
+  const generalFollowup = runtimeFlag('ENABLE_NEW_FLOW_GENERAL_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_GENERAL_FOLLOWUP);
+  const responseGuard = runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD);
+  return {
+    arch,
+    imageIngest,
+    imageFollowup,
+    generalFollowup,
+    responseGuard,
+    renderService: String(process.env.RENDER_SERVICE_NAME || ''),
+    renderInstance: String(process.env.RENDER_INSTANCE_ID || ''),
+    renderGitCommit: String(process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_SHA || ''),
+    nodeEnv: String(process.env.NODE_ENV || ''),
+    bootAt: new Date().toISOString(),
+  };
+}
+
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!line || !token) return null;
@@ -448,6 +468,13 @@ async function handleEvent(event) {
     if (!event || event.type !== 'message') return;
 
     const input = normalizeEventInput(event);
+    const flow = buildNewFlowRuntimeStatus();
+    console.log('[NEW_FLOW_ACTIVE] webhook_event', {
+      traceId: input.traceId,
+      userId: input.userId || '',
+      messageType: input.messageType,
+      ...flow
+    });
     const gatewayResult = await inputGatewayService.handleLineTopLevel(input);
     const rawResult = gatewayResult?.handled
       ? { ok: true, replyMessages: gatewayResult.replyMessages, internal: gatewayResult.internal || {} }
@@ -494,13 +521,15 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
+  const flow = buildNewFlowRuntimeStatus();
   res.status(200).json({
     ok: true,
     service: 'kokokara-line-ai',
     version: 'phase12-root-rebuild',
     time: new Date().toISOString(),
     lineSdkLoaded: Boolean(line),
-    hasAccessToken: Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN)
+    hasAccessToken: Boolean(process.env.LINE_CHANNEL_ACCESS_TOKEN),
+    newFlow: flow
   });
 });
 
@@ -524,6 +553,7 @@ app.post('/webhook', async (req, res) => {
 const port = Number(process.env.PORT || 10000);
 app.listen(port, () => {
   console.log(`server listening on ${port}`);
+  console.log('[NEW_FLOW_ACTIVE] startup', buildNewFlowRuntimeStatus());
   sessionStateRepository.verifySessionStateSchema()
     .then((result) => {
       if (result?.ok) {
