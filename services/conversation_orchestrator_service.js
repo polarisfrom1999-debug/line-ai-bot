@@ -52,6 +52,9 @@ const mealLogQueryService = require('./meal_log_query_service');
 const activeContextService = require('./active_context_service');
 const imageIngressV2Service = require('./v2/image_ingress_v2_service');
 const followupQueryV2Service = require('./v2/queries/followup_query_service');
+const newFlowImageIngestService = require('./newflow/image_ingest_orchestrator_service');
+const newFlowFollowupRouterService = require('./newflow/followup_router_service');
+const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -64,6 +67,12 @@ const MAX_PENDING_IMAGE_PERSIST_BYTES = 900 * 1024;
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function runtimeFlag(name, fallbackValue) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return Boolean(fallbackValue);
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
 }
 
 function clampScore(value) {
@@ -2132,7 +2141,10 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
     intentType: intentType || 'surface',
     messageType: input?.messageType || 'text'
   });
-  return replyIntegrityService.softenCantDoStatements(polished);
+  const softened = replyIntegrityService.softenCantDoStatements(polished);
+  if (!runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD)) return softened;
+  const guarded = responseGuardService.guardReplyText(softened);
+  return guarded?.text || softened;
 }
 
 async function polishReplyMessage(input, replyMessage, ctx, intentType) {
@@ -3073,6 +3085,24 @@ async function orchestrateConversation(input) {
 
     const text = normalizeText(input.rawText || '');
     if (input?.messageType === 'text') {
+      const imageFollowupOn = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP);
+      const generalFollowupOn = runtimeFlag('ENABLE_NEW_FLOW_GENERAL_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_GENERAL_FOLLOWUP);
+      if (imageFollowupOn || generalFollowupOn) {
+        const newFlowFollowup = await newFlowFollowupRouterService.resolveFollowup({
+          input,
+          text,
+          imageFollowupOnly: !generalFollowupOn
+        });
+        if (newFlowFollowup?.replyText) {
+          const topOut = await withSurfaceReply(input, newFlowFollowup.replyText, { recentMessages, longMemory }, newFlowFollowup.intentType || 'newflow_followup');
+          await appendTurn(input.userId, input.rawText || '', topOut);
+          return {
+            ok: true,
+            replyMessages: [{ type: 'text', text: topOut }],
+            internal: { intentType: newFlowFollowup.intentType || 'newflow_followup', responseMode: 'answer' }
+          };
+        }
+      }
       const topFollowup = await followupQueryV2Service.resolveFollowupV2({
         input,
         text,
@@ -3259,6 +3289,20 @@ async function orchestrateConversation(input) {
     }
 
     if (input?.messageType === 'image') {
+      const imageIngestOn = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST);
+      if (imageIngestOn) {
+        const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text });
+        if (newFlowImage?.handled) {
+          const tag = normalizeText(newFlowImage.intentType || 'newflow_image');
+          const surfaced = await withSurfaceReply(input, newFlowImage.replyText, { recentMessages, longMemory }, tag);
+          await appendTurn(input.userId, input.rawText || '[image]', surfaced);
+          return {
+            ok: true,
+            replyMessages: [{ type: 'text', text: surfaced }],
+            internal: { intentType: tag, responseMode: 'record' }
+          };
+        }
+      }
       const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text });
       if (ingressV2?.handled) {
         const tag = normalizeText(ingressV2.intentType || 'image_v2');

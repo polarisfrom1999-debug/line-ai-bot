@@ -33,6 +33,7 @@ const webRouter = require('./routes/web');
 const featureFlags = require('./config/feature_flags');
 const assistantRepeatGuard = require('./services/assistant_repeat_guard');
 const sessionStateRepository = require('./repositories/session_state_repository');
+const responseGuardService = require('./services/newflow/response_guard_service');
 
 function buildLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -51,13 +52,22 @@ function sanitizeMessageText(text) {
   return safe.length <= 4900 ? safe : `${safe.slice(0, 4890)}…`;
 }
 
+function runtimeFlag(name, fallbackValue) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return Boolean(fallbackValue);
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
 function normalizeReplyMessages(messages) {
   if (!Array.isArray(messages)) return [];
   return messages
     .filter(Boolean)
     .map((message) => {
       if (message.type === 'text') {
-        return { ...message, text: sanitizeMessageText(message.text) };
+        const safeText = runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD)
+          ? responseGuardService.guardReplyText(sanitizeMessageText(message.text || '')).text
+          : sanitizeMessageText(message.text);
+        return { ...message, text: safeText };
       }
       return message;
     })
