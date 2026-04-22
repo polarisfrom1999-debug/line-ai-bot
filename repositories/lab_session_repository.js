@@ -15,12 +15,17 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function isMissingColumnError(error, columnName) {
+  const msg = normalizeText(error?.message || '');
+  return Boolean(columnName && new RegExp(`column.*${columnName}|Could not find the '${columnName}' column`, 'i').test(msg));
+}
+
 async function createLabSession(params = {}) {
   if (!supabase) return { ok: false, reason: 'missing_supabase' };
   const userId = normalizeText(params.userId);
   if (!userId) return { ok: false, reason: 'missing_user' };
   const now = new Date().toISOString();
-  const row = {
+  const baseRow = {
     user_id: userId,
     source_image_id: normalizeText(params.sourceImageId || ''),
     source_message_id: normalizeText(params.sourceMessageId || ''),
@@ -35,21 +40,34 @@ async function createLabSession(params = {}) {
     confidence: Number(params.confidence || 0) || 0,
     is_lab_image_strict: Boolean(params.isLabImageStrict),
     is_lab_image_tentative: Boolean(params.isLabImageTentative),
-    gemini_raw: params.geminiRaw != null ? params.geminiRaw : null,
-    structured_json: params.structuredJson != null ? params.structuredJson : null,
     created_at: now,
     updated_at: now,
     expires_at: params.expiresAt || null,
   };
+  const rowWithGemini = {
+    ...baseRow,
+    gemini_raw: params.geminiRaw != null ? params.geminiRaw : null,
+    structured_json: params.structuredJson != null ? params.structuredJson : null,
+  };
   try {
-    const { data, error } = await supabase
+    let insertRow = rowWithGemini;
+    let ins = await supabase
       .from('lab_sessions')
-      .insert(row)
+      .insert(insertRow)
       .select('id,user_id,status,created_at')
       .limit(1)
       .maybeSingle();
-    if (error || !data) return { ok: false, reason: normalizeText(error?.message || 'insert_failed') };
-    return { ok: true, session: data };
+    if (ins?.error && (isMissingColumnError(ins.error, 'gemini_raw') || isMissingColumnError(ins.error, 'structured_json'))) {
+      insertRow = baseRow;
+      ins = await supabase
+        .from('lab_sessions')
+        .insert(insertRow)
+        .select('id,user_id,status,created_at')
+        .limit(1)
+        .maybeSingle();
+    }
+    if (ins?.error || !ins?.data) return { ok: false, reason: normalizeText(ins?.error?.message || 'insert_failed') };
+    return { ok: true, session: ins.data };
   } catch (error) {
     return { ok: false, reason: normalizeText(error?.message || 'insert_failed') };
   }
@@ -60,15 +78,24 @@ async function getLatestLabSession(userId) {
   const safeUserId = normalizeText(userId);
   if (!safeUserId) return null;
   try {
-    const { data, error } = await supabase
+    let q = await supabase
       .from('lab_sessions')
       .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at')
       .eq('user_id', safeUserId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error || !data) return null;
-    return data;
+    if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
+      q = await supabase
+        .from('lab_sessions')
+        .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at')
+        .eq('user_id', safeUserId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    }
+    if (q?.error || !q?.data) return null;
+    return q.data;
   } catch (_error) {
     return null;
   }

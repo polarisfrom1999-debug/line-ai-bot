@@ -75,6 +75,11 @@ function runtimeFlag(name, fallbackValue) {
   return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
 }
 
+function resolveNewFlowToggle(name, fallbackValue, archEnabled) {
+  if (archEnabled) return true;
+  return runtimeFlag(name, fallbackValue);
+}
+
 function clampScore(value) {
   return Math.min(10, Math.max(1, Number(value || 5)));
 }
@@ -3084,8 +3089,9 @@ async function orchestrateConversation(input) {
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
     const text = normalizeText(input.rawText || '');
+    const archOn = runtimeFlag('ENABLE_NEW_FLOW_ARCH', featureFlags.ENABLE_NEW_FLOW_ARCH);
     if (input?.messageType === 'text') {
-      const imageFollowupOn = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP);
+      const imageFollowupOn = resolveNewFlowToggle('ENABLE_NEW_FLOW_IMAGE_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP, archOn);
       const generalFollowupOn = runtimeFlag('ENABLE_NEW_FLOW_GENERAL_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_GENERAL_FOLLOWUP);
       if (imageFollowupOn || generalFollowupOn) {
         const newFlowFollowup = await newFlowFollowupRouterService.resolveFollowup({
@@ -3100,6 +3106,15 @@ async function orchestrateConversation(input) {
             ok: true,
             replyMessages: [{ type: 'text', text: topOut }],
             internal: { intentType: newFlowFollowup.intentType || 'newflow_followup', responseMode: 'answer' }
+          };
+        }
+        if (imageFollowupOn && !generalFollowupOn && newFlowFollowup?.blockLegacyFollowup) {
+          const guardedOut = await withSurfaceReply(input, newFlowFollowup.replyText || '前の画像の続きとして扱うため、もう一度目的を短く送ってください。', { recentMessages, longMemory }, 'newflow_followup_block_legacy');
+          await appendTurn(input.userId, input.rawText || '', guardedOut);
+          return {
+            ok: true,
+            replyMessages: [{ type: 'text', text: guardedOut }],
+            internal: { intentType: 'newflow_followup_block_legacy', responseMode: 'answer' }
           };
         }
       }
@@ -3289,9 +3304,14 @@ async function orchestrateConversation(input) {
     }
 
     if (input?.messageType === 'image') {
-      const imageIngestOn = runtimeFlag('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST);
+      const imageIngestOn = resolveNewFlowToggle('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST, archOn);
       if (imageIngestOn) {
-        const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text });
+        const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text }).catch((error) => ({
+          handled: true,
+          intentType: 'newflow_image_error',
+          replyText: '画像の処理で一時的な問題がありました。もう一度同じ画像を送ってください。',
+          error: String(error?.message || error || 'unknown')
+        }));
         if (newFlowImage?.handled) {
           const tag = normalizeText(newFlowImage.intentType || 'newflow_image');
           const surfaced = await withSurfaceReply(input, newFlowImage.replyText, { recentMessages, longMemory }, tag);
@@ -3302,6 +3322,14 @@ async function orchestrateConversation(input) {
             internal: { intentType: tag, responseMode: 'record' }
           };
         }
+        // 新本流ON時は旧image ingressへフォールバックしない
+        const hardStopOut = await withSurfaceReply(input, '画像の処理結果を確定できませんでした。もう一度同じ画像を送ってください。', { recentMessages, longMemory }, 'newflow_image_hard_stop');
+        await appendTurn(input.userId, input.rawText || '[image]', hardStopOut);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: hardStopOut }],
+          internal: { intentType: 'newflow_image_hard_stop', responseMode: 'answer' }
+        };
       }
       const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text });
       if (ingressV2?.handled) {

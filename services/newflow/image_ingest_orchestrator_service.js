@@ -99,20 +99,29 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '画像の取得に失敗しました。もう一度送ってください。'
     };
   }
-  const domain = decideImageDomain({ textHint });
-  if (domain === 'unknown') {
+  const selectedDomain = decideImageDomain({ textHint });
+  if (selectedDomain === 'unknown') {
+    console.info('[v2-image] route_selected', { userId: input.userId, routeKind: 'unknown', domain: 'unknown' });
     return {
       handled: true,
       intentType: 'newflow_image_unknown',
       replyText: '画像を受け取りました。食事画像か血液検査画像かを一言添えて送ってください。'
     };
   }
-  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: domain, domain });
+  console.info('[v2-image] route_selected', { userId: input.userId, routeKind: selectedDomain, domain: selectedDomain });
 
-  if (domain === 'meal') {
+  if (selectedDomain === 'meal') {
     const meal = await mealAnalysisService.analyzeMealImage(imagePayload, input.userId, normalizeText(textHint));
     if (!meal || meal?.isMealImage === false) {
       return { handled: true, intentType: 'newflow_meal_image_ng', replyText: '食事画像として判定できませんでした。食事の写真なら「食事」と添えて再送してください。' };
+    }
+    const canonicalSaved = await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input)).catch(() => false);
+    if (!canonicalSaved) {
+      return {
+        handled: true,
+        intentType: 'newflow_meal_save_pending',
+        replyText: '食事画像の解析はできましたが、保存確認が取れませんでした。もう一度同じ画像を送ってください。'
+      };
     }
     await activeContextStoreService.setActiveContext(input.userId, {
       domain: 'meal_image_session',
@@ -122,7 +131,6 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         meal
       }
     }).catch(() => null);
-    await contextMemoryService.addDailyRecord(input.userId, buildImageMealRecordPayload(meal, input)).catch(() => null);
     return { handled: true, intentType: 'newflow_meal_image', replyText: buildMealReply(meal) };
   }
 
@@ -131,15 +139,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   if (!lab || typeof lab !== 'object') {
     return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査結果画像なら「血液検査」と添えて再送してください。' };
   }
-  await activeContextStoreService.setActiveContext(input.userId, {
-    domain: 'lab_image_session',
-    payload: {
-      sourceImageId: normalizeText(imagePayload?.id || ''),
-      sourceMessageId: normalizeText(input?.messageId || ''),
-      labPanel: lab
-    }
-  }).catch(() => null);
-  await labSessionRepository.createLabSession({
+  const persist = await labSessionRepository.createLabSession({
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
     sourceMessageId: normalizeText(input?.messageId || ''),
@@ -156,6 +156,21 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     geminiRaw: lab?.geminiRaw || null,
     structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
     expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+  }).catch(() => ({ ok: false, reason: 'insert_exception' }));
+  if (!persist?.ok) {
+    return {
+      handled: true,
+      intentType: 'newflow_lab_save_pending',
+      replyText: '検査画像の解析はできましたが、保存確認が取れませんでした。もう一度同じ画像を送ってください。'
+    };
+  }
+  await activeContextStoreService.setActiveContext(input.userId, {
+    domain: 'lab_image_session',
+    payload: {
+      sourceImageId: normalizeText(imagePayload?.id || ''),
+      sourceMessageId: normalizeText(input?.messageId || ''),
+      labPanel: lab
+    }
   }).catch(() => null);
   return { handled: true, intentType: 'newflow_lab_image', replyText: buildLabReply(lab) };
 }

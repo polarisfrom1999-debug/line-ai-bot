@@ -877,6 +877,56 @@
         "createdAt": "2026-04-22T10:24:02.604Z",
         "expiresAt": "2026-04-22T12:24:02.604Z"
       }
+    },
+    "phasee-fix-1776863844004": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776863848628_03608n",
+        "text": "食事画像の続きとして扱います。「麺だけ0kcal」「半分食べた」「食べてない」のように指定してください。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-22T13:17:28.628Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "line-final-1776864279674": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776864287844_2fyqcm",
+        "text": "画像を受け取りました。食事画像か血液検査画像かを一言添えて送ってください。",
+        "sourceUserText": "[image]",
+        "at": "2026-04-22T13:24:47.846Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -1379,6 +1429,56 @@
       "selectedPlan": "",
       "onboardingCompleted": false,
       "height": ""
+    },
+    "phasee-fix-1776863844004": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "line-final-1776864279674": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
     }
   },
   "userStateStore": {
@@ -1601,6 +1701,28 @@
       "recallStyle": "direct",
       "lastEmotionTone": "neutral",
       "updatedAt": "2026-04-22T10:23:59.807Z"
+    },
+    "phasee-fix-1776863844004": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T13:17:25.543Z"
+    },
+    "line-final-1776864279674": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.3000000000000003,
+      "relationshipScore": 0.03,
+      "relationshipStage": "coach",
+      "totalTurns": 3,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-22T13:24:47.841Z"
     }
   },
   "recentMessageStore": {
@@ -2313,6 +2435,94 @@
         "messageId": "1776853442676_vp2ogh",
         "createdAt": "2026-04-22T10:24:02.676Z"
       }
+    ],
+    "phasee-fix-1776863844004": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:17:28.621Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776863848621_8orb6a",
+        "createdAt": "2026-04-22T13:17:28.621Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:17:28.628Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像の続きとして扱います。「麺だけ0kcal」「半分食べた」「食べてない」のように指定してください。",
+        "messageId": "1776863848628_03608n",
+        "createdAt": "2026-04-22T13:17:28.628Z"
+      }
+    ],
+    "line-final-1776864279674": [
+      {
+        "role": "user",
+        "content": "血液検査画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:24:45.729Z"
+      },
+      {
+        "role": "assistant",
+        "content": "血液検査画像として受け取りました。\n検査日は確認中です。\n「TGは？」「患者名は？」「異常がある項目は？」のように聞いてください。",
+        "messageId": "1776864285729_351kp9",
+        "createdAt": "2026-04-22T13:24:45.729Z"
+      },
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:24:45.742Z"
+      },
+      {
+        "role": "assistant",
+        "content": "中性脂肪 はこの画像からまだ特定しきれていません。まだ読める項目が増える可能性があるので、少し時間を置いてもう一度同じ項目名で聞いてください。",
+        "messageId": "1776864285742_vzy5kp",
+        "createdAt": "2026-04-22T13:24:45.743Z"
+      },
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:24:47.828Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 食事画像（仮推定）\n目安: 450 kcal / P 20g / F 12g / C 50g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776864287828_qr9ba5",
+        "createdAt": "2026-04-22T13:24:47.828Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:24:47.838Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像の続きとして扱います。「麺だけ0kcal」「半分食べた」「食べてない」のように指定してください。",
+        "messageId": "1776864287838_gmtrk0",
+        "createdAt": "2026-04-22T13:24:47.838Z"
+      },
+      {
+        "role": "user",
+        "content": "[image]",
+        "messageId": "",
+        "createdAt": "2026-04-22T13:24:47.844Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りました。食事画像か血液検査画像かを一言添えて送ってください。",
+        "messageId": "1776864287844_2fyqcm",
+        "createdAt": "2026-04-22T13:24:47.846Z"
+      }
     ]
   },
   "dailyRecordStore": {
@@ -2411,6 +2621,102 @@
       "exercises": [],
       "weights": [],
       "labs": []
+    },
+    "phasee-fix-1776863844004:2026-04-22": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-04-22",
+          "name": "食事画像（仮推定）",
+          "summary": "食事画像（仮推定）",
+          "items": [
+            "食事画像（仮推定）"
+          ],
+          "food_items": [
+            "食事画像（仮推定）"
+          ],
+          "estimatedNutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "kcal": 450,
+          "protein": 20,
+          "fat": 12,
+          "carbs": 50,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.72,
+          "comment": "記録を続けられているのが一番の強みです。",
+          "sourceLineMessageId": "m-1776863844004-1",
+          "dedupeKey": "msg:m-1776863844004-1",
+          "sourceImageHash": "m-1776863844004-1",
+          "raw_model_json": {
+            "correction": null,
+            "adoptedNutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "sourceLineMessageId": "m-1776863844004-1",
+            "dedupeKey": "msg:m-1776863844004-1"
+          },
+          "createdAt": "2026-04-22T13:17:27.736Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "line-final-1776864279674:2026-04-22": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-04-22",
+          "name": "食事画像（仮推定）",
+          "summary": "食事画像（仮推定）",
+          "items": [
+            "食事画像（仮推定）"
+          ],
+          "food_items": [
+            "食事画像（仮推定）"
+          ],
+          "estimatedNutrition": {
+            "kcal": 450,
+            "protein": 20,
+            "fat": 12,
+            "carbs": 50
+          },
+          "kcal": 450,
+          "protein": 20,
+          "fat": 12,
+          "carbs": 50,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.72,
+          "comment": "記録を続けられているのが一番の強みです。",
+          "sourceLineMessageId": "m-1776864285743-3",
+          "dedupeKey": "msg:m-1776864285743-3",
+          "sourceImageHash": "m-1776864285743-3",
+          "raw_model_json": {
+            "correction": null,
+            "adoptedNutrition": {
+              "kcal": 450,
+              "protein": 20,
+              "fat": 12,
+              "carbs": 50
+            },
+            "sourceLineMessageId": "m-1776864285743-3",
+            "dedupeKey": "msg:m-1776864285743-3"
+          },
+          "createdAt": "2026-04-22T13:24:47.374Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
     }
   },
   "weeklySurveyStore": {},
@@ -2424,7 +2730,9 @@
     "phasee-new-1776851882216": 1,
     "phasee-old-1776851886706": 1,
     "phasee-new-1776853435106": 1,
-    "phasee-old-1776853439638": 1
+    "phasee-old-1776853439638": 1,
+    "phasee-fix-1776863844004": 1,
+    "line-final-1776864279674": 1
   },
   "labHistoryStore": {}
 }

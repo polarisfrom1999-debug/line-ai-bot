@@ -45,7 +45,13 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   const hasActiveImageSession = Boolean(active?.domain && /_image_session$/.test(normalizeText(active.type || active.domain || '')));
   if (hasActiveImageSession) {
     const isGeneral = looksLikeGeneralConversation(safeText);
-    if (imageFollowupOnly && isGeneral) return null;
+    if (imageFollowupOnly && isGeneral) {
+      return {
+        intentType: 'newflow_followup_general_passthrough',
+        replyText: '',
+        blockLegacyFollowup: false
+      };
+    }
   }
 
   // 1) active session 有効なら session参照（最優先）
@@ -91,6 +97,13 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     const mealReply = resolveCanonicalMealFollowup(safeText, canonicalMeal);
     if (mealReply?.replyText) return mealReply;
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
+  }
+  if (imageFollowupOnly) {
+    return {
+      intentType: 'newflow_followup_block_legacy',
+      replyText: '前の画像の続きとして扱うため、確認したい項目を短く指定してください。',
+      blockLegacyFollowup: true
+    };
   }
   return null;
 }

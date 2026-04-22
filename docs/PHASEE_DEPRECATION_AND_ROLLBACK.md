@@ -74,10 +74,15 @@ Run:
 
 1. Apply migration SQL once:
    - `sql/phasee_route_reachability_daily.sql`
+   - `sql/phase_lab_sessions_gemini_columns.sql`
+   - `sql/phasee_lab_sessions_columns_guard.sql`
    - Apply in Supabase SQL Editor (or your DB migration pipeline).
 2. Verify migration (read-only):
    - `npm run ops:phasee-verify-migration`
-3. Optional write verification:
+3. Verify `lab_sessions` columns and schema cache:
+   - `select gemini_raw, structured_json from lab_sessions limit 1;`
+   - If column-not-found persists, refresh PostgREST schema cache in Supabase dashboard and re-run.
+4. Optional write verification:
    - PowerShell: `$env:PHASEE_VERIFY_WRITE='1'; npm run ops:phasee-verify-migration`
    - This inserts a one-off marker row to confirm write access.
 
