@@ -1,6 +1,9 @@
 'use strict';
 
 const classifier = require('./lab_document_classifier_service');
+const geminiDispatchService = require('./gemini_dispatch_service');
+const geminiImageAnalysisService = require('./gemini_image_analysis_service');
+const { buildLabMetaPrompt } = require('./lab_extract_prompt_builder_service');
 
 const DEFAULT_HIGH_CONFIDENCE = Number(process.env.LAB_META_HIGH_CONFIDENCE || 0.75);
 
@@ -124,15 +127,12 @@ function pickMetaValue(incomingValue, incomingConfidence, canonicalValue, highTh
   const canonical = normalizeText(canonicalValue);
   const conf = toConfidence(incomingConfidence, 0);
   if (!incoming) {
-    return { value: canonical, adopted: false, reason: 'incoming_empty', confidence: canonical ? conf : 0 };
+    return { value: canonical, adopted: false, source: 'empty_no_overwrite', confidence: canonical ? conf : 0 };
   }
   if (conf >= highThreshold) {
-    return { value: incoming, adopted: true, reason: 'incoming_high_confidence', confidence: conf };
+    return { value: incoming, adopted: true, source: 'incoming_high_confidence', confidence: conf };
   }
-  if (canonical) {
-    return { value: canonical, adopted: false, reason: 'incoming_low_keep_canonical', confidence: conf };
-  }
-  return { value: incoming, adopted: false, reason: 'incoming_low_no_canonical', confidence: conf };
+  return { value: canonical, adopted: false, source: canonical ? 'canonical_kept' : 'empty_no_overwrite', confidence: conf };
 }
 
 function mergeMetaWithCanonical({ extracted = {}, canonical = {}, highConfidenceThreshold = DEFAULT_HIGH_CONFIDENCE } = {}) {
@@ -158,11 +158,59 @@ function mergeMetaWithCanonical({ extracted = {}, canonical = {}, highConfidence
     facility_name_confidence: next.facility_name_confidence,
     print_date_confidence: next.print_date_confidence,
     adoption: {
-      patient_name: patient.reason,
-      facility_name: facility.reason,
-      print_date: printDate.reason,
+      patient_name: patient.source,
+      facility_name: facility.source,
+      print_date: printDate.source,
       high_confidence_threshold: highConfidenceThreshold,
     }
+  };
+}
+
+async function extractMetaFromImage(imagePayload, meta = {}) {
+  const promptSpec = buildLabMetaPrompt(meta);
+  let payload = {};
+  let rawText = '';
+  let source = 'prompt_json';
+  try {
+    const dispatch = await geminiDispatchService.generateStructuredImageJson({
+      imagePayload,
+      prompt: promptSpec.prompt,
+      schema: promptSpec.schema,
+      domain: promptSpec.domain,
+      model: promptSpec.preferredModel,
+      temperature: promptSpec.temperature,
+      maxOutputTokens: 1200
+    });
+    if (!dispatch?.ok) throw new Error(dispatch?.error?.message || 'meta_dispatch_failed');
+    payload = dispatch.json || {};
+    rawText = normalizeText(dispatch.text || '');
+  } catch (_error) {
+    source = 'raw_text_fallback';
+    const fallback = await geminiImageAnalysisService.analyzeImage({
+      imagePayload,
+      prompt: promptSpec.prompt,
+      model: promptSpec.preferredModel
+    }).catch(() => null);
+    rawText = normalizeText(fallback?.text || '');
+    payload = {};
+  }
+  const fromPrompt = fromExtractionPayload(payload);
+  const fromText = rescueMetaFromText(rawText);
+  return {
+    source,
+    promptVersion: promptSpec.promptVersion,
+    fromPrompt,
+    fromText,
+    mergedDraft: {
+      patient_name: normalizeText(fromPrompt.patient_name || fromText.patient_name),
+      facility_name: normalizeText(fromPrompt.facility_name || fromText.facility_name),
+      print_date: normalizeDate(fromPrompt.print_date || fromText.print_date),
+      patient_name_confidence: Math.max(toConfidence(fromPrompt.patient_name_confidence), toConfidence(fromText.patient_name_confidence)),
+      facility_name_confidence: Math.max(toConfidence(fromPrompt.facility_name_confidence), toConfidence(fromText.facility_name_confidence)),
+      print_date_confidence: Math.max(toConfidence(fromPrompt.print_date_confidence), toConfidence(fromText.print_date_confidence)),
+    },
+    rawText,
+    rawPayload: payload
   };
 }
 
@@ -172,5 +220,6 @@ module.exports = {
   fromExtractionPayload,
   rescueMetaFromText,
   mergeMetaWithCanonical,
+  extractMetaFromImage,
 };
 

@@ -82,6 +82,51 @@ function buildLabExtractPrompt(meta = {}) {
   };
 }
 
+function buildLabMetaPrompt(meta = {}) {
+  const schema = {
+    type: 'object',
+    properties: {
+      patient_name: { type: 'string' },
+      patient_name_confidence: { type: 'number' },
+      facility_name: { type: 'string' },
+      facility_name_confidence: { type: 'number' },
+      print_date: { type: 'string' },
+      print_date_confidence: { type: 'number' },
+      missing_reason: { type: 'string' }
+    },
+    required: [
+      'patient_name',
+      'patient_name_confidence',
+      'facility_name',
+      'facility_name_confidence',
+      'print_date',
+      'print_date_confidence',
+      'missing_reason'
+    ]
+  };
+
+  const prompt = [
+    'あなたは血液検査票のメタ情報抽出担当です。返答はJSONのみ。',
+    '抽出対象は patient_name, facility_name, print_date の3項目のみ。',
+    '検査項目値(data行)は一切出力しないでください。',
+    '各項目について confidence(0-1) を必ず返してください。',
+    'print_date は YYYY-MM-DD または空文字。',
+    '読めない項目は空文字、confidenceは0、missing_reasonに理由を記載。',
+    `補助 document_type: ${meta.documentType || 'unknown'}`,
+    `補助 report_date: ${meta.reportDate || ''}`,
+  ].join('\n');
+
+  return {
+    domain: 'lab_meta',
+    promptVersion: 'lab_meta_extract_v1',
+    schema,
+    prompt,
+    temperature: 0,
+    preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  };
+}
+
 module.exports = {
-  buildLabExtractPrompt
+  buildLabExtractPrompt,
+  buildLabMetaPrompt
 };
