@@ -438,6 +438,74 @@ function shouldHandleSaveAll(text) {
   return /全部保存|読み取れた日付を全部保存|日付を全部保存|まとめて保存/.test(normalizeText(text));
 }
 
+const RESEND_PROMPT = '採血結果がもう少し大きく・まっすぐ写るよう、同じ用紙でもう一度送ってもらえると助かります。';
+
+/**
+ * 患者名・医療機関を1つの自然文で（新本流 follow 用）
+ */
+function buildPatientAndClinicReply(panel) {
+  const p = normalizeText(panel?.patientName || panel?.patient_name || '');
+  const f = normalizeText(panel?.facilityName || panel?.facility_name || '');
+  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const lead = '今確認できる範囲では、';
+  if (p && f) {
+    return `${lead}患者名は「${p}」、医療機関は「${f}」のようです。${printDate ? ` 用紙の日付欄の候補に ${printDate} が見えています。` : ''}`;
+  }
+  if (p) return `${lead}患者名は「${p}」のようです。医療機関名の欄は、まだはっきり読めていないです。${printDate ? ` 日付欄の断片: ${printDate}。` : ''}`;
+  if (f) return `${lead}医療機関は「${f}」のようです。患者名の欄は、まだはっきり読めていないです。`;
+  return `患者名と医療機関名の欄は、いまの写りだと取りにくいです。${RESEND_PROMPT}`;
+}
+
+/**
+ * 検査日・印刷日（日付系の短文 follow）
+ */
+function buildDateFollowupNaturalReply(panel) {
+  const body = buildExamDateQuickReply(panel);
+  if (!/まだ|入っていません|送って|書いて|パネルに/.test(body)) return body;
+  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const exam = normalizeText(panel?.latestExamDate || panel?.examDate || '');
+  if (printDate) return `採血日（検査日）の行がまだはっきりしない一方で、用紙の日付欄の候補として ${printDate} という日付の断片を拾っています。同じ用紙でもう少し上から写すと、日付が定かになりやすいです。`;
+  if (exam) return `記録上は ${exam} 寄りの行が見えています。画像がさらに鮮明であれば、採血日の確定もしやすくなります。`;
+  return `検査日が写真からまだ定かに読み切れていません。${RESEND_PROMPT}`;
+}
+
+/**
+ * 読めた項目の要約（内部語を避け、箇条書き中心）
+ */
+function buildGentleReadableSummaryReply(panel) {
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  const withVal = items
+    .map((it) => {
+      const nm = normalizeText(it?.itemName || '');
+      const v = normalizeText(it?.value || it?.currentValue || '');
+      if (!nm) return null;
+      if (v) return { nm, v, u: normalizeText(it?.unit || ''), f: normalizeText(it?.flag || '') };
+      return null;
+    })
+    .filter(Boolean);
+  if (withVal.length) {
+    const lines = withVal.slice(0, 20).map((r) => {
+      const u = r.u ? ` ${r.u}` : '';
+      const f = r.f ? `（${r.f}）` : '';
+      return `・${r.nm}: ${r.v}${u}${f}`;
+    });
+    return `読み取れる範囲の数値としては、\n${lines.join('\n')}\n他にも枠の端などにまだ出てくる可能性はあります。`;
+  }
+  return buildReadableInventoryReply(panel);
+}
+
+/**
+ * 悪い値（H/L 付き）用の要約
+ */
+function buildGentleAbnormalReply(panel) {
+  const raw = buildAbnormalItemsReply(panel);
+  if (!/見当たり/.test(raw)) return raw;
+  if (listImportantPreview(panel?.items || []).length) {
+    return `H/L マーク付きの目立った異常値は、いまの画像からは拾えていません。一方で、まず掴めている主な測定値の例は ${listImportantPreview(panel?.items || []).join(' / ')} です。` + (normalizeText(panel?.rawText) ? ' 用紙全体がもっと鮮明に写ると、H/L も拾いやすいです。' : '');
+  }
+  return `H や L の目印付きの値は、今の段階の画像でははっきりしません。${RESEND_PROMPT}`;
+}
+
 module.exports = {
   normalizeTarget,
   extractRequestedDate,
@@ -459,4 +527,9 @@ module.exports = {
   buildAbnormalItemsReply,
   buildNaturalAllValuesReply,
   extractMetricFromRawText,
+  buildPatientAndClinicReply,
+  buildDateFollowupNaturalReply,
+  buildGentleReadableSummaryReply,
+  buildGentleAbnormalReply,
+  RESEND_PROMPT,
 };

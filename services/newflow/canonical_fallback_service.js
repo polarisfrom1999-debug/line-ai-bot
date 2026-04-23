@@ -37,13 +37,15 @@ function toLabPanel(labSession) {
   };
 }
 
-async function getCanonicalLabPanel(userId) {
+async function getCanonicalLabPanel(userId, { logReachability = true } = {}) {
   const latest = await labSessionRepository.getLatestLabSession(userId).catch(() => null);
-  console.info('[phasee-new] canonical_lab_reached', { userId: normalizeText(userId), found: Boolean(latest?.id) });
-  phaseeReachabilityService.recordReachability('canonical_lab_reached', ['services/newflow/canonical_fallback_service.js'], {
-    userId: normalizeText(userId),
-    found: Boolean(latest?.id)
-  }).catch(() => null);
+  if (logReachability) {
+    console.info('[phasee-new] canonical_lab_reached', { userId: normalizeText(userId), found: Boolean(latest?.id) });
+    phaseeReachabilityService.recordReachability('canonical_lab_reached', ['services/newflow/canonical_fallback_service.js'], {
+      userId: normalizeText(userId),
+      found: Boolean(latest?.id)
+    }).catch(() => null);
+  }
   return toLabPanel(latest);
 }
 

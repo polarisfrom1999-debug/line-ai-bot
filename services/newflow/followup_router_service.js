@@ -3,7 +3,7 @@
 const activeContextStoreService = require('./active_context_store_service');
 const responseBuilderService = require('./response_builder_service');
 const canonicalFallbackService = require('./canonical_fallback_service');
-const { resolveLabFollowup } = require('./resolvers/lab_followup_resolver_service');
+const { resolveLabFollowup, mergeLabPanels, isWeakLabPanel } = require('./resolvers/lab_followup_resolver_service');
 const { resolveMealFollowup, resolveCanonicalMealFollowup } = require('./resolvers/meal_followup_resolver_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 
@@ -14,13 +14,13 @@ function normalizeText(value) {
 function looksLikeGeneralConversation(text) {
   const safe = normalizeText(text);
   if (!safe) return true;
-  return !/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|麺|カロリー|半分|食べてない|0kcal|食事)/i.test(safe);
+  return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事)/i.test(safe);
 }
 
 function inferDomainFromText(text) {
   const safe = normalizeText(text);
   if (!safe) return 'unknown';
-  if (/(TG|LDL|HDL|HbA1c|検査|患者名|クリニック|採血|印刷日|異常|変化|推移)/i.test(safe)) return 'lab';
+  if (/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|採血|日付|悪い|何が|読め|印刷|異常|悪|値|H\/L|変化|推移)/i.test(safe)) return 'lab';
   if (/(食事|麺|カロリー|半分|食べてない|0kcal|削除できた|削除した|補正)/i.test(safe)) return 'meal';
   return 'unknown';
 }
@@ -57,7 +57,21 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   // 1) active session 有効なら session参照（最優先）
   if (hasActiveImageSession && !status?.expired) {
     if (/^lab_/.test(normalizeText(active.type || active.domain || ''))) {
-      return resolveLabFollowup(safeText, active?.payload?.labPanel || null);
+      let panel = active?.payload?.labPanel || null;
+      const sessionLabReached = true;
+      let canonicalLabReached = false;
+      if (isWeakLabPanel(panel)) {
+        const canonical = await canonicalFallbackService.getCanonicalLabPanel(input.userId, { logReachability: false });
+        if (canonical) {
+          panel = mergeLabPanels(panel, canonical);
+          canonicalLabReached = true;
+        }
+      }
+      return resolveLabFollowup(safeText, panel, {
+        userId: input.userId,
+        sessionLabReached,
+        canonicalLabReached
+      });
     }
     if (/^meal_/.test(normalizeText(active.type || active.domain || ''))) {
       return resolveMealFollowup({ input, text: safeText, activeContext: active });
@@ -70,7 +84,9 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     const inferred = inferDomainFromText(safeText);
     if (inferred === 'lab') {
       const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
-      if (panel) return resolveLabFollowup(safeText, panel);
+      if (panel) {
+        return resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+      }
       return { intentType: 'newflow_context_expired', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
     }
     if (inferred === 'meal') {
@@ -89,7 +105,9 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   const inferred = inferDomainFromText(safeText);
   if (inferred === 'lab') {
     const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
-    if (panel) return resolveLabFollowup(safeText, panel);
+    if (panel) {
+      return resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+    }
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
   if (inferred === 'meal') {
