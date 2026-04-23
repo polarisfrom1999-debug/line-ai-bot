@@ -32,6 +32,16 @@ function mimeFromPath(filePath) {
   return 'image/jpeg';
 }
 
+function itemsFromMinSchemaStructured(parsed) {
+  return (Array.isArray(parsed) ? parsed : []).map((it) => ({
+    itemName: normalizeText(it?.name || it?.rawName || it?.normalizedKey || '項目'),
+    value: normalizeText(it?.value || ''),
+    unit: normalizeText(it?.unit || ''),
+    flag: normalizeText(it?.flag || ''),
+    history: [],
+  }));
+}
+
 function panelFromLabRow(row) {
   if (!row || typeof row !== 'object') return null;
   const dates = Array.isArray(row.exam_dates_json) ? row.exam_dates_json : [];
@@ -44,7 +54,7 @@ function panelFromLabRow(row) {
     latestExamDate: dates.length ? String(dates[dates.length - 1] || '') : '',
     examDate: dates.length ? String(dates[dates.length - 1] || '') : '',
     itemsStructured: parsed,
-    items: [],
+    items: itemsFromMinSchemaStructured(parsed),
     rawText: normalizeText(row.raw_text || ''),
   };
 }
