@@ -1177,6 +1177,256 @@
         "completedSteps": [],
         "answers": {}
       }
+    },
+    "meal-real-s1-1776950223500": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950227274_a9xpih",
+        "text": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-23T13:17:07.274Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-real-s2-1776950227275": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950229095_bn00bt",
+        "text": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "sourceUserText": "カロリーは?",
+        "at": "2026-04-23T13:17:09.095Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-real-s3-1776950229096": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950230913_eguqla",
+        "text": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "sourceUserText": "今日の食事詳細教えて",
+        "at": "2026-04-23T13:17:10.913Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "real-s1-1776950269969": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950272106_aznt94",
+        "text": "補正対象の食事を特定できませんでした。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-23T13:17:52.107Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "real-s2-1776950272107": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950272475_yq6pc0",
+        "text": "補正対象の食事を特定できませんでした。",
+        "sourceUserText": "カロリーは?",
+        "at": "2026-04-23T13:17:52.475Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "real-s3-1776950272475": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950272849_5cu14d",
+        "text": "前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。",
+        "sourceUserText": "今日の合計は?",
+        "at": "2026-04-23T13:17:52.849Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-device-1.食事画像→半分食べました-1776950307119": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950308555_nv0jq7",
+        "text": "対象食事を半量補正しました。補正後は約320.0 kcal（event 1件適用）です。今日の合計は 1件 / 約320.0 kcal です。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-23T13:18:28.555Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-device-2.食事画像→カロリーは？-1776950308558": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950308975_wk0kc4",
+        "text": "直近の食事は約640.0 kcalです。",
+        "sourceUserText": "カロリーは?",
+        "at": "2026-04-23T13:18:28.975Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-device-3.食事画像→今日の食事詳細/今日の合計-1776950308976": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950309214_01tbqb",
+        "text": "前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。",
+        "sourceUserText": "今日の合計は?",
+        "at": "2026-04-23T13:18:29.214Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "meal-device-verify-1776950340870": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776950341422_b8tcrr",
+        "text": "今日の合計は 1件 / 640.0 kcal (P28.0/F18.0/C82.0) です。",
+        "sourceUserText": "今日の合計は?",
+        "at": "2026-04-23T13:19:01.423Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -1979,6 +2229,256 @@
       "selectedPlan": "",
       "onboardingCompleted": false,
       "height": ""
+    },
+    "meal-real-s1-1776950223500": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-real-s2-1776950227275": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-real-s3-1776950229096": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "real-s1-1776950269969": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "real-s2-1776950272107": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "real-s3-1776950272475": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-device-1.食事画像→半分食べました-1776950307119": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-device-2.食事画像→カロリーは？-1776950308558": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-device-3.食事画像→今日の食事詳細/今日の合計-1776950308976": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-device-verify-1776950340870": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
     }
   },
   "userStateStore": {
@@ -2311,6 +2811,83 @@
       "recallStyle": "direct",
       "lastEmotionTone": "neutral",
       "updatedAt": "2026-04-22T23:20:05.766Z"
+    },
+    "meal-real-s1-1776950223500": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:17:04.964Z"
+    },
+    "meal-real-s2-1776950227275": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:17:07.411Z"
+    },
+    "meal-real-s3-1776950229096": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:17:09.191Z"
+    },
+    "meal-device-1.食事画像→半分食べました-1776950307119": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:18:28.083Z"
+    },
+    "meal-device-2.食事画像→カロリーは？-1776950308558": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:18:28.849Z"
+    },
+    "meal-device-3.食事画像→今日の食事詳細/今日の合計-1776950308976": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:18:29.089Z"
+    },
+    "meal-device-verify-1776950340870": {
+      "nagiScore": 5,
+      "gasolineScore": 5,
+      "trustScore": 3.1,
+      "relationshipScore": 0.01,
+      "relationshipStage": "coach",
+      "totalTurns": 1,
+      "recallStyle": "direct",
+      "lastEmotionTone": "neutral",
+      "updatedAt": "2026-04-23T13:19:01.203Z"
     }
   },
   "recentMessageStore": {
@@ -3490,6 +4067,266 @@
         "content": "補正対象の食事を特定できませんでした。",
         "messageId": "1776900048620_eezx4k",
         "createdAt": "2026-04-22T23:20:48.620Z"
+      }
+    ],
+    "meal-real-s1-1776950223500": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:06.906Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776950226906_4n1hs0",
+        "createdAt": "2026-04-23T13:17:06.907Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:07.274Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776950227274_a9xpih",
+        "createdAt": "2026-04-23T13:17:07.274Z"
+      }
+    ],
+    "meal-real-s2-1776950227275": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:08.923Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776950228923_ajo9t3",
+        "createdAt": "2026-04-23T13:17:08.923Z"
+      },
+      {
+        "role": "user",
+        "content": "カロリーは?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:09.095Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776950229095_bn00bt",
+        "createdAt": "2026-04-23T13:17:09.095Z"
+      }
+    ],
+    "meal-real-s3-1776950229096": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:10.660Z"
+      },
+      {
+        "role": "assistant",
+        "content": "画像を受け取りましたが、食事か血液検査かを判定できませんでした。検査票全体または料理全体が写るように、もう一度画像を送ってください。",
+        "messageId": "1776950230660_1uw470",
+        "createdAt": "2026-04-23T13:17:10.660Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の食事詳細教えて",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:10.913Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今確認できる範囲では判断材料が不足しているため、もう一度画像を送ってください。",
+        "messageId": "1776950230913_eguqla",
+        "createdAt": "2026-04-23T13:17:10.913Z"
+      }
+    ],
+    "real-s1-1776950269969": [
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:52.106Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776950272106_aznt94",
+        "createdAt": "2026-04-23T13:17:52.106Z"
+      }
+    ],
+    "real-s2-1776950272107": [
+      {
+        "role": "user",
+        "content": "カロリーは?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:52.475Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776950272475_yq6pc0",
+        "createdAt": "2026-04-23T13:17:52.475Z"
+      }
+    ],
+    "real-s3-1776950272475": [
+      {
+        "role": "user",
+        "content": "今日の食事詳細教えて",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:52.844Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776950272844_kd847h",
+        "createdAt": "2026-04-23T13:17:52.845Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の合計は?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:17:52.849Z"
+      },
+      {
+        "role": "assistant",
+        "content": "前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。",
+        "messageId": "1776950272849_5cu14d",
+        "createdAt": "2026-04-23T13:17:52.849Z"
+      }
+    ],
+    "meal-device-1.食事画像→半分食べました-1776950307119": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:28.537Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 親子丼、味噌汁\n目安: 640 kcal / P 28g / F 18g / C 82g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776950308537_ezk0eu",
+        "createdAt": "2026-04-23T13:18:28.538Z"
+      },
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:28.555Z"
+      },
+      {
+        "role": "assistant",
+        "content": "対象食事を半量補正しました。補正後は約320.0 kcal（event 1件適用）です。今日の合計は 1件 / 約320.0 kcal です。",
+        "messageId": "1776950308555_nv0jq7",
+        "createdAt": "2026-04-23T13:18:28.555Z"
+      }
+    ],
+    "meal-device-2.食事画像→カロリーは？-1776950308558": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:28.968Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 親子丼、味噌汁\n目安: 640 kcal / P 28g / F 18g / C 82g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776950308968_lm00p2",
+        "createdAt": "2026-04-23T13:18:28.968Z"
+      },
+      {
+        "role": "user",
+        "content": "カロリーは?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:28.975Z"
+      },
+      {
+        "role": "assistant",
+        "content": "直近の食事は約640.0 kcalです。",
+        "messageId": "1776950308975_wk0kc4",
+        "createdAt": "2026-04-23T13:18:28.975Z"
+      }
+    ],
+    "meal-device-3.食事画像→今日の食事詳細/今日の合計-1776950308976": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:29.207Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 親子丼、味噌汁\n目安: 640 kcal / P 28g / F 18g / C 82g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776950309207_nj9wut",
+        "createdAt": "2026-04-23T13:18:29.207Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の食事詳細教えて",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:29.211Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今日の食事詳細です。\n1. 親子丼、味噌汁: 640.0 kcal (P28.0/F18.0/C82.0) event:0",
+        "messageId": "1776950309211_rj61x5",
+        "createdAt": "2026-04-23T13:18:29.211Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の合計は?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:18:29.214Z"
+      },
+      {
+        "role": "assistant",
+        "content": "前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。",
+        "messageId": "1776950309214_01tbqb",
+        "createdAt": "2026-04-23T13:18:29.214Z"
+      }
+    ],
+    "meal-device-verify-1776950340870": [
+      {
+        "role": "user",
+        "content": "食事画像",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:19:01.404Z"
+      },
+      {
+        "role": "assistant",
+        "content": "食事画像として受け取りました。\n見立て: 親子丼、味噌汁\n目安: 640 kcal / P 28g / F 18g / C 82g\n必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。",
+        "messageId": "1776950341404_3sqf3s",
+        "createdAt": "2026-04-23T13:19:01.404Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の食事詳細教えて",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:19:01.413Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今日の食事詳細です。\n1. 親子丼、味噌汁: 640.0 kcal (P28.0/F18.0/C82.0) event:0",
+        "messageId": "1776950341413_djtc9l",
+        "createdAt": "2026-04-23T13:19:01.413Z"
+      },
+      {
+        "role": "user",
+        "content": "今日の合計は?",
+        "messageId": "",
+        "createdAt": "2026-04-23T13:19:01.422Z"
+      },
+      {
+        "role": "assistant",
+        "content": "今日の合計は 1件 / 640.0 kcal (P28.0/F18.0/C82.0) です。",
+        "messageId": "1776950341422_b8tcrr",
+        "createdAt": "2026-04-23T13:19:01.423Z"
       }
     ]
   },

@@ -14,7 +14,7 @@ function normalizeText(value) {
 function looksLikeGeneralConversation(text) {
   const safe = normalizeText(text);
   if (!safe) return true;
-  return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事)/i.test(safe);
+  return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事|合計|詳細|内訳|トータル)/i.test(safe);
 }
 
 function inferDomainFromText(text) {

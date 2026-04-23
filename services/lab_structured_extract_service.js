@@ -73,6 +73,50 @@ function rescueRowsFromRawText(text) {
   return rows;
 }
 
+function buildTextRescuePrompt(meta = {}) {
+  const hintDate = normalizeText(meta?.latestExamDate || meta?.reportDate || '');
+  return [
+    'あなたは血液検査票のOCR補助です。項目名と数値だけを抽出してください。',
+    '出力はプレーンテキスト。1行1項目で「項目名: 値 単位」形式にしてください。',
+    '日付のみの行、検査日だけの情報、罫線情報、bbox情報は出力しないでください。',
+    'TG/中性脂肪, HbA1c, Hb/血色素量, AST, ALT, LDL, HDL, 血糖, Cr を優先してください。',
+    hintDate ? `補助日付: ${hintDate}` : '補助日付: なし',
+  ].join('\n');
+}
+
+function rescueRowsFromNarrativeText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return [];
+  const out = [];
+  const seen = new Set();
+  const lines = safe.split(/\r?\n/).map((l) => normalizeText(l)).filter(Boolean);
+  const lineRegex = /^(?:[-*・]\s*)?([^:：|]+?)\s*[:：|]\s*([^\s]+)(?:\s+([^\s]+))?/;
+  for (const line of lines) {
+    const m = line.match(lineRegex);
+    if (!m) continue;
+    const label = normalizeText(m[1]);
+    const rawValue = normalizeText(m[2]);
+    const unit = normalizeUnit(m[3] || '');
+    if (!label || !rawValue) continue;
+    if (classifier.normalizeDateToken(rawValue)) continue;
+    const numeric = numberFromSourceText(rawValue);
+    if (numeric == null) continue;
+    const normalizedKey = normalizeKey('', label);
+    const dedupe = `${normalizedKey || label}:${numeric}:${unit}`;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    out.push({
+      label_in_image: label,
+      normalized_key: normalizedKey,
+      value: String(numeric),
+      unit,
+      confidence: 0.45,
+      status: 'rescued_from_text'
+    });
+  }
+  return out;
+}
+
 function coerceStructuredPayloadShape(payload, rawText, rawCandidateText, meta = {}) {
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     const obj = { ...payload };
@@ -424,6 +468,36 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       }
     } catch (_err) {
       // noop: keep first-pass payload
+    }
+  }
+  const postRescuePrimary = geminiItems.extractPrimaryGeminiMinItems(payload);
+  if (!postRescuePrimary.length) {
+    try {
+      const textRescue = await geminiImageAnalysisService.analyzeImage({
+        imagePayload,
+        prompt: buildTextRescuePrompt(meta),
+        model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+      });
+      const textRows = rescueRowsFromNarrativeText(textRescue?.text || '');
+      if (textRows.length) {
+        payload = {
+          ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
+          document_type: normalizeText((payload && payload.document_type) || meta.documentType || 'blood_test'),
+          missing_reason: '',
+          data: textRows
+        };
+        rawText = sanitizeGeminiText(textRescue?.text || rawText);
+        if (geminiTraceBundle && typeof geminiTraceBundle === 'object') {
+          geminiTraceBundle.text_rescue = {
+            ok: Boolean(textRescue?.ok),
+            model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+            text: textRescue?.text || '',
+            rows: textRows.length
+          };
+        }
+      }
+    } catch (_err) {
+      // noop
     }
   }
 
