@@ -3,6 +3,7 @@
 const labFollowupService = require('../../lab_followup_service');
 const responseBuilderService = require('../response_builder_service');
 const { mergeLabPanels, isWeakLabPanel } = require('../lab_panel_merge_service');
+const { countQualifiedPanelRecords } = require('../../lab_gemini_items_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -16,8 +17,7 @@ function normalizeFlagValue(value) {
 }
 
 function countRecordsWithValue(panel) {
-  const items = Array.isArray(panel?.items) ? panel.items : [];
-  return items.filter((it) => normalizeText(it?.value || it?.currentValue || '')).length;
+  return countQualifiedPanelRecords(panel);
 }
 
 function countAbnormalItemRows(panel) {

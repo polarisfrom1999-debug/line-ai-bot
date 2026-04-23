@@ -11,6 +11,9 @@ function normalizeText(value) {
 function sanitizeLabItems(items = []) {
   return (Array.isArray(items) ? items : []).map((it) => ({
     itemName: normalizeText(it?.itemName || it?.name || it?.name_normalized || ''),
+    normalizedKey: normalizeText(it?.normalizedKey || ''),
+    source: normalizeText(it?.source || ''),
+    rawName: normalizeText(it?.rawName || ''),
     value: normalizeText(it?.value || ''),
     unit: normalizeText(it?.unit || ''),
     flag: normalizeText(it?.flag || ''),

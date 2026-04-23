@@ -9,6 +9,7 @@ const labSessionRepository = require('../../repositories/lab_session_repository'
 const contextMemoryService = require('../context_memory_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const labIngestTrace = require('../lab_ingest_trace_service');
+const { countPersistableParsedRecords } = require('../lab_gemini_items_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -158,11 +159,12 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査票全体が見える画像をもう一度送ってください。' };
   }
   const preDbParsed = Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []);
+  const qualifiedForDb = countPersistableParsedRecords(preDbParsed);
   const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
     sourceMessageId: normalizeText(input?.messageId || ''),
-    status: Array.isArray(lab?.items) && lab.items.length > 0 ? 'active' : 'tentative',
+    status: qualifiedForDb > 0 ? 'active' : 'tentative',
     patientName: lab?.patientName || '',
     facilityName: lab?.facilityName || '',
     printDate: lab?.printDate || '',
@@ -177,24 +179,38 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString()
   };
   let preChain = 'pre_persist';
-  if (!Array.isArray(lab?.items) || lab.items.length === 0) {
+  if (qualifiedForDb === 0) {
     if (Array.isArray(preDbParsed) && preDbParsed.length) {
-      preChain = 'legacy_items_empty_but_itemsStructured_nonzero_mapping_issue';
+      preChain = 'parsed_items_present_but_no_qualified_records';
     } else if (Number(lab?.analysisConfidence?.rows || 0) > 0) {
       preChain = 'extraction_had_rows_but_items_empty_downstream';
     } else {
       preChain = 'ingest_items_and_structured_both_empty';
     }
+  } else {
+    preChain = 'qualified_records_ready';
+  }
+  const hb = (preDbParsed || []).find((x) => normalizeText(x?.normalizedKey).toLowerCase() === 'hemoglobin');
+  if (hb && normalizeText(hb.value)) {
+    console.info('[lab-ingest-trace] stage:hemoglobin_persist_path', {
+      userId: input.userId,
+      normalizedKey: hb.normalizedKey,
+      value: hb.value,
+      source: hb.source || ''
+    });
   }
   labIngestTrace.logRecordsCountReason({
     userId: input.userId,
     stage: 'newflow_image_ingest_pre_db',
     details: {
-      recordsCount: Array.isArray(lab?.items) ? lab.items.length : 0,
+      recordsCount: qualifiedForDb,
       chain: preChain,
       extractRowCount: Number(lab?.analysisConfidence?.rows || 0),
       buildStructuredItemsCount: preDbParsed.length,
-      legacyMapItemsCount: Array.isArray(lab?.items) ? lab.items.length : 0
+      legacyMapItemsCount: Array.isArray(lab?.items) ? lab.items.length : 0,
+      primary_gemini_items: Number(lab?.analysisConfidence?.primary_gemini_items ?? 0),
+      row_fallback_used: Boolean(lab?.analysisConfidence?.row_fallback_used),
+      parsed_min_items_count: preDbParsed.length
     }
   });
   labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });

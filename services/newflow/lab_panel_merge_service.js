@@ -1,5 +1,7 @@
 'use strict';
 
+const { countQualifiedPanelRecords, isMinSchemaParsedItems } = require('../lab_gemini_items_service');
+
 function normalizeText(value) {
   return String(value || '').trim();
 }
@@ -41,8 +43,37 @@ function mergeLabPanels(sessionPanel, canonicalPanel) {
     examDates: Array.isArray(s.examDates) && s.examDates.length ? s.examDates : (c.examDates || []),
     items,
     rawText: normalizeText(s.rawText) || normalizeText(c.rawText) || '',
-    itemsStructured: Array.isArray(s.itemsStructured) && s.itemsStructured.length ? s.itemsStructured : (c.itemsStructured || [])
+    itemsStructured: mergeItemsStructuredPanels(s?.itemsStructured, c?.itemsStructured)
   };
+}
+
+function mergeItemsStructuredPanels(sessionStructured, canonicalStructured) {
+  const s = Array.isArray(sessionStructured) ? sessionStructured : [];
+  const c = Array.isArray(canonicalStructured) ? canonicalStructured : [];
+  if (s.length && !c.length) return [...s];
+  if (!s.length && c.length) return [...c];
+  if (!s.length) return [];
+  if (isMinSchemaParsedItems(s) && isMinSchemaParsedItems(c)) {
+    const byKey = new Map();
+    for (const it of c) {
+      const k = normalizeText(it?.normalizedKey);
+      if (k) byKey.set(k, { ...it });
+    }
+    for (const it of s) {
+      const k = normalizeText(it?.normalizedKey);
+      if (!k) continue;
+      const prev = byKey.get(k);
+      if (!prev) {
+        byKey.set(k, { ...it });
+        continue;
+      }
+      const v = normalizeText(it?.value || '');
+      const pv = normalizeText(prev?.value || '');
+      byKey.set(k, v && !pv ? { ...prev, ...it } : { ...it, ...prev });
+    }
+    return [...byKey.values()];
+  }
+  return [...s];
 }
 
 /**
@@ -50,6 +81,7 @@ function mergeLabPanels(sessionPanel, canonicalPanel) {
  */
 function isWeakLabPanel(panel) {
   if (!panel || typeof panel !== 'object') return true;
+  if (countQualifiedPanelRecords(panel) > 0) return false;
   const items = Array.isArray(panel.items) ? panel.items : [];
   const withValue = items.filter((it) => normalizeText(it?.value || it?.currentValue || '')).length;
   if (withValue > 0) return false;

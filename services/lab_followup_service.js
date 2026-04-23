@@ -222,6 +222,7 @@ function looksLikeJsonDump(s) {
 function buildReadableInventoryReply(panel) {
   const exam = normalizeText(panel?.latestExamDate || panel?.examDate || '');
   const items = Array.isArray(panel?.items) ? panel.items : [];
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
   const lines = items
     .map((it) => {
       const v = normalizeText(it?.value || it?.currentValue || '');
@@ -234,7 +235,16 @@ function buildReadableInventoryReply(panel) {
 
   const raw = normalizeText(panel?.rawText || '');
 
-  const merged = [...lines];
+  const fromMinSchema = structured
+    .filter((b) => normalizeText(b?.normalizedKey) && normalizeText(b?.value))
+    .map((b) => {
+      const label = normalizeText(b.name || b.rawName || b.normalizedKey);
+      const v = normalizeText(b.value);
+      const u = b.unit ? ` ${b.unit}` : '';
+      const f = b.flag ? ` ${b.flag}` : '';
+      return `・${label || '項目'}: ${v}${u}${f}`;
+    });
+  const merged = lines.length > 0 ? lines : fromMinSchema;
 
   const nameOnlyLines = [];
   for (const it of items) {
@@ -242,8 +252,16 @@ function buildReadableInventoryReply(panel) {
     const v = normalizeText(it?.value || it?.currentValue || '');
     if (nm && !v) nameOnlyLines.push(`・${nm}: （数値はまだ確定できていません）`);
   }
-  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
   for (const block of structured) {
+    if (normalizeText(block?.normalizedKey)) {
+      const nm = normalizeText(block.name || block.rawName || block.normalizedKey);
+      const v = normalizeText(block.value || '');
+      if (nm && !v) {
+        const line = `・${nm}: （数値はまだ確定できていません）`;
+        if (!nameOnlyLines.some((x) => x.includes(nm))) nameOnlyLines.push(line);
+      }
+      continue;
+    }
     const nm = normalizeText(block?.name_normalized || block?.name_original || '');
     if (!nm) continue;
     const hasVal = Array.isArray(block?.results)
@@ -286,6 +304,7 @@ function buildReadableInventoryReply(panel) {
 /** 数値一覧の依頼: JSON は出さず自然文のみ */
 function buildNaturalAllValuesReply(panel) {
   const items = Array.isArray(panel?.items) ? panel.items : [];
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
   const lines = [];
   for (const it of items) {
     const nm = normalizeText(it?.itemName || it?.name || '');
@@ -295,6 +314,18 @@ function buildNaturalAllValuesReply(panel) {
     const f = it.flag ? ` ${it.flag}` : '';
     if (v) lines.push(`・${nm}: ${v}${u}${f}`);
     else lines.push(`・${nm}: 数値はこの画像ではまだ拾えきれていないみたい`);
+  }
+  if (!lines.length) {
+    for (const b of structured) {
+      if (!normalizeText(b?.normalizedKey)) continue;
+      const nm = normalizeText(b.name || b.rawName || b.normalizedKey);
+      const v = normalizeText(b.value || '');
+      if (!nm) continue;
+      const u = b.unit ? ` ${b.unit}` : '';
+      const f = b.flag ? ` ${b.flag}` : '';
+      if (v) lines.push(`・${nm}: ${v}${u}${f}`);
+      else lines.push(`・${nm}: 数値はこの画像ではまだ拾えきれていないみたい`);
+    }
   }
   if (lines.length) {
     return ['この画像からうかがえる数値だけ、静かに並べるね。', ...lines.slice(0, 26)].join('\n');

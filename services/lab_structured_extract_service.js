@@ -6,39 +6,8 @@ const geminiDispatchService = require('./gemini_dispatch_service');
 const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
 const phaseeReachabilityService = require('./phasee_reachability_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
-
-const KEY_TO_ITEM_NAME = {
-  ast_got: 'AST',
-  alt_gpt: 'ALT',
-  gamma_gtp: 'γ-GTP',
-  creatinine: 'クレアチニン',
-  uric_acid: '尿酸',
-  bun: '尿素窒素',
-  glucose: '血糖',
-  hba1c: 'HbA1c',
-  triglycerides_tg: '中性脂肪',
-  total_cholesterol: '総コレステロール',
-  hdl_cholesterol: 'HDL',
-  ldl_cholesterol: 'LDL',
-  ldl_hdl_ratio: 'LDL/HDL比',
-  sodium: 'ナトリウム',
-  potassium: 'カリウム',
-  chloride: 'クロール',
-  egfr: 'eGFR',
-  wbc: '白血球数',
-  rbc: '赤血球数',
-  hemoglobin: '血色素量',
-  hematocrit: 'ヘマトクリット',
-  mcv: 'MCV',
-  mch: 'MCH',
-  mchc: 'MCHC',
-  platelets: '血小板数',
-  cpk: 'CPK',
-  ldh: 'LDH',
-  total_protein: '総蛋白',
-  bilirubin: '総ビリルビン',
-  calcium: 'Ca'
-};
+const { KEY_TO_ITEM_NAME } = require('./lab_lab_display_names');
+const geminiItems = require('./lab_gemini_items_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -305,37 +274,51 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   let examDates = uniqueSortedDates([...(report.exam_dates || report.examDates || []), ...historyDates, ...(meta.examDates || [])]);
   if (!examDates.length && reportDate) examDates = [reportDate];
   const latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '') || examDates[examDates.length - 1] || reportDate || '';
+  const primaryGeminiMinItems = geminiItems.extractPrimaryGeminiMinItems(payload);
+  const parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rows);
+  const dateForSyntheticRows = latestExamDate || reportDate || '';
+  const rowsForStructured = parsedMinItems.length
+    ? geminiItems.minItemsToRowsForGroupRows(parsedMinItems, dateForSyntheticRows)
+    : rows;
+  const rowFallbackUsed = geminiItems.rowFallbackActive(parsedMinItems, primaryGeminiMinItems.length, rows.length);
   const issues = [
     ...(Array.isArray(meta.issues) ? meta.issues : []),
     ...(Array.isArray(report.issues) ? report.issues : []),
     ...(Array.isArray(payload.issues) ? payload.issues : [])
   ].map(normalizeText).filter(Boolean);
-  const items = groupRowsToItems(rows, latestExamDate);
-  const confidenceValues = rows.map((row) => Number(row.confidence || 0)).filter((v) => v > 0);
+  const items = groupRowsToItems(rowsForStructured, latestExamDate);
+  const confidenceValues = rowsForStructured.map((row) => Number(row.confidence || 0)).filter((v) => v > 0);
   const confidence = confidenceValues.length
     ? Math.round((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length) * 100) / 100
     : (Number(report.confidence || payload.confidence || meta.confidence || 0) || 0);
 
+  const qualifiedRecords = geminiItems.countQualifiedParsedItems(parsedMinItems);
   let itemChain = 'ok';
-  if (rows.length === 0) {
+  if (!parsedMinItems.length) {
     const dr = report?.data;
     if (!Array.isArray(dr) || dr.length === 0) {
-      itemChain = 'no_rows:report_data_empty';
+      itemChain = 'no_items:report_data_empty';
+    } else if (!primaryGeminiMinItems.length && !rows.length) {
+      itemChain = 'no_items:gemini_primary_empty_and_normalizeRows_dropped_all';
     } else {
-      itemChain = 'no_rows:normalizeRows_dropped_all_invalid_item_or_value';
+      itemChain = 'no_items:merged_min_items_empty';
     }
-  } else if (items.length === 0) {
-    itemChain = 'rows_present_but_groupRowsToItems_returned_0';
+  } else if (primaryGeminiMinItems.length) {
+    itemChain = rowFallbackUsed ? 'ok:gemini_primary_plus_row_fallback_merge' : 'ok:gemini_primary_only';
+  } else {
+    itemChain = 'ok:row_fallback_only';
   }
   labIngestTrace.logRecordsCountReason({
     userId: meta.userId,
     stage: 'lab_structured_extract_after_groupRows',
     details: {
-      recordsCount: items.length,
+      recordsCount: qualifiedRecords,
       chain: itemChain,
       extractRowCount: rows.length,
-      buildStructuredItemsCount: 0,
-      legacyMapItemsCount: items.length
+      buildStructuredItemsCount: parsedMinItems.length,
+      legacyMapItemsCount: items.length,
+      primary_gemini_items: primaryGeminiMinItems.length,
+      row_fallback_used: rowFallbackUsed
     }
   });
 
@@ -357,6 +340,10 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     examDates,
     patientName,
     rows,
+    rowsForStructured,
+    parsedMinItems,
+    primaryGeminiItemCount: primaryGeminiMinItems.length,
+    rowFallbackUsed,
     items,
     issues,
     confidence,

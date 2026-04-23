@@ -65,7 +65,10 @@ function logRecordsCountReason({ userId, stage, details }) {
     chain: String(details?.chain || ''),
     extract_row_count: Number(details?.extractRowCount ?? 0),
     build_structured_items_count: Number(details?.buildStructuredItemsCount ?? 0),
-    legacy_map_items_count: Number(details?.legacyMapItemsCount ?? 0)
+    legacy_map_items_count: Number(details?.legacyMapItemsCount ?? 0),
+    primary_gemini_items: Number(details?.primary_gemini_items ?? details?.primaryGeminiItems ?? 0),
+    row_fallback_used: Boolean(details?.row_fallback_used ?? details?.rowFallbackUsed),
+    parsed_min_items_count: Number(details?.parsed_min_items_count ?? 0)
   });
 }
 
