@@ -27,6 +27,120 @@ function extractJson(text) {
   }
 }
 
+function getRawCandidateText(raw) {
+  const candidates = Array.isArray(raw?.candidates) ? raw.candidates : [];
+  const first = candidates[0];
+  const parts = Array.isArray(first?.content?.parts) ? first.content.parts : [];
+  const text = parts.map((p) => normalizeText(p?.text || '')).join('\n').trim();
+  return text;
+}
+
+function rescueRowsFromRawText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return [];
+  const rows = [];
+  const re = /"(?:label_in_image|item|検査項目)"\s*:\s*"([^"]+)"[\s\S]{0,260}?"normalized_key"\s*:\s*"([^"]*)"[\s\S]{0,260}?"value"\s*:\s*"([^"]+)"/g;
+  let m;
+  while ((m = re.exec(safe)) !== null) {
+    const label = normalizeText(m[1]);
+    const key = normalizeText(m[2]);
+    const value = normalizeText(m[3]);
+    if (!label || !value) continue;
+    if (classifier.normalizeDateToken(value)) continue;
+    rows.push({
+      label_in_image: label,
+      normalized_key: key,
+      value,
+      confidence: 0.5,
+      status: 'rescued_from_raw'
+    });
+  }
+  if (rows.length) return rows;
+  const reLoose = /"(?:label_in_image|item|検査項目)"\s*:\s*"([^"]+)"[\s\S]{0,260}?"value"\s*:\s*"([^"]+)"/g;
+  while ((m = reLoose.exec(safe)) !== null) {
+    const label = normalizeText(m[1]);
+    const value = normalizeText(m[2]);
+    if (!label || !value) continue;
+    if (classifier.normalizeDateToken(value)) continue;
+    rows.push({
+      label_in_image: label,
+      normalized_key: '',
+      value,
+      confidence: 0.4,
+      status: 'rescued_from_raw'
+    });
+  }
+  return rows;
+}
+
+function coerceStructuredPayloadShape(payload, rawText, rawCandidateText, meta = {}) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const obj = { ...payload };
+    if (!Array.isArray(obj.data)) obj.data = [];
+    if (!obj.document_type && meta?.documentType) obj.document_type = meta.documentType;
+    return obj;
+  }
+  const rescuedRows = rescueRowsFromRawText(`${rawCandidateText || ''}\n${rawText || ''}`);
+  if (Array.isArray(payload)) {
+    const arrRows = payload
+      .filter((x) => x && typeof x === 'object')
+      .map((x) => ({
+        label_in_image: normalizeText(x.label_in_image || x.row_label_raw || ''),
+        normalized_key: normalizeText(x.normalized_key || ''),
+        value: normalizeText(x.value || ''),
+        confidence: Number(x.confidence || 0) || 0,
+        status: normalizeText(x.status || 'present')
+      }))
+      .filter((x) => x.value && !classifier.normalizeDateToken(x.value) && (x.label_in_image || x.normalized_key));
+    const data = arrRows.length ? arrRows : rescuedRows;
+    return {
+      document_type: normalizeText(meta?.documentType || 'unknown'),
+      missing_reason: data.length ? '' : 'data_array_missing_or_date_only',
+      data
+    };
+  }
+  return {
+    document_type: normalizeText(meta?.documentType || 'unknown'),
+    missing_reason: rescuedRows.length ? '' : 'payload_not_object',
+    data: rescuedRows
+  };
+}
+
+function buildRescueExtractionSpec(meta = {}) {
+  const hintDate = normalizeText(meta?.latestExamDate || meta?.reportDate || '');
+  return {
+    prompt: [
+      '血液検査画像から「項目名と数値」だけを優先抽出してください。JSONのみ返してください。',
+      '最重要: data[] に数値付きの検査項目を入れてください。日付だけは入れないでください。',
+      'normalized_key が不明でも label_in_image と value があれば入れてください。',
+      '優先項目: triglycerides_tg, hba1c, hemoglobin, total_protein, glucose, creatinine, ast_got, alt_gpt',
+      hintDate ? `補助日付: ${hintDate}` : '補助日付: なし'
+    ].join('\n'),
+    schema: {
+      type: 'object',
+      properties: {
+        document_type: { type: 'string' },
+        missing_reason: { type: 'string' },
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              normalized_key: { type: 'string' },
+              label_in_image: { type: 'string' },
+              value: { type: ['string', 'number'] },
+              unit: { type: 'string' },
+              confidence: { type: 'number' },
+              status: { type: 'string' }
+            }
+          }
+        }
+      },
+      required: ['data']
+    }
+  };
+}
+
 function normalizeNumberText(value) {
   const safe = normalizeText(value);
   if (!safe) return '';
@@ -220,6 +334,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   let rawText = '';
   let ok = false;
   let geminiTraceBundle = null;
+  let rawCandidateText = '';
 
   try {
     const dispatch = await geminiDispatchService.generateStructuredImageJson({
@@ -228,13 +343,15 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       schema: builder.schema,
       domain: builder.domain,
       model: builder.preferredModel,
-      temperature: builder.temperature
+      temperature: builder.temperature,
+      maxOutputTokens: 3200
     });
     if (!dispatch?.ok) {
       throw new Error(dispatch?.error?.message || 'structured_image_dispatch_failed');
     }
     ok = true;
     payload = dispatch?.json || {};
+    rawCandidateText = getRawCandidateText(dispatch?.raw);
     rawText = sanitizeGeminiText(dispatch?.text || JSON.stringify(dispatch?.json || {}));
     geminiTraceBundle = {
       path: 'structured_image_json',
@@ -268,6 +385,46 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       data: result?.data,
       text: result?.text
     };
+  }
+
+  payload = coerceStructuredPayloadShape(payload, rawText, rawCandidateText, meta);
+  const initialPrimary = geminiItems.extractPrimaryGeminiMinItems(payload);
+  if (!initialPrimary.length) {
+    try {
+      const rescueSpec = buildRescueExtractionSpec(meta);
+      const rescue = await geminiDispatchService.generateStructuredImageJson({
+        imagePayload,
+        prompt: rescueSpec.prompt,
+        schema: rescueSpec.schema,
+        domain: 'lab_image_rescue',
+        model: builder.preferredModel,
+        temperature: 0,
+        maxOutputTokens: 900
+      });
+      if (rescue?.ok) {
+        const rescuePayload = coerceStructuredPayloadShape(rescue?.json || {}, sanitizeGeminiText(rescue?.text || ''), getRawCandidateText(rescue?.raw), meta);
+        const rescuePrimary = geminiItems.extractPrimaryGeminiMinItems(rescuePayload);
+        if (rescuePrimary.length) {
+          payload = {
+            ...rescuePayload,
+            document_type: normalizeText(rescuePayload.document_type || payload.document_type || meta.documentType || 'unknown'),
+            data: Array.isArray(rescuePayload.data) ? rescuePayload.data : [],
+            missing_reason: normalizeText(rescuePayload.missing_reason || '')
+          };
+          rawText = sanitizeGeminiText(rescue?.text || rawText);
+          if (geminiTraceBundle && typeof geminiTraceBundle === 'object') {
+            geminiTraceBundle.rescue = {
+              ok: true,
+              model: rescue?.model || '',
+              parsed_json: rescue?.json || {},
+              text: rescue?.text || ''
+            };
+          }
+        }
+      }
+    } catch (_err) {
+      // noop: keep first-pass payload
+    }
   }
 
   const reports = flattenReports(payload);
