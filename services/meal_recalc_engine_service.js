@@ -215,6 +215,7 @@ function recalcMealStateWithLog(input = {}, meta = {}) {
       carbs: after.carbs,
       item_list: after.item_list,
       removed_items: after.removed_items,
+      event_count: after.event_count,
     },
     applied_event_ids: after.applied_event_ids,
   });
