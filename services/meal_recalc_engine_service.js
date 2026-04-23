@@ -147,7 +147,8 @@ function applyManualEvent(state, event) {
  *   carbs: number,
  *   item_list: string[],
  *   removed_items: string[],
- *   applied_event_ids: number[]
+ *   applied_event_ids: number[],
+ *   event_count: number
  * }}
  */
 function recalcMealState(input = {}) {
@@ -186,6 +187,7 @@ function recalcMealState(input = {}) {
     item_list: [...new Set(state.items.map((x) => normalizeText(x)).filter(Boolean))],
     removed_items: [...new Set(state.removed_items.map((x) => normalizeText(x)).filter(Boolean))],
     applied_event_ids: state.applied_event_ids.filter((x) => Number.isFinite(x)),
+    event_count: state.applied_event_ids.filter((x) => Number.isFinite(x)).length,
   };
 }
 

@@ -109,8 +109,47 @@ async function getBaseMealWithEvents(mealId) {
   }
 }
 
+async function getLatestBaseMealByUser(userId) {
+  if (!supabase) return null;
+  const uid = normalizeText(userId);
+  if (!uid) return null;
+  try {
+    const { data } = await supabase
+      .from('base_meals')
+      .select('id,user_id,eaten_at,base_meal_version,source_message_id,source_image_id,meal_label,base_payload_json,created_at,updated_at')
+      .eq('user_id', uid)
+      .order('eaten_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function getBaseMealsByDateRange(userId, fromIso, toIso) {
+  if (!supabase) return [];
+  const uid = normalizeText(userId);
+  if (!uid || !normalizeText(fromIso) || !normalizeText(toIso)) return [];
+  try {
+    const { data, error } = await supabase
+      .from('base_meals')
+      .select('id,user_id,eaten_at,base_meal_version,source_message_id,source_image_id,meal_label,base_payload_json,created_at,updated_at')
+      .eq('user_id', uid)
+      .gte('eaten_at', fromIso)
+      .lt('eaten_at', toIso)
+      .order('eaten_at', { ascending: false });
+    if (error) return [];
+    return Array.isArray(data) ? data : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
 module.exports = {
   createBaseMeal,
   appendCorrectionEvent,
   getBaseMealWithEvents,
+  getLatestBaseMealByUser,
+  getBaseMealsByDateRange,
 };

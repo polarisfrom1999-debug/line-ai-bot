@@ -6,6 +6,7 @@ const imageIngestService = require('../image_ingest_service');
 const mealAnalysisService = require('../meal_analysis_service');
 const labDocumentIngestService = require('../lab_document_ingest_service');
 const labSessionRepository = require('../../repositories/lab_session_repository');
+const mealRecalcRepository = require('../../repositories/meal_recalc_repository');
 const contextMemoryService = require('../context_memory_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const labIngestTrace = require('../lab_ingest_trace_service');
@@ -76,6 +77,27 @@ function buildImageMealRecordPayload(parsedMeal, input = {}) {
     raw_model_json: {
       correction: null,
       adoptedNutrition: parsedMeal?.estimatedNutrition || {},
+      sourceLineMessageId: normalizeText(input?.messageId || ''),
+      dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : ''),
+    }
+  };
+}
+
+function buildBaseMealPayload(parsedMeal, input = {}) {
+  const record = buildImageMealRecordPayload(parsedMeal, input);
+  return {
+    eatenAt: new Date().toISOString(),
+    baseMealVersion: 'v1',
+    sourceMessageId: normalizeText(input?.messageId || ''),
+    sourceImageId: normalizeText(input?.messageId || ''),
+    mealLabel: normalizeText(record?.name || '食事'),
+    basePayloadJson: {
+      items: Array.isArray(record?.items) ? record.items : [],
+      estimatedNutrition: record?.estimatedNutrition || {},
+      kcal: Number(record?.kcal || 0),
+      protein: Number(record?.protein || 0),
+      fat: Number(record?.fat || 0),
+      carbs: Number(record?.carbs || 0),
       sourceLineMessageId: normalizeText(input?.messageId || ''),
       dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : ''),
     }
@@ -160,11 +182,16 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         replyText: '食事画像の解析はできましたが、保存確認が取れませんでした。もう一度同じ画像を送ってください。'
       };
     }
+    const baseMeal = await mealRecalcRepository.createBaseMeal({
+      userId: input.userId,
+      ...buildBaseMealPayload(meal, input)
+    }).catch(() => ({ ok: false }));
     await activeContextStoreService.setActiveContext(input.userId, {
       domain: 'meal_image_session',
       payload: {
         sourceImageId: normalizeText(imagePayload?.id || ''),
         sourceMessageId: normalizeText(input?.messageId || ''),
+        baseMealId: Number(baseMeal?.meal?.id || 0) || null,
         meal
       }
     }).catch(() => null);
