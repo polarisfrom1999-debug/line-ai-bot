@@ -210,6 +210,12 @@ function groupRowsToItems(rows, latestExamDate) {
 
 async function extractStructuredLab(imagePayload, meta = {}) {
   const builder = buildLabExtractPrompt(meta);
+  console.info('[lab-ingest-trace] stage:extract_prompt_info', {
+    userId: meta.userId,
+    prompt_version: builder?.promptVersion || '',
+    domain: builder?.domain || '',
+    preferred_model: builder?.preferredModel || ''
+  });
   let payload = {};
   let rawText = '';
   let ok = false;
@@ -293,6 +299,18 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     : (Number(report.confidence || payload.confidence || meta.confidence || 0) || 0);
 
   const qualifiedRecords = geminiItems.countQualifiedParsedItems(parsedMinItems);
+  const reportDataRows = Array.isArray(report?.data) ? report.data : [];
+  console.info('[lab-ingest-trace] stage:classifier_vs_extraction', {
+    userId: meta.userId,
+    classifier_raw_text: normalizeText(meta?.rawText || ''),
+    extraction_raw_text: normalizeText(rawText || ''),
+    extraction_document_type: normalizeText(report?.document_type || report?.documentType || ''),
+    extraction_missing_reason: normalizeText(report?.missing_reason || payload?.missing_reason || ''),
+    extraction_data_length: reportDataRows.length,
+    extraction_data_sample: reportDataRows.slice(0, 3),
+    primary_gemini_items: primaryGeminiMinItems.length,
+    parsed_items_json_length: parsedMinItems.length
+  });
   let itemChain = 'ok';
   if (!parsedMinItems.length) {
     const dr = report?.data;

@@ -100,6 +100,10 @@ async function main() {
     console.info(JSON.stringify({ intentType: out?.intentType, handled: out?.handled }, null, 2));
 
     const want = (sub) => lines.filter((l) => l.includes(sub));
+    console.info('\n--- extract_prompt_info ---');
+    for (const l of want('stage:extract_prompt_info')) console.info(l);
+    console.info('\n--- classifier_vs_extraction ---');
+    for (const l of want('stage:classifier_vs_extraction')) console.info(l);
     console.info('\n--- parsed_items_pre_insert (db_pre_insert 直前相当) ---');
     for (const l of want('parsed_items_pre_insert')) console.info(l);
     console.info('\n--- db_pre_insert ---');

@@ -20,8 +20,42 @@ function serializeValue(val) {
   return normalizeText(val);
 }
 
+function slugifyLabel(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_\-ぁ-んァ-ヶ一-龠]/g, '')
+    .slice(0, 80);
+}
+
+function inferNormalizedKey(rawLabel = '') {
+  const t = normalizeText(rawLabel).toLowerCase();
+  if (!t) return '';
+  if (t.includes('hemoglobin') || t.includes('血色素') || /^hb$/.test(t)) return 'hemoglobin';
+  if (t.includes('中性脂肪') || t.includes('triglycerides') || /^tg$/.test(t)) return 'triglycerides_tg';
+  if (t.includes('hba1c')) return 'hba1c';
+  if (t.includes('ldl')) return 'ldl_cholesterol';
+  if (t.includes('hdl')) return 'hdl_cholesterol';
+  if (t.includes('ast') || t.includes('got')) return 'ast_got';
+  if (t.includes('alt') || t.includes('gpt')) return 'alt_gpt';
+  if (t.includes('cre') || t.includes('クレアチニン')) return 'creatinine';
+  if (t.includes('wbc') || t.includes('白血球')) return 'wbc';
+  if (t.includes('rbc') || t.includes('赤血球')) return 'rbc';
+  return '';
+}
+
+function itemIdentityKey(it = {}, fallbackIndex = 0) {
+  const nk = normalizeText(it?.normalizedKey || '');
+  if (nk) return `nk:${nk}`;
+  const rn = normalizeText(it?.rawName || it?.label_in_image || '');
+  if (rn) return `raw:${rn.toLowerCase()}`;
+  const nm = normalizeText(it?.name || '');
+  if (nm) return `name:${nm.toLowerCase()}`;
+  return `anon:${fallbackIndex}`;
+}
+
 /**
- * parsed_items_json 1件の最小形（normalizedKey / value / source / rawName|name 必須）
+ * parsed_items_json 1件の最小形（value / source / rawName|name 必須。normalizedKey は暫定で空許容）
  */
 function buildMinItem({
   normalizedKey,
@@ -61,19 +95,25 @@ function buildMinItem({
 
 /**
  * Gemini の data[] から行ベース正規化を経ずに直接最小 item を作る（正本）
+ * normalized_key が無くても label_in_image + value があれば暫定 item 化する
  */
 function extractPrimaryGeminiMinItems(payload) {
   const out = [];
   const seen = new Set();
+  let anon = 0;
   for (const report of flattenReports(payload)) {
     for (const row of Array.isArray(report?.data) ? report.data : []) {
-      const nk = normalizeText(String(row?.normalized_key || row?.normalizedKey || '').toLowerCase());
-      if (!nk) continue;
+      const labelInImage = normalizeText(row?.label_in_image || row?.labelInImage || row?.row_label_raw || row?.rowLabelRaw || '');
+      const explicitKey = normalizeText(String(row?.normalized_key || row?.normalizedKey || '').toLowerCase());
+      const inferredKey = inferNormalizedKey(labelInImage);
+      const nk = explicitKey || inferredKey || (labelInImage ? `raw_label:${slugifyLabel(labelInImage) || `item_${anon}`}` : '');
       const val = serializeValue(row?.value);
       if (!val) continue;
-      if (seen.has(nk)) continue;
-      seen.add(nk);
-      const rawName = normalizeText(row?.label_in_image || row?.labelInImage || '');
+      const rawName = labelInImage;
+      if (!nk && !rawName) continue;
+      const identity = itemIdentityKey({ normalizedKey: nk, rawName }, anon++);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
       const name = KEY_TO_ITEM_NAME[nk] || rawName || nk;
       out.push(
         buildMinItem({
@@ -118,20 +158,25 @@ function rowNormalizeToFallbackMinItem(row) {
 
 function mergePrimaryAndRowFallback(primaryMinItems, normalizedRows) {
   const byKey = new Map();
+  let anon = 0;
   for (const it of primaryMinItems || []) {
-    const k = normalizeText(it?.normalizedKey);
-    if (k) byKey.set(k, { ...it });
+    const k = itemIdentityKey(it, anon++);
+    byKey.set(k, { ...it });
   }
   if (!byKey.size) {
     for (const row of normalizedRows || []) {
       const it = rowNormalizeToFallbackMinItem(row);
-      if (it && !byKey.has(it.normalizedKey)) byKey.set(it.normalizedKey, it);
+      if (!it) continue;
+      const k = itemIdentityKey(it, anon++);
+      if (!byKey.has(k)) byKey.set(k, it);
     }
   } else {
     for (const row of normalizedRows || []) {
       const it = rowNormalizeToFallbackMinItem(row);
-      if (!it || byKey.has(it.normalizedKey)) continue;
-      byKey.set(it.normalizedKey, it);
+      if (!it) continue;
+      const k = itemIdentityKey(it, anon++);
+      if (byKey.has(k)) continue;
+      byKey.set(k, it);
     }
   }
   return [...byKey.values()];

@@ -11,6 +11,7 @@ function buildLabExtractPrompt(meta = {}) {
       patient_name: { type: 'string' },
       report_date: { type: 'string' },
       exam_dates: { type: 'array', items: { type: 'string' } },
+      missing_reason: { type: 'string' },
       data: {
         type: 'array',
         items: {
@@ -41,8 +42,7 @@ function buildLabExtractPrompt(meta = {}) {
               minItems: 4,
               maxItems: 4
             }
-          },
-          required: ['normalized_key', 'label_in_image', 'date', 'value', 'confidence', 'status']
+          }
         }
       },
       issues: { type: 'array', items: { type: 'string' } },
@@ -54,6 +54,11 @@ function buildLabExtractPrompt(meta = {}) {
   const prompt = [
     'あなたは「ここから。」の血液検査構造化抽出担当です。返答はJSONのみです。',
     '目的は、単日票または推移表を構造化し、後で保存・照会できるようにすることです。',
+    '最重要: data[] を最優先で埋めてください。日付情報だけで返答を終えないでください。',
+    '最重要: data の各行は「検査項目 + 値」を表すこと。日付だけの行は data に入れないでください。',
+    '最重要: normalized_key が不明でも、label_in_image と value が取れた行は必ず data に残してください。',
+    '最重要: document_type が unknown でも、data に項目行があるならそのまま返してください。',
+    '最重要: data が空の場合は missing_reason に理由を必ず書いてください（例: value_not_readable / item_labels_not_detected / non_lab_image_like など）。',
     '採血日・検査日の列やラベル付き日付を最優先で読み、各 data 行の date と exam_dates / latest_exam_date に反映してください（印刷日だけで埋めない）。',
     '読めない時は推測せず status="unclear" にしてください。',
     '重要: document_type は single_day_report / multi_date_timeseries / unknown のいずれかにしてください。',
