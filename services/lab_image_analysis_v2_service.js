@@ -3,6 +3,7 @@
 const classifierService = require('./lab_document_classifier_service');
 const extractService = require('./lab_structured_extract_service');
 const labItemAliasService = require('./lab_item_alias_service');
+const labIngestTrace = require('./lab_ingest_trace_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -113,7 +114,7 @@ function mapStructuredToLegacyItems(items = []) {
 
 async function analyzeLabImageV2(imagePayload, opts = {}) {
   const classification = await classifierService.classifyLabDocument(imagePayload);
-  const extraction = await extractService.extractStructuredLab(imagePayload, classification);
+  const extraction = await extractService.extractStructuredLab(imagePayload, { ...classification, userId: opts.userId || '' });
   const rawText = [classification?.rawText, extraction?.rawText].filter(Boolean).join('\n');
   const rows = Array.isArray(extraction?.rows) ? extraction.rows : [];
   const examDateEntries = buildExamDateEntries(extraction, rows);
@@ -144,7 +145,7 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     },
   };
 
-  return {
+  const out = {
     source: 'image',
     intakeKind: 'blood_test',
     isLabImage,
@@ -175,6 +176,30 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     },
     sourceImageId: normalizeText(opts?.sourceImageId || '')
   };
+
+  const legacy = mapStructuredToLegacyItems(structuredItems);
+  let v2ItemChain = 'ok';
+  if (rows.length > 0 && structuredItems.length === 0) {
+    v2ItemChain = 'v2_buildStructuredItems:all_rows_skipped_no_examdate_or_value';
+  } else if (structuredItems.length > 0 && legacy.length === 0) {
+    v2ItemChain = 'v2_mapStructuredToLegacy_returned_0';
+  } else if (rows.length === 0) {
+    v2ItemChain = 'v2_extraction_rows_empty';
+  } else if (legacy.length === 0) {
+    v2ItemChain = 'v2_no_legacy_item_values';
+  }
+  labIngestTrace.logRecordsCountReason({
+    userId: opts.userId,
+    stage: 'lab_image_analysis_v2_built',
+    details: {
+      recordsCount: legacy.length,
+      chain: v2ItemChain,
+      extractRowCount: rows.length,
+      buildStructuredItemsCount: structuredItems.length,
+      legacyMapItemsCount: legacy.length
+    }
+  });
+  return out;
 }
 
 module.exports = {

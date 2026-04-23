@@ -8,6 +8,7 @@ const labDocumentIngestService = require('../lab_document_ingest_service');
 const labSessionRepository = require('../../repositories/lab_session_repository');
 const contextMemoryService = require('../context_memory_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
+const labIngestTrace = require('../lab_ingest_trace_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -156,7 +157,8 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   if (!lab || typeof lab !== 'object') {
     return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査票全体が見える画像をもう一度送ってください。' };
   }
-  const persist = await labSessionRepository.createLabSession({
+  const preDbParsed = Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []);
+  const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
     sourceMessageId: normalizeText(input?.messageId || ''),
@@ -165,15 +167,38 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     facilityName: lab?.facilityName || '',
     printDate: lab?.printDate || '',
     examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
-    parsedItems: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []),
+    parsedItems: preDbParsed,
     rawText: lab?.rawText || '',
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
     isLabImageStrict: Boolean(lab?.isLabImage),
     isLabImageTentative: true,
     geminiRaw: lab?.geminiRaw || null,
     structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
-    expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
-  }).catch(() => ({ ok: false, reason: 'insert_exception' }));
+    expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString()
+  };
+  let preChain = 'pre_persist';
+  if (!Array.isArray(lab?.items) || lab.items.length === 0) {
+    if (Array.isArray(preDbParsed) && preDbParsed.length) {
+      preChain = 'legacy_items_empty_but_itemsStructured_nonzero_mapping_issue';
+    } else if (Number(lab?.analysisConfidence?.rows || 0) > 0) {
+      preChain = 'extraction_had_rows_but_items_empty_downstream';
+    } else {
+      preChain = 'ingest_items_and_structured_both_empty';
+    }
+  }
+  labIngestTrace.logRecordsCountReason({
+    userId: input.userId,
+    stage: 'newflow_image_ingest_pre_db',
+    details: {
+      recordsCount: Array.isArray(lab?.items) ? lab.items.length : 0,
+      chain: preChain,
+      extractRowCount: Number(lab?.analysisConfidence?.rows || 0),
+      buildStructuredItemsCount: preDbParsed.length,
+      legacyMapItemsCount: Array.isArray(lab?.items) ? lab.items.length : 0
+    }
+  });
+  labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });
+  const persist = await labSessionRepository.createLabSession(insertPayload).catch(() => ({ ok: false, reason: 'insert_exception' }));
   if (!persist?.ok) {
     return {
       handled: true,

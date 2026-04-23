@@ -1,5 +1,7 @@
 'use strict';
 
+const labIngestTrace = require('../services/lab_ingest_trace_service');
+
 let supabase = null;
 try {
   ({ supabase } = require('../services/supabase_service'));
@@ -51,6 +53,10 @@ async function createLabSession(params = {}) {
   };
   try {
     let insertRow = rowWithGemini;
+    labIngestTrace.logPreInsert({
+      userId,
+      insertPayload: { stage: 'supabase_row_ready', variant: 'with_gemini_raw_columns', supabaseInsertRow: insertRow }
+    });
     let ins = await supabase
       .from('lab_sessions')
       .insert(insertRow)
@@ -59,6 +65,10 @@ async function createLabSession(params = {}) {
       .maybeSingle();
     if (ins?.error && (isMissingColumnError(ins.error, 'gemini_raw') || isMissingColumnError(ins.error, 'structured_json'))) {
       insertRow = baseRow;
+      labIngestTrace.logPreInsert({
+        userId,
+        insertPayload: { stage: 'supabase_row_retry', variant: 'without_gemini_columns_schema_fallback', supabaseInsertRow: insertRow }
+      });
       ins = await supabase
         .from('lab_sessions')
         .insert(insertRow)
@@ -66,9 +76,39 @@ async function createLabSession(params = {}) {
         .limit(1)
         .maybeSingle();
     }
-    if (ins?.error || !ins?.data) return { ok: false, reason: normalizeText(ins?.error?.message || 'insert_failed') };
+    if (ins?.error || !ins?.data) {
+      labIngestTrace.logPostInsertReadback({
+        userId,
+        sessionId: '',
+        readRow: null,
+        readError: ins?.error,
+        insertError: ins?.error
+      });
+      return { ok: false, reason: normalizeText(ins?.error?.message || 'insert_failed') };
+    }
+    const sessionId = ins.data.id;
+    let readBack = await supabase
+      .from('lab_sessions')
+      .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,confidence,created_at,updated_at,expires_at,source_image_id,source_message_id')
+      .eq('id', sessionId)
+      .maybeSingle();
+    if (readBack?.error && (isMissingColumnError(readBack.error, 'gemini_raw') || isMissingColumnError(readBack.error, 'structured_json'))) {
+      readBack = await supabase
+        .from('lab_sessions')
+        .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,confidence,created_at,updated_at,expires_at,source_image_id,source_message_id')
+        .eq('id', sessionId)
+        .maybeSingle();
+    }
+    labIngestTrace.logPostInsertReadback({
+      userId,
+      sessionId,
+      readRow: readBack?.data || null,
+      readError: readBack?.error,
+      insertError: null
+    });
     return { ok: true, session: ins.data };
   } catch (error) {
+    labIngestTrace.logPostInsertReadback({ userId, sessionId: '', readRow: null, readError: error, insertError: error });
     return { ok: false, reason: normalizeText(error?.message || 'insert_failed') };
   }
 }

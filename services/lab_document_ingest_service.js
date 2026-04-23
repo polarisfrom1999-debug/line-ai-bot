@@ -4,6 +4,7 @@ const labImageAnalysisService = require('./lab_image_analysis_service');
 const labImageAnalysisV2Service = require('./lab_image_analysis_v2_service');
 const labDocumentStoreService = require('./lab_document_store_service');
 const labReportStoreService = require('./lab_report_store_service');
+const labIngestTrace = require('./lab_ingest_trace_service');
 
 function summarizeLabPanel(panel = {}) {
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -47,11 +48,17 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
   const mode = String(process.env.KOKOKARA_LAB_PIPELINE_MODE || 'v2').trim();
   const [panelV1, panelV2] = await Promise.all([
     labImageAnalysisService.analyzeLabImage(imagePayload),
-    labImageAnalysisV2Service.analyzeLabImageV2(imagePayload, { sourceImageId: imagePayload?.id || '' })
+    labImageAnalysisV2Service.analyzeLabImageV2(imagePayload, { sourceImageId: imagePayload?.id || '', userId })
   ]);
   const comparison = buildPipelineComparison(panelV1, panelV2);
   console.info('[lab-pipeline] compare_v1_v2', { userId, mode, ...comparison });
   const panel = panelV2;
+  labIngestTrace.logLabPanelCreated({
+    userId,
+    source: 'lab_document_ingest_fresh',
+    stage: 'post_v2_before_cache_store',
+    panel
+  });
   if (mode !== 'v2') {
     panel.patientName = panel.patientName || panelV2.patientName || '';
     panel.facilityName = panel.facilityName || panelV2.facilityName || '';

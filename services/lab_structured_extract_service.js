@@ -5,6 +5,7 @@ const classifier = require('./lab_document_classifier_service');
 const geminiDispatchService = require('./gemini_dispatch_service');
 const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
 const phaseeReachabilityService = require('./phasee_reachability_service');
+const labIngestTrace = require('./lab_ingest_trace_service');
 
 const KEY_TO_ITEM_NAME = {
   ast_got: 'AST',
@@ -243,6 +244,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   let payload = {};
   let rawText = '';
   let ok = false;
+  let geminiTraceBundle = null;
 
   try {
     const dispatch = await geminiDispatchService.generateStructuredImageJson({
@@ -259,6 +261,14 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     ok = true;
     payload = dispatch?.json || {};
     rawText = sanitizeGeminiText(dispatch?.text || JSON.stringify(dispatch?.json || {}));
+    geminiTraceBundle = {
+      path: 'structured_image_json',
+      ok: true,
+      model: dispatch?.model,
+      text: dispatch?.text,
+      parsed_json: dispatch?.json,
+      raw: dispatch?.raw
+    };
   } catch (dispatchError) {
     console.info('[phasee-old] old_local_parser_reached', {
       userId: normalizeText(meta?.userId || ''),
@@ -277,6 +287,12 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     ok = Boolean(result?.ok);
     rawText = sanitizeGeminiText(result?.text || '');
     payload = extractJson(result?.text || '') || {};
+    geminiTraceBundle = {
+      path: 'fallback_text_parse',
+      image_ok: result?.ok,
+      data: result?.data,
+      text: result?.text
+    };
   }
 
   const reports = flattenReports(payload);
@@ -299,6 +315,39 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   const confidence = confidenceValues.length
     ? Math.round((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length) * 100) / 100
     : (Number(report.confidence || payload.confidence || meta.confidence || 0) || 0);
+
+  let itemChain = 'ok';
+  if (rows.length === 0) {
+    const dr = report?.data;
+    if (!Array.isArray(dr) || dr.length === 0) {
+      itemChain = 'no_rows:report_data_empty';
+    } else {
+      itemChain = 'no_rows:normalizeRows_dropped_all_invalid_item_or_value';
+    }
+  } else if (items.length === 0) {
+    itemChain = 'rows_present_but_groupRowsToItems_returned_0';
+  }
+  labIngestTrace.logRecordsCountReason({
+    userId: meta.userId,
+    stage: 'lab_structured_extract_after_groupRows',
+    details: {
+      recordsCount: items.length,
+      chain: itemChain,
+      extractRowCount: rows.length,
+      buildStructuredItemsCount: 0,
+      legacyMapItemsCount: items.length
+    }
+  });
+
+  if (geminiTraceBundle) {
+    labIngestTrace.logGeminiAndStructured({
+      userId: meta.userId,
+      source: 'lab_structured_extract',
+      note: 'after_normalize_groupRows_extraction',
+      geminiRaw: geminiTraceBundle,
+      structuredJsonParsed: payload
+    });
+  }
 
   return {
     ok,
