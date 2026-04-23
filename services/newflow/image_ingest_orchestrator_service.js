@@ -9,7 +9,7 @@ const labSessionRepository = require('../../repositories/lab_session_repository'
 const contextMemoryService = require('../context_memory_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const labIngestTrace = require('../lab_ingest_trace_service');
-const { countPersistableParsedRecords } = require('../lab_gemini_items_service');
+const { countPersistableParsedRecords, extractPrimaryGeminiMinItems } = require('../lab_gemini_items_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -17,6 +17,24 @@ function normalizeText(value) {
 
 function round1(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 10) / 10;
+}
+
+function toParsedItemsFromLabPanel(lab = {}) {
+  if (Array.isArray(lab?.itemsStructured) && lab.itemsStructured.length) {
+    return lab.itemsStructured;
+  }
+  if (Array.isArray(lab?.items) && lab.items.length) {
+    return lab.items;
+  }
+  return [];
+}
+
+function recoverParsedItemsFromStructuredJson(lab = {}) {
+  const structured = (lab?.structuredJson && typeof lab.structuredJson === 'object')
+    ? lab.structuredJson
+    : ((lab?.rawPayload && typeof lab.rawPayload === 'object') ? lab.rawPayload : null);
+  if (!structured) return [];
+  return extractPrimaryGeminiMinItems(structured);
 }
 
 function buildMealReply(meal) {
@@ -158,8 +176,18 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   if (!lab || typeof lab !== 'object') {
     return { handled: true, intentType: 'newflow_lab_image_ng', replyText: '血液検査画像として判定できませんでした。検査票全体が見える画像をもう一度送ってください。' };
   }
-  const preDbParsed = Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []);
+  const preDbParsedCandidate = toParsedItemsFromLabPanel(lab);
+  const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
+  const preDbParsed = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
   const qualifiedForDb = countPersistableParsedRecords(preDbParsed);
+  console.info('[lab-ingest-trace] stage:parsed_items_pre_insert', {
+    userId: input.userId,
+    panel_items_structured_len: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured.length : 0,
+    panel_items_len: Array.isArray(lab?.items) ? lab.items.length : 0,
+    recovered_primary_len: recoveredPrimaryParsed.length,
+    parsed_items_len: preDbParsed.length,
+    qualified_records: qualifiedForDb
+  });
   const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
@@ -213,6 +241,19 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       parsed_min_items_count: preDbParsed.length
     }
   });
+  if (qualifiedForDb > 0 && (!Array.isArray(insertPayload.parsedItems) || insertPayload.parsedItems.length === 0)) {
+    console.error('[lab-ingest-trace] stage:parsed_items_guard_blocked_empty_insert', {
+      userId: input.userId,
+      qualified_records: qualifiedForDb,
+      panel_items_structured_len: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured.length : 0,
+      recovered_primary_len: recoveredPrimaryParsed.length
+    });
+    return {
+      handled: true,
+      intentType: 'newflow_lab_save_pending',
+      replyText: '検査画像の解析はできましたが、保存データ整形で不整合を検知しました。もう一度同じ画像を送ってください。'
+    };
+  }
   labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });
   const persist = await labSessionRepository.createLabSession(insertPayload).catch(() => ({ ok: false, reason: 'insert_exception' }));
   if (!persist?.ok) {
