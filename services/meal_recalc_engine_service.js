@@ -18,17 +18,17 @@ function clone(value) {
 }
 
 function extractBaseNutrition(basePayload = {}) {
+  // 固定ルール:
+  // 再計算経路では保存済みの平坦な kcal/PFC を直接参照せず、
+  // base_meal の生データ(estimatedNutrition)を起点に計算する。
   const estimated = basePayload.estimatedNutrition && typeof basePayload.estimatedNutrition === 'object'
     ? basePayload.estimatedNutrition
     : {};
-  const adopted = basePayload.adoptedNutrition && typeof basePayload.adoptedNutrition === 'object'
-    ? basePayload.adoptedNutrition
-    : {};
   return {
-    kcal: toNumber(basePayload.kcal ?? adopted.kcal ?? estimated.kcal, 0),
-    protein: toNumber(basePayload.protein ?? adopted.protein ?? estimated.protein, 0),
-    fat: toNumber(basePayload.fat ?? adopted.fat ?? estimated.fat, 0),
-    carbs: toNumber(basePayload.carbs ?? adopted.carbs ?? estimated.carbs, 0),
+    kcal: toNumber(estimated.kcal, 0),
+    protein: toNumber(estimated.protein, 0),
+    fat: toNumber(estimated.fat, 0),
+    carbs: toNumber(estimated.carbs, 0),
   };
 }
 
