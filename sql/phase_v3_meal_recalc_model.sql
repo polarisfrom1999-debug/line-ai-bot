@@ -4,6 +4,7 @@ create table if not exists public.base_meals (
   id bigserial primary key,
   user_id text not null,
   eaten_at timestamptz not null,
+  base_meal_version text not null default 'v1',
   source_message_id text,
   source_image_id text,
   meal_label text not null default '食事',

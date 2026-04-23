@@ -28,6 +28,7 @@ async function createBaseMeal(params = {}) {
       .insert({
         user_id: userId,
         eaten_at: eatenAt,
+        base_meal_version: normalizeText(params.baseMealVersion || 'v1') || 'v1',
         source_message_id: normalizeText(params.sourceMessageId || ''),
         source_image_id: normalizeText(params.sourceImageId || ''),
         meal_label: normalizeText(params.mealLabel || '食事') || '食事',
@@ -35,7 +36,7 @@ async function createBaseMeal(params = {}) {
         created_at: now,
         updated_at: now,
       })
-      .select('id,user_id,eaten_at,meal_label,created_at')
+      .select('id,user_id,eaten_at,base_meal_version,meal_label,created_at')
       .limit(1)
       .maybeSingle();
     if (error || !data) return { ok: false, reason: normalizeText(error?.message || 'insert_failed') };
@@ -88,7 +89,7 @@ async function getBaseMealWithEvents(mealId) {
   try {
     const { data: meal } = await supabase
       .from('base_meals')
-      .select('id,user_id,eaten_at,source_message_id,source_image_id,meal_label,base_payload_json,created_at,updated_at')
+      .select('id,user_id,eaten_at,base_meal_version,source_message_id,source_image_id,meal_label,base_payload_json,created_at,updated_at')
       .eq('id', id)
       .maybeSingle();
     if (!meal) return null;
