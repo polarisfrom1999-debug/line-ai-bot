@@ -5,6 +5,8 @@ const labImageAnalysisV2Service = require('./lab_image_analysis_v2_service');
 const labDocumentStoreService = require('./lab_document_store_service');
 const labReportStoreService = require('./lab_report_store_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
+const labSessionRepository = require('../repositories/lab_session_repository');
+const labMetaExtractService = require('./lab_meta_extract_service');
 
 function summarizeLabPanel(panel = {}) {
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -19,6 +21,57 @@ function summarizeLabPanel(panel = {}) {
     facilityName: panel?.facilityName || '',
     printDate: panel?.printDate || ''
   };
+}
+
+async function applyMetaLayerToPanel({ userId, imagePayload, panel }) {
+  if (!userId || !imagePayload || !panel || typeof panel !== 'object') return panel;
+  let lastSession = null;
+  try {
+    lastSession = await labSessionRepository.getLatestLabSession(userId);
+  } catch (_e) {
+    lastSession = null;
+  }
+  const canonical = lastSession
+    ? {
+        patient_name: String(lastSession.patient_name || ''),
+        facility_name: String(lastSession.facility_name || ''),
+        print_date: String(lastSession.print_date || '').trim() || '',
+      }
+    : {};
+  const documentType = panel.geminiRaw?.classifier?.documentType
+    || panel.geminiClassification?.documentType
+    || 'unknown';
+  const reportDate = String(panel.printDate || panel.examDate || panel.latestExamDate || '').trim();
+  const metaExtraction = await labMetaExtractService
+    .extractMetaFromImage(imagePayload, { userId, documentType, reportDate })
+    .catch(() => null);
+  if (!metaExtraction?.mergedDraft) return panel;
+  const merged = labMetaExtractService.mergeMetaWithCanonical({
+    extracted: metaExtraction.mergedDraft,
+    canonical,
+  });
+  panel.patientName = String(merged.patient_name || '');
+  panel.facilityName = String(merged.facility_name || '');
+  panel.printDate = String(merged.print_date || '');
+  panel.metaExtraction = {
+    source: metaExtraction.source,
+    promptVersion: metaExtraction.promptVersion,
+  };
+  panel.metaAdoption = merged.adoption;
+  panel.metaConfidence = {
+    patient_name: merged.patient_name_confidence,
+    facility_name: merged.facility_name_confidence,
+    print_date: merged.print_date_confidence,
+  };
+  console.info('[lab-ingest-trace] stage:lab_meta_persist', {
+    userId: String(userId),
+    ...panel.metaExtraction,
+    adoption: panel.metaAdoption,
+    patientName: panel.patientName,
+    facilityName: panel.facilityName,
+    printDate: panel.printDate
+  });
+  return panel;
 }
 
 function buildPipelineComparison(v1 = {}, v2 = {}) {
@@ -52,7 +105,16 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
   ]);
   const comparison = buildPipelineComparison(panelV1, panelV2);
   console.info('[lab-pipeline] compare_v1_v2', { userId, mode, ...comparison });
-  const panel = panelV2;
+  let panel = panelV2;
+  try {
+    await applyMetaLayerToPanel({ userId, imagePayload, panel });
+  } catch (err) {
+    console.info('[lab-ingest-trace] stage:lab_meta_persist', {
+      userId: String(userId),
+      error: err?.message || 'lab_meta_layer_failed',
+      skipped: true
+    });
+  }
   labIngestTrace.logLabPanelCreated({
     userId,
     source: 'lab_document_ingest_fresh',
@@ -60,9 +122,11 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     panel
   });
   if (mode !== 'v2') {
-    panel.patientName = panel.patientName || panelV2.patientName || '';
-    panel.facilityName = panel.facilityName || panelV2.facilityName || '';
-    panel.printDate = panel.printDate || panelV2.printDate || '';
+    if (!panel.metaExtraction) {
+      panel.patientName = panel.patientName || panelV2.patientName || '';
+      panel.facilityName = panel.facilityName || panelV2.facilityName || '';
+      panel.printDate = panel.printDate || panelV2.printDate || '';
+    }
     panel.pageInfo = panel.pageInfo || panelV2.pageInfo || { current_page: null, total_pages: null };
     panel.examDateEntries = Array.isArray(panelV2.examDateEntries) ? panelV2.examDateEntries : [];
     panel.itemsStructured = Array.isArray(panelV2.itemsStructured) ? panelV2.itemsStructured : [];
