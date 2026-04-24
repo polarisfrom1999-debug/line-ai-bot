@@ -7,13 +7,17 @@ body { margin: 0; font-family: sans-serif; }
 #userList .item .item-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 #userList .item .name { font-size: 14px; font-weight: 700; }
 #userList .item .time { color: #666; font-size: 11px; white-space: nowrap; }
+#userList .item .badge { margin-left: 6px; font-size: 10px; color: #fff; background: #c0392b; border-radius: 999px; padding: 2px 7px; }
 #userList .item .preview { margin-top: 6px; font-size: 12px; color: #2f2f2f; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; min-height: 2.8em; }
 #userList .item .subid { display: block; margin-top: 5px; color: #888; font-size: 11px; }
 #userList .item.active { border-color: #7d5a7b; background: #f6eef8; box-shadow: inset 0 0 0 1px #7d5a7b33; }
+#userList .item.unread .name { font-weight: 800; }
+#chatHistory .date-sep { text-align: center; color: #777; font-size: 12px; margin: 12px 0 6px; }
 #chatHistory .row { margin: 8px 0; }
 #chatHistory .bubble { padding: 8px; border-radius: 10px; max-width: 90%; white-space: pre-wrap; }
 #chatHistory .user .bubble { background: #eee; margin-left: auto; }
 #chatHistory .assistant .bubble { background: #f1e7f4; }
+#chatHistory .meta { font-size: 11px; color: #777; margin-top: 3px; }
 .send { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #ddd; padding-top: 8px; }
 textarea { width: 100%; min-height: 120px; }
 #weekDraftText, #monthDraftText { min-height: 420px; height: 52vh; max-height: 72vh; box-sizing: border-box; }
@@ -26,3 +30,12 @@ textarea { width: 100%; min-height: 120px; }
 .right { overflow-y: auto; }
 .center { min-width: 0; }
 .send textarea { min-height: 72px; max-height: 150px; }
+.right-split { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; min-height: 72vh; }
+.section-head { font-weight: 700; margin-bottom: 6px; }
+.consult,.drafts { border: 1px solid #ddd; border-radius: 10px; padding: 10px; overflow: auto; min-height: 0; }
+.consult-log { border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; min-height: 120px; max-height: 180px; overflow: auto; background: #fafafa; }
+.consult-item { margin-bottom: 10px; }
+.consult-item .q { font-size: 12px; color: #333; }
+.consult-item .a { margin-top: 4px; white-space: pre-wrap; font-size: 13px; }
+.consult-form textarea { min-height: 92px; }
+.row-btns { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }

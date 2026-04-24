@@ -33,7 +33,20 @@ function isSystemLikeMessage(role, messageType, text) {
   return false;
 }
 
-async function getManagedUsers({ query = '', limit = 80 } = {}) {
+function pickDisplayName(userRow = {}) {
+  const p1 = normalizeText(userRow.line_display_name || userRow.display_name || '');
+  const p2 = normalizeText(userRow.preferred_name || userRow.nickname || userRow.name || '');
+  const p3 = normalizeText(
+    userRow?.metadata?.patientName
+    || userRow?.metadata?.patient_name
+    || userRow?.metadata?.fullName
+    || userRow?.metadata?.name
+    || ''
+  );
+  return p1 || p2 || p3 || '';
+}
+
+async function getManagedUsers({ query = '', limit = 80, adminUserId = '' } = {}) {
   if (!supabase) return [];
   const q = normalizeText(query).toLowerCase();
   const { data, error } = await supabase
@@ -41,13 +54,22 @@ async function getManagedUsers({ query = '', limit = 80 } = {}) {
     .select('line_user_id,message_text,created_at,role,message_type,metadata')
     .not('line_user_id', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(2000);
+    .limit(4000);
   if (error || !Array.isArray(data)) return [];
   const { data: usersData } = await supabase
     .from('users')
-    .select('id,line_user_id,display_name,preferred_name,name,metadata')
+    .select('id,line_user_id,line_display_name,display_name,preferred_name,nickname,name,metadata')
     .not('line_user_id', 'is', null)
     .limit(5000);
+  const { data: readData } = await supabase
+    .from('admin_thread_reads')
+    .select('line_user_id,last_read_message_at')
+    .eq('admin_user_id', normalizeText(adminUserId || ''))
+    .limit(5000);
+  const readMap = new Map();
+  for (const r of Array.isArray(readData) ? readData : []) {
+    readMap.set(normalizeText(r.line_user_id), toIso(r.last_read_message_at));
+  }
   const userMap = new Map();
   for (const u of Array.isArray(usersData) ? usersData : []) {
     userMap.set(normalizeText(u.line_user_id), u);
@@ -63,13 +85,13 @@ async function getManagedUsers({ query = '', limit = 80 } = {}) {
       lastRole: '',
       unread: false,
       displayName: '',
-      helperId: shortId(uid)
+      helperId: shortId(uid),
+      unreadCount: 0,
+      hasNew: false
     };
     const profile = userMap.get(uid) || {};
-    const p1 = normalizeText(profile.display_name || '');
-    const p2 = normalizeText(profile.preferred_name || profile.name || '');
-    const p3 = normalizeText(profile?.metadata?.patientName || profile?.metadata?.patient_name || '');
-    cur.displayName = p1 || p2 || p3 || `未設定ユーザー (${shortId(uid)})`;
+    const picked = pickDisplayName(profile);
+    cur.displayName = picked || `未設定ユーザー (${shortId(uid)})`;
     const iso = toIso(row.created_at);
     if (!cur.lastMessageAt || (iso && iso > cur.lastMessageAt)) {
       cur.lastMessageAt = iso;
@@ -86,6 +108,16 @@ async function getManagedUsers({ query = '', limit = 80 } = {}) {
       if (!isSystemLikeMessage(row.role, row.message_type, txt)) {
         cur.lastPreview = txt.slice(0, 120);
       }
+    }
+    const readAt = readMap.get(uid) || '';
+    if (
+      normalizeText(row.role) === 'user'
+      && iso
+      && (!readAt || iso > readAt)
+      && !isSystemLikeMessage(row.role, row.message_type, normalizeText(row.message_text))
+    ) {
+      cur.unreadCount += 1;
+      cur.hasNew = true;
     }
     map.set(uid, cur);
   }
@@ -120,6 +152,36 @@ async function getUserChatHistory(lineUserId, { limit = 200 } = {}) {
     createdAt: toIso(r.created_at) || new Date().toISOString(),
     attachments: Array.isArray(r?.metadata?.attachments) ? r.metadata.attachments : []
   }));
+}
+
+async function markThreadRead({ adminUserId, lineUserId, lastReadMessageAt }) {
+  if (!supabase) return { ok: false };
+  const payload = {
+    admin_user_id: normalizeText(adminUserId),
+    line_user_id: normalizeText(lineUserId),
+    last_read_message_at: normalizeText(lastReadMessageAt) || new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabase.from('admin_thread_reads').upsert(payload, { onConflict: 'admin_user_id,line_user_id' });
+  if (error) return { ok: false, reason: normalizeText(error.message || 'mark_read_failed') };
+  return { ok: true };
+}
+
+async function syncLineDisplayName(lineUserId, displayName) {
+  if (!supabase) return { ok: false };
+  const uid = normalizeText(lineUserId);
+  const name = normalizeText(displayName);
+  if (!uid || !name) return { ok: false };
+  const { error } = await supabase
+    .from('users')
+    .update({
+      line_display_name: name,
+      display_name: name,
+      updated_at: new Date().toISOString()
+    })
+    .eq('line_user_id', uid);
+  if (error) return { ok: false, reason: normalizeText(error.message || 'sync_display_name_failed') };
+  return { ok: true };
 }
 
 async function insertAdminMessage({ lineUserId, text = '', attachments = [], adminUserId = '' } = {}) {
@@ -206,6 +268,8 @@ async function upsertTheme({ adminUserId, themeId, accentColor } = {}) {
 module.exports = {
   getManagedUsers,
   getUserChatHistory,
+  markThreadRead,
+  syncLineDisplayName,
   insertAdminMessage,
   getDraft,
   upsertDraft,

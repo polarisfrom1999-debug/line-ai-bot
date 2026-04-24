@@ -16,6 +16,13 @@ const { getTokyoWeekEnergyBalance } = require('../services/weekly_balance_query_
 const { getTokyoMonthEnergyBalance } = require('../services/monthly_balance_query_service');
 const webAdminRepository = require('../repositories/web_admin_repository');
 const webAdminResponseBuilder = require('../services/web_admin_response_builder_service');
+const aiChatService = require('../services/ai_chat_service');
+let line = null;
+try {
+  line = require('@line/bot-sdk');
+} catch (_e) {
+  line = null;
+}
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 5, fileSize: 12 * 1024 * 1024 } });
 
@@ -49,6 +56,21 @@ function buildDisplayName(user) {
   if (!raw) return 'ここから。ユーザー';
   if (/今日|昨日|明日|暖か|眠い|しんど|痛い|なりそう|です$|ます$/.test(raw)) return 'ここから。ユーザー';
   return raw;
+}
+
+async function refreshLineDisplayName(lineUserId) {
+  const uid = String(lineUserId || '').trim();
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!uid || !line || !token) return { ok: false };
+  try {
+    const client = new line.messagingApi.MessagingApiClient({ channelAccessToken: token });
+    const profile = await client.getProfile(uid);
+    const displayName = String(profile?.displayName || '').trim();
+    if (!displayName) return { ok: false };
+    return webAdminRepository.syncLineDisplayName(uid, displayName);
+  } catch (_e) {
+    return { ok: false };
+  }
 }
 
 function buildFallbackHomeResponse(user, message) {
@@ -627,11 +649,47 @@ router.get('/records/labs/list', requireSession, async (req, res) => {
 router.get('/admin/users', requireSession, async (req, res) => {
   try {
     const q = String(req.query.q || '');
-    const items = await webAdminRepository.getManagedUsers({ query: q, limit: Number(req.query.limit || 80) });
+    const items = await webAdminRepository.getManagedUsers({
+      query: q,
+      limit: Number(req.query.limit || 80),
+      adminUserId: req.webSession.user?.id || ''
+    });
     console.info('[phasee-new] web_user_list_context', { admin_user_id: req.webSession.user?.id || '', count: items.length, query: q.slice(0, 40) });
     res.json({ ok: true, items });
   } catch (error) {
     res.status(500).json({ ok: false, error: 'web_user_list_failed', message: '利用者一覧を取得できませんでした。' });
+  }
+});
+
+router.post('/admin/users/refresh-display-name', requireSession, async (req, res) => {
+  try {
+    const lineUserId = String(req.body?.lineUserId || '').trim();
+    if (!lineUserId) return res.status(400).json({ ok: false, error: 'invalid_user' });
+    const out = await refreshLineDisplayName(lineUserId);
+    return res.json({ ok: Boolean(out?.ok) });
+  } catch (_e) {
+    return res.status(500).json({ ok: false, error: 'refresh_display_name_failed' });
+  }
+});
+
+router.post('/admin/thread/read', requireSession, async (req, res) => {
+  try {
+    const lineUserId = String(req.body?.lineUserId || '').trim();
+    const lastReadMessageAt = String(req.body?.lastReadMessageAt || '').trim();
+    if (!lineUserId) {
+      return res.status(400).json({ ok: false, error: 'invalid_user', message: '対象ユーザーが不正です。' });
+    }
+    const out = await webAdminRepository.markThreadRead({
+      adminUserId: req.webSession.user?.id || '',
+      lineUserId,
+      lastReadMessageAt
+    });
+    if (!out?.ok) {
+      return res.status(500).json({ ok: false, error: 'mark_read_failed', message: '既読更新に失敗しました。' });
+    }
+    return res.json({ ok: true });
+  } catch (_e) {
+    return res.status(500).json({ ok: false, error: 'mark_read_failed', message: '既読更新に失敗しました。' });
   }
 });
 
@@ -736,6 +794,51 @@ router.get('/admin/summary/monthly', requireSession, async (req, res) => {
     res.json({ ok: true, summary: month });
   } catch (_e) {
     res.status(500).json({ ok: false, error: 'web_monthly_summary_failed', message: '今月サマリを取得できませんでした。' });
+  }
+});
+
+router.post('/admin/consult', requireSession, async (req, res) => {
+  try {
+    const lineUserId = String(req.body?.lineUserId || '').trim();
+    const prompt = String(req.body?.prompt || '').trim();
+    const reportType = String(req.body?.reportType || 'weekly').trim();
+    if (!lineUserId || !prompt) {
+      return res.status(400).json({ ok: false, error: 'invalid_consult', message: '対象ユーザーと相談文が必要です。' });
+    }
+    const today = await getTokyoDayEnergyBalance(lineUserId, null);
+    const week = await getTokyoWeekEnergyBalance(lineUserId, null);
+    const month = await getTokyoMonthEnergyBalance(lineUserId, null);
+    const history = await webAdminRepository.getUserChatHistory(lineUserId, { limit: 40 });
+    const recentHistory = history.slice(-16).map((m) => `${m.role === 'user' ? '利用者' : '返信'}: ${String(m.text || '').slice(0, 160)}`).join('\n');
+    const contextBlock = [
+      `対象: ${lineUserId}`,
+      `[今日サマリ] intake=${today?.intakeKcal || 0}, activity=${today?.activityKcal || 0}, net=${today?.netKcal || 0}, mealCount=${today?.mealCount || 0}, correctionCount=${today?.totalCorrectionEventCount || 0}`,
+      `[今週サマリ] intake=${week?.totals?.weekIntakeKcal || 0}, activity=${week?.totals?.weekActivityKcal || 0}, net=${week?.totals?.weekNetKcal || 0}, mealCount=${week?.totals?.weekMealCount || 0}, correctionCount=${week?.totals?.weekCorrectionEventCount || 0}`,
+      `[今月サマリ] intake=${month?.totals?.monthIntakeKcal || 0}, activity=${month?.totals?.monthActivityKcal || 0}, net=${month?.totals?.monthNetKcal || 0}, mealCount=${month?.totals?.monthMealCount || 0}, correctionCount=${month?.totals?.monthCorrectionEventCount || 0}`,
+      recentHistory ? `[直近チャット]\n${recentHistory}` : ''
+    ].filter(Boolean).join('\n');
+    const userInput = [
+      'あなたは管理者向けのレポート作成アシスタントです。',
+      '利用者へ直接送る文ではなく、管理者の検討メモとして回答してください。',
+      `出力用途: ${reportType === 'monthly' ? '月間報告' : '週間報告'}`,
+      '依頼:',
+      prompt
+    ].join('\n');
+    const answer = await aiChatService.generateNaturalResponse(userInput, {
+      intentType: 'admin_consult',
+      responseMode: 'guided',
+      recentMessages: []
+    }, {
+      draftReply: contextBlock,
+      hasStructuredData: true
+    });
+    return res.json({
+      ok: true,
+      answer: String(answer || '').trim() || '相談文を生成できませんでした。再度お試しください。',
+      context: { today, week, month, recentCount: history.length }
+    });
+  } catch (_e) {
+    return res.status(500).json({ ok: false, error: 'admin_consult_failed', message: 'AI相談に失敗しました。' });
   }
 });
 

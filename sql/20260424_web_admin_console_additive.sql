@@ -22,3 +22,15 @@ create table if not exists web_theme_settings (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists users
+  add column if not exists line_display_name text not null default '';
+
+create table if not exists admin_thread_reads (
+  id bigserial primary key,
+  admin_user_id text not null,
+  line_user_id text not null,
+  last_read_message_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (admin_user_id, line_user_id)
+);

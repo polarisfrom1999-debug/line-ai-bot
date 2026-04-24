@@ -11,6 +11,7 @@
     <aside class="left">
       <div class="head">利用者一覧</div>
       <input id="userSearch" placeholder="検索">
+      <button id="refreshDisplayName" type="button">選択ユーザーのLINE名更新</button>
       <div id="userList"></div>
     </aside>
     <main class="center">
@@ -23,26 +24,51 @@
       </form>
     </main>
     <aside class="right">
-      <div class="head">サマリ / 下書き</div>
-      <div class="tabs">
-        <button data-tab="today" class="active">今日</button>
-        <button data-tab="week">今週</button>
-        <button data-tab="month">今月</button>
-        <button data-tab="weekDraft">週間報告下書き</button>
-        <button data-tab="monthDraft">月間報告下書き</button>
-      </div>
-      <div id="panelToday" class="panel active"></div>
-      <div id="panelWeek" class="panel"></div>
-      <div id="panelMonth" class="panel"></div>
-      <div id="panelWeekDraft" class="panel">
-        <button id="genWeek">再生成</button>
-        <textarea id="weekDraftText"></textarea>
-        <button id="saveWeek">保存</button>
-      </div>
-      <div id="panelMonthDraft" class="panel">
-        <button id="genMonth">再生成</button>
-        <textarea id="monthDraftText"></textarea>
-        <button id="saveMonth">保存</button>
+      <div class="head">AI相談 / 下書き</div>
+      <div class="right-split">
+        <section class="consult">
+          <div class="section-head">AI相談（管理者向け）</div>
+          <div class="tabs">
+            <button data-tab="today" class="active">今日</button>
+            <button data-tab="week">今週</button>
+            <button data-tab="month">今月</button>
+          </div>
+          <div id="panelToday" class="panel active"></div>
+          <div id="panelWeek" class="panel"></div>
+          <div id="panelMonth" class="panel"></div>
+          <div id="consultLog" class="consult-log"></div>
+          <form id="consultForm" class="consult-form">
+            <select id="consultType">
+              <option value="weekly">週間報告向け</option>
+              <option value="monthly">月間報告向け</option>
+            </select>
+            <textarea id="consultInput" placeholder="例: 今週の声かけを3案出して"></textarea>
+            <div class="row-btns">
+              <button type="submit">AIに相談</button>
+              <button id="applyToWeek" type="button">回答を週報へ反映</button>
+              <button id="applyToMonth" type="button">回答を月報へ反映</button>
+            </div>
+          </form>
+        </section>
+        <section class="drafts">
+          <div class="section-head">下書き保存</div>
+          <div class="tabs">
+            <button data-tab="weekDraft" class="active">週間報告下書き</button>
+            <button data-tab="monthDraft">月間報告下書き</button>
+          </div>
+          <div id="panelWeekDraft" class="panel active">
+            <button id="genWeek">再生成</button>
+            <button id="reloadWeek">再読込</button>
+            <textarea id="weekDraftText"></textarea>
+            <button id="saveWeek">保存</button>
+          </div>
+          <div id="panelMonthDraft" class="panel">
+            <button id="genMonth">再生成</button>
+            <button id="reloadMonth">再読込</button>
+            <textarea id="monthDraftText"></textarea>
+            <button id="saveMonth">保存</button>
+          </div>
+        </section>
       </div>
       <div class="theme">
         <label>テーマ</label>

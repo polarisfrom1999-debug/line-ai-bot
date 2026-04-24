@@ -67,6 +67,24 @@ function buildLineClient() {
   }
 }
 
+async function syncLineDisplayName(lineClient, lineUserId) {
+  const uid = String(lineUserId || '').trim();
+  if (!uid || !lineClient) return;
+  try {
+    const getProfileFn = typeof lineClient.getProfile === 'function'
+      ? lineClient.getProfile.bind(lineClient)
+      : null;
+    if (!getProfileFn) return;
+    const profile = await getProfileFn(uid);
+    const displayName = String(profile?.displayName || '').trim();
+    if (!displayName) return;
+    const webAdminRepository = require('./repositories/web_admin_repository');
+    await webAdminRepository.syncLineDisplayName(uid, displayName);
+  } catch (_e) {
+    // LINE profile取得失敗時は会話処理を止めない
+  }
+}
+
 function sanitizeMessageText(text) {
   const safe = String(text || '');
   return safe.length <= 4900 ? safe : `${safe.slice(0, 4890)}…`;
@@ -549,7 +567,9 @@ app.post('/webhook', async (req, res) => {
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
     res.status(200).send('ok');
 
+    const lineClient = buildLineClient();
     for (const event of events) {
+      await syncLineDisplayName(lineClient, event?.source?.userId || '');
       await handleEvent(event);
     }
   } catch (error) {
