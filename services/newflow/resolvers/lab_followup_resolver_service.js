@@ -181,7 +181,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const comparisons = labHistoryCompare.summarizeMultisessionComparisons(arr);
     const picked = labHistoryCompare.pickOverallLines(comparisons);
     const hasComp = picked.some((c) => c && c.canCompare);
-    const body = labFollowupService.buildOverallHistoryDeltaReply(picked, { historySessionsCount: arr.length });
+    const body = labFollowupService.buildOverallHistoryDeltaReply(picked, {
+      historySessionsCount: arr.length,
+      comparisonAvailable: hasComp
+    });
     record('history_overall', {
       history_sessions_count: arr.length,
       comparison_available: hasComp,

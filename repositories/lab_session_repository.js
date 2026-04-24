@@ -175,9 +175,16 @@ async function getRecentLabSessions(userId, limit = 10, opts = {}) {
     const raw = Array.isArray(q.data) ? q.data : [];
     const withRep = raw.map((r) => ({ ...r, _rep: repDateForRow(r) }));
     withRep.sort((a, b) => {
-      const di = String(b._rep || '').localeCompare(String(a._rep || ''));
-      if (di !== 0) return di;
-      return (Number(b.id) || 0) - (Number(a.id) || 0);
+      const ra = a._rep;
+      const rb = b._rep;
+      if (ra && rb) {
+        const d = String(rb).localeCompare(String(ra));
+        if (d !== 0) return d;
+        return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+      }
+      if (ra && !rb) return -1;
+      if (!ra && rb) return 1;
+      return String(b.created_at || '').localeCompare(String(a.created_at || ''));
     });
     return withRep.slice(0, limit);
   } catch (_e) {
@@ -201,9 +208,7 @@ function repDateForRow(row) {
     .filter(Boolean)
     .sort();
   if (dts.length) return dts[dts.length - 1];
-  const c = String(row.created_at || '');
-  const m3 = c.match(/(20\d{2}-\d{2}-\d{2})/);
-  return m3 ? m3[1] : '';
+  return '';
 }
 
 module.exports = {

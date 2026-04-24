@@ -9,7 +9,7 @@ function normalizeText(value) {
 const EPS_RATIO = 0.0001;
 
 /**
- * 代表日: print_date → 最大 exam 日付 → created_at(日)
+ * 観測日: print_date → 最大 exam 日付。取れない場合は空（並びは session の created_at desc で別途）
  */
 function representativeDateForSession(row) {
   if (!row || typeof row !== 'object') return '';
@@ -21,9 +21,7 @@ function representativeDateForSession(row) {
     .filter(Boolean)
     .sort();
   if (dates.length) return dates[dates.length - 1];
-  const c = String(row.created_at || '');
-  const m = c.match(/(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : '';
+  return '';
 }
 
 function normalizeDateTokenFromRow(token) {
@@ -43,7 +41,7 @@ function normalizeDateTokenFromRow(token) {
  * 比較用共通1行
  * { normalizedKey, observedDate, value, flag, sessionId, displayName, rawName, unit }
  */
-function normalizeParsedItemToCommon(sessionId, observedDate, item) {
+function normalizeParsedItemToCommon(sessionId, observedDate, item, sessionCreatedAt) {
   if (!item || typeof item !== 'object') return null;
   const normalizedKey = normalizeText(item.normalizedKey || item.normalized_key || '');
   const value = pickValue(item);
@@ -64,7 +62,8 @@ function normalizeParsedItemToCommon(sessionId, observedDate, item) {
     sessionId: Number(sessionId) || 0,
     displayName: displayName || normalizedKey,
     rawName: rawName || displayName,
-    unit: normalizeText(item.unit || '')
+    unit: normalizeText(item.unit || ''),
+    sessionCreatedAt: String(sessionCreatedAt || '')
   };
 }
 
@@ -127,10 +126,11 @@ function stableGroupKeyFromCommon(row) {
 function flattenSessionItems(sessionRow) {
   const sid = sessionRow?.id;
   const obs = representativeDateForSession(sessionRow);
+  const sca = String(sessionRow?.created_at || '');
   const list = Array.isArray(sessionRow?.parsed_items_json) ? sessionRow.parsed_items_json : [];
   const byGroup = new Map();
   for (const raw of list) {
-    const row = normalizeParsedItemToCommon(sid, obs, raw);
+    const row = normalizeParsedItemToCommon(sid, obs, raw, sca);
     if (!row || !row.value) continue;
     if (!row.normalizedKey) continue;
     const gk = stableGroupKeyFromCommon(row);
@@ -141,15 +141,22 @@ function flattenSessionItems(sessionRow) {
 }
 
 /**
- * セッション行を新しい日付 → 同日内は id desc で並べる
+ * 代表日新しい順（日付が無い行は created_at desc。観測日が同じなら created_at desc）
  */
 function sortSessionsForHistory(rows) {
   return [...(rows || [])]
     .map((r) => ({ ...r, _rep: representativeDateForSession(r) }))
     .sort((a, b) => {
-      const d = String(b._rep || '').localeCompare(String(a._rep || ''));
-      if (d !== 0) return d;
-      return (Number(b.id) || 0) - (Number(a.id) || 0);
+      const ra = a._rep;
+      const rb = b._rep;
+      if (ra && rb) {
+        const c = String(rb).localeCompare(String(ra));
+        if (c !== 0) return c;
+        return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+      }
+      if (ra && !rb) return -1;
+      if (!ra && rb) return 1;
+      return String(b.created_at || '').localeCompare(String(a.created_at || ''));
     });
 }
 
@@ -169,25 +176,31 @@ function buildSeriesByGroupKey(allCommonRows) {
     arr.sort((a, b) => {
       const da = String(a.observedDate || '').localeCompare(String(b.observedDate || ''));
       if (da !== 0) return da;
-      return (Number(a.sessionId) || 0) - (Number(b.sessionId) || 0);
+      return String(b.sessionCreatedAt || '').localeCompare(String(a.sessionCreatedAt || ''));
     });
   }
   return m;
 }
 
 /**
- * 同一 (groupKey, date) へは1点（同じ日で複数行ある場合、先に現れた＝新しい session を先に all に積む前提で先着）
+ * 同じ「観測日付ラベル」+ session は1点。観測日が空のときは session 単位で分離（upload 順序は sessionCreatedAt）
  */
 function uniqueSeriesByDate(series) {
   const byD = new Map();
   for (const p of series) {
-    const d = p.observedDate || '_nodate_';
+    const d = p.observedDate
+      || `_undated_s${p.sessionId}_${p.sessionCreatedAt || ''}`;
     if (!byD.has(d)) byD.set(d, p);
   }
   return [...byD.values()].sort((a, b) => {
-    const da = String(a.observedDate).localeCompare(String(b.observedDate));
-    if (da !== 0) return da;
-    return (Number(b.sessionId) || 0) - (Number(a.sessionId) || 0);
+    const hasA = Boolean(a.observedDate);
+    const hasB = Boolean(b.observedDate);
+    if (hasA && hasB) {
+      return String(a.observedDate).localeCompare(String(b.observedDate));
+    }
+    if (hasA && !hasB) return -1;
+    if (!hasA && hasB) return 1;
+    return String(a.sessionCreatedAt || '').localeCompare(String(b.sessionCreatedAt || ''));
   });
 }
 
@@ -223,6 +236,17 @@ function compareKeySeries(groupKey, series) {
   }
   const latest = u[u.length - 1];
   const previous = u[u.length - 2];
+  if (!normalizeText(latest.observedDate) || !normalizeText(previous.observedDate)) {
+    return {
+      canCompare: false,
+      reason: 'undated_incomparable',
+      latest,
+      previous,
+      delta: null,
+      direction: 'unknown',
+      groupKey
+    };
+  }
   const a = parseNum(latest.value);
   const b = parseNum(previous.value);
   if (Number.isFinite(a) && Number.isFinite(b)) {
@@ -335,8 +359,9 @@ function getTgSeries(sessions) {
 function listAbnormalRowsFromSession(sessionRow) {
   const out = [];
   const obs = representativeDateForSession(sessionRow);
+  const sca = String(sessionRow?.created_at || '');
   for (const raw of Array.isArray(sessionRow?.parsed_items_json) ? sessionRow.parsed_items_json : []) {
-    const row = normalizeParsedItemToCommon(sessionRow?.id, obs, raw);
+    const row = normalizeParsedItemToCommon(sessionRow?.id, obs, raw, sca);
     if (!row) continue;
     if (row.flag === 'H' || row.flag === 'L') {
       out.push({

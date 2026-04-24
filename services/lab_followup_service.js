@@ -571,10 +571,13 @@ function buildKeyDeltaReply(comparison) {
     return '前回分と突き合わせられる行を、いまの保存範囲からは作れませんでした。';
   }
   if (!comparison.canCompare) {
+    if (comparison.reason === 'undated_incomparable' && comparison.previous) {
+      return '比較に必要な「観測日（印刷日/検査日）」を2点ともに保存行から取れないため、採取前後としての前回比は述べられません。数値上の推測で前回比の言い方はしません。';
+    }
     if (comparison.reason === 'single_session' || (comparison.previous == null)) {
       const l = comparison.latest;
       const u = l.unit ? ` ${l.unit}` : '';
-      return `前回分と併せての比較に必要な、別日の保存行が足りていません。いま分かる範囲では、${l.observedDate ? `${l.observedDate} 時点で ` : ''}${l.value}${u} です。`;
+      return `前回分と併せての比較に必要な、観測日の揃った別日分が足りていないか、まだ1回分しかありません。いま分かる範囲では、${l.observedDate ? `観測日候補 ${l.observedDate} で ` : ''}${l.value}${u} です。前回採取からの差分の言い切りはしません。`;
     }
   }
   const l = comparison.latest;
@@ -597,18 +600,22 @@ function buildKeyDeltaReply(comparison) {
 
 /**
  * 前回比の要約（複数項目を最大3、全体1〜3文）
- * @param {object} [options] historySessionsCount
+ * @param {object} [options] historySessionsCount, comparisonAvailable
  */
 function buildOverallHistoryDeltaReply(pickedComparisons, options = {}) {
   const hsc = options.historySessionsCount;
+  const cav = options.comparisonAvailable;
   const use = (Array.isArray(pickedComparisons) ? pickedComparisons : [])
     .filter((c) => c && c.canCompare)
     .slice(0, 3);
   if (!use.length) {
-    if (hsc != null && hsc < 2) {
-      return '前回分と併せて比較するには、少なくとも別日分の用紙が2回分取り込まれているのが望ましいです。いまの保存件数が1回分の場合、前回比の文章は出し切れません。';
+    if (cav === false && hsc != null && hsc >= 2) {
+      return '保存は複数回分あっても、比較用の観測日（印刷日/検査日）が2点ともに揃わない、または枠同士の対応が取れないため、前回採取からの変化の推測は出しません。';
     }
-    return '同日の行同士の重なりが、まだ十分に出ていないようです。別日の用紙が2回分あっても、同じ項目行が同じ枠名で揃っていないと、前回比の説明は出しづらいです。';
+    if (hsc != null && hsc < 2) {
+      return '前回分と併せて比較するには、少なくとも別日分の用紙が2回分取り込まれているのが望ましいです。いまの保存件数が1回分の場合、前回比の言い切りはしません。';
+    }
+    return '同日の行同士の重なりが、まだ十分に出ていないようです。観測日が揃った比較点が作れないため、前回比の推測は出しません。';
   }
   const one = use.map((c) => buildKeyDeltaReply(c)).filter(Boolean);
   if (!one.length) {
@@ -654,12 +661,15 @@ function buildTgProgressReply(compare) {
     return '中性脂肪（TG）行が、比較用の保存行としてまだ作れていません。';
   }
   if (!compare.canCompare) {
+    if (compare.reason === 'undated_incomparable' && compare.previous) {
+      return '中性脂肪（TG）の2回分の保存は見えても、観測日（印刷日/検査日）が2点ともに取れないため、採取前後としての「推移」は述べません。前回採取からの差分の推測は出しません。';
+    }
     const l = compare.latest;
     if (l) {
       const u = l.unit ? ` ${l.unit}` : '';
       return l.observedDate
-        ? `保存上は ${l.observedDate} 時点で、中性脂肪（TG）相当の行は ${l.value}${u} として拾えており、もう1回分はまだ併用できていません。`
-        : `中性脂肪（TG）相当の行は、いまの保存では ${l.value}${u} が最新です。もう1回分が入ると推移をお伝えしやすいです。`;
+        ? `比較不能です（観測日が1点分しか揃っていない、または2回分の観測日が同時に取れていません）。保存上は少なくとも ${l.observedDate} 付近の行で ${l.value}${u} と読めます。採取日の前後比の言い切りはしません。`
+        : `観測日が定かでない1点分として、中性脂肪（TG）相当の行は ${l.value}${u} と読めます。前回分との前後差の推測は出しません。`;
     }
     return '中性脂肪（TG）の行が、比較用の保存行としてまだ作れていません。';
   }
