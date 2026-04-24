@@ -233,6 +233,35 @@ function normalizeUnit(value) {
     .replace(/μ/g, 'u');
 }
 
+function extractDateTokensFromText(value) {
+  const safe = normalizeText(value);
+  if (!safe) return [];
+  const out = [];
+  const re = /(20\d{2}[\/\.\-年]\s*\d{1,2}[\/\.\-月]\s*\d{1,2}日?)/g;
+  let m;
+  while ((m = re.exec(safe)) !== null) {
+    const d = classifier.normalizeDateToken(m[1]);
+    if (d) out.push(d);
+  }
+  return classifier.uniqueSortedDates(out);
+}
+
+function inferObservedDate(row = {}, defaultDate = '') {
+  const direct = classifier.normalizeDateToken(
+    row?.date
+    || row?.observed_date
+    || row?.observedDate
+    || row?.exam_date
+    || row?.examDate
+    || ''
+  );
+  if (direct) return direct;
+  const headerDate = classifier.normalizeDateToken(row?.column_header_raw || row?.columnHeaderRaw || '');
+  if (headerDate) return headerDate;
+  const fromSource = extractDateTokensFromText(`${normalizeText(row?.source_text || row?.sourceText || '')} ${normalizeText(row?.value || '')}`);
+  return fromSource[fromSource.length - 1] || classifier.normalizeDateToken(defaultDate);
+}
+
 function normalizeKey(key, label) {
   const safeKey = normalizeText(key).toLowerCase();
   if (KEY_TO_ITEM_NAME[safeKey]) return safeKey;
@@ -289,9 +318,37 @@ function normalizeRows(report) {
     const normalizedKey = normalizeKey(row?.normalized_key || row?.normalizedKey, row?.label_in_image || row?.labelInImage || '');
     if (!normalizedKey) continue;
     const itemName = KEY_TO_ITEM_NAME[normalizedKey];
-    const date = classifier.normalizeDateToken(row?.date || defaultDate || '');
+    const date = inferObservedDate(row, defaultDate || '');
     const numericValue = normalizeMaybeNumber(row?.value) ?? numberFromSourceText(row?.source_text || row?.sourceText || '');
-    if (!itemName || numericValue == null) continue;
+    const multiDateValues = row?.values_by_date && typeof row.values_by_date === 'object' ? row.values_by_date : null;
+    if (!itemName) continue;
+    if (multiDateValues && !Array.isArray(multiDateValues)) {
+      for (const [k, v] of Object.entries(multiDateValues)) {
+        const nd = classifier.normalizeDateToken(k);
+        const nv = normalizeMaybeNumber(v) ?? numberFromSourceText(v);
+        if (!nd || nv == null) continue;
+        const referenceLow = normalizeMaybeNumber(row?.reference_low ?? row?.referenceLow);
+        const referenceHigh = normalizeMaybeNumber(row?.reference_high ?? row?.referenceHigh);
+        rows.push({
+          normalizedKey,
+          itemName,
+          labelInImage: normalizeText(row?.label_in_image || row?.labelInImage || itemName),
+          date: nd,
+          value: String(nv),
+          unit: normalizeUnit(row?.unit || ''),
+          referenceLow,
+          referenceHigh,
+          flag: normalizeFlag(row?.flag, nv, referenceLow, referenceHigh),
+          confidence: Number(row?.confidence || 0) || 0,
+          status: normalizeStatus(row?.status || 'readable'),
+          sourceText: normalizeText(row?.source_text || row?.sourceText || row?.value || ''),
+          rowLabelRaw: normalizeText(row?.row_label_raw || row?.rowLabelRaw || row?.label_in_image || row?.labelInImage || ''),
+          columnHeaderRaw: normalizeText(row?.column_header_raw || row?.columnHeaderRaw || k)
+        });
+      }
+      continue;
+    }
+    if (numericValue == null) continue;
     const referenceLow = normalizeMaybeNumber(row?.reference_low ?? row?.referenceLow);
     const referenceHigh = normalizeMaybeNumber(row?.reference_high ?? row?.referenceHigh);
     rows.push({
@@ -531,6 +588,28 @@ async function extractStructuredLab(imagePayload, meta = {}) {
 
   const qualifiedRecords = geminiItems.countQualifiedParsedItems(parsedMinItems);
   const reportDataRows = Array.isArray(report?.data) ? report.data : [];
+  const multiDateRowCount = reportDataRows.filter((r) => r && typeof r === 'object' && (
+    (r.values_by_date && typeof r.values_by_date === 'object')
+    || extractDateTokensFromText(`${normalizeText(r.column_header_raw || r.columnHeaderRaw || '')} ${normalizeText(r.source_text || r.sourceText || '')}`).length >= 2
+  )).length;
+  const majorKeys = new Set(['triglycerides_tg', 'ldl_cholesterol', 'hdl_cholesterol', 'ast_got', 'alt_gpt', 'gamma_gtp', 'hba1c', 'creatinine']);
+  const majorDateSet = new Set(rows.filter((r) => majorKeys.has(r.normalizedKey) && r.date).map((r) => r.date));
+  console.info('[phasee-new] lab_extract_context', {
+    userId: meta.userId || '',
+    documentType,
+    rows: rows.length,
+    items: items.length,
+    exam_dates: examDates.length,
+    latest_exam_date: latestExamDate || '',
+    major_dates: majorDateSet.size
+  });
+  console.info('[phasee-new] lab_history_table_extract_context', {
+    userId: meta.userId || '',
+    documentType,
+    multi_date_row_count: multiDateRowCount,
+    observed_dates: historyDates.length,
+    major_item_dates: majorDateSet.size
+  });
   console.info('[lab-ingest-trace] stage:classifier_vs_extraction', {
     userId: meta.userId,
     classifier_raw_text: normalizeText(meta?.rawText || ''),

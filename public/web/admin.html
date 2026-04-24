@@ -16,11 +16,16 @@
     </aside>
     <main class="center">
       <div class="head">チャット履歴</div>
+      <div class="chat-tools">
+        <input id="chatSearch" placeholder="この履歴を検索">
+        <button id="chatSearchBtn" type="button">検索</button>
+        <button id="loadOlder" type="button">もっと前を読む</button>
+      </div>
       <div id="chatHistory"></div>
       <form id="sendForm" class="send">
         <textarea id="messageInput" placeholder="返信を入力"></textarea>
         <input id="fileInput" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov">
-        <button type="submit">送信</button>
+        <button id="sendBtn" type="submit">送信</button>
       </form>
     </main>
     <aside class="right">
@@ -60,12 +65,14 @@
             <button id="genWeek">再生成</button>
             <button id="reloadWeek">再読込</button>
             <textarea id="weekDraftText"></textarea>
+            <div id="weekDraftUpdated"></div>
             <button id="saveWeek">保存</button>
           </div>
           <div id="panelMonthDraft" class="panel">
             <button id="genMonth">再生成</button>
             <button id="reloadMonth">再読込</button>
             <textarea id="monthDraftText"></textarea>
+            <div id="monthDraftUpdated"></div>
             <button id="saveMonth">保存</button>
           </div>
         </section>

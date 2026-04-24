@@ -1,6 +1,18 @@
 (function () {
   'use strict';
-  const state = { users: [], selected: '', daily: null, weekly: null, monthly: null, consults: [], lastConsultAnswer: '' };
+  const state = {
+    users: [],
+    selected: '',
+    daily: null,
+    weekly: null,
+    monthly: null,
+    consults: [],
+    lastConsultAnswer: '',
+    historyItems: [],
+    historyBefore: '',
+    historyHasMore: true,
+    historyKeyword: ''
+  };
   const qs = (id) => document.getElementById(id);
   const token = localStorage.getItem('kokokara-web-token') || '';
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -33,6 +45,7 @@
   function fmtDateOnly(v) { const d = new Date(v || ''); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' }); }
   function fmtTime(v) { const d = new Date(v || ''); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }); }
   function esc(v) { return String(v || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
+  function applyTheme(themeId) { document.body.setAttribute('data-theme', themeId || 'soft-default'); }
 
   async function loadUsers(options = {}) {
     const skipAutoLoad = Boolean(options.skipAutoLoad);
@@ -57,23 +70,35 @@
       el.addEventListener('click', async () => { state.selected = el.dataset.id; renderUsers(); await loadAllForUser(); });
     });
   }
-  async function loadHistory() {
-    const { items } = await jget(`/api/web/admin/chat/history?lineUserId=${encodeURIComponent(state.selected)}`);
+  function renderHistory() {
     let lastDate = '';
-    qs('chatHistory').innerHTML = (items || []).map((m) => {
+    qs('chatHistory').innerHTML = (state.historyItems || []).map((m) => {
       const curDate = fmtDateOnly(m.createdAt);
       const sep = curDate && curDate !== lastDate ? `<div class="date-sep">${esc(curDate)}</div>` : '';
       lastDate = curDate || lastDate;
+      const role = String(m.role || '').toLowerCase();
+      const roleLabel = role === 'user' ? '利用者' : role === 'assistant' ? '返信' : role;
       return `${sep}<div class="row ${m.role}">
         <div class="bubble">${esc(m.text || '')}</div>
         ${(m.attachments || []).map((a) => a.file_type === 'image'
           ? `<a href="${esc(a.file_url)}" target="_blank"><img src="${esc(a.file_url)}" style="max-width:120px"></a>`
-          : `<a href="${esc(a.file_url)}" target="_blank">🎬 ${esc(a.file_name || 'video')}</a>`).join('<br>')}
-        <div class="meta">${m.role === 'user' ? '利用者' : '返信'} ${esc(fmtTime(m.createdAt))}</div>
+          : `<a href="${esc(a.file_url)}" target="_blank">🎬 ${esc(a.file_name || 'video')} (${esc(a.send_status || '')})</a>`).join('<br>')}
+        <div class="meta">${roleLabel} ${esc(fmtTime(m.createdAt))}</div>
       </div>`;
     }).join('');
+  }
+
+  async function loadHistory(options = {}) {
+    const before = options.appendOlder ? state.historyBefore : '';
+    const keyword = state.historyKeyword || '';
+    const { items, paging } = await jget(`/api/web/admin/chat/history?lineUserId=${encodeURIComponent(state.selected)}&limit=120&before=${encodeURIComponent(before)}&keyword=${encodeURIComponent(keyword)}`);
+    if (options.appendOlder) state.historyItems = [...(items || []), ...state.historyItems];
+    else state.historyItems = items || [];
+    state.historyBefore = paging?.oldest || '';
+    state.historyHasMore = Boolean(paging?.hasMore);
+    renderHistory();
     qs('chatHistory').scrollTop = qs('chatHistory').scrollHeight;
-    const newest = (items || []).slice(-1)[0]?.createdAt || '';
+    const newest = (state.historyItems || []).slice(-1)[0]?.createdAt || '';
     await jpost('/api/web/admin/thread/read', { lineUserId: state.selected, lastReadMessageAt: newest });
     await loadUsers({ skipAutoLoad: true });
   }
@@ -90,18 +115,29 @@
     state.monthly = (await jget(`/api/web/admin/summary/monthly?lineUserId=${uid}`)).summary;
     renderSummary();
   }
-  async function loadAllForUser() { await loadHistory(); await loadSummaries(); await loadDrafts(); renderConsultLog(); }
+  async function loadAllForUser() {
+    state.historyBefore = '';
+    state.historyHasMore = true;
+    state.historyKeyword = '';
+    qs('chatSearch').value = '';
+    await loadHistory();
+    await loadSummaries();
+    await loadDrafts();
+    renderConsultLog();
+  }
 
   async function loadDrafts() {
     if (state.weekly) {
       const q = `lineUserId=${encodeURIComponent(state.selected)}&reportType=weekly&periodStart=${state.weekly.fromYmd}&periodEnd=${state.weekly.toYmd}`;
       const { item } = await jget(`/api/web/admin/report-draft?${q}`);
       qs('weekDraftText').value = (item && (item.edited_text || item.draft_text)) || '';
+      qs('weekDraftUpdated').textContent = item?.updated_at ? `最終更新: ${fmtDate(item.updated_at)}` : '';
     }
     if (state.monthly) {
       const q = `lineUserId=${encodeURIComponent(state.selected)}&reportType=monthly&periodStart=${state.monthly.fromYmd}&periodEnd=${state.monthly.toYmd}`;
       const { item } = await jget(`/api/web/admin/report-draft?${q}`);
       qs('monthDraftText').value = (item && (item.edited_text || item.draft_text)) || '';
+      qs('monthDraftUpdated').textContent = item?.updated_at ? `最終更新: ${fmtDate(item.updated_at)}` : '';
     }
   }
   async function generateDraft(type) {
@@ -126,21 +162,31 @@
   async function sendMessage(ev) {
     ev.preventDefault();
     if (!state.selected) return;
-    const text = qs('messageInput').value.trim();
-    const files = Array.from(qs('fileInput').files || []);
-    let attachments = [];
-    if (files.length) {
-      const fd = new FormData();
-      fd.append('lineUserId', state.selected);
-      files.forEach((f) => fd.append('files', f));
-      const up = await postForm('/api/web/admin/attachments/upload', fd);
-      attachments = up.attachments || [];
+    const sendBtn = qs('sendBtn');
+    sendBtn.disabled = true;
+    sendBtn.textContent = '送信中...';
+    try {
+      const text = qs('messageInput').value.trim();
+      const files = Array.from(qs('fileInput').files || []);
+      let attachments = [];
+      if (files.length) {
+        const fd = new FormData();
+        fd.append('lineUserId', state.selected);
+        files.forEach((f) => fd.append('files', f));
+        setStatus('添付をアップロード中...');
+        const up = await postForm('/api/web/admin/attachments/upload', fd);
+        attachments = up.attachments || [];
+      }
+      const out = await jpost('/api/web/admin/chat/send', { lineUserId: state.selected, text, attachments });
+      qs('messageInput').value = '';
+      qs('fileInput').value = '';
+      await loadHistory();
+      const delivery = out.delivery || {};
+      setStatus(delivery.attempted ? (delivery.ok ? '送信しました（LINE配信成功）' : `保存済み（LINE配信失敗: ${delivery.reason || 'unknown'}）`) : '保存済み（LINE配信未実施）');
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = '送信';
     }
-    await jpost('/api/web/admin/chat/send', { lineUserId: state.selected, text, attachments });
-    qs('messageInput').value = '';
-    qs('fileInput').value = '';
-    await loadHistory();
-    setStatus('送信しました');
   }
 
   function renderConsultLog() {
@@ -184,6 +230,12 @@
       setStatus('表示名を更新しました');
     });
     qs('sendForm').addEventListener('submit', (e) => sendMessage(e).catch((er) => setStatus(er.message)));
+    qs('loadOlder').addEventListener('click', () => loadHistory({ appendOlder: true }).catch((e) => setStatus(e.message)));
+    qs('chatSearchBtn').addEventListener('click', async () => {
+      state.historyKeyword = qs('chatSearch').value.trim();
+      state.historyBefore = '';
+      await loadHistory();
+    });
     document.querySelectorAll('.consult .tabs button').forEach((b) => b.addEventListener('click', () => {
       document.querySelectorAll('.consult .tabs button').forEach((x) => x.classList.remove('active'));
       b.classList.add('active');
@@ -208,6 +260,7 @@
     qs('applyToMonth').addEventListener('click', () => applyConsultToDraft('monthly'));
     qs('saveTheme').addEventListener('click', async () => {
       await jpost('/api/web/admin/theme', { themeId: qs('themeId').value, accentColor: '' });
+      applyTheme(qs('themeId').value);
       setStatus('テーマを保存しました');
     });
   }
@@ -217,6 +270,7 @@
     try {
       const t = await jget('/api/web/admin/theme');
       if (t.item?.theme_id) qs('themeId').value = t.item.theme_id;
+      applyTheme(qs('themeId').value);
     } catch (_e) {}
     await loadUsers();
     setStatus('読み込み完了');

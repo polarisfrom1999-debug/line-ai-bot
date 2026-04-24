@@ -133,20 +133,26 @@ async function getManagedUsers({ query = '', limit = 80, adminUserId = '' } = {}
   return items.slice(0, Math.max(1, Number(limit) || 80));
 }
 
-async function getUserChatHistory(lineUserId, { limit = 200 } = {}) {
+async function getUserChatHistory(lineUserId, { limit = 120, before = '', keyword = '' } = {}) {
   if (!supabase) return [];
   const uid = normalizeText(lineUserId);
   if (!uid) return [];
-  const { data, error } = await supabase
+  let q = supabase
     .from('chat_logs')
     .select('id,role,message_text,message_type,created_at,metadata,source_channel,line_user_id')
     .eq('line_user_id', uid)
-    .order('created_at', { ascending: true })
-    .limit(Math.max(20, Number(limit) || 200));
+    .order('created_at', { ascending: false })
+    .limit(Math.max(20, Number(limit) || 120));
+  const beforeIso = toIso(before);
+  if (beforeIso) q = q.lt('created_at', beforeIso);
+  const safeKeyword = normalizeText(keyword);
+  if (safeKeyword) q = q.ilike('message_text', `%${safeKeyword}%`);
+  const { data, error } = await q;
   if (error || !Array.isArray(data)) return [];
-  return data.map((r) => ({
+  const rows = data.slice().reverse();
+  return rows.map((r) => ({
     id: r.id,
-    role: normalizeText(r.role || '') === 'user' ? 'user' : 'assistant',
+    role: normalizeText(r.role || '').toLowerCase(),
     text: normalizeText(r.message_text || ''),
     messageType: normalizeText(r.message_type || 'text'),
     createdAt: toIso(r.created_at) || new Date().toISOString(),

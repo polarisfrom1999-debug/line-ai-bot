@@ -73,6 +73,47 @@ async function refreshLineDisplayName(lineUserId) {
   }
 }
 
+function buildLineClient() {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!line || !token) return null;
+  try {
+    return new line.messagingApi.MessagingApiClient({ channelAccessToken: token });
+  } catch (_e) {
+    return null;
+  }
+}
+
+function buildLinePushMessages(text, attachments = []) {
+  const messages = [];
+  const safeText = String(text || '').trim();
+  if (safeText) messages.push({ type: 'text', text: safeText.slice(0, 4900) });
+  for (const a of attachments) {
+    const url = String(a?.file_url || '').trim();
+    if (!url) continue;
+    const t = String(a?.file_type || '').toLowerCase();
+    if (t === 'image') {
+      messages.push({ type: 'image', originalContentUrl: url, previewImageUrl: String(a?.thumbnail_url || url) });
+    } else if (t === 'video') {
+      messages.push({ type: 'video', originalContentUrl: url, previewImageUrl: String(a?.thumbnail_url || a?.file_url || '') });
+    }
+    if (messages.length >= 5) break;
+  }
+  return messages.slice(0, 5);
+}
+
+async function pushLineMessage(lineUserId, text, attachments = []) {
+  const client = buildLineClient();
+  if (!client) return { attempted: false, ok: false, reason: 'line_client_unavailable' };
+  const messages = buildLinePushMessages(text, attachments);
+  if (!messages.length) return { attempted: false, ok: false, reason: 'no_push_payload' };
+  try {
+    await client.pushMessage({ to: String(lineUserId), messages });
+    return { attempted: true, ok: true };
+  } catch (error) {
+    return { attempted: true, ok: false, reason: String(error?.message || 'line_push_failed') };
+  }
+}
+
 function buildFallbackHomeResponse(user, message) {
   const home = dataService.buildFallbackHomeData(user, { message });
   const recordsOverview = dataService.buildFallbackRecordsOverview(user, home);
@@ -140,6 +181,7 @@ async function uploadAdminAttachment(file, lineUserId) {
   if (error) throw error;
   const pub = supabase.storage.from(bucket).getPublicUrl(path);
   return {
+    message_id: '',
     file_type: /^image\//.test(file.mimetype || '') ? 'image' : 'video',
     mime_type: file.mimetype || '',
     file_name: file.originalname || '',
@@ -147,7 +189,8 @@ async function uploadAdminAttachment(file, lineUserId) {
     file_url: pub?.data?.publicUrl || '',
     storage_path: path,
     thumbnail_url: '',
-    created_at: new Date().toISOString()
+    created_at: new Date().toISOString(),
+    send_status: 'uploaded'
   };
 }
 
@@ -666,6 +709,7 @@ router.post('/admin/users/refresh-display-name', requireSession, async (req, res
     const lineUserId = String(req.body?.lineUserId || '').trim();
     if (!lineUserId) return res.status(400).json({ ok: false, error: 'invalid_user' });
     const out = await refreshLineDisplayName(lineUserId);
+    console.info('[phasee-new] line_display_name_sync', { admin_user_id: req.webSession.user?.id || '', line_user_id: lineUserId, ok: Boolean(out?.ok), mode: 'manual' });
     return res.json({ ok: Boolean(out?.ok) });
   } catch (_e) {
     return res.status(500).json({ ok: false, error: 'refresh_display_name_failed' });
@@ -696,9 +740,19 @@ router.post('/admin/thread/read', requireSession, async (req, res) => {
 router.get('/admin/chat/history', requireSession, async (req, res) => {
   try {
     const lineUserId = String(req.query.lineUserId || '');
-    const items = await webAdminRepository.getUserChatHistory(lineUserId, { limit: Number(req.query.limit || 300) });
-    console.info('[phasee-new] web_chat_history_context', { admin_user_id: req.webSession.user?.id || '', user_id: lineUserId, count: items.length });
-    res.json({ ok: true, items });
+    const limit = Number(req.query.limit || 120);
+    const before = String(req.query.before || '');
+    const keyword = String(req.query.keyword || '');
+    const items = await webAdminRepository.getUserChatHistory(lineUserId, { limit, before, keyword });
+    const oldest = items[0]?.createdAt || '';
+    console.info('[phasee-new] web_chat_history_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: lineUserId,
+      count: items.length,
+      before: before.slice(0, 30),
+      keyword_len: keyword.length
+    });
+    res.json({ ok: true, items, paging: { oldest, hasMore: items.length >= Math.max(20, limit) } });
   } catch (_e) {
     res.status(500).json({ ok: false, error: 'web_chat_history_failed', message: 'チャット履歴を取得できませんでした。' });
   }
@@ -742,10 +796,15 @@ router.post('/admin/chat/send', requireSession, async (req, res) => {
     if (!lineUserId || (!text && !attachments.length)) {
       return res.status(400).json({ ok: false, error: 'invalid_send', message: '送信内容がありません。' });
     }
+    const pushResult = await pushLineMessage(lineUserId, text, attachments);
+    const enrichedAttachments = attachments.map((a) => ({
+      ...a,
+      send_status: pushResult.attempted ? (pushResult.ok ? 'sent' : 'failed') : 'stored_only'
+    }));
     const out = await webAdminRepository.insertAdminMessage({
       lineUserId,
       text,
-      attachments,
+      attachments: enrichedAttachments,
       adminUserId: req.webSession.user?.id || ''
     });
     if (!out?.ok) {
@@ -756,9 +815,12 @@ router.post('/admin/chat/send', requireSession, async (req, res) => {
       admin_user_id: req.webSession.user?.id || '',
       user_id: lineUserId,
       text_len: text.length,
-      attachment_count: attachments.length
+      attachment_count: attachments.length,
+      push_attempted: pushResult.attempted,
+      push_ok: pushResult.ok,
+      push_reason: pushResult.reason || ''
     });
-    res.json({ ok: true, items: history });
+    res.json({ ok: true, items: history, delivery: pushResult });
   } catch (_e) {
     res.status(500).json({ ok: false, error: 'web_chat_send_failed', message: '返信送信に失敗しました。' });
   }
@@ -809,12 +871,19 @@ router.post('/admin/consult', requireSession, async (req, res) => {
     const week = await getTokyoWeekEnergyBalance(lineUserId, null);
     const month = await getTokyoMonthEnergyBalance(lineUserId, null);
     const history = await webAdminRepository.getUserChatHistory(lineUserId, { limit: 40 });
+    const weekDraft = week ? await webAdminRepository.getDraft(lineUserId, 'weekly', week.fromYmd, week.toYmd) : null;
+    const monthDraft = month ? await webAdminRepository.getDraft(lineUserId, 'monthly', month.fromYmd, month.toYmd) : null;
+    const weekActiveDays = Array.isArray(week?.days) ? week.days.filter((d) => Number(d?.activityKcal || 0) > 0).length : 0;
+    const monthActiveDays = Array.isArray(month?.days) ? month.days.filter((d) => Number(d?.activityKcal || 0) > 0).length : 0;
     const recentHistory = history.slice(-16).map((m) => `${m.role === 'user' ? '利用者' : '返信'}: ${String(m.text || '').slice(0, 160)}`).join('\n');
     const contextBlock = [
       `対象: ${lineUserId}`,
       `[今日サマリ] intake=${today?.intakeKcal || 0}, activity=${today?.activityKcal || 0}, net=${today?.netKcal || 0}, mealCount=${today?.mealCount || 0}, correctionCount=${today?.totalCorrectionEventCount || 0}`,
       `[今週サマリ] intake=${week?.totals?.weekIntakeKcal || 0}, activity=${week?.totals?.weekActivityKcal || 0}, net=${week?.totals?.weekNetKcal || 0}, mealCount=${week?.totals?.weekMealCount || 0}, correctionCount=${week?.totals?.weekCorrectionEventCount || 0}`,
       `[今月サマリ] intake=${month?.totals?.monthIntakeKcal || 0}, activity=${month?.totals?.monthActivityKcal || 0}, net=${month?.totals?.monthNetKcal || 0}, mealCount=${month?.totals?.monthMealCount || 0}, correctionCount=${month?.totals?.monthCorrectionEventCount || 0}`,
+      `[活動記録件数目安] 今週活動日=${weekActiveDays}, 今月活動日=${monthActiveDays}`,
+      weekDraft ? `[週間下書き]\n${String(weekDraft.edited_text || weekDraft.draft_text || '').slice(0, 500)}` : '',
+      monthDraft ? `[月間下書き]\n${String(monthDraft.edited_text || monthDraft.draft_text || '').slice(0, 500)}` : '',
       recentHistory ? `[直近チャット]\n${recentHistory}` : ''
     ].filter(Boolean).join('\n');
     const userInput = [
@@ -831,6 +900,17 @@ router.post('/admin/consult', requireSession, async (req, res) => {
     }, {
       draftReply: contextBlock,
       hasStructuredData: true
+    });
+    console.info('[phasee-new] web_ai_consult_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: lineUserId,
+      report_type: reportType,
+      prompt_len: prompt.length,
+      recent_count: history.length,
+      has_week_draft: Boolean(weekDraft),
+      has_month_draft: Boolean(monthDraft),
+      week_active_days: weekActiveDays,
+      month_active_days: monthActiveDays
     });
     return res.json({
       ok: true,
@@ -906,6 +986,7 @@ router.get('/admin/report-draft', requireSession, async (req, res) => {
 
 router.get('/admin/theme', requireSession, async (req, res) => {
   const item = await webAdminRepository.getThemeByAdmin(req.webSession.user?.id || '');
+  console.info('[phasee-new] web_theme_context', { mode: 'get', admin_user_id: req.webSession.user?.id || '', theme_id: item?.theme_id || '' });
   res.json({ ok: true, item });
 });
 
@@ -916,6 +997,7 @@ router.post('/admin/theme', requireSession, async (req, res) => {
     accentColor: String(req.body?.accentColor || '')
   });
   if (!out?.ok) return res.status(500).json({ ok: false, error: 'web_theme_save_failed', message: 'テーマ保存に失敗しました。' });
+  console.info('[phasee-new] web_theme_context', { mode: 'save', admin_user_id: req.webSession.user?.id || '', theme_id: String(req.body?.themeId || '') });
   res.json({ ok: true });
 });
 
