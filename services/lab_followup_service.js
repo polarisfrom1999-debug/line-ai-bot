@@ -3,6 +3,7 @@
 const { normalizeItemName, collectTrendRows, buildPanelTrendSummary } = require('./lab_trend_service');
 const labItemAliasService = require('./lab_item_alias_service');
 const labHistoryCompare = require('./lab_history_compare_service');
+const labSessionRepository = require('../repositories/lab_session_repository');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -106,14 +107,31 @@ function buildLabImageReply(panel) {
   const latest = normalizeDateToken(panel?.latestExamDate || panel?.examDate || '') || dates[dates.length - 1] || '';
   const issues = Array.isArray(panel?.issues) ? panel.issues.filter(Boolean) : [];
   const preview = listImportantPreview(panel?.items || []);
-  const previewLine = preview.length ? `いま拾えてるのは ${preview.join(' / ')} 。` : '';
-  const dateLine = latest ? `検査日は ${latest} として見てる。` : '';
-  const issueLine = issues.length ? `（注意: ${issues[0]}）` : '';
+  const previewLine = preview.length ? `いま読み取れている主な数値の例は ${preview.join(' / ')} です。` : '';
+  const dateLine = latest ? `検査日は ${latest} として扱っています。` : '';
+  const issueLine = issues.length ? `（読み取り上の注意: ${issues[0]}）` : '';
   if ((panel?.documentKind || '').includes('multi') || dates.length >= 2) {
-    const multiDate = dates.length ? `日付は ${dates.join(' / ')} 。` : '';
-    return [`検査の画像ありがとう。推移表っぽいね。`, multiDate, dateLine, previewLine, issueLine, `TGやHbA1c、気になるところを一文で。`].filter(Boolean).join('\n');
+    const multiDate = dates.length ? `日付の候補は ${dates.join(' / ')} です。` : '';
+    return [
+      '今確認できる範囲では、検査結果の画像として受け取りました。',
+      multiDate,
+      dateLine,
+      previewLine,
+      issueLine,
+      '要約としては、複数日付が写っている可能性があるため、項目名（例: TG、HbA1c）を指定して聞いてください。'
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
-  return [`検査だね、受け取ったよ。`, dateLine, previewLine, issueLine, `聞きたい項目を送って。`].filter(Boolean).join('\n');
+  return [
+    '今確認できる範囲では、検査結果の画像として受け取りました。',
+    dateLine,
+    previewLine,
+    issueLine,
+    '聞きたい項目を「TGは？」のように短く送ってください。'
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildDateSelectionReply(date) {
@@ -339,7 +357,7 @@ function buildNaturalAllValuesReply(panel) {
     }
   }
   if (lines.length) {
-    return ['この画像からうかがえる数値だけ、静かに並べるね。', ...lines.slice(0, 26)].join('\n');
+    return ['この画像からうかがえる数値だけ、次のとおりです。', ...lines.slice(0, 26)].join('\n');
   }
   return buildReadableInventoryReply(panel);
 }
@@ -430,11 +448,14 @@ function buildItemReply(panel, targetName, selectedDate) {
       compareLine = `前回 ${previous.date} の ${previous.value}${previous.unit ? ` ${previous.unit}` : ''} と比べて ${absDelta}${row.unit ? ` ${row.unit}` : ''} ${direction}`;
     }
   }
-  return [
+  const core = [
     `${row.itemName} は ${row.date} で ${row.value}${unit} です。`,
     compareLine || null,
     reference ? `${reference} で、${flagSentence}` : flagSentence
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return `${core} まとめると、上記がいま確認できる範囲の回答です。結果の解釈は主治医の説明を優先してください。`;
 }
 
 function buildTrendReply(panel, text) {
@@ -656,6 +677,97 @@ function buildAbnormalChangeReply(latestRowList, worseningList) {
 /**
  * TG/中性脂肪の直近1キーの推移
  */
+/**
+ * 「傾向と対策」系（保存2回分以上なら前回比を短く併記。医療断定はしない）
+ */
+function buildTrendAndCountermeasuresReply(panel, historySessions = []) {
+  const lines = [];
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+
+  for (const it of items) {
+    const fl = normalizeFlag(it?.flag);
+    const v = normalizeText(it?.value || it?.currentValue || '');
+    const nm = normalizeText(it?.itemName || '');
+    if (!nm || !v) continue;
+    if (fl === 'H' || fl === 'L') {
+      lines.push(
+        `${nm} は ${v}${it.unit ? ` ${it.unit}` : ''} で、印字上は ${fl === 'H' ? '基準より高めの目印（H）' : '基準より低めの目印（L）'}が見えています。`
+      );
+    }
+    if (lines.length >= 4) break;
+  }
+  if (lines.length < 2) {
+    const prev = listImportantPreview(panel?.items || []);
+    for (const s of prev) {
+      if (lines.length >= 4) break;
+      const firstWord = normalizeText(s.split(/\s+/)[0]);
+      if (firstWord && !lines.some((l) => l.includes(firstWord))) {
+        lines.push(`${s} が今回の枠から読み取れています。`);
+      }
+    }
+  }
+
+  const hs = Array.isArray(historySessions) ? historySessions : [];
+  let deltaBlock = '';
+  if (hs.length >= 2) {
+    const comparisons = labHistoryCompare.summarizeMultisessionComparisons(hs);
+    const picked = labHistoryCompare.pickOverallLines(comparisons).filter((c) => c && c.canCompare).slice(0, 2);
+    if (picked.length) {
+      deltaBlock =
+        '保存が2回分以上ある項目については、' +
+        picked
+          .map((c) => buildKeyDeltaReply(c))
+          .filter(Boolean)
+          .join(' ') +
+        ' ';
+    }
+  }
+
+  const mid = lines.slice(0, 4).join(' ');
+  const tail =
+    '今後の見方としては、用紙の基準と医師の説明を優先し、ここでの文章はメモ代わりの補助にとどめてください。医療上の判断の代わりにはなりません。';
+  if (!normalizeText(mid) && !normalizeText(deltaBlock)) {
+    return `今回の画像から主要項目を十分には拾えていないため、傾向の言い切りは控えます。項目名を指定して聞いてください。`;
+  }
+  return `${mid}${deltaBlock}${tail}`.replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * 保存済み lab_sessions の日付目安一覧（最大5件表示、合計件数は全件）
+ */
+function buildSavedLabSessionsDatesReply(historyRows) {
+  const rows = Array.isArray(historyRows) ? historyRows : [];
+  if (!rows.length) {
+    return '保存済みの検査セッションはまだありません。';
+  }
+  const total = rows.length;
+  const lines = [];
+  let ambiguousInList = 0;
+  for (let i = 0; i < Math.min(5, rows.length); i += 1) {
+    const row = rows[i];
+    const rep = labSessionRepository.repDateForRow(row);
+    const printD = normalizeDateToken(row.print_date || '');
+    const exArr = Array.isArray(row.exam_dates_json) ? row.exam_dates_json : [];
+    const exJoined = exArr.map((d) => normalizeDateToken(String(d))).filter(Boolean).slice(0, 2);
+    if (rep) {
+      const bits = [];
+      if (printD && printD !== rep) bits.push(`印刷日 ${printD}`);
+      if (exJoined.length) bits.push(`採血日候補 ${exJoined.join('・')}`);
+      const extra = bits.length ? `（${bits.join(' / ')}）` : '';
+      lines.push(`${i + 1}. 代表日 ${rep}${extra}`);
+    } else {
+      ambiguousInList += 1;
+      lines.push(`${i + 1}. 日付不明の保存データ（印刷日・採血日の抽出が弱い可能性があります）`);
+    }
+  }
+  const ambNote =
+    ambiguousInList > 0
+      ? `\n上記のうち、日付不明として扱った行が ${ambiguousInList} 件あります。`
+      : '';
+  const summary = '要約としては、保存の新しい順に先頭を列挙しています。単一の画像だけから複数日付を断定したわけではありません。';
+  return `保存済みの検査関連データは合計 ${total} 件です。日付の目安は次のとおりです。\n${lines.join('\n')}${ambNote}\n${summary}`.trim();
+}
+
 function buildTgProgressReply(compare) {
   if (!compare) {
     return '中性脂肪（TG）行が、比較用の保存行としてまだ作れていません。';
@@ -705,5 +817,7 @@ module.exports = {
   buildKeyDeltaReply,
   buildOverallHistoryDeltaReply,
   buildAbnormalChangeReply,
-  buildTgProgressReply
+  buildTgProgressReply,
+  buildTrendAndCountermeasuresReply,
+  buildSavedLabSessionsDatesReply
 };

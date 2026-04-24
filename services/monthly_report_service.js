@@ -168,7 +168,7 @@ async function buildMonthlyReport(params) {
   const signals = collectMessageSignals(recentMessages);
 
   const lines = [
-    '今月の流れを、ここから。の目線でまとめました。',
+    '📊 今月の流れを、ここから見た目線でまとめました。',
     `継続の感触: ${allRecords.activeDays || 0}日、記録や会話の動きがありました。`,
     buildMealsLine(allRecords),
     buildExerciseLine(allRecords)

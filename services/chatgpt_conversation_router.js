@@ -315,7 +315,7 @@ async function routeConversation(input) {
   if (!normalized.userId) {
     return naturalizeResult(normalized, {
       ok: true,
-      replyMessages: [{ type: 'text', text: '今うまく相手を特定できなかったので、もう一度だけ送ってもらえたら大丈夫です。' }],
+      replyMessages: [{ type: 'text', text: '😊 今うまく相手を特定できなかったので、もう一度だけ送ってもらえたら大丈夫です。' }],
       internal: { intentType: 'invalid', responseMode: 'empathy_only' }
     });
   }

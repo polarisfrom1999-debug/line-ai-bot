@@ -176,6 +176,36 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     return Array.isArray(rows) ? rows : [];
   };
 
+  if (
+    /他の日付|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)/i.test(
+      safeText
+    )
+  ) {
+    const arr = await loadHistory();
+    const body = labFollowupService.buildSavedLabSessionsDatesReply(arr || []);
+    record('lab_saved_dates_inventory', {
+      history_sessions_count: (arr || []).length,
+      comparison_available: (arr || []).length >= 2,
+      comparison_mode: 'saved_dates'
+    });
+    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim() };
+  }
+
+  if (
+    /傾向(と|)(対策|対応|アドバイス|教え)|対策(を)?(教|聞)|気をつける(こと|点|べき)|今回の検査(で|から).*(傾向|わか|気)|検査結果から.*(傾向|対策)|どんな傾向(が|を|は|に)/i.test(
+      safeText
+    )
+  ) {
+    const arr = await loadHistory();
+    const body = labFollowupService.buildTrendAndCountermeasuresReply(p, arr || []);
+    record('lab_trend_guidance', {
+      history_sessions_count: (arr || []).length,
+      comparison_available: (arr || []).length >= 2,
+      comparison_mode: 'trend_guidance'
+    });
+    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim() };
+  }
+
   if (/前回(より|と(比(べ|較)|比較|比べ|くら(べ|い)))|前回(から|に)(は)?(どう|なっ)|比(べ|較)て(は)?(どう|の)(か)?|前回(は(どう|どんな)|から)/.test(safeText) && /前回|比(べ|較)/.test(safeText)) {
     const arr = await loadHistory();
     const comparisons = labHistoryCompare.summarizeMultisessionComparisons(arr);

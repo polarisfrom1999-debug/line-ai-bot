@@ -45,10 +45,10 @@ function buildMealReply(meal) {
   const fat = round1(meal?.estimatedNutrition?.fat || 0);
   const carbs = round1(meal?.estimatedNutrition?.carbs || 0);
   return [
-    '食事画像として受け取りました。',
+    '🍽️ 食事画像として受け取りました。',
     `見立て: ${items || '品目未特定'}`,
     `目安: ${kcal} kcal / P ${protein}g / F ${fat}g / C ${carbs}g`,
-    '必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。'
+    '✨ 必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。'
   ].join('\n');
 }
 

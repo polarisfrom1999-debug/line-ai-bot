@@ -215,4 +215,5 @@ module.exports = {
   createLabSession,
   getLatestLabSession,
   getRecentLabSessions,
+  repDateForRow
 };

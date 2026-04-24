@@ -24,6 +24,9 @@ function looksLikeGeneralConversation(text) {
   )) {
     return false;
   }
+  if (/(傾向(と|)(対策|対応)|対策(を)?(教|聞)|気をつける(こと|点|べき)|他の日付|他の検査日|何日分(\s*(ある|です|か|？)|ある|です|か)|保存.*(何件|いくつ))/.test(safe)) {
+    return false;
+  }
   return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事|合計|詳細|内訳|トータル|収支|運動|活動)/i.test(
     safe
   );
@@ -32,7 +35,10 @@ function looksLikeGeneralConversation(text) {
 function inferDomainFromText(text) {
   const safe = normalizeText(text);
   if (!safe) return 'unknown';
-  if (/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|採血|日付|悪い|何が|読め|印刷|異常|悪|値|H\/L|変化|推移)/i.test(safe)) return 'lab';
+  if (/(今週|週間|直近(7|７)日|今日の(合計|収支)|半分食べ|0kcal|食事の合計)/i.test(safe)) return 'meal';
+  if (/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|採血|日付|悪い|何が|読め|印刷|異常|悪|値|H\/L|変化|推移|傾向|対策|気をつける|他の日付|他の検査日|何日分)/i.test(safe)) {
+    return 'lab';
+  }
   if (/(食事|麺|カロリー|半分|食べてない|0kcal|削除できた|削除した|補正)/i.test(safe)) return 'meal';
   return 'unknown';
 }

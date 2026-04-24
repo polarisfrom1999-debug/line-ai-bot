@@ -217,7 +217,7 @@ async function buildWeeklyReport(params) {
 
   const signals = collectMessageSignals(recentMessages);
   const lines = [
-    '今週の記録を、伴走の視点で眺めました。',
+    '📊 今週の記録を、伴走の視点で眺めました。',
     `継続の感触: ${allRecords.activeDays || 0}日、何かしらの記録や会話がありました。`,
     buildMealsLine(allRecords),
     buildExerciseLine(allRecords)

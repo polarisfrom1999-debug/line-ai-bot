@@ -26,8 +26,12 @@ const questions = [
   { q: 'TGは？', source: { session: true, canonical: false } },
   { q: '患者名やクリニック名は？', source: { session: true, canonical: false } },
   { q: '何が読めたの？', source: { session: true, canonical: false } },
-  { q: '悪い値は？', source: { session: true, canonical: false } }
+  { q: '悪い値は？', source: { session: true, canonical: false } },
+  { q: 'この検査結果から私の傾向と対策教えて', source: { session: true, canonical: false } },
+  { q: '他の日付の検査は読めてる？', source: { session: true, canonical: false } }
 ];
+
+const emojiRe = /[\u{1F300}-\u{1F9FF}\u2600-\u26FF\u2700-\u27BF]/u;
 
 async function run() {
   const lines = [];
@@ -46,10 +50,14 @@ async function run() {
         canonicalLabReached: row.source.canonical
       });
       const ctx = lines.filter((l) => l.includes('lab_followup_context')).slice(-1)[0] || '';
+      const reply = out?.replyText || '';
+      if (emojiRe.test(reply)) {
+        throw new Error(`lab reply must not contain emoji: ${row.q}`);
+      }
       results.push({
         question: row.q,
         resolved_by: row.source.session && !row.source.canonical ? 'active_session (simulated)' : 'canonical (simulated)',
-        reply: out?.replyText || '',
+        reply,
         context_log: ctx
       });
     }
