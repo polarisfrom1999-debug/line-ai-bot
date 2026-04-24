@@ -43,9 +43,12 @@
   function renderUsers() {
     qs('userList').innerHTML = state.users.map((u) => `
       <div class="item ${u.lineUserId === state.selected ? 'active' : ''}" data-id="${esc(u.lineUserId)}">
-        <div>${esc(u.lineUserId)}</div>
-        <div>${esc(u.lastPreview || '')}</div>
-        <small>${esc(fmtDate(u.lastMessageAt))}</small>
+        <div class="item-top">
+          <strong class="name">${esc(u.displayName || '未設定ユーザー')}</strong>
+          <small class="time">${esc(fmtDate(u.lastMessageAt))}</small>
+        </div>
+        <div class="preview">${esc(u.lastPreview || 'メッセージあり')}</div>
+        <small class="subid">${esc(u.helperId || '')}</small>
       </div>`).join('');
     qs('userList').querySelectorAll('.item').forEach((el) => {
       el.addEventListener('click', async () => { state.selected = el.dataset.id; renderUsers(); await loadAllForUser(); });

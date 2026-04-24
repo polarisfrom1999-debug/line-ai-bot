@@ -16,16 +16,42 @@ function toIso(v) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+function shortId(v) {
+  const s = normalizeText(v);
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 6)}...${s.slice(-4)}`;
+}
+
+function isSystemLikeMessage(role, messageType, text) {
+  const r = normalizeText(role).toLowerCase();
+  const mt = normalizeText(messageType).toLowerCase();
+  const t = normalizeText(text);
+  if (r === 'system' || r === 'tool') return true;
+  if (mt === 'system' || mt === 'tool') return true;
+  if (/^\[system\]/i.test(t)) return true;
+  if (/^intent=|^mode=/.test(t)) return true;
+  return false;
+}
+
 async function getManagedUsers({ query = '', limit = 80 } = {}) {
   if (!supabase) return [];
   const q = normalizeText(query).toLowerCase();
   const { data, error } = await supabase
     .from('chat_logs')
-    .select('line_user_id,message_text,created_at,role')
+    .select('line_user_id,message_text,created_at,role,message_type,metadata')
     .not('line_user_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(2000);
   if (error || !Array.isArray(data)) return [];
+  const { data: usersData } = await supabase
+    .from('users')
+    .select('id,line_user_id,display_name,preferred_name,name,metadata')
+    .not('line_user_id', 'is', null)
+    .limit(5000);
+  const userMap = new Map();
+  for (const u of Array.isArray(usersData) ? usersData : []) {
+    userMap.set(normalizeText(u.line_user_id), u);
+  }
   const map = new Map();
   for (const row of data) {
     const uid = normalizeText(row.line_user_id);
@@ -35,19 +61,42 @@ async function getManagedUsers({ query = '', limit = 80 } = {}) {
       lastMessageAt: '',
       lastPreview: '',
       lastRole: '',
-      unread: false
+      unread: false,
+      displayName: '',
+      helperId: shortId(uid)
     };
+    const profile = userMap.get(uid) || {};
+    const p1 = normalizeText(profile.display_name || '');
+    const p2 = normalizeText(profile.preferred_name || profile.name || '');
+    const p3 = normalizeText(profile?.metadata?.patientName || profile?.metadata?.patient_name || '');
+    cur.displayName = p1 || p2 || p3 || `未設定ユーザー (${shortId(uid)})`;
     const iso = toIso(row.created_at);
     if (!cur.lastMessageAt || (iso && iso > cur.lastMessageAt)) {
       cur.lastMessageAt = iso;
-      cur.lastPreview = normalizeText(row.message_text).slice(0, 120);
+      const txt = normalizeText(row.message_text);
+      if (!isSystemLikeMessage(row.role, row.message_type, txt)) {
+        cur.lastPreview = txt.slice(0, 120);
+      } else if (!cur.lastPreview) {
+        cur.lastPreview = 'メッセージあり';
+      }
       cur.lastRole = normalizeText(row.role || '');
+    }
+    if (!cur.lastPreview) {
+      const txt = normalizeText(row.message_text);
+      if (!isSystemLikeMessage(row.role, row.message_type, txt)) {
+        cur.lastPreview = txt.slice(0, 120);
+      }
     }
     map.set(uid, cur);
   }
   let items = Array.from(map.values()).sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
   if (q) {
-    items = items.filter((u) => u.lineUserId.toLowerCase().includes(q) || String(u.lastPreview || '').toLowerCase().includes(q));
+    items = items.filter((u) =>
+      u.lineUserId.toLowerCase().includes(q)
+      || String(u.displayName || '').toLowerCase().includes(q)
+      || String(u.lastPreview || '').toLowerCase().includes(q)
+      || String(u.helperId || '').toLowerCase().includes(q)
+    );
   }
   return items.slice(0, Math.max(1, Number(limit) || 80));
 }
