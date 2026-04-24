@@ -533,6 +533,14 @@ app.get('/health', (_req, res) => {
   });
 });
 
+app.get('/web/admin', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public/web/admin.html'));
+});
+
+app.get('/web/admin.html', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public/web/admin.html'));
+});
+
 app.use('/web', express.static(path.join(__dirname, 'public/web'), { index: 'index.html' }));
 app.use('/api/web', webRouter);
 
