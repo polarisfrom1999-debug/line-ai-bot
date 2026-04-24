@@ -53,6 +53,11 @@ async function applyMetaLayerToPanel({ userId, imagePayload, panel }) {
   panel.patientName = String(merged.patient_name || '');
   panel.facilityName = String(merged.facility_name || '');
   panel.printDate = String(merged.print_date || '');
+  panel.meta = {
+    patientName: panel.patientName,
+    facilityName: panel.facilityName,
+    printDate: panel.printDate,
+  };
   panel.metaExtraction = {
     source: metaExtraction.source,
     promptVersion: metaExtraction.promptVersion,

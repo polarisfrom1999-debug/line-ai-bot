@@ -26,13 +26,47 @@ function sanitizeLabItems(items = []) {
   }));
 }
 
+function parseLabMetaFromGeminiRaw(geminiRaw) {
+  if (geminiRaw == null) return { metaAdoption: null, metaExtraction: null, metaConfidence: null };
+  let obj = geminiRaw;
+  if (typeof geminiRaw === 'string') {
+    try {
+      obj = JSON.parse(geminiRaw);
+    } catch (_e) {
+      return { metaAdoption: null, metaExtraction: null, metaConfidence: null };
+    }
+  }
+  if (!obj || typeof obj !== 'object') return { metaAdoption: null, metaExtraction: null, metaConfidence: null };
+  const block = obj.lab_meta || obj.labMeta;
+  if (!block || typeof block !== 'object') return { metaAdoption: null, metaExtraction: null, metaConfidence: null };
+  return {
+    metaAdoption: block.metaAdoption || null,
+    metaExtraction: block.metaExtraction || null,
+    metaConfidence: block.metaConfidence || null
+  };
+}
+
 function toLabPanel(labSession) {
   if (!labSession || typeof labSession !== 'object') return null;
   const dates = Array.isArray(labSession.exam_dates_json) ? labSession.exam_dates_json : [];
+  const patientName = normalizeText(labSession.patient_name || '');
+  const facilityName = normalizeText(labSession.facility_name || '');
+  const printDate = normalizeText(labSession.print_date || '');
+  const { metaAdoption, metaExtraction, metaConfidence } = parseLabMetaFromGeminiRaw(
+    labSession.gemini_raw
+  );
   return {
-    patientName: normalizeText(labSession.patient_name || ''),
-    facilityName: normalizeText(labSession.facility_name || ''),
-    printDate: normalizeText(labSession.print_date || ''),
+    patientName,
+    facilityName,
+    printDate,
+    meta: {
+      patientName,
+      facilityName,
+      printDate
+    },
+    metaAdoption: metaAdoption || null,
+    metaExtraction: metaExtraction || null,
+    metaConfidence: metaConfidence || null,
     examDates: dates,
     items: sanitizeLabItems(labSession.parsed_items_json),
     rawText: normalizeText(labSession.raw_text || ''),

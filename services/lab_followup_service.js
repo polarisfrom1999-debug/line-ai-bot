@@ -2,9 +2,20 @@
 
 const { normalizeItemName, collectTrendRows, buildPanelTrendSummary } = require('./lab_trend_service');
 const labItemAliasService = require('./lab_item_alias_service');
+const labHistoryCompare = require('./lab_history_compare_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function getMetaPatientName(panel) {
+  return normalizeText(panel?.meta?.patientName || panel?.patientName || panel?.patient_name);
+}
+function getMetaFacilityName(panel) {
+  return normalizeText(panel?.meta?.facilityName || panel?.facilityName || panel?.facility_name);
+}
+function getMetaPrintDateForCopy(panel) {
+  return normalizeDateToken(panel?.meta?.printDate || panel?.printDate || panel?.print_date);
 }
 
 function normalizeDateToken(token) {
@@ -272,11 +283,11 @@ function buildReadableInventoryReply(panel) {
   }
 
   const hintLines = [];
-  const pd = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const pd = getMetaPrintDateForCopy(panel);
   if (pd) hintLines.push(`印刷日の候補: ${pd}`);
-  const pn = normalizeText(panel?.patientName || panel?.patient_name || '');
+  const pn = getMetaPatientName(panel);
   if (pn) hintLines.push(`氏名らしき文字列: ${pn}`);
-  const fc = normalizeText(panel?.facilityName || panel?.facility_name || '');
+  const fc = getMetaFacilityName(panel);
   if (fc) hintLines.push(`施設名らしき文字列: ${fc}`);
   const dateCandidates = collectAvailableDates(panel);
   if (dateCandidates.length) hintLines.push(`日付候補: ${dateCandidates.join(' / ')}`);
@@ -342,17 +353,17 @@ function buildExamDateQuickReply(panel) {
 }
 
 function buildPatientNameReply(panel) {
-  const name = normalizeText(panel?.patientName || panel?.patient_name || '');
+  const name = getMetaPatientName(panel);
   return name ? `患者名は「${name}」です。` : '患者名はこの画像からは確定できませんでした。';
 }
 
 function buildFacilityNameReply(panel) {
-  const facility = normalizeText(panel?.facilityName || panel?.facility_name || '');
+  const facility = getMetaFacilityName(panel);
   return facility ? `医療機関名は「${facility}」です。` : '病院名・クリニック名はこの画像からは確定できませんでした。';
 }
 
 function buildPrintDateReply(panel) {
-  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const printDate = getMetaPrintDateForCopy(panel);
   return printDate ? `印刷日は ${printDate} です。` : '印刷日はこの画像からは確定できませんでした。';
 }
 
@@ -475,9 +486,9 @@ const RESEND_PROMPT = '採血結果がもう少し大きく・まっすぐ写る
  * 患者名・医療機関を1つの自然文で（新本流 follow 用）
  */
 function buildPatientAndClinicReply(panel) {
-  const p = normalizeText(panel?.patientName || panel?.patient_name || '');
-  const f = normalizeText(panel?.facilityName || panel?.facility_name || '');
-  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const p = getMetaPatientName(panel);
+  const f = getMetaFacilityName(panel);
+  const printDate = getMetaPrintDateForCopy(panel);
   const lead = '今確認できる範囲では、';
   if (p && f) {
     return `${lead}患者名は「${p}」、医療機関は「${f}」のようです。${printDate ? ` 用紙の日付欄の候補に ${printDate} が見えています。` : ''}`;
@@ -493,7 +504,7 @@ function buildPatientAndClinicReply(panel) {
 function buildDateFollowupNaturalReply(panel) {
   const body = buildExamDateQuickReply(panel);
   if (!/まだ|入っていません|送って|書いて|パネルに/.test(body)) return body;
-  const printDate = normalizeDateToken(panel?.printDate || panel?.print_date || '');
+  const printDate = getMetaPrintDateForCopy(panel);
   const exam = normalizeText(panel?.latestExamDate || panel?.examDate || '');
   if (printDate) return `採血日（検査日）の行がまだはっきりしない一方で、用紙の日付欄の候補として ${printDate} という日付の断片を拾っています。同じ用紙でもう少し上から写すと、日付が定かになりやすいです。`;
   if (exam) return `記録上は ${exam} 寄りの行が見えています。画像がさらに鮮明であれば、採血日の確定もしやすくなります。`;
@@ -537,6 +548,124 @@ function buildGentleAbnormalReply(panel) {
   return `H や L の目印付きの値は、今の段階の画像でははっきりしません。${RESEND_PROMPT}`;
 }
 
+function stripAliasForLabel(groupKey) {
+  return String(groupKey || '').replace(/^alias:/, '') || '';
+}
+
+function displayLabelForComparison(c) {
+  if (!c) return '該当項目';
+  const a = stripAliasForLabel(c.groupKey);
+  if (a) {
+    const cn = labItemAliasService.canonicalToLabel ? labItemAliasService.canonicalToLabel(a) : '';
+    if (cn) return cn;
+  }
+  if (c.latest) return normalizeText(c.latest.displayName) || a || '該当項目';
+  return '該当項目';
+}
+
+/**
+ * 同一キー1項目の前回比（1〜2文、医療断定はしない）
+ */
+function buildKeyDeltaReply(comparison) {
+  if (!comparison || !comparison.latest) {
+    return '前回分と突き合わせられる行を、いまの保存範囲からは作れませんでした。';
+  }
+  if (!comparison.canCompare) {
+    if (comparison.reason === 'single_session' || (comparison.previous == null)) {
+      const l = comparison.latest;
+      const u = l.unit ? ` ${l.unit}` : '';
+      return `前回分と併せての比較に必要な、別日の保存行が足りていません。いま分かる範囲では、${l.observedDate ? `${l.observedDate} 時点で ` : ''}${l.value}${u} です。`;
+    }
+  }
+  const l = comparison.latest;
+  const p = comparison.previous;
+  const label = displayLabelForComparison(comparison);
+  if (!l || !p) {
+    return '前回分が特定できないため、差分の説明は出し切れません。';
+  }
+  const u = l.unit || p.unit ? ` ${(l.unit || p.unit) || ''}` : '';
+  if (comparison.delta == null) {
+    return `差分の数の取り扱いが難しい行です。前回分は ${p.observedDate} で ${p.value}、直近分は ${l.observedDate} で ${l.value} と読めています（医学的な解釈は行いません）。`;
+  }
+  const abs = Math.abs(comparison.delta);
+  const dabs = abs % 1 < 1e-9 || abs % 1 > 0.999 ? String(Math.round(abs)) : abs.toFixed(1);
+  let rel = 'ほぼ同程度';
+  if (comparison.direction === 'up') rel = '数値的には上がる方向';
+  if (comparison.direction === 'down') rel = '数値的には下がる方向';
+  return `${label}は、前回分（${p.observedDate} ころ: ${p.value}）に対し、直近分（${l.observedDate} ころ: ${l.value}）では差が約${dabs}${u} あり、${rel}に見えます。`;
+}
+
+/**
+ * 前回比の要約（複数項目を最大3、全体1〜3文）
+ * @param {object} [options] historySessionsCount
+ */
+function buildOverallHistoryDeltaReply(pickedComparisons, options = {}) {
+  const hsc = options.historySessionsCount;
+  const use = (Array.isArray(pickedComparisons) ? pickedComparisons : [])
+    .filter((c) => c && c.canCompare)
+    .slice(0, 3);
+  if (!use.length) {
+    if (hsc != null && hsc < 2) {
+      return '前回分と併せて比較するには、少なくとも別日分の用紙が2回分取り込まれているのが望ましいです。いまの保存件数が1回分の場合、前回比の文章は出し切れません。';
+    }
+    return '同日の行同士の重なりが、まだ十分に出ていないようです。別日の用紙が2回分あっても、同じ項目行が同じ枠名で揃っていないと、前回比の説明は出しづらいです。';
+  }
+  const one = use.map((c) => buildKeyDeltaReply(c)).filter(Boolean);
+  if (!one.length) {
+    return '前回採分との照合に必要な行が、保存データ上ではまとまっていないようです。';
+  }
+  return one.join(' ');
+}
+
+/**
+ * 悪化の可能性がある行＋前回分との H 変化（1〜3文）
+ */
+function buildAbnormalChangeReply(latestRowList, worseningList) {
+  const a = Array.isArray(latestRowList) ? latestRowList : [];
+  const w = Array.isArray(worseningList) ? worseningList : [];
+  const out = [];
+  if (a.length) {
+    const s = a.slice(0, 10).map(
+      (r) => {
+        const u = r.unit ? ` ${r.unit}` : '';
+        return `「${r.displayName}」${r.value}${u}（${r.flag}）`;
+      }
+    );
+    out.push(`今回分の読み取り上、目印 H/L 付きとして拾えた行に、${s.join('、')} などがあります。`);
+  } else {
+    out.push('今回分の枠取り上、H または L の明確な行は拾い切れていない可能性があります。印字が薄い用紙では見落としが出ることがあります。');
+  }
+  if (w.length) {
+    out.push('直前に保存してある1回分と併せる範囲で見ると、' + w.slice(0, 3).map((e) => {
+      const pr = e.previous
+        ? `${e.previous.value}${e.previous.unit ? ` ${e.previous.unit}` : ''} 付近`
+        : '基準内付近';
+      return `「${e.displayName}」は、前回分（${pr}）に比し今回 H（${e.current.value}${e.current.unit ? ` ${e.current.unit}` : ''}）の見え方です。`;
+    }).join(' '));
+  }
+  return out.join(' ').slice(0, 1000);
+}
+
+/**
+ * TG/中性脂肪の直近1キーの推移
+ */
+function buildTgProgressReply(compare) {
+  if (!compare) {
+    return '中性脂肪（TG）行が、比較用の保存行としてまだ作れていません。';
+  }
+  if (!compare.canCompare) {
+    const l = compare.latest;
+    if (l) {
+      const u = l.unit ? ` ${l.unit}` : '';
+      return l.observedDate
+        ? `保存上は ${l.observedDate} 時点で、中性脂肪（TG）相当の行は ${l.value}${u} として拾えており、もう1回分はまだ併用できていません。`
+        : `中性脂肪（TG）相当の行は、いまの保存では ${l.value}${u} が最新です。もう1回分が入ると推移をお伝えしやすいです。`;
+    }
+    return '中性脂肪（TG）の行が、比較用の保存行としてまだ作れていません。';
+  }
+  return `TG（中性脂肪）について、${buildKeyDeltaReply(compare)}`;
+}
+
 module.exports = {
   normalizeTarget,
   extractRequestedDate,
@@ -563,4 +692,8 @@ module.exports = {
   buildGentleReadableSummaryReply,
   buildGentleAbnormalReply,
   RESEND_PROMPT,
+  buildKeyDeltaReply,
+  buildOverallHistoryDeltaReply,
+  buildAbnormalChangeReply,
+  buildTgProgressReply
 };

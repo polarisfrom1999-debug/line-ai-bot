@@ -67,7 +67,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
           canonicalLabReached = true;
         }
       }
-      return resolveLabFollowup(safeText, panel, {
+      return await resolveLabFollowup(safeText, panel, {
         userId: input.userId,
         sessionLabReached,
         canonicalLabReached
@@ -85,7 +85,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     if (inferred === 'lab') {
       const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
       if (panel) {
-        return resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+        return await resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
       }
       return { intentType: 'newflow_context_expired', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
     }
@@ -103,11 +103,11 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
 
   // 3) active なしでも canonicalで答えられるものは答える
   const inferred = inferDomainFromText(safeText);
-  if (inferred === 'lab') {
-    const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
-    if (panel) {
-      return resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
-    }
+    if (inferred === 'lab') {
+      const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
+      if (panel) {
+        return await resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+      }
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
   if (inferred === 'meal') {

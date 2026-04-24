@@ -141,7 +141,73 @@ async function getLatestLabSession(userId) {
   }
 }
 
+/**
+ * 直近 N 件の lab_sessions。Supabase では日付式 ORDER が重いため、
+ * 十分な行を created_at desc で取り、代表日で再ソートして N 件に切る。
+ * @param {string} userId
+ * @param {number} [limit=10]
+ * @param {object} [opts] fetchMultiplier 取得バッファ（既定 8）
+ * @returns {Promise<object[]|null>} 代表日新しい順（同一日付なら id 大きい＝新しい行）
+ */
+async function getRecentLabSessions(userId, limit = 10, opts = {}) {
+  if (!supabase) return null;
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return null;
+  const mult = Number(opts.fetchMultiplier) > 0 ? Number(opts.fetchMultiplier) : 8;
+  const fetchN = Math.min(200, Math.max(Number(limit) || 10, 1) * mult);
+  try {
+    const sel = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at,updated_at';
+    let q = await supabase
+      .from('lab_sessions')
+      .select(`${sel},gemini_raw,structured_json`)
+      .eq('user_id', safeUserId)
+      .order('created_at', { ascending: false })
+      .limit(fetchN);
+    if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
+      q = await supabase
+        .from('lab_sessions')
+        .select(sel)
+        .eq('user_id', safeUserId)
+        .order('created_at', { ascending: false })
+        .limit(fetchN);
+    }
+    if (q?.error) return null;
+    const raw = Array.isArray(q.data) ? q.data : [];
+    const withRep = raw.map((r) => ({ ...r, _rep: repDateForRow(r) }));
+    withRep.sort((a, b) => {
+      const di = String(b._rep || '').localeCompare(String(a._rep || ''));
+      if (di !== 0) return di;
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
+    });
+    return withRep.slice(0, limit);
+  } catch (_e) {
+    return null;
+  }
+}
+
+function repDateForRow(row) {
+  const p = String(row.print_date || '').trim();
+  if (p) {
+    const m = p.match(/(20\d{2}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  const ex = Array.isArray(row.exam_dates_json) ? row.exam_dates_json : [];
+  const dts = ex
+    .map((d) => {
+      const s = String(d || '');
+      const m2 = s.match(/(20\d{2}-\d{2}-\d{2})/);
+      return m2 ? m2[1] : '';
+    })
+    .filter(Boolean)
+    .sort();
+  if (dts.length) return dts[dts.length - 1];
+  const c = String(row.created_at || '');
+  const m3 = c.match(/(20\d{2}-\d{2}-\d{2})/);
+  return m3 ? m3[1] : '';
+}
+
 module.exports = {
   createLabSession,
   getLatestLabSession,
+  getRecentLabSessions,
 };

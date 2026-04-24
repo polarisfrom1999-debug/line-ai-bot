@@ -29,7 +29,7 @@ const questions = [
   { q: '悪い値は？', source: { session: true, canonical: false } }
 ];
 
-function run() {
+async function run() {
   const lines = [];
   const oldInfo = console.info;
   console.info = (...args) => {
@@ -40,7 +40,7 @@ function run() {
   const results = [];
   try {
     for (const row of questions) {
-      const out = resolveLabFollowup(row.q, samplePanel, {
+      const out = await resolveLabFollowup(row.q, samplePanel, {
         userId: 'e2e-lab-quality',
         sessionLabReached: row.source.session,
         canonicalLabReached: row.source.canonical
@@ -60,4 +60,7 @@ function run() {
   }
 }
 
-run();
+run().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

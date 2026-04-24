@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const imageIngestOrchestrator = require('../services/newflow/image_ingest_orchestrator_service');
 const labSessionRepository = require('../repositories/lab_session_repository');
+const canonicalFallbackService = require('../services/newflow/canonical_fallback_service');
 const { resolveLabFollowup } = require('../services/newflow/resolvers/lab_followup_resolver_service');
 
 function normalizeText(value) {
@@ -32,32 +33,7 @@ function mimeFromPath(filePath) {
   return 'image/jpeg';
 }
 
-function itemsFromMinSchemaStructured(parsed) {
-  return (Array.isArray(parsed) ? parsed : []).map((it) => ({
-    itemName: normalizeText(it?.name || it?.rawName || it?.normalizedKey || '項目'),
-    value: normalizeText(it?.value || ''),
-    unit: normalizeText(it?.unit || ''),
-    flag: normalizeText(it?.flag || ''),
-    history: [],
-  }));
-}
-
-function panelFromLabRow(row) {
-  if (!row || typeof row !== 'object') return null;
-  const dates = Array.isArray(row.exam_dates_json) ? row.exam_dates_json : [];
-  const parsed = Array.isArray(row.parsed_items_json) ? row.parsed_items_json : [];
-  return {
-    patientName: normalizeText(row.patient_name || ''),
-    facilityName: normalizeText(row.facility_name || ''),
-    printDate: normalizeText(row.print_date || ''),
-    examDates: dates,
-    latestExamDate: dates.length ? String(dates[dates.length - 1] || '') : '',
-    examDate: dates.length ? String(dates[dates.length - 1] || '') : '',
-    itemsStructured: parsed,
-    items: itemsFromMinSchemaStructured(parsed),
-    rawText: normalizeText(row.raw_text || ''),
-  };
-}
+/** 本番の canonical 経路（gemini_raw.lab_meta から metaAdoption 等を復元）でパネルを組み立てる */
 
 async function main() {
   const imgPath = process.argv[2];
@@ -119,11 +95,11 @@ async function main() {
       console.info('parsed_items_json_sample=', JSON.stringify(row.parsed_items_json.slice(0, 5), null, 2));
     }
 
-    const panel = panelFromLabRow(row);
+    const panel = await canonicalFallbackService.getCanonicalLabPanel(userId, { logReachability: false });
     if (panel) {
       console.info('\n--- follow-up (same resolver as newflow; LINE 文面はここを実機と突き合わせ) ---');
-      for (const q of ['TGは？', '患者名は？']) {
-        const r = resolveLabFollowup(q, panel, {
+      for (const q of ['TGは？', '患者名は？', '施設名は？', '印刷日は？']) {
+        const r = await resolveLabFollowup(q, panel, {
           userId,
           sessionLabReached: true,
           canonicalLabReached: true,

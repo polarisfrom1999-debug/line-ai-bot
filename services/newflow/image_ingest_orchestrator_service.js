@@ -207,6 +207,21 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
   const preDbParsed = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
   const qualifiedForDb = countPersistableParsedRecords(preDbParsed);
+  const labGeminiRaw = lab?.geminiRaw && typeof lab.geminiRaw === 'object' ? { ...lab.geminiRaw } : {};
+  if (lab?.metaAdoption || lab?.metaExtraction) {
+    labGeminiRaw.lab_meta = {
+      metaAdoption: lab.metaAdoption || null,
+      metaExtraction: lab.metaExtraction || null,
+      metaConfidence: lab.metaConfidence || null
+    };
+  }
+  if (!lab.meta) {
+    lab.meta = {
+      patientName: String(lab.patientName || ''),
+      facilityName: String(lab.facilityName || ''),
+      printDate: String(lab.printDate || '')
+    };
+  }
   console.info('[lab-ingest-trace] stage:parsed_items_pre_insert', {
     userId: input.userId,
     panel_items_structured_len: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured.length : 0,
@@ -229,7 +244,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
     isLabImageStrict: Boolean(lab?.isLabImage),
     isLabImageTentative: true,
-    geminiRaw: lab?.geminiRaw || null,
+    geminiRaw: Object.keys(labGeminiRaw).length ? labGeminiRaw : (lab?.geminiRaw || null),
     structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
     expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString()
   };

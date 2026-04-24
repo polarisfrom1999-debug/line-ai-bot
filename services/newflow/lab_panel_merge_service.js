@@ -32,18 +32,29 @@ function mergeLabPanels(sessionPanel, canonicalPanel) {
   }
   const items = [...byName.values()];
 
+  const patientName = normalizeText(s.patientName) || normalizeText(c.patientName) || '';
+  const facilityName = normalizeText(s.facilityName) || normalizeText(c.facilityName) || '';
+  const printDate = normalizeText(s.printDate) || normalizeText(c.printDate) || '';
   return {
     ...c,
     ...s,
-    patientName: normalizeText(s.patientName) || normalizeText(c.patientName) || '',
-    facilityName: normalizeText(s.facilityName) || normalizeText(c.facilityName) || '',
-    printDate: normalizeText(s.printDate) || normalizeText(c.printDate) || '',
+    patientName,
+    facilityName,
+    printDate,
+    meta: {
+      patientName,
+      facilityName,
+      printDate
+    },
     latestExamDate: normalizeText(s.latestExamDate) || normalizeText(s.examDate) || normalizeText(c.latestExamDate) || normalizeText(c.examDate) || '',
     examDate: normalizeText(s.examDate) || normalizeText(c.examDate) || '',
     examDates: Array.isArray(s.examDates) && s.examDates.length ? s.examDates : (c.examDates || []),
     items,
     rawText: normalizeText(s.rawText) || normalizeText(c.rawText) || '',
-    itemsStructured: mergeItemsStructuredPanels(s?.itemsStructured, c?.itemsStructured)
+    itemsStructured: mergeItemsStructuredPanels(s?.itemsStructured, c?.itemsStructured),
+    metaAdoption: s.metaAdoption || c.metaAdoption || null,
+    metaExtraction: s.metaExtraction || c.metaExtraction || null,
+    metaConfidence: s.metaConfidence || c.metaConfidence || null
   };
 }
 
