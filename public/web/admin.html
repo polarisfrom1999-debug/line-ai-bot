@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ここから。管理画面</title>
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="left">
+      <div class="head">利用者一覧</div>
+      <input id="userSearch" placeholder="検索">
+      <div id="userList"></div>
+    </aside>
+    <main class="center">
+      <div class="head">チャット履歴</div>
+      <div id="chatHistory"></div>
+      <form id="sendForm" class="send">
+        <textarea id="messageInput" placeholder="返信を入力"></textarea>
+        <input id="fileInput" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov">
+        <button type="submit">送信</button>
+      </form>
+    </main>
+    <aside class="right">
+      <div class="head">サマリ / 下書き</div>
+      <div class="tabs">
+        <button data-tab="today" class="active">今日</button>
+        <button data-tab="week">今週</button>
+        <button data-tab="month">今月</button>
+        <button data-tab="weekDraft">週間報告下書き</button>
+        <button data-tab="monthDraft">月間報告下書き</button>
+      </div>
+      <div id="panelToday" class="panel active"></div>
+      <div id="panelWeek" class="panel"></div>
+      <div id="panelMonth" class="panel"></div>
+      <div id="panelWeekDraft" class="panel">
+        <button id="genWeek">再生成</button>
+        <textarea id="weekDraftText"></textarea>
+        <button id="saveWeek">保存</button>
+      </div>
+      <div id="panelMonthDraft" class="panel">
+        <button id="genMonth">再生成</button>
+        <textarea id="monthDraftText"></textarea>
+        <button id="saveMonth">保存</button>
+      </div>
+      <div class="theme">
+        <label>テーマ</label>
+        <select id="themeId">
+          <option value="soft-default">soft-default</option>
+          <option value="clear-cream">clear-cream</option>
+          <option value="clear-blue">clear-blue</option>
+          <option value="night-gentle">night-gentle</option>
+        </select>
+        <button id="saveTheme">テーマ保存</button>
+      </div>
+      <div id="status"></div>
+    </aside>
+  </div>
+  <script src="./admin.js"></script>
+</body>
+</html>

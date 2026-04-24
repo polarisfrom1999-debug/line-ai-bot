@@ -1,0 +1,18 @@
+body { margin: 0; font-family: sans-serif; }
+.layout { display: grid; grid-template-columns: 280px 1fr 420px; height: 100vh; }
+.left,.center,.right { border-right: 1px solid #ddd; padding: 10px; overflow: auto; }
+.head { font-weight: 700; margin-bottom: 8px; }
+#userList .item { padding: 8px; border: 1px solid #ddd; margin-top: 6px; cursor: pointer; border-radius: 8px; }
+#userList .item.active { border-color: #7d5a7b; background: #f6eef8; }
+#chatHistory .row { margin: 8px 0; }
+#chatHistory .bubble { padding: 8px; border-radius: 10px; max-width: 90%; white-space: pre-wrap; }
+#chatHistory .user .bubble { background: #eee; margin-left: auto; }
+#chatHistory .assistant .bubble { background: #f1e7f4; }
+.send { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #ddd; padding-top: 8px; }
+textarea { width: 100%; min-height: 90px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tabs button.active { background: #7d5a7b; color: #fff; }
+.panel { display: none; }
+.panel.active { display: block; }
+.theme { border-top: 1px solid #ddd; margin-top: 10px; padding-top: 10px; }
+#status { margin-top: 8px; color: #444; font-size: 12px; }
