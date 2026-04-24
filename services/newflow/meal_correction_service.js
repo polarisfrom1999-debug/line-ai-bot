@@ -4,8 +4,10 @@ const mealRecalcRepository = require('../../repositories/meal_recalc_repository'
 const { recalcMealStateWithLog } = require('../meal_recalc_engine_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const dailyBalanceQuery = require('../daily_balance_query_service');
+const weeklyBalanceQuery = require('../weekly_balance_query_service');
 const responseBuilderService = require('./response_builder_service');
 
+const WEEK_BALANCE_INTENTS = new Set(['week_summary', 'week_balance', 'week_intake']);
 const DAY_BALANCE_INTENTS = new Set(['today_meal_detail', 'today_total', 'today_balance', 'today_intake', 'today_activity']);
 
 function normalizeText(value) {
@@ -16,6 +18,23 @@ function detectMealCorrectionIntent(safe) {
   if (/麺.*ゼロ|ゼロカロリー|0kcal|0 kcal|この麺はゼロ/.test(safe)) return 'set_component_zero';
   if (/半分食べた|一部だけ食べた|半分だけ|半分食べました|半分だけ食べた/.test(safe)) return 'set_component_fraction';
   if (/食べてない|食べなかった|この麺は食べてない/.test(safe)) return 'mark_component_not_eaten';
+
+  if (/(今週|週間|この(一|1)週間|直近(7|７)日(間)?).*(収支|出納|カロリーの?収支)/.test(safe) || /(週間(の|は|って)?(収支|出納|バランス))/.test(safe)) {
+    return 'week_balance';
+  }
+  if (/(今週|週間|この(一|1)週間|直近(7|７)日(間)?).*(食べ(た|る|ます|ました|ましたか|ますか)?(の|量|分|くらい|か|？|ですか|だっけ|だっ|でした|です)?|何(を)?(食べ|食事(を)?(した|して|します|食べ(た|る|ている)?(の|？|か|))?)?.*(くらい|量|分|？|いくら|何キロ|キロ|kcal|ｋｃａｌ)|食事(量|の?量|の合計|のうち|は|を)?(くらい|いくら|どれ|？)|摂取(量|は|し(た|て|ます|ました)?)?(くらい|いくら|どれ|か|？|ですか|だっけ|だっ|でした)?|ど(の|な)くらい.*(食|食事|キロ|カロリー|kcal|ｋｃａｌ))/.test(
+    safe
+  ) || /(週間(で|の)?(は|、)?(食|食事|何を食|摂取(し|量)))/.test(safe)) {
+    return 'week_intake';
+  }
+  if (
+    /(週間報告|週(の|間)?(報告|まとめ|サマリ|サマリー|ふり返(り|ります|った)?|振り(返|返)(る|り|い)?|レポート|状況)|今週(の|は|って)?(まとめ|サマリ|サマリー|ふり返(り|る)?|振り(返|返)(る|るの)?|どう(だっ(た|け)|でした(か|)|ですか(。|)|？)|状況|所見|だいたい(どう(だった|だ|ですか|か)?)?)|7日(間|分|ぶり)?(の|は|で|って)?(まとめ|報告|ふり返(り|る)?|振り(返|返)(る|り|い)?|サマリ|サマリー|状況(は|の|のあたり|どう(だった|だ|です|か|？))|はどう)|直近(7|７)日(間|ぶり)?(の|は|で|って|のあたり)?(まとめ|報告|ふり返(り|る)?|振り(返|返)(る|るの)?|サマリ|サマリー|状況(は|の|どう(だった|だ|です|か|？))|[のは]どう(だった|だ|です|か|？|)))|今週(、|。)?(全体|ざっと|ざっくり)(の?あたり|の|の状況|の感じ(は|？|？)?)?(は|？|？)?|今週(、|。)?(どう(だった|だ(っ(た|け))?|でした(か|)|です(か|)|の感じ(は|？)?)?$)/.test(
+      safe
+    ) ||
+    /(今週$|週(間|の)で(、|。)?$)/.test(safe)
+  ) {
+    return 'week_summary';
+  }
 
   if (/(今日|本日).*(収支|出納|カロリーの?収支)/.test(safe)) return 'today_balance';
   if (/(今日|本日).*(合計|トータル|総(摂取|カロリー|カロリ)|日次(合計)?|カロリーの?合計|合計カロリー|摂取の?合計)/.test(safe)) return 'today_total';
@@ -126,6 +145,19 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
     return null;
   }
   console.info('[newflow-followup] meal_correction_intent', { userId: input.userId, intent, text: safe.slice(0, 80) });
+
+  if (WEEK_BALANCE_INTENTS.has(intent)) {
+    const w = await weeklyBalanceQuery.getTokyoWeekEnergyBalance(String(input.userId), null);
+    if (intent === 'week_summary') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildWeekSummaryReply(w) };
+    }
+    if (intent === 'week_balance') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildWeekBalanceReply(w) };
+    }
+    if (intent === 'week_intake') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildWeekIntakeAskReply(w) };
+    }
+  }
 
   if (DAY_BALANCE_INTENTS.has(intent)) {
     const b = await dailyBalanceQuery.getTokyoDayEnergyBalance(String(input.userId), null);

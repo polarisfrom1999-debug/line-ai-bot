@@ -64,6 +64,83 @@ function buildTodayActivityAskReply(b) {
   return `今日、活動記録は${b.activityCount}件分あって、消費（推定活動kcal）の合計は約${b.activityKcal} kcal です。`;
 }
 
+function buildWeekSoftTips(w) {
+  const t = w?.totals;
+  const days = Array.isArray(w?.days) ? w.days : [];
+  if (!t || !days.length) {
+    return { good: '記録の範囲で、週の雰囲気を掴めています。', watch: null };
+  }
+  if (t.weekIntakeKcal < 1 && t.weekActivityKcal < 1) {
+    return {
+      good: 'この7日は、食事・活動ともにまだ記録が少なめに見えます。続けて送ってもらえれば、次週は比較しやすくなります。',
+      watch: null
+    };
+  }
+  const zeroMeal = days.filter((d) => (d?.mealCount || 0) === 0).length;
+  const good =
+    zeroMeal <= 2
+      ? '直近7日のうち、何日かは食事の記録が入っていて、流れを追いやすい雰囲気です。'
+      : '食事ゼロの日が多めに見えますが、週の数字は参考程度に留めてよいかもしれません。';
+  const watch =
+    t.weekActivityKcal < 1 && t.weekIntakeKcal > 0
+      ? '活動分の記録は控えめに見えるため、週合計は摂取寄りの見え方になる可能性があります。体調の感覚とあわせるのが良さそうです。'
+      : days.filter((d) => (d?.activityCount || 0) === 0).length >= 5
+        ? '活動の記録が日によって少なめの日が多いため、活動kcalの合計は低めに出やすいかもしれません。'
+        : null;
+  return { good, watch };
+}
+
+/**
+ * w = getTokyoWeekEnergyBalance の戻り
+ */
+function buildWeekSummaryReply(w) {
+  if (!w) {
+    return '週の集計をいま取得できませんでした。少し待ってからもう一度送ってください。';
+  }
+  const a = w.averages;
+  const t = w.totals;
+  const { good, watch } = buildWeekSoftTips(w);
+  const range = `（${w.fromYmd}〜${w.toYmd}、東京日付・7日分）`;
+  const line1 = `週間のまとめ${range}です。摂取合計 約${t.weekIntakeKcal} kcal、活動 約${t.weekActivityKcal} kcal、差分（摂取−活動） 約${t.weekNetKcal} kcal。食事の件数合計 ${t.weekMealCount} 件、補正イベント合計 ${t.weekCorrectionEventCount} 件、活動記録の行数合計 ${t.weekActivityRowCount} 行です。`;
+  const line2 = `1日あたりの目安（7日平均）は、摂取 約${a.avgIntakeKcal} kcal、活動 約${a.avgActivityKcal} kcal、差分 約${a.avgNetKcal} kcal です。`;
+  const out = [line1, line2, good];
+  if (watch) {
+    out.push(watch);
+  }
+  return out.join('\n');
+}
+
+function buildWeekBalanceReply(w) {
+  if (!w) {
+    return '週の収支をいま集計できませんでした。少し待ってからもう一度送ってください。';
+  }
+  const t = w.totals;
+  const { good, watch } = buildWeekSoftTips(w);
+  const range = `（${w.fromYmd}〜${w.toYmd}、7日分）`;
+  const main = `今週の収支${range}は、摂取（食事再計算後）の合計 約${t.weekIntakeKcal} kcal、活動消費（記録上）の合計 約${t.weekActivityKcal} kcal、差分（摂取−活動） 約${t.weekNetKcal} kcal です。補正イベント合計 ${t.weekCorrectionEventCount} 件。`;
+  const extra = [good];
+  if (watch) {
+    extra.push(watch);
+  }
+  return [main, ...extra].join('\n');
+}
+
+function buildWeekIntakeAskReply(w) {
+  if (!w) {
+    return '週の食事分をいま集計できませんでした。少し待ってからもう一度送ってください。';
+  }
+  const t = w.totals;
+  const a = w.averages;
+  const { good, watch } = buildWeekSoftTips(w);
+  const range = `（${w.fromYmd}〜${w.toYmd}、7日分）`;
+  const main = `今週${range}、食事（再計算反映後）の合計摂取は 約${t.weekIntakeKcal} kcal です。食事の件数合計 ${t.weekMealCount} 件、補正イベント合計 ${t.weekCorrectionEventCount} 件。1日平均の摂取は 約${a.avgIntakeKcal} kcal です。`;
+  const extra = [good];
+  if (watch) {
+    extra.push(watch);
+  }
+  return [main, ...extra].join('\n');
+}
+
 module.exports = {
   buildTtlExpiredReply,
   buildCanonicalInsufficientReply,
@@ -73,4 +150,7 @@ module.exports = {
   buildTodayBalanceReply,
   buildTodayIntakeAskReply,
   buildTodayActivityAskReply,
+  buildWeekSummaryReply,
+  buildWeekBalanceReply,
+  buildWeekIntakeAskReply,
 };

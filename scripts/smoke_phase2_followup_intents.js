@@ -62,6 +62,10 @@ function runMealIntentChecks() {
     ['今日の収支は？', 'today_balance'],
     ['今日どのくらい食べた？', 'today_intake'],
     ['今日の運動量は？', 'today_activity'],
+    ['今週のまとめ', 'week_summary'],
+    ['週間報告', 'week_summary'],
+    ['今週の収支は？', 'week_balance'],
+    ['今週どのくらい食べた？', 'week_intake'],
   ];
   for (const [text, expected] of cases) {
     const got = mealFollowup.detectMealCorrectionIntent(text);

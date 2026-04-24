@@ -24,6 +24,7 @@ function buildTokyoRangeIso(ymd) {
  *
  * @param {string} userId
  * @param {string} [dateYmd] 省略時は東京本日
+ * @param {{ skipDailyLog?: boolean }} [options]
  * @returns {Promise<{
  *   dateYmd: string,
  *   fromIso: string, toIso: string,
@@ -34,7 +35,8 @@ function buildTokyoRangeIso(ymd) {
  *   details: object[]
  * } | null>}
  */
-async function getTokyoDayEnergyBalance(userId, dateYmd) {
+async function getTokyoDayEnergyBalance(userId, dateYmd, options = {}) {
+  const skipDailyLog = Boolean(options?.skipDailyLog);
   const day = String(dateYmd || contextMemoryService.getTokyoTodayYmd() || '').trim();
   if (!String(userId || '').trim() || !day) return null;
   const { fromIso, toIso } = buildTokyoRangeIso(day);
@@ -92,16 +94,18 @@ async function getTokyoDayEnergyBalance(userId, dateYmd) {
     netKcal,
     details
   };
-  console.info('[phasee-new] daily_balance_context', {
-    userId: String(userId),
-    dateYmd: day,
-    mealCount: payload.mealCount,
-    totalCorrectionEventCount: payload.totalCorrectionEventCount,
-    activityCount: payload.activityCount,
-    intakeKcal: payload.intakeKcal,
-    activityKcal: payload.activityKcal,
-    netKcal: payload.netKcal
-  });
+  if (!skipDailyLog) {
+    console.info('[phasee-new] daily_balance_context', {
+      userId: String(userId),
+      dateYmd: day,
+      mealCount: payload.mealCount,
+      totalCorrectionEventCount: payload.totalCorrectionEventCount,
+      activityCount: payload.activityCount,
+      intakeKcal: payload.intakeKcal,
+      activityKcal: payload.activityKcal,
+      netKcal: payload.netKcal
+    });
+  }
   return payload;
 }
 
