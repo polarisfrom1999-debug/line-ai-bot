@@ -14,7 +14,14 @@ function normalizeText(value) {
 function looksLikeGeneralConversation(text) {
   const safe = normalizeText(text);
   if (!safe) return true;
-  return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事|合計|詳細|内訳|トータル)/i.test(safe);
+  if (/(今日|本日).*(合計|収支|出納|食べ(た|る|ます|ました)?(くらい|量|の|分|か|？|ですか|だっけ)?|動(いた|き|きます|ます|ました)?(くらい|量|の|分|か|？|ですか|だっけ)?|ど(の|な)くらい|運動|歩(いた|数|行)?|活動(量|量は|消費)?(くらい|どれ)?|摂取(量|は|した)?(くらい|いくら)?)/.test(
+    safe
+  )) {
+    return false;
+  }
+  return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|麺|カロリー|半分|食べてない|0kcal|食事|合計|詳細|内訳|トータル|収支|運動|活動)/i.test(
+    safe
+  );
 }
 
 function inferDomainFromText(text) {

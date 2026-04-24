@@ -58,6 +58,10 @@ function runMealIntentChecks() {
     ['これは食べてない', 'mark_component_not_eaten'],
     ['再計算してください', 'recalc_meal'],
     ['さっきの食事は削除して下さい', 'delete_entire_record'],
+    ['今日の合計は？', 'today_total'],
+    ['今日の収支は？', 'today_balance'],
+    ['今日どのくらい食べた？', 'today_intake'],
+    ['今日の運動量は？', 'today_activity'],
   ];
   for (const [text, expected] of cases) {
     const got = mealFollowup.detectMealCorrectionIntent(text);

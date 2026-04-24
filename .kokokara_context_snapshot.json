@@ -1427,6 +1427,31 @@
         "completedSteps": [],
         "answers": {}
       }
+    },
+    "meal-corr-1776992896334": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1776992896928_8an0ji",
+        "text": "補正対象の食事を特定できませんでした。",
+        "sourceUserText": "半分食べました",
+        "at": "2026-04-24T01:08:16.928Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -2456,6 +2481,31 @@
       "height": ""
     },
     "meal-device-verify-1776950340870": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "height": ""
+    },
+    "meal-corr-1776992896334": {
       "preferredName": "",
       "goal": "",
       "eatingPattern": [],
@@ -4327,6 +4377,20 @@
         "content": "今日の合計は 1件 / 640.0 kcal (P28.0/F18.0/C82.0) です。",
         "messageId": "1776950341422_b8tcrr",
         "createdAt": "2026-04-23T13:19:01.423Z"
+      }
+    ],
+    "meal-corr-1776992896334": [
+      {
+        "role": "user",
+        "content": "半分食べました",
+        "messageId": "",
+        "createdAt": "2026-04-24T01:08:16.928Z"
+      },
+      {
+        "role": "assistant",
+        "content": "補正対象の食事を特定できませんでした。",
+        "messageId": "1776992896928_8an0ji",
+        "createdAt": "2026-04-24T01:08:16.928Z"
       }
     ]
   },

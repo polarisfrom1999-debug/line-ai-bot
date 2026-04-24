@@ -1,9 +1,12 @@
 'use strict';
 
-const contextMemoryService = require('../context_memory_service');
 const mealRecalcRepository = require('../../repositories/meal_recalc_repository');
 const { recalcMealStateWithLog } = require('../meal_recalc_engine_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
+const dailyBalanceQuery = require('../daily_balance_query_service');
+const responseBuilderService = require('./response_builder_service');
+
+const DAY_BALANCE_INTENTS = new Set(['today_meal_detail', 'today_total', 'today_balance', 'today_intake', 'today_activity']);
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -13,8 +16,31 @@ function detectMealCorrectionIntent(safe) {
   if (/麺.*ゼロ|ゼロカロリー|0kcal|0 kcal|この麺はゼロ/.test(safe)) return 'set_component_zero';
   if (/半分食べた|一部だけ食べた|半分だけ|半分食べました|半分だけ食べた/.test(safe)) return 'set_component_fraction';
   if (/食べてない|食べなかった|この麺は食べてない/.test(safe)) return 'mark_component_not_eaten';
+
+  if (/(今日|本日).*(収支|出納|カロリーの?収支)/.test(safe)) return 'today_balance';
+  if (/(今日|本日).*(合計|トータル|総(摂取|カロリー|カロリ)|日次(合計)?|カロリーの?合計|合計カロリー|摂取の?合計)/.test(safe)) return 'today_total';
+  if (/(今日|本日)の?カロリー(は|の|って|だっけ|って|いくら)?(？|ですか|だっけ|\?)?\s*$/i.test(safe)) {
+    return 'today_total';
+  }
+  if (
+    /(今日|本日).{0,12}運動(量|は|の|を|した|して|しました|します|ログ|記録|した|してきた)?(の|は|を|いくら|くらい|どれ|ですか|だっけ|ますか|ましたか|して)?[？\?]?\s*$/i.test(
+      safe
+    ) &&
+    !/(合計|収支|食べ(た|る|ます|ました|です)|何.*食べ|食事(の|は|)(量|合計|詳細|内訳|一覧)|摂取(量|は|した|します|しますか)|合計|トータル|総(摂取|カロリー|カロリ))/.test(
+      safe
+    )
+  ) {
+    return 'today_activity';
+  }
+  if (/(今日|本日).*(ど(の|な)くらい|いくら|何(を)?).*(食べ(た|る|ます|ました|ますか)?(の|量|分|くらい|か|？|ですか|だっけ)?|何.*食べ(た|る)|食事(の量|量|の量は|の合計|は|を)?(くらい|いくら|どれ)|摂取(量|は|した|します)?(くらい|どれ|いくら)?|キロ(カロリー|kcal|ｋｃａｌ))/.test(safe)) {
+    return 'today_intake';
+  }
+  if (/(今日|本日).*(ど(の|な)くらい|いくら|何(歩|分|キロ)?).*(動(いた|き|きた|ます|ました)?(の|量|分|くらい|か|？|ですか|だっけ)?|運動(量|は|を|した|して|します|しました)?(の|くらい|どれ|いくら|か|？)?|歩(いた|数|行|き|いて)?(の|量|分|くらい|か|？)?|活動(量|量は|消費|した|します)?(くらい|どれ|いくら|か|？)?|活動(記録|ログ)?|走(った|る)?|走行|泳(い)?(だ|ぎ|ぐ)?(くらい)?|スイム)/.test(
+    safe
+  )) {
+    return 'today_activity';
+  }
   if (/今日.*(食事|詳細|内訳)|詳細一覧|食事詳細/.test(safe)) return 'today_meal_detail';
-  if (/今日.*(合計|トータル)|日次合計|総摂取|合計カロリー/.test(safe)) return 'today_total';
   if (/再計算|再計算して|計算し直し|recalc/.test(safe)) return 'recalc_meal';
   if (/削除して|消して/.test(safe)) return 'delete_entire_record';
   if (/昨日の食事|昨日にして|昨晩の分/.test(safe)) return 'relocate_entire_record';
@@ -40,17 +66,9 @@ async function appendCorrectionEvent(userId, payload = {}) {
     timestamp: normalizeText(payload?.timestamp || new Date().toISOString()),
     dedupeKey: dedupeSeed,
     sourceMessageId: normalizeText(payload?.sourceMessageId || ''),
-    createdByFlow: 'newflow_meal_correction'
+    createdByFlow: 'newflow_meal_correction',
   }).catch(() => ({ ok: false }));
   return Boolean(res?.ok);
-}
-
-function buildTokyoRangeIso(ymd) {
-  const day = normalizeText(ymd);
-  if (!day) return { fromIso: '', toIso: '' };
-  const fromIso = new Date(`${day}T00:00:00+09:00`).toISOString();
-  const toIso = new Date(new Date(`${day}T00:00:00+09:00`).getTime() + (24 * 60 * 60 * 1000)).toISOString();
-  return { fromIso, toIso };
 }
 
 async function resolveMealBundle(mealId, userId) {
@@ -61,35 +79,30 @@ async function resolveMealBundle(mealId, userId) {
   return mealRecalcRepository.getBaseMealWithEvents(latest.id);
 }
 
+/**
+ * 補正後の日次合計等（日次正本 query と同じ集計）
+ * @returns {Promise<{ count: number, kcal: number, protein: number, fat: number, carbs: number, details: object[] }>}
+ */
 async function computeTodayRollup(userId) {
-  const today = contextMemoryService.getTokyoTodayYmd();
-  const range = buildTokyoRangeIso(today);
-  const meals = await mealRecalcRepository.getBaseMealsByDateRange(userId, range.fromIso, range.toIso);
-  let kcal = 0;
-  let protein = 0;
-  let fat = 0;
-  let carbs = 0;
-  const details = [];
-  for (const meal of (Array.isArray(meals) ? meals : [])) {
-    const bundle = await mealRecalcRepository.getBaseMealWithEvents(meal.id);
-    if (!bundle?.meal) continue;
-    const state = recalcMealStateWithLog(bundle, { userId });
-    kcal += Number(state.kcal || 0);
-    protein += Number(state.protein || 0);
-    fat += Number(state.fat || 0);
-    carbs += Number(state.carbs || 0);
-    details.push({
-      mealId: Number(meal.id || 0),
-      label: normalizeText(bundle?.meal?.meal_label || '食事'),
-      kcal: Number(state.kcal || 0),
-      protein: Number(state.protein || 0),
-      fat: Number(state.fat || 0),
-      carbs: Number(state.carbs || 0),
-      eventCount: Number(state.event_count || 0),
-      itemList: Array.isArray(state.item_list) ? state.item_list : []
-    });
-  }
-  return { count: details.length, kcal, protein, fat, carbs, details };
+  const b = await dailyBalanceQuery.getTokyoDayEnergyBalance(String(userId), null);
+  if (!b) return { count: 0, kcal: 0, protein: 0, fat: 0, carbs: 0, details: [] };
+  return {
+    count: b.mealCount,
+    kcal: b.intakeKcal,
+    protein: b.protein,
+    fat: b.fat,
+    carbs: b.carbs,
+    details: (b.details || []).map((d) => ({
+      mealId: d.mealId,
+      label: d.label,
+      kcal: d.kcal,
+      protein: d.protein,
+      fat: d.fat,
+      carbs: d.carbs,
+      eventCount: d.eventCount,
+      itemList: Array.isArray(d.itemList) ? d.itemList : [],
+    })),
+  };
 }
 
 /**
@@ -102,15 +115,40 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
   const intent = detectMealCorrectionIntent(safe);
   if (intent) {
     console.info('[phasee-new] newflow_meal_correction_reached', { userId: input?.userId || '', intent, text: safe.slice(0, 60) });
-    phaseeReachabilityService.recordReachability('newflow_meal_correction_reached', ['services/newflow/meal_correction_service.js'], {
-      userId: input?.userId || '',
-      intent,
-      text: safe.slice(0, 60)
-    }).catch(() => null);
+    phaseeReachabilityService
+      .recordReachability('newflow_meal_correction_reached', ['services/newflow/meal_correction_service.js'], {
+        userId: input?.userId || '',
+        intent,
+        text: safe.slice(0, 60),
+      })
+      .catch(() => null);
   } else {
     return null;
   }
   console.info('[newflow-followup] meal_correction_intent', { userId: input.userId, intent, text: safe.slice(0, 80) });
+
+  if (DAY_BALANCE_INTENTS.has(intent)) {
+    const b = await dailyBalanceQuery.getTokyoDayEnergyBalance(String(input.userId), null);
+    if (intent === 'today_total') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayMealTotalReply(b) };
+    }
+    if (intent === 'today_balance') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayBalanceReply(b) };
+    }
+    if (intent === 'today_intake') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayIntakeAskReply(b) };
+    }
+    if (intent === 'today_activity') {
+      return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayActivityAskReply(b) };
+    }
+    if (intent === 'today_meal_detail') {
+      if (!b?.mealCount) return { intentType: 'newflow_meal_correction', replyText: '今日の食事詳細はまだありません。' };
+      const lines = b.details
+        .slice(0, 5)
+        .map((d, idx) => `${idx + 1}. ${d.label}: ${Number(d.kcal).toFixed(1)} kcal (P${Number(d.protein).toFixed(1)}/F${Number(d.fat).toFixed(1)}/C${Number(d.carbs).toFixed(1)}) event:${d.eventCount}`);
+      return { intentType: 'newflow_meal_correction', replyText: `今日の食事詳細です。\n${lines.join('\n')}` };
+    }
+  }
 
   const mealIdFromContext = Number(activeContext?.payload?.baseMealId || 0);
   const baseBundle = await resolveMealBundle(mealIdFromContext, input.userId);
@@ -139,7 +177,7 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
       intentType: 'newflow_meal_correction',
       replyText: componentName
         ? `「${componentName}」のみ0kcal補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
-        : `対象食事を0kcal補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+        : `対象食事を0kcal補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`,
     };
   }
   if (intent === 'set_component_fraction') {
@@ -160,22 +198,7 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
       intentType: 'newflow_meal_correction',
       replyText: componentName
         ? `「${componentName}」を半量補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
-        : `対象食事を半量補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
-    };
-  }
-  if (intent === 'today_meal_detail') {
-    const totals = await computeTodayRollup(input.userId);
-    if (!totals.count) return { intentType: 'newflow_meal_correction', replyText: '今日の食事詳細はまだありません。' };
-    const lines = totals.details
-      .slice(0, 5)
-      .map((d, idx) => `${idx + 1}. ${d.label}: ${d.kcal.toFixed(1)} kcal (P${d.protein.toFixed(1)}/F${d.fat.toFixed(1)}/C${d.carbs.toFixed(1)}) event:${d.eventCount}`);
-    return { intentType: 'newflow_meal_correction', replyText: `今日の食事詳細です。\n${lines.join('\n')}` };
-  }
-  if (intent === 'today_total') {
-    const totals = await computeTodayRollup(input.userId);
-    return {
-      intentType: 'newflow_meal_correction',
-      replyText: `今日の合計は ${totals.count}件 / ${totals.kcal.toFixed(1)} kcal (P${totals.protein.toFixed(1)}/F${totals.fat.toFixed(1)}/C${totals.carbs.toFixed(1)}) です。`
+        : `対象食事を半量補正しました。補正後は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）です。今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`,
     };
   }
   if (intent === 'recalc_meal') {
@@ -184,7 +207,7 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
     const totals = await computeTodayRollup(input.userId);
     return {
       intentType: 'newflow_meal_correction',
-      replyText: `再計算しました。直近食事は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）、今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`
+      replyText: `再計算しました。直近食事は約${Number(recalced?.kcal || 0).toFixed(1)} kcal（event ${Number(recalced?.event_count || 0)}件適用）、今日の合計は ${totals.count}件 / 約${totals.kcal.toFixed(1)} kcal です。`,
     };
   }
   if (intent === 'ask_component_kcal') {
@@ -201,5 +224,5 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
 
 module.exports = {
   resolveMealFollowupFromSession,
-  detectMealCorrectionIntent
+  detectMealCorrectionIntent,
 };
