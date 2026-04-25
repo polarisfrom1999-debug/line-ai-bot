@@ -10,6 +10,92 @@ function normalizeText(v) {
   return String(v || '').trim();
 }
 
+function normalizeYmdToken(v) {
+  const s = normalizeText(v).replace(/\//g, '-');
+  const m = s.match(/(20\d{2})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return '';
+  return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+}
+
+function toNumberOrNull(v) {
+  const raw = normalizeText(v).replace(/,/g, '');
+  if (!raw) return null;
+  if (!/^[-+]?\d+(\.\d+)?$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildMatrixDiagnostics(rows = []) {
+  const headerCandidates = [];
+  const headerRejected = [];
+  const rowCandidates = [];
+  const rowRejected = [];
+  const cellCandidates = [];
+  const cellRejected = [];
+  const mappings = [];
+
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const observedDate = normalizeYmdToken(r?.date || r?.observedDate || r?.observed_date || '');
+    if (observedDate) headerCandidates.push(observedDate);
+    else headerRejected.push('invalid_or_missing_date');
+
+    const label = normalizeText(r?.label_in_image || r?.rawName || r?.name || '');
+    const normalizedKey = normalizeText(r?.normalized_key || r?.normalizedKey || '');
+    if (label) {
+      if (normalizedKey) rowCandidates.push(normalizedKey);
+      else rowRejected.push('normalized_key_not_found');
+    } else {
+      rowRejected.push('missing_row_label');
+    }
+
+    const valueRaw = normalizeText(r?.value);
+    const valueNum = toNumberOrNull(valueRaw);
+    if (!valueRaw) {
+      cellRejected.push('empty_value');
+    } else if (valueNum == null) {
+      cellRejected.push('non_numeric_value');
+    } else {
+      cellCandidates.push(valueRaw);
+    }
+
+    if (observedDate && normalizedKey && valueNum != null) {
+      mappings.push({ observedDate, normalizedKey, value: valueRaw });
+    }
+  }
+
+  const headersDistinct = Array.from(new Set(headerCandidates));
+  const majorKeys = new Set([
+    'triglycerides_tg',
+    'ldl_cholesterol',
+    'hdl_cholesterol',
+    'ast_got',
+    'alt_gpt',
+    'gamma_gtp',
+    'hba1c',
+    'creatinine'
+  ]);
+  const majorCount = rowCandidates.filter((k) => majorKeys.has(k)).length;
+  const reason = (() => {
+    if (!headersDistinct.length) return 'no_date_headers';
+    if (!rowCandidates.length) return rowRejected.includes('normalized_key_not_found') ? 'normalized_key_not_found' : 'no_row_labels';
+    if (!cellCandidates.length) return cellRejected.includes('non_numeric_value') ? 'all_values_rejected' : 'no_numeric_cells';
+    if (!mappings.length) return 'mapping_failed_due_to_grid_alignment';
+    return '';
+  })();
+
+  return {
+    headersDistinct,
+    headerRejected,
+    rowCandidates,
+    rowRejected,
+    majorCount,
+    cellCandidates,
+    cellRejected,
+    mappings,
+    reason
+  };
+}
+
 /**
  * 複数日付表（matrix）専用の2nd pass。単票用スキーマで落ちた行項目を救う。
  */
@@ -26,22 +112,66 @@ async function extractMatrixTable(imagePayload, meta = {}) {
       maxOutputTokens: 4096
     });
     if (!dispatch?.ok) {
+      const reason = normalizeText(dispatch?.error?.message || 'matrix_dispatch_failed');
+      console.info('[phasee-new] lab_matrix_header_extract', {
+        userId: meta.userId || '',
+        date_header_candidates: 0,
+        observed_date_count: 0,
+        observed_dates: [],
+        rejected_reasons: [reason || 'no_date_headers']
+      });
+      console.info('[phasee-new] lab_matrix_row_label_extract', {
+        userId: meta.userId || '',
+        row_label_candidates: 0,
+        normalized_key_count: 0,
+        major_key_count: 0,
+        rejected_reasons: [reason || 'no_row_labels']
+      });
+      console.info('[phasee-new] lab_matrix_cell_value_extract', {
+        userId: meta.userId || '',
+        numeric_cell_count: 0,
+        rejected_reasons: [reason || 'no_numeric_cells']
+      });
+      console.info('[phasee-new] lab_matrix_mapping', {
+        userId: meta.userId || '',
+        mapping_count: 0,
+        matrix_cell_count: 0,
+        reason: 'matrix_detected_but_empty'
+      });
       return { ok: false, data: [], raw: null, error: String(dispatch?.error?.message || 'matrix_dispatch_failed') };
     }
     const json = dispatch.json || {};
     const rows = Array.isArray(json.data) ? json.data : [];
-    const observedDates = new Set();
-    for (const r of rows) {
-      const d = normalizeText(r?.date || r?.observedDate || r?.observed_date || '');
-      if (d) {
-        const parts = d.match(/(20\d{2}-\d{2}-\d{2})/);
-        if (parts) observedDates.add(parts[1]);
-      }
-    }
+    const diag = buildMatrixDiagnostics(rows);
+    console.info('[phasee-new] lab_matrix_header_extract', {
+      userId: meta.userId || '',
+      date_header_candidates: rows.length,
+      observed_date_count: diag.headersDistinct.length,
+      observed_dates: diag.headersDistinct,
+      rejected_reasons: diag.headerRejected.slice(0, 20)
+    });
+    console.info('[phasee-new] lab_matrix_row_label_extract', {
+      userId: meta.userId || '',
+      row_label_candidates: rows.length,
+      normalized_key_count: diag.rowCandidates.length,
+      major_key_count: diag.majorCount,
+      rejected_reasons: diag.rowRejected.slice(0, 20)
+    });
+    console.info('[phasee-new] lab_matrix_cell_value_extract', {
+      userId: meta.userId || '',
+      numeric_cell_count: diag.cellCandidates.length,
+      rejected_reasons: diag.cellRejected.slice(0, 20)
+    });
+    console.info('[phasee-new] lab_matrix_mapping', {
+      userId: meta.userId || '',
+      mapping_count: diag.mappings.length,
+      matrix_cell_count: diag.mappings.length,
+      reason: diag.reason || ''
+    });
     console.info('[phasee-new] lab_multi_date_matrix_extract', {
       userId: meta.userId || '',
       item_count: rows.length,
-      observed_date_count: observedDates.size,
+      observed_date_count: diag.headersDistinct.length,
       major_key_count: rows.filter((r) => {
         const k = normalizeText(String(r?.normalized_key || r?.normalizedKey || '').toLowerCase());
         return ['triglycerides_tg', 'ldl_cholesterol', 'hdl_cholesterol', 'ast_got', 'alt_gpt', 'gamma_gtp', 'hba1c', 'creatinine', 'glucose', 'uric_acid', 'total_cholesterol'].includes(k);
@@ -53,6 +183,31 @@ async function extractMatrixTable(imagePayload, meta = {}) {
     });
     return { ok: rows.length > 0, data: rows, raw: json };
   } catch (e) {
+    console.info('[phasee-new] lab_matrix_header_extract', {
+      userId: meta.userId || '',
+      date_header_candidates: 0,
+      observed_date_count: 0,
+      observed_dates: [],
+      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+    });
+    console.info('[phasee-new] lab_matrix_row_label_extract', {
+      userId: meta.userId || '',
+      row_label_candidates: 0,
+      normalized_key_count: 0,
+      major_key_count: 0,
+      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+    });
+    console.info('[phasee-new] lab_matrix_cell_value_extract', {
+      userId: meta.userId || '',
+      numeric_cell_count: 0,
+      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+    });
+    console.info('[phasee-new] lab_matrix_mapping', {
+      userId: meta.userId || '',
+      mapping_count: 0,
+      matrix_cell_count: 0,
+      reason: 'matrix_detected_but_empty'
+    });
     return { ok: false, data: [], raw: null, error: String(e?.message || e) };
   }
 }
@@ -132,5 +287,6 @@ function guessKeyFromLabel(lab) {
 module.exports = {
   extractMatrixTable,
   extractMatrixMajorRescueText,
-  majorRescueTextToDataRows
+  majorRescueTextToDataRows,
+  buildMatrixDiagnostics
 };

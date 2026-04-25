@@ -566,7 +566,14 @@ async function extractStructuredLab(imagePayload, meta = {}) {
 
   const isChatLayout = /chat|screenshot/i.test(String(meta?.documentType || ''));
   const afterAllRescuesPrimary = geminiItems.extractPrimaryGeminiMinItems(payload);
-  const runMatrix = !isChatLayout && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length);
+  const observedInPrimary = afterAllRescuesPrimary.filter((x) => normalizeText(x?.observedDate || x?.observed_date)).length;
+  const rawDateHintCount = extractDateTokensFromText(rawText || '').length;
+  const payloadDateHintCount = extractDateTokensFromText(JSON.stringify(payload || {})).length;
+  const matrixHintLikely = /multi[_\s-]?date|時系列|検査日|採血日|前回|今回/i.test(String(layoutClassifier || '') + ' ' + String(rawText || ''));
+  const matrixByDateGap = afterAllRescuesPrimary.length > 0
+    && observedInPrimary === 0
+    && (rawDateHintCount >= 2 || payloadDateHintCount >= 2 || matrixHintLikely || afterAllRescuesPrimary.length >= 8);
+  const runMatrix = !isChatLayout && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length || matrixByDateGap);
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
     if (m1?.data?.length) {
@@ -580,6 +587,32 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       const txt = await labMatrixExtractService.extractMatrixMajorRescueText(imagePayload, meta);
       const extra = labMatrixExtractService.majorRescueTextToDataRows(txt);
       if (extra.length) {
+        const extraDiag = labMatrixExtractService.buildMatrixDiagnostics(extra);
+        console.info('[phasee-new] lab_matrix_header_extract', {
+          userId: meta.userId || '',
+          date_header_candidates: extra.length,
+          observed_date_count: extraDiag.headersDistinct.length,
+          observed_dates: extraDiag.headersDistinct,
+          rejected_reasons: extraDiag.headerRejected.slice(0, 20)
+        });
+        console.info('[phasee-new] lab_matrix_row_label_extract', {
+          userId: meta.userId || '',
+          row_label_candidates: extra.length,
+          normalized_key_count: extraDiag.rowCandidates.length,
+          major_key_count: extraDiag.majorCount,
+          rejected_reasons: extraDiag.rowRejected.slice(0, 20)
+        });
+        console.info('[phasee-new] lab_matrix_cell_value_extract', {
+          userId: meta.userId || '',
+          numeric_cell_count: extraDiag.cellCandidates.length,
+          rejected_reasons: extraDiag.cellRejected.slice(0, 20)
+        });
+        console.info('[phasee-new] lab_matrix_mapping', {
+          userId: meta.userId || '',
+          mapping_count: extraDiag.mappings.length,
+          matrix_cell_count: extraDiag.mappings.length,
+          reason: extraDiag.reason || ''
+        });
         const existing = Array.isArray(payload.data) ? payload.data : [];
         payload = {
           ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
@@ -617,8 +650,19 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     ? Math.round((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length) * 100) / 100
     : (Number(report.confidence || payload.confidence || meta.confidence || 0) || 0);
 
-  const qualifiedRecords = geminiItems.countQualifiedParsedItems(parsedMinItems);
   const reportDataRows = Array.isArray(report?.data) ? report.data : [];
+  const qualifiedRecords = geminiItems.countQualifiedParsedItems(parsedMinItems);
+  const matrixDiagFinal = runMatrix
+    ? labMatrixExtractService.buildMatrixDiagnostics(reportDataRows)
+    : null;
+  if (runMatrix) {
+    console.info('[phasee-new] lab_matrix_final_items', {
+      userId: meta.userId || '',
+      parsed_items_count: parsedMinItems.length,
+      qualified_records_count: qualifiedRecords,
+      reason: parsedMinItems.length ? '' : (matrixDiagFinal?.reason || 'matrix_detected_but_empty')
+    });
+  }
   const multiDateRowCount = reportDataRows.filter((r) => r && typeof r === 'object' && (
     (r.values_by_date && typeof r.values_by_date === 'object')
     || extractDateTokensFromText(`${normalizeText(r.column_header_raw || r.columnHeaderRaw || '')} ${normalizeText(r.source_text || r.sourceText || '')}`).length >= 2
