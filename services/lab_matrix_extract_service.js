@@ -4,7 +4,6 @@ const geminiDispatchService = require('./gemini_dispatch_service');
 const { buildLabMatrixExtractSpec } = require('./lab_extract_prompt_builder_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
 const { KEY_TO_ITEM_NAME } = require('./lab_lab_display_names');
-const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -255,15 +254,59 @@ async function extractMatrixMajorRescueText(imagePayload, meta = {}) {
     '日付行だけ、見出しだけ、は禁止。必ず数値行を出してください。'
   ].join('\n');
   try {
-    const result = await geminiImageAnalysisService.analyzeImage({
-      imagePayload,
+    const result = await geminiDispatchService.generateTextFromImage({
       prompt,
+      imagePayload,
       model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
     });
-    return normalizeText(result?.text || '');
+    return normalizeText(result?.text || result || '');
   } catch (_e) {
     return '';
   }
+}
+
+async function extractMatrixRescueTsvText(imagePayload) {
+  const prompt = [
+    '血液検査の複数日付表を読み取り、以下のTSV形式のみを返してください。',
+    '1行 = item_label<TAB>observed_date(YYYY-MM-DD)<TAB>value<TAB>unit<TAB>flag',
+    '例: 中性脂肪<TAB>2025-03-22<TAB>145<TAB>mg/dL<TAB>H',
+    '日付が2つ以上ある場合は、同じ項目を日付ごとに複数行出してください。',
+    '日付行だけ、見出しだけは禁止。値がある行だけ返してください。'
+  ].join('\n');
+  try {
+    const result = await geminiDispatchService.generateTextFromImage({
+      prompt,
+      imagePayload,
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    });
+    return normalizeText(result?.text || result || '');
+  } catch (_e) {
+    return '';
+  }
+}
+
+function parseTsvRowsToDataRows(text) {
+  const out = [];
+  const lines = normalizeText(text).split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  for (const line of lines) {
+    const cols = line.split('\t').map((x) => normalizeText(x));
+    if (cols.length < 3) continue;
+    const rawLabel = cols[0];
+    const observedDate = normalizeYmdToken(cols[1]);
+    const value = cols[2];
+    if (!rawLabel || !observedDate || !value) continue;
+    out.push({
+      label_in_image: rawLabel,
+      normalized_key: guessKeyFromLabel(rawLabel) || `raw_label:${rawLabel.toLowerCase()}`,
+      date: observedDate,
+      value,
+      unit: cols[3] || '',
+      flag: cols[4] || '',
+      source: 'matrix_tsv_rescue',
+      status: 'rescued_from_tsv'
+    });
+  }
+  return out;
 }
 
 /**
@@ -318,6 +361,8 @@ function guessKeyFromLabel(lab) {
 module.exports = {
   extractMatrixTable,
   extractMatrixMajorRescueText,
+  extractMatrixRescueTsvText,
+  parseTsvRowsToDataRows,
   majorRescueTextToDataRows,
   buildMatrixDiagnostics
 };

@@ -84,6 +84,16 @@ async function run() {
       },
       text: '他の日付の検査は？'
     });
+    const trendReply = await followupRouterService.resolveFollowup({
+      input: {
+        userId,
+        lineUserId: userId,
+        messageType: 'text',
+        messageId: `msg-q-trend-${Date.now()}`,
+        rawText: 'TGの変化はどうかな？'
+      },
+      text: 'TGの変化はどうかな？'
+    });
 
     const latest = await getLatestSessionForUser(userId);
     const parsed = Array.isArray(latest?.parsed_items_json) ? latest.parsed_items_json : [];
@@ -109,6 +119,7 @@ async function run() {
       } : null,
       tg_reply: normalizeText(tgReply?.replyText || ''),
       dates_reply: normalizeText(datesReply?.replyText || ''),
+      tg_trend_reply: normalizeText(trendReply?.replyText || ''),
       logs: {
         header: stage('lab_matrix_header_extract'),
         row_label: stage('lab_matrix_row_label_extract'),

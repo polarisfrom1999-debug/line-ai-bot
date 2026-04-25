@@ -576,16 +576,37 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   const runMatrix = !isChatLayout && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length || matrixByDateGap);
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
-    if (m1?.data?.length) {
+    const m1Rows = Array.isArray(m1?.data) ? m1.data : [];
+    const m1Diag = m1Rows.length ? labMatrixExtractService.buildMatrixDiagnostics(m1Rows) : null;
+    const needRescue = !m1Rows.length
+      || !m1Diag
+      || m1Diag.headersDistinct.length < 2
+      || m1Diag.mappings.length < 1;
+    if (!needRescue) {
       const existing = Array.isArray(payload.data) ? payload.data : [];
       payload = {
         ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
         document_type: 'multi_date_timeseries',
-        data: [...existing, ...m1.data]
+        data: [...existing, ...m1Rows]
       };
     } else {
       const txt = await labMatrixExtractService.extractMatrixMajorRescueText(imagePayload, meta);
-      const extra = labMatrixExtractService.majorRescueTextToDataRows(txt);
+      let extra = labMatrixExtractService.majorRescueTextToDataRows(txt);
+      const extraDates = new Set(extra.map((x) => normalizeText(x?.date || x?.observedDate || x?.observed_date || '')).filter(Boolean));
+      if (!extra.length || extraDates.size < 2) {
+        const tsv = await labMatrixExtractService.extractMatrixRescueTsvText(imagePayload);
+        const tsvRows = labMatrixExtractService.parseTsvRowsToDataRows(tsv);
+        if (tsvRows.length) extra = tsvRows;
+      }
+      if (extra.length) {
+        extra = extra.map((r) => {
+          const nk = normalizeText(r?.normalized_key || r?.normalizedKey || '');
+          if (nk) return r;
+          const raw = normalizeText(r?.label_in_image || r?.rawName || r?.name || '');
+          if (!raw) return r;
+          return { ...r, normalized_key: `raw_label:${raw.toLowerCase()}` };
+        });
+      }
       if (extra.length) {
         const extraDiag = labMatrixExtractService.buildMatrixDiagnostics(extra);
         console.info('[phasee-new] lab_matrix_header_extract', {
@@ -593,24 +614,33 @@ async function extractStructuredLab(imagePayload, meta = {}) {
           date_header_candidates: extra.length,
           observed_date_count: extraDiag.headersDistinct.length,
           observed_dates: extraDiag.headersDistinct,
-          rejected_reasons: extraDiag.headerRejected.slice(0, 20)
+          rejected_headers: extraDiag.headerRejected.slice(0, 20),
+          reason: extraDiag.reason || ''
         });
         console.info('[phasee-new] lab_matrix_row_label_extract', {
           userId: meta.userId || '',
           row_label_candidates: extra.length,
           normalized_key_count: extraDiag.rowCandidates.length,
           major_key_count: extraDiag.majorCount,
-          rejected_reasons: extraDiag.rowRejected.slice(0, 20)
+          raw_row_labels_sample: extra.slice(0, 5).map((r) => normalizeText(r?.label_in_image || r?.rawName || r?.name || '')),
+          rejected_row_labels: extraDiag.rowRejected.slice(0, 20),
+          reason: extraDiag.reason || ''
         });
         console.info('[phasee-new] lab_matrix_cell_value_extract', {
           userId: meta.userId || '',
           numeric_cell_count: extraDiag.cellCandidates.length,
-          rejected_reasons: extraDiag.cellRejected.slice(0, 20)
+          numeric_cells_sample: extraDiag.cellCandidates.slice(0, 8),
+          units_found: extraDiag.unitsFound,
+          flags_found: extraDiag.flagsFound,
+          rejected_cells: extraDiag.cellRejected.slice(0, 20),
+          reason: extraDiag.reason || ''
         });
         console.info('[phasee-new] lab_matrix_mapping', {
           userId: meta.userId || '',
           mapping_count: extraDiag.mappings.length,
           matrix_cell_count: extraDiag.mappings.length,
+          distinct_observed_dates_count: new Set(extraDiag.mappings.map((m) => normalizeText(m?.observedDate || ''))).size,
+          mapped_keys_count: new Set(extraDiag.mappings.map((m) => normalizeText(m?.normalizedKey || ''))).size,
           reason: extraDiag.reason || ''
         });
         const existing = Array.isArray(payload.data) ? payload.data : [];

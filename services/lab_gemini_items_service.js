@@ -52,12 +52,13 @@ function inferNormalizedKey(rawLabel = '') {
 }
 
 function itemIdentityKey(it = {}, fallbackIndex = 0) {
+  const od = normalizeYmd(it?.observedDate || it?.observed_date || it?.date || '');
   const nk = normalizeText(it?.normalizedKey || '');
-  if (nk) return `nk:${nk}`;
+  if (nk) return od ? `nk:${nk}@${od}` : `nk:${nk}`;
   const rn = normalizeText(it?.rawName || it?.label_in_image || '');
-  if (rn) return `raw:${rn.toLowerCase()}`;
+  if (rn) return od ? `raw:${rn.toLowerCase()}@${od}` : `raw:${rn.toLowerCase()}`;
   const nm = normalizeText(it?.name || '');
-  if (nm) return `name:${nm.toLowerCase()}`;
+  if (nm) return od ? `name:${nm.toLowerCase()}@${od}` : `name:${nm.toLowerCase()}`;
   return `anon:${fallbackIndex}`;
 }
 
