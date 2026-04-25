@@ -4,6 +4,7 @@ const geminiImageAnalysisService = require('./gemini_image_analysis_service');
 const classifier = require('./lab_document_classifier_service');
 const geminiDispatchService = require('./gemini_dispatch_service');
 const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
+const labMatrixExtractService = require('./lab_matrix_extract_service');
 const phaseeReachabilityService = require('./phasee_reachability_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
 const { KEY_TO_ITEM_NAME } = require('./lab_lab_display_names');
@@ -315,14 +316,15 @@ function normalizeRows(report) {
   const defaultDate = classifier.normalizeDateToken(report?.latest_exam_date || report?.latestExamDate || report?.report_date || report?.reportDate || '');
   const rows = [];
   for (const row of Array.isArray(report?.data) ? report.data : []) {
-    const normalizedKey = normalizeKey(row?.normalized_key || row?.normalizedKey, row?.label_in_image || row?.labelInImage || '');
+    const labelIn = normalizeText(row?.label_in_image || row?.labelInImage || row?.row_label_raw || row?.rowLabelRaw || '');
+    let normalizedKey = normalizeKey(row?.normalized_key || row?.normalizedKey, labelIn);
+    if (!normalizedKey && labelIn) normalizedKey = normalizeKey('', labelIn);
     if (!normalizedKey) continue;
-    const itemName = KEY_TO_ITEM_NAME[normalizedKey];
+    const itemName = KEY_TO_ITEM_NAME[normalizedKey] || labelIn || normalizedKey;
     const date = inferObservedDate(row, defaultDate || '');
     const numericValue = normalizeMaybeNumber(row?.value) ?? numberFromSourceText(row?.source_text || row?.sourceText || '');
-    const multiDateValues = row?.values_by_date && typeof row.values_by_date === 'object' ? row.values_by_date : null;
-    if (!itemName) continue;
-    if (multiDateValues && !Array.isArray(multiDateValues)) {
+    const multiDateValues = row?.values_by_date && typeof row.values_by_date === 'object' && !Array.isArray(row.values_by_date) ? row.values_by_date : null;
+    if (multiDateValues) {
       for (const [k, v] of Object.entries(multiDateValues)) {
         const nd = classifier.normalizeDateToken(k);
         const nv = normalizeMaybeNumber(v) ?? numberFromSourceText(v);
@@ -555,6 +557,35 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       }
     } catch (_err) {
       // noop
+    }
+  }
+
+  const layoutClassifier = classifier.normalizeDocumentType(meta.documentType || payload?.document_type || '');
+  const layoutLabel = layoutClassifier === 'multi_date_timeseries' ? 'lab_multi_date_matrix' : 'lab_single_day_report';
+  console.info('[phasee-new] lab_document_layout_type', { userId: meta.userId || '', layout: layoutLabel, classifier_doc: layoutClassifier });
+
+  const isChatLayout = /chat|screenshot/i.test(String(meta?.documentType || ''));
+  const afterAllRescuesPrimary = geminiItems.extractPrimaryGeminiMinItems(payload);
+  const runMatrix = !isChatLayout && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length);
+  if (runMatrix) {
+    const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
+    if (m1?.data?.length) {
+      const existing = Array.isArray(payload.data) ? payload.data : [];
+      payload = {
+        ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
+        document_type: 'multi_date_timeseries',
+        data: [...existing, ...m1.data]
+      };
+    } else {
+      const txt = await labMatrixExtractService.extractMatrixMajorRescueText(imagePayload, meta);
+      const extra = labMatrixExtractService.majorRescueTextToDataRows(txt);
+      if (extra.length) {
+        const existing = Array.isArray(payload.data) ? payload.data : [];
+        payload = {
+          ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
+          data: [...existing, ...extra]
+        };
+      }
     }
   }
 

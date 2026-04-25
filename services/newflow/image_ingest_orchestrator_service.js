@@ -113,6 +113,14 @@ function buildLabReply(lab = {}) {
   ].join('\n');
 }
 
+function hasUsableLabMeta(lab = {}) {
+  return Boolean(
+    normalizeText(lab?.patientName || lab?.meta?.patientName)
+    || normalizeText(lab?.facilityName || lab?.meta?.facilityName)
+    || normalizeText(lab?.printDate || lab?.meta?.printDate)
+  );
+}
+
 async function resolveImagePayload(input) {
   if (input?.webImagePayload?.buffer) {
     return {
@@ -296,6 +304,22 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '検査画像の解析はできましたが、保存データ整形で不整合を検知しました。もう一度同じ画像を送ってください。'
     };
   }
+  const hasMeta = hasUsableLabMeta(lab);
+  const shouldPersistSession = qualifiedForDb > 0 || hasMeta;
+  if (!shouldPersistSession) {
+    console.info('[phasee-new] lab_empty_session_blocked', {
+      userId: input.userId,
+      blocked: true,
+      reason: 'no_qualified_items_and_no_meta',
+      qualified_records: qualifiedForDb
+    });
+    return {
+      handled: true,
+      intentType: 'newflow_lab_extract_insufficient',
+      replyText: '血液検査票の数値行をまだ取り込めていません。鮮明に全体が写るよう送り直すか、気になる数値を短く書き添えてください。'
+    };
+  }
+
   labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });
   const persist = await labSessionRepository.createLabSession(insertPayload).catch(() => ({ ok: false, reason: 'insert_exception' }));
   if (!persist?.ok) {
@@ -305,14 +329,17 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       replyText: '検査画像の解析はできましたが、保存確認が取れませんでした。もう一度同じ画像を送ってください。'
     };
   }
-  await activeContextStoreService.setActiveContext(input.userId, {
-    domain: 'lab_image_session',
-    payload: {
-      sourceImageId: normalizeText(imagePayload?.id || ''),
-      sourceMessageId: normalizeText(input?.messageId || ''),
-      labPanel: lab
-    }
-  }).catch(() => null);
+  const hasFollowupBody = qualifiedForDb > 0 || hasMeta;
+  if (hasFollowupBody) {
+    await activeContextStoreService.setActiveContext(input.userId, {
+      domain: 'lab_image_session',
+      payload: {
+        sourceImageId: normalizeText(imagePayload?.id || ''),
+        sourceMessageId: normalizeText(input?.messageId || ''),
+        labPanel: lab
+      }
+    }).catch(() => null);
+  }
   return { handled: true, intentType: 'newflow_lab_image', replyText: buildLabReply(lab) };
 }
 

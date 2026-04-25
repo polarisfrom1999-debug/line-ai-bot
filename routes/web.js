@@ -17,6 +17,8 @@ const { getTokyoMonthEnergyBalance } = require('../services/monthly_balance_quer
 const webAdminRepository = require('../repositories/web_admin_repository');
 const webAdminResponseBuilder = require('../services/web_admin_response_builder_service');
 const aiChatService = require('../services/ai_chat_service');
+const lineDisplayNameSyncService = require('../services/line_display_name_sync_service');
+const { supabase: supabaseForLineName } = require('../services/supabase_service');
 let line = null;
 try {
   line = require('@line/bot-sdk');
@@ -61,15 +63,29 @@ function buildDisplayName(user) {
 async function refreshLineDisplayName(lineUserId) {
   const uid = String(lineUserId || '').trim();
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (!uid || !line || !token) return { ok: false };
+  if (!uid) return { ok: false, reason: 'invalid_uid' };
+  if (!line || !token) {
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason: 'line_client_unavailable' });
+    return { ok: false, reason: 'line_client_unavailable' };
+  }
   try {
     const client = new line.messagingApi.MessagingApiClient({ channelAccessToken: token });
     const profile = await client.getProfile(uid);
     const displayName = String(profile?.displayName || '').trim();
-    if (!displayName) return { ok: false };
-    return webAdminRepository.syncLineDisplayName(uid, displayName);
-  } catch (_e) {
-    return { ok: false };
+    if (!displayName) {
+      console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason: 'empty_display_name' });
+      return { ok: false, reason: 'empty_display_name' };
+    }
+    const out = await lineDisplayNameSyncService.syncLineDisplayNameToDb(supabaseForLineName, uid, displayName, { mode: 'manual' });
+    if (!out?.ok) {
+      console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason: out?.reason || 'db_failed' });
+    }
+    return out;
+  } catch (e) {
+    const d = String(e?.message || e || 'line_api');
+    const reason = /not\s*found|404/i.test(d) ? 'line_user_not_found' : 'line_api_error';
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason, detail: d.slice(0, 200) });
+    return { ok: false, reason };
   }
 }
 

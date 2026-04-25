@@ -69,20 +69,32 @@ function buildLineClient() {
 
 async function syncLineDisplayName(lineClient, lineUserId) {
   const uid = String(lineUserId || '').trim();
-  if (!uid || !lineClient) return;
+  if (!uid || !lineClient) {
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'webhook', reason: 'missing_client_or_uid', line_user_id: uid || '' });
+    return;
+  }
+  const lineDisplayNameSyncService = require('./services/line_display_name_sync_service');
   try {
     const getProfileFn = typeof lineClient.getProfile === 'function'
       ? lineClient.getProfile.bind(lineClient)
       : null;
-    if (!getProfileFn) return;
+    if (!getProfileFn) {
+      console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'webhook', reason: 'no_getProfile', line_user_id: uid });
+      return;
+    }
     const profile = await getProfileFn(uid);
     const displayName = String(profile?.displayName || '').trim();
-    if (!displayName) return;
-    const webAdminRepository = require('./repositories/web_admin_repository');
-    const out = await webAdminRepository.syncLineDisplayName(uid, displayName);
-    console.info('[phasee-new] line_display_name_sync', { line_user_id: uid, ok: Boolean(out?.ok), mode: 'webhook' });
-  } catch (_e) {
-    console.info('[phasee-new] line_display_name_sync', { line_user_id: uid, ok: false, mode: 'webhook' });
+    if (!displayName) {
+      console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'webhook', reason: 'empty_display_name', line_user_id: uid });
+      return;
+    }
+    const out = await lineDisplayNameSyncService.syncLineDisplayNameToDb(supabase, uid, displayName, { mode: 'webhook' });
+    if (!out?.ok) {
+      console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'webhook', reason: out?.reason || 'db_sync', line_user_id: uid });
+    }
+  } catch (e) {
+    const detail = String(e?.message || e || 'line_api');
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'webhook', reason: 'line_api_error', detail: detail.slice(0, 200), line_user_id: uid });
   }
 }
 

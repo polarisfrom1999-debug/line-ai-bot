@@ -157,11 +157,15 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
   };
 
   const qualifiedParsed = geminiItems.countQualifiedParsedItems(parsedMinItems);
+  const docLayout = classifierService.normalizeDocumentType(classification?.documentType || '') === 'multi_date_timeseries'
+    ? 'lab_multi_date_matrix'
+    : 'lab_single_day_report';
   const out = {
     source: 'image',
     intakeKind: 'blood_test',
     isLabImage,
     labLike,
+    labDocumentLayout: docLayout,
     patientName: normalizeText(extraction?.patientName || classification?.patientName || ''),
     facilityName: '',
     printDate: normalizeText(classifierService.normalizeDateToken(classification?.reportDate || '')),

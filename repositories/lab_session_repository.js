@@ -113,29 +113,44 @@ async function createLabSession(params = {}) {
   }
 }
 
+function sessionRowHasUsableFollowupContent(row) {
+  if (!row) return false;
+  const items = row.parsed_items_json;
+  if (Array.isArray(items)) {
+    for (const it of items) {
+      if (normalizeText(it?.normalizedKey) && normalizeText(it?.value)) return true;
+    }
+  }
+  if (normalizeText(row.patient_name) || normalizeText(row.facility_name) || normalizeText(row.print_date)) return true;
+  return false;
+}
+
 async function getLatestLabSession(userId) {
   if (!supabase) return null;
   const safeUserId = normalizeText(userId);
   if (!safeUserId) return null;
+  const sel = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at';
+  const selNarrow = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at';
   try {
     let q = await supabase
       .from('lab_sessions')
-      .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at')
+      .select(sel)
       .eq('user_id', safeUserId)
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(20);
     if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
       q = await supabase
         .from('lab_sessions')
-        .select('id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at')
+        .select(selNarrow)
         .eq('user_id', safeUserId)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(20);
     }
-    if (q?.error || !q?.data) return null;
-    return q.data;
+    if (q?.error || !Array.isArray(q.data)) return null;
+    for (const row of q.data) {
+      if (sessionRowHasUsableFollowupContent(row)) return row;
+    }
+    return null;
   } catch (_error) {
     return null;
   }

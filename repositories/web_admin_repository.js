@@ -1,5 +1,6 @@
 'use strict';
 
+const lineDisplayNameSyncService = require('../services/line_display_name_sync_service');
 let supabase = null;
 try {
   ({ supabase } = require('../services/supabase_service'));
@@ -174,20 +175,7 @@ async function markThreadRead({ adminUserId, lineUserId, lastReadMessageAt }) {
 }
 
 async function syncLineDisplayName(lineUserId, displayName) {
-  if (!supabase) return { ok: false };
-  const uid = normalizeText(lineUserId);
-  const name = normalizeText(displayName);
-  if (!uid || !name) return { ok: false };
-  const { error } = await supabase
-    .from('users')
-    .update({
-      line_display_name: name,
-      display_name: name,
-      updated_at: new Date().toISOString()
-    })
-    .eq('line_user_id', uid);
-  if (error) return { ok: false, reason: normalizeText(error.message || 'sync_display_name_failed') };
-  return { ok: true };
+  return lineDisplayNameSyncService.syncLineDisplayNameToDb(supabase, lineUserId, displayName, { mode: 'admin_api' });
 }
 
 async function insertAdminMessage({ lineUserId, text = '', attachments = [], adminUserId = '' } = {}) {

@@ -126,7 +126,61 @@ function buildLabMetaPrompt(meta = {}) {
   };
 }
 
+/**
+ * 複数日付表（横に日付列、縦に検査項目）専用。matrix セルを data[] に展開する。
+ */
+function buildLabMatrixExtractSpec(meta = {}) {
+  const schema = {
+    type: 'object',
+    properties: {
+      document_type: { type: 'string' },
+      exam_dates: { type: 'array', items: { type: 'string' } },
+      data: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            normalized_key: { type: 'string' },
+            label_in_image: { type: 'string' },
+            date: { type: 'string' },
+            value: { type: ['string', 'number'] },
+            unit: { type: 'string' },
+            reference_low: { type: ['number', 'string'] },
+            reference_high: { type: ['number', 'string'] },
+            flag: { type: 'string' },
+            confidence: { type: 'number' },
+            status: { type: 'string' },
+            row_label_raw: { type: 'string' },
+            column_header_raw: { type: 'string' },
+            values_by_date: { type: 'object' }
+          }
+        }
+      }
+    },
+    required: ['document_type', 'data']
+  };
+  const prompt = [
+    'あなたは「多次元の採血結果推移表（同じ用紙に過去採取が横並び）」のOCR/構造化専用です。JSON のみ返してください。',
+    'document_type は "multi_date_timeseries" 固定でよいです。',
+    '最優先: 左列（または上段左）の検査項目名と、各採血日/検査日列（ヘッダに日付）の交点セルにある数値を1行1セルにした data[] を作ってください。',
+    '同一項目が複数日付列に数値を持てば、行を分け、各行に date(YYYY-MM-DD) と value を入れてください。values_by_date オブジェクト { "2024-01-10": "88", "2024-04-10": "92" } も併用可能です（その場合 date は代表の最新でよいが、行は日付分だけ繰り返し推奨）。',
+    'normalized_key には ast_got,alt_gpt,gamma_gtp,creatinine,glucose,hba1c,triglycerides_tg,total_cholesterol,hdl_cholesterol,ldl_cholesterol,uric_acid,bun 等を使ってください。不明なら label_in_image だけ必須。value がある行は日付推測のための抜粋元として残す。',
+    '採血日/検査日の見出し行の日付を exam_dates に全列挙（正規化 YYYY-MM-DD）。',
+    '日付だけ抜かれて数値0件の data は出さない（セル数値必須）。推測で数値を捏造しない。読めないセルは status=unclear。',
+    `分類補助 document_type: ${meta.documentType || 'unknown'}`,
+    '禁止: 表の枠外の会話、説明文。'
+  ].join('\n');
+  return {
+    domain: 'lab_image_matrix',
+    promptVersion: 'lab_matrix_extract_v1',
+    schema,
+    prompt,
+    preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  };
+}
+
 module.exports = {
   buildLabExtractPrompt,
-  buildLabMetaPrompt
+  buildLabMetaPrompt,
+  buildLabMatrixExtractSpec
 };
