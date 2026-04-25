@@ -136,6 +136,27 @@ function rescueRowsToParsedMinItems(rows = []) {
   return out;
 }
 
+function parseDateTokens(value) {
+  const safe = normalizeText(value);
+  if (!safe) return [];
+  const out = [];
+  const regex = /(20\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})/g;
+  let m;
+  while ((m = regex.exec(safe)) !== null) {
+    out.push(`${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`);
+  }
+  return Array.from(new Set(out));
+}
+
+function hasMajorKeyCoverage(items = []) {
+  const need = new Set(['triglycerides_tg', 'ldl_cholesterol', 'hdl_cholesterol', 'ast_got', 'alt_gpt', 'gamma_gtp', 'hba1c', 'creatinine']);
+  for (const it of Array.isArray(items) ? items : []) {
+    const k = normalizeText(it?.normalizedKey || '').toLowerCase();
+    if (need.has(k)) need.delete(k);
+  }
+  return need.size <= 3;
+}
+
 async function analyzeLabImageV2(imagePayload, opts = {}) {
   const classification = await classifierService.classifyLabDocument(imagePayload);
   const extraction = await extractService.extractStructuredLab(imagePayload, { ...classification, userId: opts.userId || '' });
@@ -154,7 +175,37 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     const rescuedMinItems = rescueRowsToParsedMinItems(rescuedRows);
     if (rescuedMinItems.length) parsedMinItemsFinal = rescuedMinItems;
   }
+  if (!hasMajorKeyCoverage(parsedMinItemsFinal)) {
+    const rescuedText = await matrixExtractService.extractMatrixMajorRescueText(imagePayload, { userId: opts.userId || '' });
+    const rescuedRows = matrixExtractService.majorRescueTextToDataRows(rescuedText);
+    const rescuedMinItems = rescueRowsToParsedMinItems(rescuedRows);
+    if (rescuedMinItems.length) {
+      const existingKeys = new Set(parsedMinItemsFinal.map((x) => normalizeText(x?.normalizedKey).toLowerCase()));
+      for (const row of rescuedMinItems) {
+        const k = normalizeText(row?.normalizedKey).toLowerCase();
+        if (!k || existingKeys.has(k)) continue;
+        parsedMinItemsFinal.push(row);
+        existingKeys.add(k);
+      }
+    }
+  }
+  const dateHints = Array.from(new Set([
+    ...parseDateTokens(extraction?.rawText || ''),
+    ...parseDateTokens(classification?.rawText || ''),
+    ...parseDateTokens(extraction?.latestExamDate || ''),
+    ...parseDateTokens(classification?.reportDate || '')
+  ]));
+  const fallbackObservedDate = dateHints[dateHints.length - 1] || '';
+  if (fallbackObservedDate) {
+    parsedMinItemsFinal = parsedMinItemsFinal.map((it) => ({
+      ...it,
+      observedDate: normalizeText(it?.observedDate || it?.observed_date || fallbackObservedDate)
+    }));
+  }
   const examDateEntries = buildExamDateEntries(extraction, structRows.length ? structRows : rows);
+  if (fallbackObservedDate && !examDateEntries.some((x) => normalizeText(x?.normalized_date) === fallbackObservedDate)) {
+    examDateEntries.push({ value: fallbackObservedDate, normalized_date: fallbackObservedDate, confidence: 0.4, source: 'fallback' });
+  }
   const latestExamDate =
     examDateEntries[examDateEntries.length - 1]?.normalized_date || extraction?.latestExamDate || '';
   const structuredItems = buildStructuredItems(structRows, latestExamDate);
@@ -190,6 +241,9 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
   const docLayout = docTypeNormalized === 'multi_date_timeseries'
     ? 'lab_multi_date_matrix'
     : 'lab_single_day_report';
+  const latestDateFallback = normalizeText(latestExamDate || examDateEntries[examDateEntries.length - 1]?.normalized_date || '');
+  const printDateNorm = normalizeText(classifierService.normalizeDateToken(classification?.reportDate || ''));
+  const finalLatestExamDate = latestDateFallback || printDateNorm;
   const out = {
     source: 'image',
     intakeKind: 'blood_test',
@@ -198,10 +252,10 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     labDocumentLayout: docLayout,
     patientName: normalizeText(extraction?.patientName || classification?.patientName || ''),
     facilityName: '',
-    printDate: normalizeText(classifierService.normalizeDateToken(classification?.reportDate || '')),
+    printDate: printDateNorm,
     pageInfo: detectPageInfo(rawText),
-    examDate: latestExamDate,
-    latestExamDate,
+    examDate: finalLatestExamDate,
+    latestExamDate: finalLatestExamDate,
     examDates: examDateEntries.map((d) => d.normalized_date),
     examDateEntries,
     items: mapStructuredToLegacyItems(structuredItems),

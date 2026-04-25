@@ -121,6 +121,13 @@ function hasUsableLabMeta(lab = {}) {
   );
 }
 
+function normalizeYmd(v) {
+  const s = normalizeText(v).replace(/\//g, '-');
+  const m = s.match(/(20\d{2})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return '';
+  return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+}
+
 async function resolveImagePayload(input) {
   if (input?.webImagePayload?.buffer) {
     return {
@@ -213,7 +220,14 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   }
   const preDbParsedCandidate = toParsedItemsFromLabPanel(lab);
   const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
-  const preDbParsed = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
+  const preDbParsedRaw = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
+  const observedDateFallback = normalizeYmd(lab?.latestExamDate || lab?.examDate || lab?.printDate || lab?.meta?.printDate || '');
+  const preDbParsed = (Array.isArray(preDbParsedRaw) ? preDbParsedRaw : []).map((it) => {
+    if (!it || typeof it !== 'object') return it;
+    const od = normalizeYmd(it.observedDate || it.observed_date || '');
+    if (od || !observedDateFallback) return it;
+    return { ...it, observedDate: observedDateFallback };
+  });
   const qualifiedForDb = countPersistableParsedRecords(preDbParsed);
   const labGeminiRaw = lab?.geminiRaw && typeof lab.geminiRaw === 'object' ? { ...lab.geminiRaw } : {};
   if (lab?.metaAdoption || lab?.metaExtraction) {

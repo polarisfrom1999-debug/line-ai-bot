@@ -117,7 +117,11 @@ async function run() {
         final_items: stage('lab_matrix_final_items'),
         followup: stage('[phasee-new] lab_followup_context')
       },
-      matrix_reason: matrixReason
+      matrix_reason: matrixReason,
+      followup_flags: {
+        tg_session_lab_reached: /"session_lab_reached":true/.test(stage('[phasee-new] lab_followup_context')[0] || ''),
+        tg_canonical_lab_reached: /"canonical_lab_reached":true/.test(stage('[phasee-new] lab_followup_context')[0] || ''),
+      }
     };
 
     console.log('e2e_lab_matrix_fixture_pipeline: done');

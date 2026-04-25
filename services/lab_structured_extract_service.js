@@ -631,9 +631,16 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   const historyDates = uniqueSortedDates(rows.map((row) => row.date));
   let examDates = uniqueSortedDates([...(report.exam_dates || report.examDates || []), ...historyDates, ...(meta.examDates || [])]);
   if (!examDates.length && reportDate) examDates = [reportDate];
-  const latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '') || examDates[examDates.length - 1] || reportDate || '';
+  let latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '') || examDates[examDates.length - 1] || reportDate || '';
   const primaryGeminiMinItems = geminiItems.extractPrimaryGeminiMinItems(payload);
   const parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rows);
+  const parsedObservedDates = parsedMinItems
+    .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
+    .filter(Boolean);
+  if (parsedObservedDates.length) {
+    examDates = uniqueSortedDates([...examDates, ...parsedObservedDates]);
+    latestExamDate = latestExamDate || examDates[examDates.length - 1] || '';
+  }
   const dateForSyntheticRows = latestExamDate || reportDate || '';
   const rowsForStructured = parsedMinItems.length
     ? geminiItems.minItemsToRowsForGroupRows(parsedMinItems, dateForSyntheticRows)
@@ -660,7 +667,10 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       userId: meta.userId || '',
       parsed_items_count: parsedMinItems.length,
       qualified_records_count: qualifiedRecords,
-      reason: parsedMinItems.length ? '' : (matrixDiagFinal?.reason || 'matrix_detected_but_empty')
+      observed_dates: uniqueSortedDates(parsedObservedDates),
+      reason: parsedMinItems.length
+        ? (parsedObservedDates.length ? '' : 'observed_dates_empty_after_mapping')
+        : (matrixDiagFinal?.reason || 'matrix_detected_but_empty')
     });
   }
   const multiDateRowCount = reportDataRows.filter((r) => r && typeof r === 'object' && (

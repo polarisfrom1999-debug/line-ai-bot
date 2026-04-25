@@ -88,6 +88,10 @@ function collectAvailableDates(panel) {
       if (nd) set.add(nd);
     }
   }
+  for (const item of panel?.itemsStructured || []) {
+    const d = normalizeDateToken(item?.observedDate || item?.observed_date || item?.date || '');
+    if (d) set.add(d);
+  }
   return [...set].sort();
 }
 
@@ -749,12 +753,18 @@ function buildSavedLabSessionsDatesReply(historyRows) {
     const printD = normalizeDateToken(row.print_date || '');
     const exArr = Array.isArray(row.exam_dates_json) ? row.exam_dates_json : [];
     const exJoined = exArr.map((d) => normalizeDateToken(String(d))).filter(Boolean).slice(0, 2);
-    if (rep) {
+    const parsedItems = Array.isArray(row.parsed_items_json) ? row.parsed_items_json : [];
+    const parsedDates = Array.from(new Set(parsedItems
+      .map((it) => normalizeDateToken(it?.observedDate || it?.observed_date || ''))
+      .filter(Boolean))).slice(0, 3);
+    if (rep || parsedDates.length) {
       const bits = [];
       if (printD && printD !== rep) bits.push(`印刷日 ${printD}`);
       if (exJoined.length) bits.push(`採血日候補 ${exJoined.join('・')}`);
+      if (parsedDates.length) bits.push(`観測日候補 ${parsedDates.join('・')}`);
+      const displayRep = rep || parsedDates[parsedDates.length - 1];
       const extra = bits.length ? `（${bits.join(' / ')}）` : '';
-      lines.push(`${i + 1}. 代表日 ${rep}${extra}`);
+      lines.push(`${i + 1}. 代表日 ${displayRep}${extra}`);
     } else {
       ambiguousInList += 1;
       lines.push(`${i + 1}. 日付不明の保存データ（印刷日・採血日の抽出が弱い可能性があります）`);

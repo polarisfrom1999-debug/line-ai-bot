@@ -28,6 +28,13 @@ function slugifyLabel(value) {
     .slice(0, 80);
 }
 
+function normalizeYmd(value) {
+  const s = normalizeText(value).replace(/\//g, '-');
+  const m = s.match(/(20\d{2})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return '';
+  return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+}
+
 function inferNormalizedKey(rawLabel = '') {
   const t = normalizeText(rawLabel).toLowerCase();
   if (!t) return '';
@@ -68,7 +75,8 @@ function buildMinItem({
   referenceLow = null,
   referenceHigh = null,
   confidence = null,
-  status = ''
+  status = '',
+  observedDate = ''
 } = {}) {
   const nk = normalizeText(String(normalizedKey || '').toLowerCase());
   const val = serializeValue(value);
@@ -89,7 +97,8 @@ function buildMinItem({
     ...(referenceLow != null ? { referenceLow } : {}),
     ...(referenceHigh != null ? { referenceHigh } : {}),
     ...(confidence != null ? { confidence: Number(confidence) || 0 } : {}),
-    ...(status ? { status: normalizeText(status) } : {})
+    ...(status ? { status: normalizeText(status) } : {}),
+    ...(normalizeYmd(observedDate) ? { observedDate: normalizeYmd(observedDate) } : {})
   };
 }
 
@@ -102,6 +111,15 @@ function extractPrimaryGeminiMinItems(payload) {
   const seen = new Set();
   let anon = 0;
   for (const report of flattenReports(payload)) {
+    const reportDateFallback = normalizeYmd(
+      report?.latest_exam_date
+      || report?.latestExamDate
+      || report?.report_date
+      || report?.reportDate
+      || (Array.isArray(report?.exam_dates) ? report.exam_dates[0] : '')
+      || (Array.isArray(report?.examDates) ? report.examDates[0] : '')
+      || ''
+    );
     for (const row of Array.isArray(report?.data) ? report.data : []) {
       const labelInImage = normalizeText(row?.label_in_image || row?.labelInImage || row?.row_label_raw || row?.rowLabelRaw || '');
       const explicitKey = normalizeText(String(row?.normalized_key || row?.normalizedKey || '').toLowerCase());
@@ -115,6 +133,14 @@ function extractPrimaryGeminiMinItems(payload) {
       if (seen.has(identity)) continue;
       seen.add(identity);
       const name = KEY_TO_ITEM_NAME[nk] || rawName || nk;
+      const observedDate = normalizeYmd(
+        row?.date
+        || row?.observedDate
+        || row?.observed_date
+        || row?.exam_date
+        || row?.examDate
+        || reportDateFallback
+      );
       out.push(
         buildMinItem({
           normalizedKey: nk,
@@ -127,7 +153,8 @@ function extractPrimaryGeminiMinItems(payload) {
           referenceLow: row?.reference_low ?? row?.referenceLow,
           referenceHigh: row?.reference_high ?? row?.referenceHigh,
           confidence: row?.confidence,
-          status: row?.status
+          status: row?.status,
+          observedDate
         })
       );
     }
@@ -152,7 +179,8 @@ function rowNormalizeToFallbackMinItem(row) {
     referenceLow: row?.referenceLow,
     referenceHigh: row?.referenceHigh,
     confidence: row?.confidence,
-    status: row?.status
+    status: row?.status,
+    observedDate: normalizeYmd(row?.date || row?.observedDate || row?.observed_date || row?.columnHeaderRaw || '')
   });
 }
 
@@ -200,7 +228,8 @@ function minItemsToRowsForGroupRows(minItems, latestExamDate) {
       status: normalizeText(it.status || 'readable'),
       sourceText: serializeValue(it.value),
       rowLabelRaw: normalizeText(it.rawName || ''),
-      columnHeaderRaw: date
+      columnHeaderRaw: normalizeText(it.observedDate || date),
+      observedDate: normalizeYmd(it.observedDate || date)
     };
   });
 }

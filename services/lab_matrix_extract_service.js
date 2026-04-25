@@ -32,6 +32,8 @@ function buildMatrixDiagnostics(rows = []) {
   const rowRejected = [];
   const cellCandidates = [];
   const cellRejected = [];
+  const unitsFound = new Set();
+  const flagsFound = new Set();
   const mappings = [];
 
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -50,6 +52,10 @@ function buildMatrixDiagnostics(rows = []) {
 
     const valueRaw = normalizeText(r?.value);
     const valueNum = toNumberOrNull(valueRaw);
+    const unit = normalizeText(r?.unit || '');
+    const flag = normalizeText(r?.flag || '').toUpperCase();
+    if (unit) unitsFound.add(unit);
+    if (flag === 'H' || flag === 'L') flagsFound.add(flag);
     if (!valueRaw) {
       cellRejected.push('empty_value');
     } else if (valueNum == null) {
@@ -91,6 +97,8 @@ function buildMatrixDiagnostics(rows = []) {
     majorCount,
     cellCandidates,
     cellRejected,
+    unitsFound: [...unitsFound],
+    flagsFound: [...flagsFound],
     mappings,
     reason
   };
@@ -118,19 +126,26 @@ async function extractMatrixTable(imagePayload, meta = {}) {
         date_header_candidates: 0,
         observed_date_count: 0,
         observed_dates: [],
-        rejected_reasons: [reason || 'no_date_headers']
+        rejected_headers: [reason || 'no_date_headers'],
+        reason: 'no_date_headers'
       });
       console.info('[phasee-new] lab_matrix_row_label_extract', {
         userId: meta.userId || '',
         row_label_candidates: 0,
         normalized_key_count: 0,
         major_key_count: 0,
-        rejected_reasons: [reason || 'no_row_labels']
+        raw_row_labels_sample: [],
+        rejected_row_labels: [reason || 'no_row_labels'],
+        reason: 'no_row_labels'
       });
       console.info('[phasee-new] lab_matrix_cell_value_extract', {
         userId: meta.userId || '',
         numeric_cell_count: 0,
-        rejected_reasons: [reason || 'no_numeric_cells']
+        numeric_cells_sample: [],
+        units_found: [],
+        flags_found: [],
+        rejected_cells: [reason || 'no_numeric_cells'],
+        reason: 'no_numeric_cells'
       });
       console.info('[phasee-new] lab_matrix_mapping', {
         userId: meta.userId || '',
@@ -148,24 +163,33 @@ async function extractMatrixTable(imagePayload, meta = {}) {
       date_header_candidates: rows.length,
       observed_date_count: diag.headersDistinct.length,
       observed_dates: diag.headersDistinct,
-      rejected_reasons: diag.headerRejected.slice(0, 20)
+      rejected_headers: diag.headerRejected.slice(0, 20),
+      reason: diag.headersDistinct.length ? '' : 'no_date_headers'
     });
     console.info('[phasee-new] lab_matrix_row_label_extract', {
       userId: meta.userId || '',
       row_label_candidates: rows.length,
       normalized_key_count: diag.rowCandidates.length,
       major_key_count: diag.majorCount,
-      rejected_reasons: diag.rowRejected.slice(0, 20)
+      raw_row_labels_sample: rows.map((r) => normalizeText(r?.label_in_image || r?.rawName || r?.name || '')).filter(Boolean).slice(0, 12),
+      rejected_row_labels: diag.rowRejected.slice(0, 20),
+      reason: diag.rowCandidates.length ? '' : (diag.reason === 'normalized_key_not_found' ? 'normalized_key_not_found' : 'no_row_labels')
     });
     console.info('[phasee-new] lab_matrix_cell_value_extract', {
       userId: meta.userId || '',
       numeric_cell_count: diag.cellCandidates.length,
-      rejected_reasons: diag.cellRejected.slice(0, 20)
+      numeric_cells_sample: diag.cellCandidates.slice(0, 12),
+      units_found: diag.unitsFound,
+      flags_found: diag.flagsFound,
+      rejected_cells: diag.cellRejected.slice(0, 20),
+      reason: diag.cellCandidates.length ? '' : (diag.reason === 'all_values_rejected' ? 'all_values_rejected' : 'no_numeric_cells')
     });
     console.info('[phasee-new] lab_matrix_mapping', {
       userId: meta.userId || '',
       mapping_count: diag.mappings.length,
       matrix_cell_count: diag.mappings.length,
+      distinct_observed_dates_count: Array.from(new Set(diag.mappings.map((m) => m.observedDate))).length,
+      mapped_keys_count: Array.from(new Set(diag.mappings.map((m) => m.normalizedKey))).length,
       reason: diag.reason || ''
     });
     console.info('[phasee-new] lab_multi_date_matrix_extract', {
@@ -188,19 +212,26 @@ async function extractMatrixTable(imagePayload, meta = {}) {
       date_header_candidates: 0,
       observed_date_count: 0,
       observed_dates: [],
-      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+      rejected_headers: [String(e?.message || 'matrix_exception').slice(0, 160)],
+      reason: 'matrix_detected_but_empty'
     });
     console.info('[phasee-new] lab_matrix_row_label_extract', {
       userId: meta.userId || '',
       row_label_candidates: 0,
       normalized_key_count: 0,
       major_key_count: 0,
-      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+      raw_row_labels_sample: [],
+      rejected_row_labels: [String(e?.message || 'matrix_exception').slice(0, 160)],
+      reason: 'matrix_detected_but_empty'
     });
     console.info('[phasee-new] lab_matrix_cell_value_extract', {
       userId: meta.userId || '',
       numeric_cell_count: 0,
-      rejected_reasons: [String(e?.message || 'matrix_exception').slice(0, 160)]
+      numeric_cells_sample: [],
+      units_found: [],
+      flags_found: [],
+      rejected_cells: [String(e?.message || 'matrix_exception').slice(0, 160)],
+      reason: 'matrix_detected_but_empty'
     });
     console.info('[phasee-new] lab_matrix_mapping', {
       userId: meta.userId || '',
