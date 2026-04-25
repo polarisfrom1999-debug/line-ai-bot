@@ -5,6 +5,7 @@ const extractService = require('./lab_structured_extract_service');
 const labItemAliasService = require('./lab_item_alias_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
 const geminiItems = require('./lab_gemini_items_service');
+const matrixExtractService = require('./lab_matrix_extract_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -115,6 +116,26 @@ function mapStructuredToLegacyItems(items = []) {
   });
 }
 
+function rescueRowsToParsedMinItems(rows = []) {
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const normalizedKey = normalizeText(row?.normalized_key || row?.normalizedKey || '');
+    const value = normalizeText(row?.value);
+    if (!normalizedKey || !value) continue;
+    out.push({
+      normalizedKey,
+      value,
+      unit: normalizeText(row?.unit || ''),
+      flag: normalizeFlag(row?.flag),
+      confidence: Number(row?.confidence || 0) || 0,
+      source: 'lab_multi_date_matrix',
+      observedDate: normalizeText(row?.date || row?.observedDate || row?.observed_date || ''),
+      rawName: normalizeText(row?.label_in_image || row?.rawName || row?.name || '')
+    });
+  }
+  return out;
+}
+
 async function analyzeLabImageV2(imagePayload, opts = {}) {
   const classification = await classifierService.classifyLabDocument(imagePayload);
   const extraction = await extractService.extractStructuredLab(imagePayload, { ...classification, userId: opts.userId || '' });
@@ -124,13 +145,22 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     ? extraction.rowsForStructured
     : rows;
   const parsedMinItems = Array.isArray(extraction?.parsedMinItems) ? extraction.parsedMinItems : [];
+  let parsedMinItemsFinal = Array.isArray(parsedMinItems) ? [...parsedMinItems] : [];
+  const docTypeNormalized = classifierService.normalizeDocumentType(classification?.documentType || '');
+  const isMultiDateLayout = docTypeNormalized === 'multi_date_timeseries';
+  if (!geminiItems.countQualifiedParsedItems(parsedMinItemsFinal) && isMultiDateLayout) {
+    const rescuedText = await matrixExtractService.extractMatrixMajorRescueText(imagePayload, { userId: opts.userId || '' });
+    const rescuedRows = matrixExtractService.majorRescueTextToDataRows(rescuedText);
+    const rescuedMinItems = rescueRowsToParsedMinItems(rescuedRows);
+    if (rescuedMinItems.length) parsedMinItemsFinal = rescuedMinItems;
+  }
   const examDateEntries = buildExamDateEntries(extraction, structRows.length ? structRows : rows);
   const latestExamDate =
     examDateEntries[examDateEntries.length - 1]?.normalized_date || extraction?.latestExamDate || '';
   const structuredItems = buildStructuredItems(structRows, latestExamDate);
   const isChatShot = classification?.documentType === 'chat_screenshot';
   const geminiSaysDocument = Boolean(classification?.isLabDocument);
-  const hasStructuredRows = structRows.length > 0 || parsedMinItems.length > 0;
+  const hasStructuredRows = structRows.length > 0 || parsedMinItemsFinal.length > 0;
   const isLabImage = Boolean((geminiSaysDocument && !isChatShot) || hasStructuredRows);
   const labLike = Boolean(isLabImage || hasStructuredRows);
 
@@ -156,8 +186,8 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     },
   };
 
-  const qualifiedParsed = geminiItems.countQualifiedParsedItems(parsedMinItems);
-  const docLayout = classifierService.normalizeDocumentType(classification?.documentType || '') === 'multi_date_timeseries'
+  const qualifiedParsed = geminiItems.countQualifiedParsedItems(parsedMinItemsFinal);
+  const docLayout = docTypeNormalized === 'multi_date_timeseries'
     ? 'lab_multi_date_matrix'
     : 'lab_single_day_report';
   const out = {
@@ -175,7 +205,7 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     examDates: examDateEntries.map((d) => d.normalized_date),
     examDateEntries,
     items: mapStructuredToLegacyItems(structuredItems),
-    itemsStructured: parsedMinItems.length ? parsedMinItems : structuredItems,
+    itemsStructured: parsedMinItemsFinal.length ? parsedMinItemsFinal : structuredItems,
     rawText: normalizeText(rawText),
     rawPayload: extraction?.rawPayload || null,
     structuredJson,
@@ -203,18 +233,18 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     v2ItemChain = 'v2_buildStructuredItems:all_rows_skipped_no_examdate_or_value';
   } else if (structuredItems.length > 0 && legacy.length === 0) {
     v2ItemChain = 'v2_mapStructuredToLegacy_returned_0';
-  } else if (structRows.length === 0 && !parsedMinItems.length) {
+  } else if (structRows.length === 0 && !parsedMinItemsFinal.length) {
     v2ItemChain = 'v2_extraction_rows_empty';
   } else if (legacy.length === 0 && !qualifiedParsed) {
     v2ItemChain = 'v2_no_legacy_item_values';
-  } else if (parsedMinItems.length && qualifiedParsed) {
+  } else if (parsedMinItemsFinal.length && qualifiedParsed) {
     v2ItemChain = extraction?.rowFallbackUsed ? 'v2_parsed_min_items_gemini_plus_row_fallback' : 'v2_parsed_min_items_gemini_primary';
   }
   console.info('[lab-ingest-trace] stage:items_source', {
     userId: String(opts.userId || ''),
     primary_gemini_items: extraction?.primaryGeminiItemCount ?? 0,
     row_fallback_used: Boolean(extraction?.rowFallbackUsed),
-    parsed_min_keys: parsedMinItems.map((x) => x.normalizedKey).slice(0, 24)
+    parsed_min_keys: parsedMinItemsFinal.map((x) => x.normalizedKey).slice(0, 24)
   });
   labIngestTrace.logRecordsCountReason({
     userId: opts.userId,
@@ -227,7 +257,7 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
       legacyMapItemsCount: legacy.length,
       primary_gemini_items: extraction?.primaryGeminiItemCount ?? 0,
       row_fallback_used: Boolean(extraction?.rowFallbackUsed),
-      parsed_min_items_count: parsedMinItems.length
+      parsed_min_items_count: parsedMinItemsFinal.length
     }
   });
   return out;

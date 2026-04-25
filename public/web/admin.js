@@ -213,11 +213,18 @@
     renderConsultLog();
   }
 
-  function applyConsultToDraft(type) {
+  async function applyConsultToDraft(type) {
     const t = String(state.lastConsultAnswer || '').trim();
     if (!t) return setStatus('先にAI相談を実行してください');
     const box = type === 'weekly' ? qs('weekDraftText') : qs('monthDraftText');
     box.value = `${box.value ? `${box.value}\n\n` : ''}${t}`;
+    if (state.selected) {
+      await jpost('/api/web/admin/consult/apply-to-draft', {
+        lineUserId: state.selected,
+        reportType: type,
+        answer: t
+      });
+    }
     setStatus(`${type === 'weekly' ? '週報' : '月報'}下書きへ反映しました`);
   }
 
@@ -225,7 +232,11 @@
     qs('userSearch').addEventListener('input', () => loadUsers().catch((e) => setStatus(e.message)));
     qs('refreshDisplayName').addEventListener('click', async () => {
       if (!state.selected) return;
-      await jpost('/api/web/admin/users/refresh-display-name', { lineUserId: state.selected });
+      const out = await jpost('/api/web/admin/users/refresh-display-name', { lineUserId: state.selected });
+      if (out?.displayName) {
+        state.users = state.users.map((u) => (u.lineUserId === state.selected ? { ...u, displayName: out.displayName } : u));
+        renderUsers();
+      }
       await loadUsers({ skipAutoLoad: true });
       setStatus('表示名を更新しました');
     });
@@ -256,8 +267,8 @@
     qs('saveWeek').addEventListener('click', () => saveDraft('weekly').catch((e) => setStatus(e.message)));
     qs('saveMonth').addEventListener('click', () => saveDraft('monthly').catch((e) => setStatus(e.message)));
     qs('consultForm').addEventListener('submit', (e) => askConsult(e).catch((er) => setStatus(er.message)));
-    qs('applyToWeek').addEventListener('click', () => applyConsultToDraft('weekly'));
-    qs('applyToMonth').addEventListener('click', () => applyConsultToDraft('monthly'));
+    qs('applyToWeek').addEventListener('click', () => applyConsultToDraft('weekly').catch((e) => setStatus(e.message)));
+    qs('applyToMonth').addEventListener('click', () => applyConsultToDraft('monthly').catch((e) => setStatus(e.message)));
     qs('saveTheme').addEventListener('click', async () => {
       await jpost('/api/web/admin/theme', { themeId: qs('themeId').value, accentColor: '' });
       applyTheme(qs('themeId').value);

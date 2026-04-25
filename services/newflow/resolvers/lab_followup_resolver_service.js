@@ -182,7 +182,15 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     )
   ) {
     const arr = await loadHistory();
-    const body = labFollowupService.buildSavedLabSessionsDatesReply(arr || []);
+    const panelDates = Array.from(new Set(
+      (Array.isArray(p?.examDates) ? p.examDates : [])
+        .map((d) => normalizeText(d))
+        .filter(Boolean)
+    ));
+    const panelDateLine = panelDates.length
+      ? `この画像内で読み取れた日付候補は ${panelDates.join(' / ')} です。`
+      : '';
+    const body = [panelDateLine, labFollowupService.buildSavedLabSessionsDatesReply(arr || [])].filter(Boolean).join(' ');
     record('lab_saved_dates_inventory', {
       history_sessions_count: (arr || []).length,
       comparison_available: (arr || []).length >= 2,

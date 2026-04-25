@@ -360,6 +360,51 @@ async function persistDailyRecordToDb(lineUserId, record) {
         ai_comment: normalizeString(record.comment || record.amountNote || '食事記録'),
         raw_model_json: rawModel
       });
+      try {
+        const mealRecalcRepository = require('../repositories/meal_recalc_repository');
+        const sourceMessageId = normalizeString(record.sourceLineMessageId || '');
+        const dedupeKey = normalizeString(record.dedupeKey || '');
+        const sourceImageId = normalizeString(record.sourceImageId || '');
+        const existsByMessage = sourceMessageId
+          ? await safeMaybeSingle(() => supabase
+            .from('base_meals')
+            .select('id')
+            .eq('user_id', lineUserId)
+            .eq('source_message_id', sourceMessageId)
+            .limit(1)
+            .maybeSingle(), null)
+          : null;
+        const existsByImage = !existsByMessage && sourceImageId
+          ? await safeMaybeSingle(() => supabase
+            .from('base_meals')
+            .select('id')
+            .eq('user_id', lineUserId)
+            .eq('source_image_id', sourceImageId)
+            .limit(1)
+            .maybeSingle(), null)
+          : null;
+        if (!existsByMessage && !existsByImage) {
+          await mealRecalcRepository.createBaseMeal({
+            userId: lineUserId,
+            eatenAt: eatenAtIso,
+            sourceMessageId,
+            sourceImageId,
+            mealLabel: normalizeString(record.summary || record.name || '食事'),
+            basePayloadJson: {
+              dedupeKey,
+              items: Array.isArray(foodItems) ? foodItems : [],
+              estimatedNutrition: {
+                kcal: Number(record.kcal || record.estimatedNutrition?.kcal || 0) || 0,
+                protein: Number(record.protein || record.estimatedNutrition?.protein || 0) || 0,
+                fat: Number(record.fat || record.estimatedNutrition?.fat || 0) || 0,
+                carbs: Number(record.carbs || record.estimatedNutrition?.carbs || 0) || 0
+              }
+            }
+          });
+        }
+      } catch (_mirrorError) {
+        // base_meals mirror is best-effort; keep meal_logs save as source of truth.
+      }
       console.info('[meal] saved', { userId: lineUserId });
       try {
         const mealLogQueryService = require('./meal_log_query_service');

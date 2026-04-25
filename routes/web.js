@@ -64,7 +64,11 @@ async function refreshLineDisplayName(lineUserId) {
   const uid = String(lineUserId || '').trim();
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!uid) return { ok: false, reason: 'invalid_uid' };
-  if (!line || !token) {
+  if (!token) {
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason: 'token_missing' });
+    return { ok: false, reason: 'token_missing' };
+  }
+  if (!line) {
     console.info('[phasee-new] line_display_name_sync', { ok: false, mode: 'manual', reason: 'line_client_unavailable' });
     return { ok: false, reason: 'line_client_unavailable' };
   }
@@ -111,6 +115,9 @@ function buildLinePushMessages(text, attachments = []) {
       messages.push({ type: 'image', originalContentUrl: url, previewImageUrl: String(a?.thumbnail_url || url) });
     } else if (t === 'video') {
       messages.push({ type: 'video', originalContentUrl: url, previewImageUrl: String(a?.thumbnail_url || a?.file_url || '') });
+    } else if (t === 'file') {
+      const label = String(a?.file_name || '添付ファイル');
+      messages.push({ type: 'text', text: `添付ファイル: ${label}\n${url}`.slice(0, 4900) });
     }
     if (messages.length >= 5) break;
   }
@@ -178,6 +185,11 @@ function buildWebFallbackReply(message) {
   return `「${safe.slice(0, 60)}${safe.length > 60 ? '…' : ''}」、受け取った。いちばん気になるところからでいいよ。`;
 }
 
+function buildAttachmentMessageId() {
+  const n = Math.random().toString(36).slice(2, 10);
+  return `wa_${Date.now()}_${n}`;
+}
+
 async function uploadAdminAttachment(file, lineUserId) {
   let supabase = null;
   try {
@@ -196,15 +208,16 @@ async function uploadAdminAttachment(file, lineUserId) {
   });
   if (error) throw error;
   const pub = supabase.storage.from(bucket).getPublicUrl(path);
+  const genericFileType = /^video\//.test(file.mimetype || '') ? 'video' : (/^image\//.test(file.mimetype || '') ? 'image' : 'file');
   return {
-    message_id: '',
-    file_type: /^image\//.test(file.mimetype || '') ? 'image' : 'video',
+    message_id: buildAttachmentMessageId(),
+    file_type: genericFileType,
     mime_type: file.mimetype || '',
     file_name: file.originalname || '',
     file_size: Number(file.size || 0),
     file_url: pub?.data?.publicUrl || '',
     storage_path: path,
-    thumbnail_url: '',
+    thumbnail_url: genericFileType === 'image' ? (pub?.data?.publicUrl || '') : '',
     created_at: new Date().toISOString(),
     send_status: 'uploaded'
   };
@@ -726,7 +739,13 @@ router.post('/admin/users/refresh-display-name', requireSession, async (req, res
     if (!lineUserId) return res.status(400).json({ ok: false, error: 'invalid_user' });
     const out = await refreshLineDisplayName(lineUserId);
     console.info('[phasee-new] line_display_name_sync', { admin_user_id: req.webSession.user?.id || '', line_user_id: lineUserId, ok: Boolean(out?.ok), mode: 'manual' });
-    return res.json({ ok: Boolean(out?.ok) });
+    const users = await webAdminRepository.getManagedUsers({
+      query: '',
+      limit: 200,
+      adminUserId: req.webSession.user?.id || ''
+    });
+    const target = (users || []).find((x) => String(x?.lineUserId || '') === lineUserId);
+    return res.json({ ok: Boolean(out?.ok), displayName: target?.displayName || '' });
   } catch (_e) {
     return res.status(500).json({ ok: false, error: 'refresh_display_name_failed' });
   }
@@ -781,10 +800,10 @@ router.post('/admin/attachments/upload', requireSession, upload.array('files', 5
     if (!lineUserId || !files.length) {
       return res.status(400).json({ ok: false, error: 'invalid_upload', message: '対象ユーザーまたは添付が不足しています。' });
     }
-    const allow = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime'];
+    const allow = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'application/pdf'];
     for (const f of files) {
       if (!allow.includes(String(f.mimetype || '').toLowerCase())) {
-        return res.status(400).json({ ok: false, error: 'unsupported_mime', message: '対応形式は jpg/jpeg/png/webp/mp4/mov です。' });
+        return res.status(400).json({ ok: false, error: 'unsupported_mime', message: '対応形式は jpg/jpeg/png/webp/mp4/mov/pdf です。' });
       }
     }
     const uploaded = [];
@@ -794,12 +813,23 @@ router.post('/admin/attachments/upload', requireSession, upload.array('files', 5
     console.info('[phasee-new] web_attachment_upload_context', {
       admin_user_id: req.webSession.user?.id || '',
       user_id: lineUserId,
+      upload_ok: true,
+      storage_ok: uploaded.every((x) => Boolean(String(x.storage_path || '').trim())),
+      db_saved_ok: true,
       attachment_count: uploaded.length,
       attachment_types: uploaded.map((x) => x.file_type),
       attachment_sizes: uploaded.map((x) => x.file_size)
     });
     res.json({ ok: true, attachments: uploaded });
   } catch (error) {
+    console.info('[phasee-new] web_attachment_upload_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: String(req.body?.lineUserId || '').trim(),
+      upload_ok: false,
+      storage_ok: false,
+      db_saved_ok: false,
+      reason: String(error?.message || 'upload_failed').slice(0, 200)
+    });
     res.status(500).json({ ok: false, error: 'web_attachment_upload_failed', message: '添付アップロードに失敗しました。' });
   }
 });
@@ -824,9 +854,30 @@ router.post('/admin/chat/send', requireSession, async (req, res) => {
       adminUserId: req.webSession.user?.id || ''
     });
     if (!out?.ok) {
+      console.info('[phasee-new] web_attachment_send_context', {
+        admin_user_id: req.webSession.user?.id || '',
+        user_id: lineUserId,
+        upload_ok: true,
+        storage_ok: attachments.every((x) => Boolean(String(x.storage_path || x.file_url || '').trim())),
+        db_saved_ok: false,
+        line_push_ok: pushResult.ok,
+        history_saved_ok: false,
+        reason: out?.reason || 'history_save_failed'
+      });
       return res.status(500).json({ ok: false, error: 'web_chat_send_failed', message: '管理者返信を保存できませんでした。' });
     }
     const history = await webAdminRepository.getUserChatHistory(lineUserId, { limit: 300 });
+    console.info('[phasee-new] web_attachment_send_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: lineUserId,
+      upload_ok: true,
+      storage_ok: attachments.every((x) => Boolean(String(x.storage_path || x.file_url || '').trim())),
+      db_saved_ok: true,
+      line_push_ok: pushResult.ok,
+      history_saved_ok: true,
+      attachment_count: attachments.length,
+      attachment_message_ids: attachments.map((x) => String(x?.message_id || '')).filter(Boolean)
+    });
     console.info('[phasee-new] web_chat_send_context', {
       admin_user_id: req.webSession.user?.id || '',
       user_id: lineUserId,
@@ -838,6 +889,16 @@ router.post('/admin/chat/send', requireSession, async (req, res) => {
     });
     res.json({ ok: true, items: history, delivery: pushResult });
   } catch (_e) {
+    console.info('[phasee-new] web_attachment_send_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: String(req.body?.lineUserId || '').trim(),
+      upload_ok: true,
+      storage_ok: false,
+      db_saved_ok: false,
+      line_push_ok: false,
+      history_saved_ok: false,
+      reason: 'send_failed'
+    });
     res.status(500).json({ ok: false, error: 'web_chat_send_failed', message: '返信送信に失敗しました。' });
   }
 });
@@ -889,8 +950,13 @@ router.post('/admin/consult', requireSession, async (req, res) => {
     const history = await webAdminRepository.getUserChatHistory(lineUserId, { limit: 40 });
     const weekDraft = week ? await webAdminRepository.getDraft(lineUserId, 'weekly', week.fromYmd, week.toYmd) : null;
     const monthDraft = month ? await webAdminRepository.getDraft(lineUserId, 'monthly', month.fromYmd, month.toYmd) : null;
-    const weekActiveDays = Array.isArray(week?.days) ? week.days.filter((d) => Number(d?.activityKcal || 0) > 0).length : 0;
-    const monthActiveDays = Array.isArray(month?.days) ? month.days.filter((d) => Number(d?.activityKcal || 0) > 0).length : 0;
+    const latestLab = await webAdminRepository.getLatestLabSummaryByLineUserId(lineUserId);
+    const weekActiveDays = Array.isArray(week?.days)
+      ? week.days.filter((d) => Number(d?.activityCount || 0) > 0 || Number(d?.activityKcal || 0) > 0).length
+      : 0;
+    const monthActiveDays = Array.isArray(month?.days)
+      ? month.days.filter((d) => Number(d?.activityCount || 0) > 0 || Number(d?.activityKcal || 0) > 0).length
+      : 0;
     const recentHistory = history.slice(-16).map((m) => `${m.role === 'user' ? '利用者' : '返信'}: ${String(m.text || '').slice(0, 160)}`).join('\n');
     const contextBlock = [
       `対象: ${lineUserId}`,
@@ -898,8 +964,11 @@ router.post('/admin/consult', requireSession, async (req, res) => {
       `[今週サマリ] intake=${week?.totals?.weekIntakeKcal || 0}, activity=${week?.totals?.weekActivityKcal || 0}, net=${week?.totals?.weekNetKcal || 0}, mealCount=${week?.totals?.weekMealCount || 0}, correctionCount=${week?.totals?.weekCorrectionEventCount || 0}`,
       `[今月サマリ] intake=${month?.totals?.monthIntakeKcal || 0}, activity=${month?.totals?.monthActivityKcal || 0}, net=${month?.totals?.monthNetKcal || 0}, mealCount=${month?.totals?.monthMealCount || 0}, correctionCount=${month?.totals?.monthCorrectionEventCount || 0}`,
       `[活動記録件数目安] 今週活動日=${weekActiveDays}, 今月活動日=${monthActiveDays}`,
+      `[DBカウント] mealCount_today=${today?.mealCount || 0}, correctionEventCount_today=${today?.totalCorrectionEventCount || 0}, activityCount_today=${today?.activityCount || 0}`,
       weekDraft ? `[週間下書き]\n${String(weekDraft.edited_text || weekDraft.draft_text || '').slice(0, 500)}` : '',
       monthDraft ? `[月間下書き]\n${String(monthDraft.edited_text || monthDraft.draft_text || '').slice(0, 500)}` : '',
+      latestLab ? `[主要血液検査サマリ]\nrecords=${latestLab.recordsCount}, examDates=${(latestLab.examDates || []).join(', ') || 'n/a'}, patient=${latestLab.patientName || 'n/a'}, facility=${latestLab.facilityName || 'n/a'}, printDate=${latestLab.printDate || 'n/a'}` : '',
+      latestLab?.majorItems?.length ? `[主要項目抜粋]\n${latestLab.majorItems.map((x) => `${x.key}:${x.value}${x.unit ? ` ${x.unit}` : ''}${x.observedDate ? ` (${x.observedDate})` : ''}`).join('\n')}` : '',
       recentHistory ? `[直近チャット]\n${recentHistory}` : ''
     ].filter(Boolean).join('\n');
     const userInput = [
@@ -925,16 +994,66 @@ router.post('/admin/consult', requireSession, async (req, res) => {
       recent_count: history.length,
       has_week_draft: Boolean(weekDraft),
       has_month_draft: Boolean(monthDraft),
+      meal_count_today: Number(today?.mealCount || 0),
+      correction_event_count_today: Number(today?.totalCorrectionEventCount || 0),
+      activity_count_today: Number(today?.activityCount || 0),
+      has_lab_summary: Boolean(latestLab),
+      lab_records_count: Number(latestLab?.recordsCount || 0),
       week_active_days: weekActiveDays,
       month_active_days: monthActiveDays
     });
     return res.json({
       ok: true,
       answer: String(answer || '').trim() || '相談文を生成できませんでした。再度お試しください。',
-      context: { today, week, month, recentCount: history.length }
+      context: { today, week, month, latestLab, recentCount: history.length }
     });
   } catch (_e) {
     return res.status(500).json({ ok: false, error: 'admin_consult_failed', message: 'AI相談に失敗しました。' });
+  }
+});
+
+router.post('/admin/consult/apply-to-draft', requireSession, async (req, res) => {
+  try {
+    const lineUserId = String(req.body?.lineUserId || '').trim();
+    const reportType = String(req.body?.reportType || 'weekly').trim();
+    const answer = String(req.body?.answer || '').trim();
+    if (!lineUserId || !answer || !['weekly', 'monthly'].includes(reportType)) {
+      return res.status(400).json({ ok: false, error: 'invalid_apply_request', message: '対象ユーザー・種別・相談結果が必要です。' });
+    }
+    const summary = reportType === 'weekly'
+      ? await getTokyoWeekEnergyBalance(lineUserId, null)
+      : await getTokyoMonthEnergyBalance(lineUserId, null);
+    if (!summary) {
+      return res.status(400).json({ ok: false, error: 'summary_not_available', message: '対象期間サマリが取得できませんでした。' });
+    }
+    const periodStart = String(summary.fromYmd || '').trim();
+    const periodEnd = String(summary.toYmd || '').trim();
+    const existing = await webAdminRepository.getDraft(lineUserId, reportType, periodStart, periodEnd);
+    const before = String(existing?.edited_text || existing?.draft_text || '').trim();
+    const merged = [before, `\n[AI相談反映]\n${answer}`].filter(Boolean).join('\n').trim();
+    const out = await webAdminRepository.upsertDraft({
+      user_id: lineUserId,
+      report_type: reportType,
+      period_start: periodStart,
+      period_end: periodEnd,
+      source_summary_json: summary,
+      draft_text: String(existing?.draft_text || ''),
+      edited_text: merged,
+      status: 'saved'
+    });
+    if (!out?.ok) {
+      return res.status(500).json({ ok: false, error: 'web_consult_apply_failed', message: '相談結果の反映保存に失敗しました。' });
+    }
+    console.info('[phasee-new] web_ai_consult_apply_context', {
+      admin_user_id: req.webSession.user?.id || '',
+      user_id: lineUserId,
+      report_type: reportType,
+      period: `${periodStart}..${periodEnd}`,
+      applied_len: answer.length
+    });
+    return res.json({ ok: true, periodStart, periodEnd, reportType });
+  } catch (_e) {
+    return res.status(500).json({ ok: false, error: 'web_consult_apply_failed', message: '相談結果の反映に失敗しました。' });
   }
 });
 

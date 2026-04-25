@@ -259,6 +259,39 @@ async function upsertTheme({ adminUserId, themeId, accentColor } = {}) {
   return { ok: true };
 }
 
+async function getLatestLabSummaryByLineUserId(lineUserId) {
+  if (!supabase) return null;
+  const uid = normalizeText(lineUserId);
+  if (!uid) return null;
+  const { data, error } = await supabase
+    .from('lab_sessions')
+    .select('exam_dates_json,parsed_items_json,patient_name,facility_name,print_date,created_at')
+    .eq('line_user_id', uid)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  const rows = Array.isArray(data.parsed_items_json) ? data.parsed_items_json : [];
+  return {
+    createdAt: normalizeText(data.created_at || ''),
+    patientName: normalizeText(data.patient_name || ''),
+    facilityName: normalizeText(data.facility_name || ''),
+    printDate: normalizeText(data.print_date || ''),
+    examDates: Array.isArray(data.exam_dates_json) ? data.exam_dates_json.filter(Boolean).map((x) => normalizeText(x)) : [],
+    recordsCount: rows.length,
+    majorItems: rows
+      .filter((x) => x && typeof x === 'object')
+      .map((x) => ({
+        key: normalizeText(x.normalizedKey || x.key || ''),
+        value: x.value != null ? String(x.value) : '',
+        unit: normalizeText(x.unit || ''),
+        observedDate: normalizeText(x.observedDate || x.observed_date || '')
+      }))
+      .filter((x) => x.key && x.value)
+      .slice(0, 8)
+  };
+}
+
 module.exports = {
   getManagedUsers,
   getUserChatHistory,
@@ -268,5 +301,6 @@ module.exports = {
   getDraft,
   upsertDraft,
   getThemeByAdmin,
-  upsertTheme
+  upsertTheme,
+  getLatestLabSummaryByLineUserId
 };

@@ -6,6 +6,13 @@ function normalizeText(v) {
   return String(v || '').trim();
 }
 
+function classifyDbError(message) {
+  const safe = String(message || '').toLowerCase();
+  if (!safe) return 'db_error';
+  if (safe.includes('schema cache') || safe.includes('could not find the') || safe.includes('column')) return 'schema_cache';
+  return 'db_error';
+}
+
 /**
  * line_user_id 行を必ず作ってから id で更新（update 0 行のまま成功扱いにしない）
  */
@@ -47,6 +54,7 @@ async function syncLineDisplayNameToDb(supabase, lineUserId, displayName, { mode
     .select('id');
   if (error) {
     const detail = String(error.message || 'db_update');
+    const reason = classifyDbError(detail);
     try {
       await supabase
         .from('users')
@@ -55,8 +63,8 @@ async function syncLineDisplayNameToDb(supabase, lineUserId, displayName, { mode
     } catch (_e) {
       // 監査列未適用の環境でも本処理は失敗扱いのまま
     }
-    console.info('[phasee-new] line_display_name_sync', { ok: false, mode, reason: 'db_error', detail: detail.slice(0, 200) });
-    return { ok: false, reason: detail };
+    console.info('[phasee-new] line_display_name_sync', { ok: false, mode, reason, detail: detail.slice(0, 200) });
+    return { ok: false, reason, detail };
   }
   if (!Array.isArray(data) || !data.length) {
     console.info('[phasee-new] line_display_name_sync', { ok: false, mode, reason: 'update_zero_rows', userId: String(user.id) });

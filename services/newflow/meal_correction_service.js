@@ -3,12 +3,13 @@
 const mealRecalcRepository = require('../../repositories/meal_recalc_repository');
 const { recalcMealStateWithLog } = require('../meal_recalc_engine_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
+const contextMemoryService = require('../context_memory_service');
 const dailyBalanceQuery = require('../daily_balance_query_service');
 const weeklyBalanceQuery = require('../weekly_balance_query_service');
 const responseBuilderService = require('./response_builder_service');
 
 const WEEK_BALANCE_INTENTS = new Set(['week_summary', 'week_balance', 'week_intake']);
-const DAY_BALANCE_INTENTS = new Set(['today_meal_detail', 'today_total', 'today_balance', 'today_intake', 'today_activity']);
+const DAY_BALANCE_INTENTS = new Set(['today_meal_detail', 'today_total', 'today_balance', 'today_intake', 'today_activity', 'yesterday_total', 'yesterday_balance']);
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -38,6 +39,8 @@ function detectMealCorrectionIntent(safe) {
 
   if (/(今日|本日).*(収支|出納|カロリーの?収支)/.test(safe)) return 'today_balance';
   if (/(今日|本日).*(合計|トータル|総(摂取|カロリー|カロリ)|日次(合計)?|カロリーの?合計|合計カロリー|摂取の?合計)/.test(safe)) return 'today_total';
+  if (/(昨日|きのう).*(収支|出納|カロリーの?収支)/.test(safe)) return 'yesterday_balance';
+  if (/(昨日|きのう).*(合計|トータル|総(摂取|カロリー|カロリ)|日次(合計)?|カロリーの?合計|合計カロリー|摂取の?合計)/.test(safe)) return 'yesterday_total';
   if (/(今日|本日)の?カロリー(は|の|って|だっけ|って|いくら)?(？|ですか|だっけ|\?)?\s*$/i.test(safe)) {
     return 'today_total';
   }
@@ -70,6 +73,18 @@ function detectMealCorrectionIntent(safe) {
 function extractComponentName(safe) {
   const hit = (safe || '').match(/([^\s、。]+)\s*(だけ|は|を)?\s*(ゼロ|0kcal|0 kcal|食べてない|半分)/);
   return normalizeText(hit?.[1] || '');
+}
+
+function buildSpecificDayTotalReply(dayBalance) {
+  if (!dayBalance?.mealCount) {
+    return `🍚 ${dayBalance?.dateYmd || '対象日'}（東京日付）の食事はまだ記録がありません。合計 0 kcal です。`;
+  }
+  return `🍚 ${dayBalance.dateYmd}（東京日付）の合計は、食事${dayBalance.mealCount}件、摂取（再計算反映後）で約${dayBalance.intakeKcal} kcal（P${dayBalance.protein}／F${dayBalance.fat}／C${dayBalance.carbs}）です。補正の適用は合計${dayBalance.totalCorrectionEventCount}件分です。`;
+}
+
+function buildSpecificDayBalanceReply(dayBalance) {
+  const d = String(dayBalance?.dateYmd || '').trim();
+  return `⚖️ ${d || '対象日'}（東京日付）の収支は、食事（再計算後）の摂取が約${dayBalance?.intakeKcal || 0} kcal、活動消費が約${dayBalance?.activityKcal || 0} kcal（活動${dayBalance?.activityCount || 0}件）で、差分（摂取−活動）が約${dayBalance?.netKcal || 0} kcal です。合計補正イベント${dayBalance?.totalCorrectionEventCount || 0}件。`;
 }
 
 async function appendCorrectionEvent(userId, payload = {}) {
@@ -160,7 +175,12 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
   }
 
   if (DAY_BALANCE_INTENTS.has(intent)) {
-    const b = await dailyBalanceQuery.getTokyoDayEnergyBalance(String(input.userId), null);
+    let targetYmd = null;
+    if (intent === 'yesterday_total' || intent === 'yesterday_balance') {
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      targetYmd = contextMemoryService.addCalendarDaysToTokyoYmd(todayYmd, -1);
+    }
+    const b = await dailyBalanceQuery.getTokyoDayEnergyBalance(String(input.userId), targetYmd || null);
     if (intent === 'today_total') {
       return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayMealTotalReply(b) };
     }
@@ -172,6 +192,12 @@ async function resolveMealFollowupFromSession({ input, text, activeContext } = {
     }
     if (intent === 'today_activity') {
       return { intentType: 'newflow_meal_correction', replyText: responseBuilderService.buildTodayActivityAskReply(b) };
+    }
+    if (intent === 'yesterday_total') {
+      return { intentType: 'newflow_meal_correction', replyText: buildSpecificDayTotalReply(b) };
+    }
+    if (intent === 'yesterday_balance') {
+      return { intentType: 'newflow_meal_correction', replyText: buildSpecificDayBalanceReply(b) };
     }
     if (intent === 'today_meal_detail') {
       if (!b?.mealCount) return { intentType: 'newflow_meal_correction', replyText: '今日の食事詳細はまだありません。' };

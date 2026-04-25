@@ -4,6 +4,7 @@ const contextMemoryService = require('./context_memory_service');
 const mealRecalcRepository = require('../repositories/meal_recalc_repository');
 const activityLogRepository = require('../repositories/activity_log_repository');
 const { recalcMealStateWithLog } = require('./meal_recalc_engine_service');
+const mealLogQueryService = require('./meal_log_query_service');
 
 function round1(n) {
   return Math.round((Number(n || 0) + Number.EPSILON) * 10) / 10;
@@ -73,6 +74,30 @@ async function getTokyoDayEnergyBalance(userId, dateYmd, options = {}) {
       eventCount: evn,
       itemList: Array.isArray(state?.item_list) ? state.item_list : []
     });
+  }
+  if (!details.length) {
+    const mealLogs = await mealLogQueryService.getMealLogsByDateRange(String(userId), day, day);
+    const dedupedLogs = mealLogQueryService.deduplicateMealLogs(mealLogs);
+    for (const row of dedupedLogs) {
+      const kc = Number(row?.kcal || 0);
+      const pr = Number(row?.protein || 0);
+      const f = Number(row?.fat || 0);
+      const c = Number(row?.carbs || 0);
+      intakeKcal += kc;
+      protein += pr;
+      fat += f;
+      carbs += c;
+      details.push({
+        mealId: Number(row?.id || 0),
+        label: String(row?.mealLabel || '食事'),
+        kcal: round1(kc),
+        protein: round1(pr),
+        fat: round1(f),
+        carbs: round1(c),
+        eventCount: 0,
+        itemList: Array.isArray(row?.foodItems) ? row.foodItems : []
+      });
+    }
   }
 
   const act = await activityLogRepository.getActivityBurnInRange(String(userId), fromIso, toIso);
