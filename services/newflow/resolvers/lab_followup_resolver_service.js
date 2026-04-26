@@ -204,6 +204,11 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildBalanceReply(p)}`.trim() };
   }
 
+  if (/(傾向は[?？]?|傾向どう|推移は[?？]?|推移どう|この検査の傾向は[?？]?|この検査の傾向)/.test(safeText)) {
+    record('trend');
+    return { intentType: 'newflow_lab_followup', replyText: buildTrendReply(p) };
+  }
+
   if (
     /(この検査結果|検査結果).*(異常|高い数値|低い数値|傾向)|高い数値ある|低い数値ある|異常は\?|異常ある/.test(safeText)
   ) {

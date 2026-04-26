@@ -19,8 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const imageIngestOrchestrator = require('../services/newflow/image_ingest_orchestrator_service');
 const labSessionRepository = require('../repositories/lab_session_repository');
-const canonicalFallbackService = require('../services/newflow/canonical_fallback_service');
-const { resolveLabFollowup } = require('../services/newflow/resolvers/lab_followup_resolver_service');
+const followupRouterService = require('../services/newflow/followup_router_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -95,20 +94,25 @@ async function main() {
       console.info('parsed_items_json_sample=', JSON.stringify(row.parsed_items_json.slice(0, 5), null, 2));
     }
 
-    const panel = await canonicalFallbackService.getCanonicalLabPanel(userId, { logReachability: false });
-    if (panel) {
+    if (row) {
       console.info('\n--- follow-up (same resolver as newflow; LINE 文面はここを実機と突き合わせ) ---');
-      for (const q of ['TGは？', '患者名は？', '施設名は？', '印刷日は？']) {
-        const r = await resolveLabFollowup(q, panel, {
-          userId,
-          sessionLabReached: true,
-          canonicalLabReached: true,
+      const questions = ['TGは？', '他の日付は？', '前回よりどう？', '異常ある？', '傾向は？', 'バランスは？', '患者名は？', '施設名は？', '印刷日は？'];
+      for (const q of questions) {
+        const r = await followupRouterService.resolveFollowup({
+          input: {
+            userId,
+            lineUserId: userId,
+            messageType: 'text',
+            messageId: `msg-q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            rawText: q
+          },
+          text: q
         });
         console.info(`\nQ: ${q}`);
         console.info(`A: ${normalizeText(r?.replyText || '')}`);
       }
       console.info('\n--- lab_followup_context lines (last few) ---');
-      for (const l of want('lab_followup_context').slice(-4)) console.info(l);
+      for (const l of want('lab_followup_context').slice(-12)) console.info(l);
     } else {
       console.info('\n(No lab_sessions row — insert失敗 or Supabase 未設定)');
     }
