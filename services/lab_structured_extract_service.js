@@ -663,10 +663,17 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   if (!examDates.length && reportDate) examDates = [reportDate];
   let latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '') || examDates[examDates.length - 1] || reportDate || '';
   const primaryGeminiMinItems = geminiItems.extractPrimaryGeminiMinItems(payload);
-  const parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rows);
+  let parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rows);
   const parsedObservedDates = parsedMinItems
     .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
     .filter(Boolean);
+  const parsedObservedDistinct = uniqueSortedDates(parsedObservedDates);
+  if (runMatrix && parsedObservedDistinct.length >= 2) {
+    parsedMinItems = parsedMinItems.map((x) => ({
+      ...x,
+      source: 'lab_multi_date_matrix'
+    }));
+  }
   if (parsedObservedDates.length) {
     examDates = uniqueSortedDates([...examDates, ...parsedObservedDates]);
     latestExamDate = latestExamDate || examDates[examDates.length - 1] || '';

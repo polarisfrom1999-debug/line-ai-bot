@@ -736,6 +736,99 @@ function buildTrendAndCountermeasuresReply(panel, historySessions = []) {
   return `${mid}${deltaBlock}${tail}`.replace(/\s{2,}/g, ' ').trim();
 }
 
+function toFiniteNumber(value) {
+  const n = Number(String(value || '').replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function collectLatestRowsFromPanel(panel) {
+  const out = [];
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  for (const it of items) {
+    const name = normalizeItemName(it?.itemName || it?.name || '');
+    if (!name) continue;
+    const rows = collectTrendRows(panel, name);
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    if (!latest || !normalizeText(latest?.value || '')) continue;
+    out.push({
+      name,
+      date: normalizeDateToken(latest.date || ''),
+      value: normalizeText(latest.value || ''),
+      unit: normalizeText(latest.unit || ''),
+      flag: normalizeFlag(latest.flag || ''),
+      referenceLow: latest.referenceLow ?? null,
+      referenceHigh: latest.referenceHigh ?? null
+    });
+  }
+  return out;
+}
+
+function isReferenceOut(row) {
+  const v = toFiniteNumber(row?.value);
+  if (v == null) return false;
+  const lo = toFiniteNumber(row?.referenceLow);
+  const hi = toFiniteNumber(row?.referenceHigh);
+  if (lo != null && v < lo) return true;
+  if (hi != null && v > hi) return true;
+  return false;
+}
+
+function buildAbnormalSummaryReply(panel) {
+  const latestRows = collectLatestRowsFromPanel(panel);
+  const flagged = latestRows.filter((r) => r.flag === 'H' || r.flag === 'L');
+  const outOfRange = latestRows.filter((r) => isReferenceOut(r) && !flagged.some((f) => f.name === r.name));
+  if (!flagged.length && !outOfRange.length) {
+    return '今確認できる範囲では、H/L や明確な基準外として拾えた値は目立っていません。主治医の説明を優先してください。';
+  }
+  const lines = [];
+  for (const r of [...flagged, ...outOfRange].slice(0, 6)) {
+    const unit = r.unit ? ` ${r.unit}` : '';
+    const mark = r.flag ? ` ${r.flag}` : '';
+    lines.push(`・${r.name}: ${r.date || '日付不明'} ${r.value}${unit}${mark}`);
+  }
+  return ['今確認できる範囲では、注意して見たい値は次のとおりです。', ...lines, '主治医の説明を優先してください。'].join('\n');
+}
+
+function buildHighLowReply(panel, mode = 'high') {
+  const latestRows = collectLatestRowsFromPanel(panel);
+  const picked = latestRows.filter((r) => (mode === 'high' ? r.flag === 'H' : r.flag === 'L'));
+  if (!picked.length) {
+    return mode === 'high'
+      ? '今確認できる範囲では、H マーク付きの高めの値は目立っていません。主治医の説明を優先してください。'
+      : '今確認できる範囲では、L マーク付きの低めの値は目立っていません。主治医の説明を優先してください。';
+  }
+  const lines = picked.slice(0, 6).map((r) => `・${r.name}: ${r.date || '日付不明'} ${r.value}${r.unit ? ` ${r.unit}` : ''} ${r.flag}`);
+  return [
+    mode === 'high' ? '今確認できる範囲で高め（H）として読めた値です。' : '今確認できる範囲で低め（L）として読めた値です。',
+    ...lines,
+    '主治医の説明を優先してください。'
+  ].join('\n');
+}
+
+function buildBalanceReply(panel) {
+  const groups = [
+    { label: '脂質系', names: ['中性脂肪', 'LDL', 'HDL', '総コレステロール', 'LDL/HDL比'] },
+    { label: '肝機能系', names: ['AST', 'ALT', 'γ-GTP'] },
+    { label: '糖代謝系', names: ['HbA1c', '血糖'] },
+    { label: '腎機能系', names: ['クレアチニン', 'eGFR', '尿酸'] }
+  ];
+  const lines = [];
+  for (const g of groups) {
+    const values = [];
+    for (const nm of g.names) {
+      const rows = collectTrendRows(panel, nm);
+      const latest = rows.length ? rows[rows.length - 1] : null;
+      if (!latest || !normalizeText(latest?.value || '')) continue;
+      values.push(`${nm} ${latest.value}${latest.unit ? ` ${latest.unit}` : ''}${latest.flag ? ` ${latest.flag}` : ''}`);
+    }
+    if (values.length) lines.push(`・${g.label}: ${values.slice(0, 3).join(' / ')}`);
+  }
+  if (!lines.length) {
+    return '今確認できる範囲では、バランス評価に必要な主要項目が十分にそろっていません。主治医の説明を優先してください。';
+  }
+  return ['今確認できる範囲でのバランス整理です。', ...lines, '主治医の説明を優先してください。'].join('\n');
+}
+
 /**
  * 保存済み lab_sessions の日付目安一覧（最大5件表示、合計件数は全件）
  */
@@ -829,5 +922,8 @@ module.exports = {
   buildAbnormalChangeReply,
   buildTgProgressReply,
   buildTrendAndCountermeasuresReply,
-  buildSavedLabSessionsDatesReply
+  buildSavedLabSessionsDatesReply,
+  buildAbnormalSummaryReply,
+  buildHighLowReply,
+  buildBalanceReply
 };

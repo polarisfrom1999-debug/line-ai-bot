@@ -94,6 +94,36 @@ async function run() {
       },
       text: 'TGの変化はどうかな？'
     });
+    const prevReply = await followupRouterService.resolveFollowup({
+      input: {
+        userId,
+        lineUserId: userId,
+        messageType: 'text',
+        messageId: `msg-q-prev-${Date.now()}`,
+        rawText: '前回よりどう？'
+      },
+      text: '前回よりどう？'
+    });
+    const abnormalReply = await followupRouterService.resolveFollowup({
+      input: {
+        userId,
+        lineUserId: userId,
+        messageType: 'text',
+        messageId: `msg-q-abnormal-${Date.now()}`,
+        rawText: 'この検査結果の異常は？'
+      },
+      text: 'この検査結果の異常は？'
+    });
+    const balanceReply = await followupRouterService.resolveFollowup({
+      input: {
+        userId,
+        lineUserId: userId,
+        messageType: 'text',
+        messageId: `msg-q-balance-${Date.now()}`,
+        rawText: 'バランスはどう？'
+      },
+      text: 'バランスはどう？'
+    });
 
     const latest = await getLatestSessionForUser(userId);
     const parsed = Array.isArray(latest?.parsed_items_json) ? latest.parsed_items_json : [];
@@ -120,6 +150,9 @@ async function run() {
       tg_reply: normalizeText(tgReply?.replyText || ''),
       dates_reply: normalizeText(datesReply?.replyText || ''),
       tg_trend_reply: normalizeText(trendReply?.replyText || ''),
+      previous_reply: normalizeText(prevReply?.replyText || ''),
+      abnormal_reply: normalizeText(abnormalReply?.replyText || ''),
+      balance_reply: normalizeText(balanceReply?.replyText || ''),
       logs: {
         header: stage('lab_matrix_header_extract'),
         row_label: stage('lab_matrix_row_label_extract'),

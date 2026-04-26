@@ -199,6 +199,30 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim() };
   }
 
+  if (/(バランスは\?|バランスどう|バランス|脂質系|肝機能系|糖代謝系|腎機能系)/.test(safeText)) {
+    record('balance');
+    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildBalanceReply(p)}`.trim() };
+  }
+
+  if (
+    /(この検査結果|検査結果).*(異常|高い数値|低い数値|傾向)|高い数値ある|低い数値ある|異常は\?|異常ある/.test(safeText)
+  ) {
+    if (/(高い数値ある|高め|高い値|高値)/.test(safeText)) {
+      record('high_values');
+      return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildHighLowReply(p, 'high')}`.trim() };
+    }
+    if (/(低い数値ある|低め|低い値|低値)/.test(safeText)) {
+      record('low_values');
+      return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildHighLowReply(p, 'low')}`.trim() };
+    }
+    if (/(傾向|推移|前回より|前回と比較|前回と比べ)/.test(safeText)) {
+      record('trend');
+      return { intentType: 'newflow_lab_followup', replyText: buildTrendReply(p) };
+    }
+    record('abnormal_summary');
+    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildAbnormalSummaryReply(p)}`.trim() };
+  }
+
   if (
     /傾向(と|)(対策|対応|アドバイス|教え)|対策(を)?(教|聞)|気をつける(こと|点|べき)|今回の検査(で|から).*(傾向|わか|気)|検査結果から.*(傾向|対策)|どんな傾向(が|を|は|に)/i.test(
       safeText
@@ -219,10 +243,16 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const comparisons = labHistoryCompare.summarizeMultisessionComparisons(arr);
     const picked = labHistoryCompare.pickOverallLines(comparisons);
     const hasComp = picked.some((c) => c && c.canCompare);
-    const body = labFollowupService.buildOverallHistoryDeltaReply(picked, {
+    let body = labFollowupService.buildOverallHistoryDeltaReply(picked, {
       historySessionsCount: arr.length,
       comparisonAvailable: hasComp
     });
+    if (!hasComp) {
+      const inSessionTrend = buildTrendReply(p);
+      if (normalizeText(inSessionTrend)) {
+        body = `${body} 同一画像内の時系列で見える範囲では、${inSessionTrend.replace(/^今確認できる範囲では、/, '')}`;
+      }
+    }
     record('history_overall', {
       history_sessions_count: arr.length,
       comparison_available: hasComp,
