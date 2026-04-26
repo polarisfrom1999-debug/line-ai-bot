@@ -207,6 +207,43 @@ async function getRecentLabSessions(userId, limit = 10, opts = {}) {
   }
 }
 
+async function updateLatestLabSessionMeta(userId, patch = {}) {
+  if (!supabase) return { ok: false, reason: 'missing_supabase' };
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return { ok: false, reason: 'missing_user' };
+  const next = {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'patientName')) next.patient_name = normalizeText(patch.patientName || '');
+  if (Object.prototype.hasOwnProperty.call(patch, 'facilityName')) next.facility_name = normalizeText(patch.facilityName || '');
+  if (Object.prototype.hasOwnProperty.call(patch, 'printDate')) next.print_date = normalizeText(patch.printDate || '') || null;
+  if (!Object.keys(next).length) return { ok: false, reason: 'empty_patch' };
+  next.updated_at = new Date().toISOString();
+  try {
+    const latest = await supabase
+      .from('lab_sessions')
+      .select('id')
+      .eq('user_id', safeUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest?.error || !latest?.data?.id) {
+      return { ok: false, reason: normalizeText(latest?.error?.message || 'latest_not_found') };
+    }
+    const upd = await supabase
+      .from('lab_sessions')
+      .update(next)
+      .eq('id', latest.data.id)
+      .select('id,user_id,patient_name,facility_name,print_date,updated_at')
+      .limit(1)
+      .maybeSingle();
+    if (upd?.error || !upd?.data) {
+      return { ok: false, reason: normalizeText(upd?.error?.message || 'update_failed') };
+    }
+    return { ok: true, row: upd.data };
+  } catch (e) {
+    return { ok: false, reason: normalizeText(e?.message || 'update_failed') };
+  }
+}
+
 function repDateForRow(row) {
   const p = String(row.print_date || '').trim();
   if (p) {
@@ -230,5 +267,6 @@ module.exports = {
   createLabSession,
   getLatestLabSession,
   getRecentLabSessions,
-  repDateForRow
+  repDateForRow,
+  updateLatestLabSessionMeta
 };

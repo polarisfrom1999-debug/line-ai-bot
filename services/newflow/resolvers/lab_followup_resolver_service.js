@@ -146,6 +146,35 @@ function buildTrendReply(panel = {}) {
   return `${buildScopePrefix(panel)} 変化が分かる行は、${trendLines.join(' / ')} です。`;
 }
 
+function parseLabMetaCorrection(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  const patient = safe.match(/(?:患者名|氏名)\s*(?:は|:|：)?\s*([^\n。]+)/);
+  const facilityFromLead = safe.match(/(?:これは|施設名は|病院名は|医療機関は)?\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所))/);
+  const facility = safe.match(/(?:施設名|病院名|クリニック|医院|医療機関)\s*(?:は|:|：)?\s*([^\n。]+)/);
+  const printDate = safe.match(/(?:印刷日|検査日|採血日)\s*(?:は|:|：)?\s*((?:20\d{2}[-\/\.年]\d{1,2}[-\/\.月]\d{1,2}日?)|(?:\d{2}[-\/]\d{1,2}[-\/]\d{1,2}))/);
+  const out = {};
+  const clean = (v) => normalizeText(v).replace(/です$|だよ$|だった$|だ$/g, '').trim();
+  const invalid = (v) => !v || /[?？]/.test(v) || v.length > 80;
+  if (patient) {
+    const v = clean(patient[1]);
+    if (!invalid(v)) out.patientName = v;
+  }
+  if (facility) {
+    const v = clean(facility[1]);
+    if (!invalid(v)) out.facilityName = v;
+  }
+  if (!out.facilityName && facilityFromLead) {
+    const v = clean(facilityFromLead[1]);
+    if (!invalid(v)) out.facilityName = v;
+  }
+  if (printDate) {
+    const v = normalizeText(printDate[1]);
+    if (!invalid(v)) out.printDate = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /**
  * @param {object} [meta] session_lab_reached / canonical_lab_reached: 追跡用
  */
@@ -175,6 +204,32 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const rows = await labSessionRepository.getRecentLabSessions(userId, 10);
     return Array.isArray(rows) ? rows : [];
   };
+
+  if (/(これは|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|病院|医療機関|患者名|氏名|印刷日|検査日|採血日)/.test(safeText)) {
+    const patch = parseLabMetaCorrection(safeText);
+    if (patch && normalizeText(userId)) {
+      const upd = await labSessionRepository.updateLatestLabSessionMeta(userId, patch);
+      console.info('[phasee-new] lab_correction_intent', {
+        userId: normalizeText(userId),
+        correction_type: 'meta',
+        patch,
+        ok: Boolean(upd?.ok),
+        reason: upd?.ok ? '' : normalizeText(upd?.reason || 'update_failed')
+      });
+      record('correction_intent_meta', {
+        comparison_mode: 'correction_meta',
+        comparison_available: false
+      });
+      if (upd?.ok) {
+        const fixed = [];
+        if (patch.patientName) fixed.push(`患者名=${patch.patientName}`);
+        if (patch.facilityName) fixed.push(`施設名=${patch.facilityName}`);
+        if (patch.printDate) fixed.push(`日付=${patch.printDate}`);
+        return { intentType: 'newflow_lab_followup', replyText: `訂正内容を保存データに反映しました（${fixed.join(' / ')}）。` };
+      }
+      return { intentType: 'newflow_lab_followup', replyText: '訂正として受け取りましたが、保存反映に失敗しました。もう一度同じ内容を短く送ってください。' };
+    }
+  }
 
   if (
     /他の日付|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)/i.test(

@@ -96,7 +96,7 @@ async function main() {
 
     if (row) {
       console.info('\n--- follow-up (same resolver as newflow; LINE 文面はここを実機と突き合わせ) ---');
-      const questions = ['TGは？', '他の日付は？', '前回よりどう？', '異常ある？', '傾向は？', 'バランスは？', '患者名は？', '施設名は？', '印刷日は？'];
+      const questions = ['TGは？', '他の日付は？', '前回よりどう？', '異常ある？', '傾向は？', 'バランスは？', 'これは宮澤クリニックだよ', '患者名は？', '施設名は？', '印刷日は？'];
       for (const q of questions) {
         const r = await followupRouterService.resolveFollowup({
           input: {
