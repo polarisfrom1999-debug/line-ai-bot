@@ -24,8 +24,7 @@ for (const [key, value] of Object.entries(flags)) {
   console.log(`${key}=${value ? 'ON' : 'OFF'}`);
 }
 
-console.log('
-Recommended deploy order:');
+console.log('\nRecommended deploy order:');
 console.log('1. USE_NEW_ORCHESTRATOR=1');
 console.log('2. ENABLE_STAGE_ENTRY_GUIDANCE=1');
 console.log('3. ENABLE_GUIDANCE_GENERAL=1 ENABLE_GUIDANCE_SUMMARY_VIEW=1 ENABLE_GUIDANCE_PERSONA=1');
