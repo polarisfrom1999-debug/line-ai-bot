@@ -327,6 +327,14 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       reason: 'no_qualified_items_and_no_meta',
       qualified_records: qualifiedForDb
     });
+    await activeContextStoreService.setActiveContext(input.userId, {
+      domain: 'lab_image_session_failed',
+      payload: {
+        sourceImageId: normalizeText(imagePayload?.id || ''),
+        sourceMessageId: normalizeText(input?.messageId || ''),
+        reason: 'no_qualified_items_and_no_meta'
+      }
+    }).catch(() => null);
     return {
       handled: true,
       intentType: 'newflow_lab_extract_insufficient',
@@ -337,6 +345,14 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });
   const persist = await labSessionRepository.createLabSession(insertPayload).catch(() => ({ ok: false, reason: 'insert_exception' }));
   if (!persist?.ok) {
+    await activeContextStoreService.setActiveContext(input.userId, {
+      domain: 'lab_image_session_failed',
+      payload: {
+        sourceImageId: normalizeText(imagePayload?.id || ''),
+        sourceMessageId: normalizeText(input?.messageId || ''),
+        reason: 'db_insert_failed'
+      }
+    }).catch(() => null);
     return {
       handled: true,
       intentType: 'newflow_lab_save_pending',
@@ -350,6 +366,10 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       payload: {
         sourceImageId: normalizeText(imagePayload?.id || ''),
         sourceMessageId: normalizeText(input?.messageId || ''),
+        labSessionId: persist?.session?.id || null,
+        observedDates: Array.from(new Set(preDbParsed
+          .map((x) => normalizeYmd(x?.observedDate || x?.observed_date || ''))
+          .filter(Boolean))),
         labPanel: lab
       }
     }).catch(() => null);

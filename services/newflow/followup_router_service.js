@@ -60,7 +60,11 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
 
   const status = await activeContextStoreService.getActiveContext(input?.userId);
   const active = status?.context;
-  const hasActiveImageSession = Boolean(active?.domain && /_image_session$/.test(normalizeText(active.type || active.domain || '')));
+  const activeType = normalizeText(active?.type || active?.domain || '');
+  const hasActiveImageSession = Boolean(
+    active?.domain
+    && (/_image_session$/.test(activeType) || activeType === 'lab_image_session_failed')
+  );
   if (hasActiveImageSession) {
     const isGeneral = looksLikeGeneralConversation(safeText);
     if (imageFollowupOnly && isGeneral) {
@@ -74,21 +78,32 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
 
   // 1) active session 有効なら session参照（最優先）
   if (hasActiveImageSession && !status?.expired) {
+    if (/^lab_image_session_failed/.test(normalizeText(active.type || active.domain || ''))) {
+      return {
+        intentType: 'newflow_lab_followup_blocked_after_failed_ingest',
+        replyText: '直前の検査画像はまだ取り込めていないため、過去データでは回答しません。画像を撮り直して再送してください。'
+      };
+    }
     if (/^lab_/.test(normalizeText(active.type || active.domain || ''))) {
       let panel = active?.payload?.labPanel || null;
       const sessionLabReached = true;
       let canonicalLabReached = false;
+      const currentSessionId = active?.payload?.labSessionId || null;
+      let answerSourceSessionId = currentSessionId || null;
       if (isWeakLabPanel(panel)) {
         const canonical = await canonicalFallbackService.getCanonicalLabPanel(input.userId, { logReachability: false });
         if (canonical) {
           panel = mergeLabPanels(panel, canonical);
           canonicalLabReached = true;
+          answerSourceSessionId = canonical?.sourceSessionId || answerSourceSessionId;
         }
       }
       return await resolveLabFollowup(safeText, panel, {
         userId: input.userId,
         sessionLabReached,
-        canonicalLabReached
+        canonicalLabReached,
+        currentSessionId,
+        answerSourceSessionId
       });
     }
     if (/^meal_/.test(normalizeText(active.type || active.domain || ''))) {
@@ -103,7 +118,13 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     if (inferred === 'lab') {
       const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
       if (panel) {
-        return await resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+        return await resolveLabFollowup(safeText, panel, {
+          userId: input.userId,
+          sessionLabReached: false,
+          canonicalLabReached: true,
+          currentSessionId: null,
+          answerSourceSessionId: panel?.sourceSessionId || null
+        });
       }
       return { intentType: 'newflow_context_expired', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
     }
@@ -124,7 +145,13 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     if (inferred === 'lab') {
       const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
       if (panel) {
-        return await resolveLabFollowup(safeText, panel, { userId: input.userId, sessionLabReached: false, canonicalLabReached: true });
+        return await resolveLabFollowup(safeText, panel, {
+          userId: input.userId,
+          sessionLabReached: false,
+          canonicalLabReached: true,
+          currentSessionId: null,
+          answerSourceSessionId: panel?.sourceSessionId || null
+        });
       }
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }

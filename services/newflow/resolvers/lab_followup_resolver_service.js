@@ -50,7 +50,12 @@ const DEFAULT_LOG_EX = {
   comparison_available: false,
   comparison_target_key: null,
   comparison_mode: null,
-  abnormal_rows_count: null
+  abnormal_rows_count: null,
+  current_session_id: null,
+  answer_source_session_id: null,
+  current_session_observed_dates: [],
+  returned_dates_list: [],
+  correction_patch_applied: null
 };
 
 /**
@@ -85,7 +90,12 @@ function logLabFollowupContext({
       comparison_available: ex.comparison_available,
       comparison_target_key: ex.comparison_target_key,
       comparison_mode: ex.comparison_mode,
-      abnormal_rows_count: ex.abnormal_rows_count
+      abnormal_rows_count: ex.abnormal_rows_count,
+      current_session_id: ex.current_session_id,
+      answer_source_session_id: ex.answer_source_session_id,
+      current_session_observed_dates: ex.current_session_observed_dates,
+      returned_dates_list: ex.returned_dates_list,
+      correction_patch_applied: ex.correction_patch_applied
     });
     return;
   }
@@ -110,7 +120,12 @@ function logLabFollowupContext({
     comparison_available: ex.comparison_available,
     comparison_target_key: ex.comparison_target_key,
     comparison_mode: ex.comparison_mode,
-    abnormal_rows_count: ex.abnormal_rows_count
+    abnormal_rows_count: ex.abnormal_rows_count,
+    current_session_id: ex.current_session_id,
+    answer_source_session_id: ex.answer_source_session_id,
+    current_session_observed_dates: ex.current_session_observed_dates,
+    returned_dates_list: ex.returned_dates_list,
+    correction_patch_applied: ex.correction_patch_applied
   });
 }
 
@@ -154,7 +169,10 @@ function parseLabMetaCorrection(text) {
   const facility = safe.match(/(?:施設名|病院名|クリニック|医院|医療機関)\s*(?:は|:|：)?\s*([^\n。]+)/);
   const printDate = safe.match(/(?:印刷日|検査日|採血日)\s*(?:は|:|：)?\s*((?:20\d{2}[-\/\.年]\d{1,2}[-\/\.月]\d{1,2}日?)|(?:\d{2}[-\/]\d{1,2}[-\/]\d{1,2}))/);
   const out = {};
-  const clean = (v) => normalizeText(v).replace(/です$|だよ$|だった$|だ$/g, '').trim();
+  const clean = (v) => normalizeText(v)
+    .replace(/です$|だよ$|だった$|だ$/g, '')
+    .replace(/^(これは|これ)\s*/, '')
+    .trim();
   const invalid = (v) => !v || /[?？]/.test(v) || v.length > 80;
   if (patient) {
     const v = clean(patient[1]);
@@ -221,7 +239,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   if (!safeText) return null;
 
   const p = panel && typeof panel === 'object' ? panel : null;
-  const { userId = '', sessionLabReached = false, canonicalLabReached = false } = meta;
+  const {
+    userId = '',
+    sessionLabReached = false,
+    canonicalLabReached = false,
+    currentSessionId = null,
+    answerSourceSessionId = null
+  } = meta;
 
   if (!p) {
     logLabFollowupContext({ userId, questionId: 'no_panel', sessionLabReached, canonicalLabReached, panel: null, logExtra: {} });
@@ -233,8 +257,26 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     ? (labFollowupService.RESEND_PROMPT || 'もう一度鮮明に送り直すと、読み取れやすくなります。')
     : '';
 
+  const currentObservedDates = Array.from(new Set(
+    (Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
+      .map((x) => normalizeText(x?.observedDate || x?.observed_date || x?.date || ''))
+      .filter(Boolean)
+  )).sort();
+
   const record = (id, logExtra = {}) => {
-    logLabFollowupContext({ userId, questionId: id, sessionLabReached, canonicalLabReached, panel: p, logExtra });
+    logLabFollowupContext({
+      userId,
+      questionId: id,
+      sessionLabReached,
+      canonicalLabReached,
+      panel: p,
+      logExtra: {
+        current_session_id: currentSessionId,
+        answer_source_session_id: answerSourceSessionId || currentSessionId,
+        current_session_observed_dates: currentObservedDates,
+        ...logExtra
+      }
+    });
   };
 
   const loadHistory = async () => {
@@ -243,10 +285,14 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     return Array.isArray(rows) ? rows : [];
   };
 
-  if (/(これは|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|病院|医療機関|患者名|氏名|印刷日|検査日|採血日)/.test(safeText)) {
+  if (/((これは|これ|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|内科|病院|医療機関|患者名|氏名|印刷日|検査日|採血日))|((患者名|氏名|施設名|病院名).*(だよ|です|だった))/i.test(safeText)) {
     const patch = parseLabMetaCorrection(safeText);
     if (patch && normalizeText(userId)) {
       const upd = await labSessionRepository.updateLatestLabSessionMeta(userId, patch);
+      await labSessionRepository.appendLatestLabSessionCorrectionAudit(userId, {
+        correctionType: 'meta',
+        patch
+      }).catch(() => null);
       console.info('[phasee-new] lab_correction_intent', {
         userId: normalizeText(userId),
         correction_type: 'meta',
@@ -256,7 +302,11 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       });
       record('correction_intent_meta', {
         comparison_mode: 'correction_meta',
-        comparison_available: false
+        comparison_available: false,
+        current_session_id: currentSessionId,
+        answer_source_session_id: answerSourceSessionId || currentSessionId,
+        current_session_observed_dates: currentObservedDates,
+        correction_patch_applied: patch
       });
       if (upd?.ok) {
         const fixed = [];
@@ -285,7 +335,11 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       });
       record('correction_intent_date', {
         comparison_mode: 'correction_date',
-        comparison_available: false
+        comparison_available: false,
+        current_session_id: currentSessionId,
+        answer_source_session_id: answerSourceSessionId || currentSessionId,
+        current_session_observed_dates: currentObservedDates,
+        correction_patch_applied: patch || { rawText: safeText, correctionHint: 'date' }
       });
       if (upd?.ok) {
         return { intentType: 'newflow_lab_followup', replyText: '日付訂正として受け取り、監査ログに反映しました。必要なら「2025-03-24のTGを2025-03-20へ」のように具体的に送ってください。' };
@@ -310,7 +364,11 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       });
       record('correction_intent_value_association', {
         comparison_mode: 'correction_value_association',
-        comparison_available: false
+        comparison_available: false,
+        current_session_id: currentSessionId,
+        answer_source_session_id: answerSourceSessionId || currentSessionId,
+        current_session_observed_dates: currentObservedDates,
+        correction_patch_applied: patch || { rawText: safeText, correctionHint: 'value_association' }
       });
       if (upd?.ok) {
         return { intentType: 'newflow_lab_followup', replyText: '値の紐づけ訂正として受け取り、監査ログに反映しました。対象項目と正しい日付を1つずつ指定すると再紐づけしやすくなります。' };
@@ -325,19 +383,26 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     )
   ) {
     const arr = await loadHistory();
-    const panelDates = Array.from(new Set(
-      (Array.isArray(p?.examDates) ? p.examDates : [])
-        .map((d) => normalizeText(d))
-        .filter(Boolean)
-    ));
+    const panelDates = currentObservedDates.length
+      ? currentObservedDates
+      : Array.from(new Set(
+        (Array.isArray(p?.examDates) ? p.examDates : [])
+          .map((d) => normalizeText(d))
+          .filter(Boolean)
+      ));
     const panelDateLine = panelDates.length
       ? `この画像内で読み取れた日付候補は ${panelDates.join(' / ')} です。`
       : '';
-    const body = [panelDateLine, labFollowupService.buildSavedLabSessionsDatesReply(arr || [])].filter(Boolean).join(' ');
+    const savedCountLine = `保存済みセッション件数は ${(arr || []).length} 件です。`;
+    const body = [panelDateLine, savedCountLine].filter(Boolean).join(' ');
     record('lab_saved_dates_inventory', {
       history_sessions_count: (arr || []).length,
       comparison_available: (arr || []).length >= 2,
-      comparison_mode: 'saved_dates'
+      comparison_mode: 'saved_dates',
+      current_session_id: currentSessionId,
+      answer_source_session_id: answerSourceSessionId || currentSessionId,
+      current_session_observed_dates: currentObservedDates,
+      returned_dates_list: panelDates
     });
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim() };
   }

@@ -56,6 +56,7 @@ function toLabPanel(labSession) {
     labSession.gemini_raw
   );
   return {
+    sourceSessionId: labSession.id || null,
     patientName,
     facilityName,
     printDate,
