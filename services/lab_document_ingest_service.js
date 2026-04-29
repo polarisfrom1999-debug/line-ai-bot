@@ -93,6 +93,14 @@ function buildPipelineComparison(v1 = {}, v2 = {}) {
   };
 }
 
+function panelQualifiedCount(panel = {}) {
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
+  const items = Array.isArray(panel?.items) ? panel.items : [];
+  const structuredCount = structured.filter((x) => x && typeof x === 'object' && String(x.value || '').trim()).length;
+  const itemCount = items.filter((x) => x && typeof x === 'object' && String(x.value || x.currentValue || '').trim()).length;
+  return Math.max(structuredCount, itemCount);
+}
+
 async function ingestLabDocument({ userId, imagePayload } = {}) {
   const cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
   if (cached) {
@@ -110,7 +118,25 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
   ]);
   const comparison = buildPipelineComparison(panelV1, panelV2);
   console.info('[lab-pipeline] compare_v1_v2', { userId, mode, ...comparison });
+  const v2Count = panelQualifiedCount(panelV2);
+  const v1Count = panelQualifiedCount(panelV1);
   let panel = panelV2;
+  if (v2Count === 0 && v1Count > 0) {
+    panel = {
+      ...panelV1,
+      geminiRaw: panelV2?.geminiRaw || panelV1?.geminiRaw || null,
+      structuredJson: panelV2?.structuredJson ?? panelV1?.structuredJson ?? null,
+      rawPayload: panelV2?.rawPayload ?? panelV1?.rawPayload ?? null,
+      analysisConfidence: panelV2?.analysisConfidence || panelV1?.analysisConfidence || {},
+      examDateEntries: Array.isArray(panelV2?.examDateEntries) ? panelV2.examDateEntries : (panelV1?.examDateEntries || []),
+      pageInfo: panelV2?.pageInfo || panelV1?.pageInfo || { current_page: null, total_pages: null }
+    };
+    console.info('[lab-pipeline] v2_empty_fallback_to_v1', {
+      userId,
+      v2_count: v2Count,
+      v1_count: v1Count
+    });
+  }
   try {
     await applyMetaLayerToPanel({ userId, imagePayload, panel });
   } catch (err) {

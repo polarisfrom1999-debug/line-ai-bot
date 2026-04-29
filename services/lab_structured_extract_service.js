@@ -438,6 +438,9 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   let ok = false;
   let geminiTraceBundle = null;
   let rawCandidateText = '';
+  let textRescueRowCount = 0;
+  let matrixRowsCount = 0;
+  let matrixRescueRowsCount = 0;
 
   try {
     const dispatch = await geminiDispatchService.generateStructuredImageJson({
@@ -539,6 +542,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       });
       const textRows = rescueRowsFromNarrativeText(textRescue?.text || '');
       if (textRows.length) {
+        textRescueRowCount = textRows.length;
         payload = {
           ...(payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}),
           document_type: normalizeText((payload && payload.document_type) || meta.documentType || 'blood_test'),
@@ -577,6 +581,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
     const m1Rows = Array.isArray(m1?.data) ? m1.data : [];
+    matrixRowsCount = m1Rows.length;
     const m1Diag = m1Rows.length ? labMatrixExtractService.buildMatrixDiagnostics(m1Rows) : null;
     const needRescue = !m1Rows.length
       || !m1Diag
@@ -599,6 +604,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
         if (tsvRows.length) extra = tsvRows;
       }
       if (extra.length) {
+        matrixRescueRowsCount = extra.length;
         extra = extra.map((r) => {
           const nk = normalizeText(r?.normalized_key || r?.normalizedKey || '');
           if (nk) return r;
@@ -757,6 +763,26 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     itemChain = rowFallbackUsed ? 'ok:gemini_primary_plus_row_fallback_merge' : 'ok:gemini_primary_only';
   } else {
     itemChain = 'ok:row_fallback_only';
+  }
+  if (!parsedMinItems.length) {
+    const topLevelKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? Object.keys(payload).slice(0, 20)
+      : [];
+    const dataArr = Array.isArray(payload?.data) ? payload.data : [];
+    const dateOnlyRows = dataArr.filter((r) => classifier.normalizeDateToken(r?.value || '') && !normalizeText(r?.label_in_image || r?.labelInImage || r?.row_label_raw || ''));
+    console.info('[lab-ingest-trace] stage:zero_items_diagnostics', {
+      userId: meta.userId,
+      gemini_raw_empty: !normalizeText(rawCandidateText || rawText),
+      gemini_top_level_keys: topLevelKeys,
+      structured_result_present: Boolean(payload && (Array.isArray(payload?.data) || topLevelKeys.length)),
+      matrix_candidates_count: matrixRowsCount,
+      rows_candidates_count: rows.length,
+      text_fallback_candidates_count: textRescueRowCount,
+      row_fallback_used: rowFallbackUsed,
+      row_fallback_unused_reason: rowFallbackUsed ? '' : 'row_fallback_rows_empty_or_unmapped',
+      date_only_payload_rows: dateOnlyRows.length,
+      parsed_items_empty_reason: itemChain
+    });
   }
   labIngestTrace.logRecordsCountReason({
     userId: meta.userId,
