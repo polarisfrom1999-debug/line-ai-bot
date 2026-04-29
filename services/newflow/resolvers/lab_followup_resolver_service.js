@@ -165,7 +165,7 @@ function parseLabMetaCorrection(text) {
   const safe = normalizeText(text);
   if (!safe) return null;
   const patient = safe.match(/(?:患者名|氏名)\s*(?:は|:|：)?\s*([^\n。]+)/);
-  const facilityFromLead = safe.match(/(?:これは|施設名は|病院名は|医療機関は)?\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所))/);
+  const facilityFromLead = safe.match(/(?:これは|施設名は|病院名は|医療機関は)?\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所|内科))/);
   const facility = safe.match(/(?:施設名|病院名|クリニック|医院|医療機関)\s*(?:は|:|：)?\s*([^\n。]+)/);
   const printDate = safe.match(/(?:印刷日|検査日|採血日)\s*(?:は|:|：)?\s*((?:20\d{2}[-\/\.年]\d{1,2}[-\/\.月]\d{1,2}日?)|(?:\d{2}[-\/]\d{1,2}[-\/]\d{1,2}))/);
   const out = {};
@@ -556,6 +556,19 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   if (/(変化|推移|上がっ|下がっ|前回(と)?(比|くら))/.test(safeText) && !/前回(より|と(比(べ|較)))/.test(safeText) && !/(中性脂肪|TG)の(推移|傾向)/i.test(safeText)) {
     record('trend');
     return { intentType: 'newflow_lab_followup', replyText: buildTrendReply(p) };
+  }
+  if (/(この(検査)?結果.*どう|この結果.*どう|健康状態どう思う|総評して|全体としてどう|全体的にどう)/i.test(safeText)) {
+    record('overall_assessment', {
+      comparison_mode: 'overall_assessment'
+    });
+    const summary = [
+      labFollowupService.buildAbnormalSummaryReply(p),
+      labFollowupService.buildBalanceReply(p)
+    ].filter(Boolean).join('\n');
+    return {
+      intentType: 'newflow_lab_followup',
+      replyText: `${pre} ${summary}`.trim()
+    };
   }
   if (/(他に)?(何の)?(項目|検査)|他に(何|読|わか|え)る?|他の(検査)?/i.test(safeText)) {
     record('other_values');
