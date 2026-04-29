@@ -257,11 +257,18 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     ? (labFollowupService.RESEND_PROMPT || 'もう一度鮮明に送り直すと、読み取れやすくなります。')
     : '';
 
-  const currentObservedDates = Array.from(new Set(
-    (Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
+  const currentObservedDates = Array.from(new Set([
+    ...(Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
       .map((x) => normalizeText(x?.observedDate || x?.observed_date || x?.date || ''))
+      .filter(Boolean),
+    ...(Array.isArray(p?.examDates) ? p.examDates : [])
+      .map((d) => normalizeText(d))
+      .filter(Boolean),
+    ...(Array.isArray(p?.items) ? p.items : [])
+      .flatMap((it) => (Array.isArray(it?.history) ? it.history : []))
+      .map((h) => normalizeText(h?.date || ''))
       .filter(Boolean)
-  )).sort();
+  ])).sort();
 
   const record = (id, logExtra = {}) => {
     logLabFollowupContext({
@@ -378,7 +385,7 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   }
 
   if (
-    /他の日付|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)/i.test(
+    /他の日付|他の日は|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)/i.test(
       safeText
     )
   ) {
@@ -432,6 +439,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       record('trend');
       return { intentType: 'newflow_lab_followup', replyText: buildTrendReply(p) };
     }
+    record('abnormal_summary');
+    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildAbnormalSummaryReply(p)}`.trim() };
+  }
+  if (/(何が問題|問題ある|問題がある|どこが問題|何が悪い)/.test(safeText)) {
     record('abnormal_summary');
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildAbnormalSummaryReply(p)}`.trim() };
   }
@@ -557,7 +568,7 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     record('trend');
     return { intentType: 'newflow_lab_followup', replyText: buildTrendReply(p) };
   }
-  if (/(この(検査)?結果.*どう|この結果.*どう|健康状態どう思う|総評して|全体としてどう|全体的にどう)/i.test(safeText)) {
+  if (/(私の検査の結果.*どう|この(検査)?結果.*どう|この結果.*どう|健康状態どう思う|総評して|全体としてどう|全体的にどう)/i.test(safeText)) {
     record('overall_assessment', {
       comparison_mode: 'overall_assessment'
     });

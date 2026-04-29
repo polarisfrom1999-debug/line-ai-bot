@@ -221,7 +221,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   const preDbParsedCandidate = toParsedItemsFromLabPanel(lab);
   const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
   const preDbParsedRaw = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
-  const observedDateFallback = normalizeYmd(lab?.latestExamDate || lab?.examDate || lab?.printDate || lab?.meta?.printDate || '');
+  const observedDateFallback = normalizeYmd(lab?.latestExamDate || lab?.examDate || '');
   const preDbParsed = (Array.isArray(preDbParsedRaw) ? preDbParsedRaw : []).map((it) => {
     if (!it || typeof it !== 'object') return it;
     const od = normalizeYmd(it.observedDate || it.observed_date || '');
@@ -252,6 +252,14 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     parsed_items_len: preDbParsed.length,
     qualified_records: qualifiedForDb
   });
+  const observedDatesFromItems = Array.from(new Set(
+    preDbParsed
+      .map((it) => normalizeYmd(it?.observedDate || it?.observed_date || ''))
+      .filter(Boolean)
+  )).sort();
+  const examDatesForInsert = observedDatesFromItems.length
+    ? observedDatesFromItems
+    : (Array.isArray(lab?.examDates) ? lab.examDates : []);
   const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
@@ -260,7 +268,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     patientName: lab?.patientName || '',
     facilityName: lab?.facilityName || '',
     printDate: lab?.printDate || '',
-    examDates: Array.isArray(lab?.examDates) ? lab.examDates : [],
+    examDates: examDatesForInsert,
     parsedItems: preDbParsed,
     rawText: lab?.rawText || '',
     confidence: Number(lab?.analysisConfidence?.v2_confidence || 0) || 0,
@@ -367,9 +375,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         sourceImageId: normalizeText(imagePayload?.id || ''),
         sourceMessageId: normalizeText(input?.messageId || ''),
         labSessionId: persist?.session?.id || null,
-        observedDates: Array.from(new Set(preDbParsed
-          .map((x) => normalizeYmd(x?.observedDate || x?.observed_date || ''))
-          .filter(Boolean))),
+        observedDates: observedDatesFromItems,
         labPanel: lab
       }
     }).catch(() => null);
