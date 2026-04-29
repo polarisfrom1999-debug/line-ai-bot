@@ -13,6 +13,46 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+/** Meta correction: strip junk before persisting patch / session columns (resolver unchanged). */
+function stripLeadingPunctuationAndSpaces(s) {
+  let t = String(s || '');
+  for (let i = 0; i < 8; i++) {
+    const next = t.replace(/^[\s\u3000、。,.．]+/, '');
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
+const LAB_META_NAME_INTRO_RE =
+  /^(これは|これ|ここ|ここは|病院は|施設は|医療機関は|病院名は|施設名は)\s*[、,]?\s*/u;
+
+function sanitizeLabMetaNameField(value) {
+  let s = normalizeText(value);
+  if (!s) return '';
+  for (let i = 0; i < 6; i++) {
+    s = stripLeadingPunctuationAndSpaces(s);
+    const m = s.match(LAB_META_NAME_INTRO_RE);
+    if (!m) break;
+    s = s.slice(m[0].length);
+  }
+  s = stripLeadingPunctuationAndSpaces(s);
+  s = s.replace(/[\s\u3000、。,.．]+$/u, '').trim();
+  return normalizeText(s);
+}
+
+function sanitizeMetaCorrectionPatch(patch) {
+  if (!patch || typeof patch !== 'object') return patch;
+  const out = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(out, 'patientName')) {
+    out.patientName = sanitizeLabMetaNameField(out.patientName);
+  }
+  if (Object.prototype.hasOwnProperty.call(out, 'facilityName')) {
+    out.facilityName = sanitizeLabMetaNameField(out.facilityName);
+  }
+  return out;
+}
+
 function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -211,10 +251,11 @@ async function updateLatestLabSessionMeta(userId, patch = {}) {
   if (!supabase) return { ok: false, reason: 'missing_supabase' };
   const safeUserId = normalizeText(userId);
   if (!safeUserId) return { ok: false, reason: 'missing_user' };
+  const patchClean = sanitizeMetaCorrectionPatch(patch);
   const next = {};
-  if (Object.prototype.hasOwnProperty.call(patch, 'patientName')) next.patient_name = normalizeText(patch.patientName || '');
-  if (Object.prototype.hasOwnProperty.call(patch, 'facilityName')) next.facility_name = normalizeText(patch.facilityName || '');
-  if (Object.prototype.hasOwnProperty.call(patch, 'printDate')) next.print_date = normalizeText(patch.printDate || '') || null;
+  if (Object.prototype.hasOwnProperty.call(patchClean, 'patientName')) next.patient_name = normalizeText(patchClean.patientName || '');
+  if (Object.prototype.hasOwnProperty.call(patchClean, 'facilityName')) next.facility_name = normalizeText(patchClean.facilityName || '');
+  if (Object.prototype.hasOwnProperty.call(patchClean, 'printDate')) next.print_date = normalizeText(patchClean.printDate || '') || null;
   if (!Object.keys(next).length) return { ok: false, reason: 'empty_patch' };
   next.updated_at = new Date().toISOString();
   try {
@@ -267,9 +308,13 @@ async function appendLatestLabSessionCorrectionAudit(userId, entry = {}) {
     const currentAudit = Array.isArray(currentGeminiRaw.correction_audit)
       ? [...currentGeminiRaw.correction_audit]
       : [];
+    let patchForAudit = entry?.patch && typeof entry.patch === 'object' ? { ...entry.patch } : {};
+    if (normalizeText(correctionType) === 'meta') {
+      patchForAudit = sanitizeMetaCorrectionPatch(patchForAudit);
+    }
     currentAudit.push({
       correction_type: correctionType,
-      patch: entry?.patch && typeof entry.patch === 'object' ? entry.patch : {},
+      patch: patchForAudit,
       at: new Date().toISOString()
     });
     const upd = await supabase
