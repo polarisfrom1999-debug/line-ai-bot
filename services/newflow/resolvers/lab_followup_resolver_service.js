@@ -257,18 +257,11 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     ? (labFollowupService.RESEND_PROMPT || 'もう一度鮮明に送り直すと、読み取れやすくなります。')
     : '';
 
-  const currentObservedDates = Array.from(new Set([
-    ...(Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
-      .map((x) => normalizeText(x?.observedDate || x?.observed_date || x?.date || ''))
-      .filter(Boolean),
-    ...(Array.isArray(p?.examDates) ? p.examDates : [])
-      .map((d) => normalizeText(d))
-      .filter(Boolean),
-    ...(Array.isArray(p?.items) ? p.items : [])
-      .flatMap((it) => (Array.isArray(it?.history) ? it.history : []))
-      .map((h) => normalizeText(h?.date || ''))
+  const currentObservedDates = Array.from(new Set(
+    (Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
+      .map((x) => normalizeText(x?.observedDate || x?.observed_date || ''))
       .filter(Boolean)
-  ])).sort();
+  )).sort();
 
   const record = (id, logExtra = {}) => {
     logLabFollowupContext({
@@ -584,6 +577,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   if (/(他に)?(何の)?(項目|検査)|他に(何|読|わか|え)る?|他の(検査)?/i.test(safeText)) {
     record('other_values');
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildGentleReadableSummaryReply(p)}${tail ? ` ${tail}` : ''}`.trim() };
+  }
+  if (/(何読み取れた|何を読み取った|全部教えて|どの項目が保存された|読み取れた項目を見せて|10件は何を読み取った|保存項目)/.test(safeText)) {
+    record('item_inventory');
+    return {
+      intentType: 'newflow_lab_followup',
+      replyText: `${pre} ${labFollowupService.buildNaturalAllValuesReply(p)}${tail ? ` ${tail}` : ''}`.trim()
+    };
   }
   const target = labFollowupService.normalizeTarget(safeText);
   if (target) {
