@@ -244,6 +244,56 @@ async function updateLatestLabSessionMeta(userId, patch = {}) {
   }
 }
 
+async function appendLatestLabSessionCorrectionAudit(userId, entry = {}) {
+  if (!supabase) return { ok: false, reason: 'missing_supabase' };
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return { ok: false, reason: 'missing_user' };
+  const correctionType = normalizeText(entry?.correctionType || '');
+  if (!correctionType) return { ok: false, reason: 'missing_correction_type' };
+  try {
+    const latest = await supabase
+      .from('lab_sessions')
+      .select('id,gemini_raw')
+      .eq('user_id', safeUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest?.error || !latest?.data?.id) {
+      return { ok: false, reason: normalizeText(latest?.error?.message || 'latest_not_found') };
+    }
+    const currentGeminiRaw = latest.data.gemini_raw && typeof latest.data.gemini_raw === 'object'
+      ? { ...latest.data.gemini_raw }
+      : {};
+    const currentAudit = Array.isArray(currentGeminiRaw.correction_audit)
+      ? [...currentGeminiRaw.correction_audit]
+      : [];
+    currentAudit.push({
+      correction_type: correctionType,
+      patch: entry?.patch && typeof entry.patch === 'object' ? entry.patch : {},
+      at: new Date().toISOString()
+    });
+    const upd = await supabase
+      .from('lab_sessions')
+      .update({
+        gemini_raw: {
+          ...currentGeminiRaw,
+          correction_audit: currentAudit
+        },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', latest.data.id)
+      .select('id,updated_at,gemini_raw')
+      .limit(1)
+      .maybeSingle();
+    if (upd?.error || !upd?.data?.id) {
+      return { ok: false, reason: normalizeText(upd?.error?.message || 'update_failed') };
+    }
+    return { ok: true, row: upd.data };
+  } catch (e) {
+    return { ok: false, reason: normalizeText(e?.message || 'update_failed') };
+  }
+}
+
 function repDateForRow(row) {
   const p = String(row.print_date || '').trim();
   if (p) {
@@ -268,5 +318,6 @@ module.exports = {
   getLatestLabSession,
   getRecentLabSessions,
   repDateForRow,
-  updateLatestLabSessionMeta
+  updateLatestLabSessionMeta,
+  appendLatestLabSessionCorrectionAudit
 };

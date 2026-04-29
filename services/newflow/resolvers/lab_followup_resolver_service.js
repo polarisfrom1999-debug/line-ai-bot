@@ -175,6 +175,44 @@ function parseLabMetaCorrection(text) {
   return Object.keys(out).length ? out : null;
 }
 
+function normalizeDateToken(value) {
+  const safe = normalizeText(value).replace(/\s+/g, '');
+  if (!safe) return '';
+  let m = safe.match(/(20\d{2})[\/\.\-年](\d{1,2})[\/\.\-月](\d{1,2})日?/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  m = safe.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return '';
+}
+
+function extractDateCorrectionPatch(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  if (!/(日付|検査日|採血日|別の日|違う|ちがう)/.test(safe)) return null;
+  const dateRegex = /(20\d{2}[\/\.\-年]\d{1,2}[\/\.\-月]\d{1,2}日?)/g;
+  const dates = [];
+  let m;
+  while ((m = dateRegex.exec(safe)) !== null) {
+    const d = normalizeDateToken(m[1]);
+    if (d) dates.push(d);
+  }
+  return {
+    rawText: safe,
+    correctionHint: 'date',
+    mentionedDates: Array.from(new Set(dates))
+  };
+}
+
+function extractValueAssociationCorrectionPatch(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  if (!/(その値|この値|別の日|値.*違う|値.*ちがう|紐づけ|ひもづけ|対応が違う)/.test(safe)) return null;
+  return {
+    rawText: safe,
+    correctionHint: 'value_association'
+  };
+}
+
 /**
  * @param {object} [meta] session_lab_reached / canonical_lab_reached: 追跡用
  */
@@ -228,6 +266,56 @@ async function resolveLabFollowup(text, panel, meta = {}) {
         return { intentType: 'newflow_lab_followup', replyText: `訂正内容を保存データに反映しました（${fixed.join(' / ')}）。` };
       }
       return { intentType: 'newflow_lab_followup', replyText: '訂正として受け取りましたが、保存反映に失敗しました。もう一度同じ内容を短く送ってください。' };
+    }
+  }
+
+  if (/(日付が違う|日付.*ちがう|検査日が違う|採血日が違う|検査日.*ちがう|採血日.*ちがう|別の日だよ|別の日です)/.test(safeText) && !/値/.test(safeText)) {
+    const patch = extractDateCorrectionPatch(safeText);
+    if (normalizeText(userId)) {
+      const upd = await labSessionRepository.appendLatestLabSessionCorrectionAudit(userId, {
+        correctionType: 'date',
+        patch: patch || { rawText: safeText, correctionHint: 'date' }
+      });
+      console.info('[phasee-new] lab_correction_intent', {
+        userId: normalizeText(userId),
+        correction_type: 'date',
+        patch: patch || { rawText: safeText, correctionHint: 'date' },
+        ok: Boolean(upd?.ok),
+        reason: upd?.ok ? '' : normalizeText(upd?.reason || 'update_failed')
+      });
+      record('correction_intent_date', {
+        comparison_mode: 'correction_date',
+        comparison_available: false
+      });
+      if (upd?.ok) {
+        return { intentType: 'newflow_lab_followup', replyText: '日付訂正として受け取り、監査ログに反映しました。必要なら「2025-03-24のTGを2025-03-20へ」のように具体的に送ってください。' };
+      }
+      return { intentType: 'newflow_lab_followup', replyText: '日付訂正として受け取りましたが、保存反映に失敗しました。もう一度短く送ってください。' };
+    }
+  }
+
+  if (/(その値は別の日だよ|その値は別の日|この値は別の日|値は別の日|値の紐づけ|値のひもづけ|値.*別の日)/.test(safeText)) {
+    const patch = extractValueAssociationCorrectionPatch(safeText);
+    if (normalizeText(userId)) {
+      const upd = await labSessionRepository.appendLatestLabSessionCorrectionAudit(userId, {
+        correctionType: 'value_association',
+        patch: patch || { rawText: safeText, correctionHint: 'value_association' }
+      });
+      console.info('[phasee-new] lab_correction_intent', {
+        userId: normalizeText(userId),
+        correction_type: 'value_association',
+        patch: patch || { rawText: safeText, correctionHint: 'value_association' },
+        ok: Boolean(upd?.ok),
+        reason: upd?.ok ? '' : normalizeText(upd?.reason || 'update_failed')
+      });
+      record('correction_intent_value_association', {
+        comparison_mode: 'correction_value_association',
+        comparison_available: false
+      });
+      if (upd?.ok) {
+        return { intentType: 'newflow_lab_followup', replyText: '値の紐づけ訂正として受け取り、監査ログに反映しました。対象項目と正しい日付を1つずつ指定すると再紐づけしやすくなります。' };
+      }
+      return { intentType: 'newflow_lab_followup', replyText: '値の紐づけ訂正として受け取りましたが、保存反映に失敗しました。もう一度短く送ってください。' };
     }
   }
 
