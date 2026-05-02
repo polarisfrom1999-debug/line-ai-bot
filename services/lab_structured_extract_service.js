@@ -1186,6 +1186,8 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     rawText,
     rawPayload: payload,
     promptVersion: builder.promptVersion,
+    runMatrix,
+    matrixExtractPromptVersion: runMatrix ? 'lab_matrix_extract_v1' : '',
     geminiMultiDateRowsCount: Array.isArray(report.rows) ? report.rows.length : 0,
     examDateCandidates: examDateCandidatesLog,
     columnDates: columnDatesLog,

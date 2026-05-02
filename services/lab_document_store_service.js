@@ -19,13 +19,24 @@ function hashBuffer(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+function labExtractCacheVersionSuffix() {
+  const v = String(process.env.LAB_EXTRACT_CACHE_VERSION || '').trim();
+  return v ? `:labcv:${v}` : '';
+}
+
 function hashImagePayload(payload = {}) {
-  if (payload.hash) return normalizeText(payload.hash);
-  const hash = hashBuffer(payload.buffer);
-  if (hash) return hash;
-  const messageId = normalizeText(payload.messageId || '');
-  if (messageId) return `message:${messageId}`;
-  return '';
+  let base = '';
+  if (payload.hash) base = normalizeText(payload.hash);
+  else {
+    const h = hashBuffer(payload.buffer);
+    if (h) base = h;
+    else {
+      const messageId = normalizeText(payload.messageId || '');
+      if (messageId) base = `message:${messageId}`;
+    }
+  }
+  if (!base) return '';
+  return `${base}${labExtractCacheVersionSuffix()}`;
 }
 
 async function fetchPersistedPanel(userId, hash) {

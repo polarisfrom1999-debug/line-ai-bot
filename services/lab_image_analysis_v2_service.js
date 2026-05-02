@@ -281,6 +281,8 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
       v2_confidence: Number(extraction?.confidence || 0) || 0,
       classifier_confidence: Number(classification?.confidence || 0) || 0,
       promptVersion: normalizeText(extraction?.promptVersion || ''),
+      run_matrix: Boolean(extraction?.runMatrix),
+      matrix_extract_promptVersion: normalizeText(extraction?.matrixExtractPromptVersion || ''),
       rows: rows.length,
       rows_for_structured: structRows.length,
       primary_gemini_items: extraction?.primaryGeminiItemCount ?? 0,
@@ -300,7 +302,13 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
       legacy_data_items_count: Number(extraction?.legacyDataPrimaryCount || 0) || 0,
       fallback_used_reason: normalizeText(extraction?.multiDateFlattenFallbackReason || '')
     },
-    sourceImageId: normalizeText(opts?.sourceImageId || '')
+    sourceImageId: normalizeText(opts?.sourceImageId || ''),
+    labExtractCacheFingerprint: {
+      lab_extract_cache_version: String(process.env.LAB_EXTRACT_CACHE_VERSION || '').trim() || '0',
+      primary_lab_extract_promptVersion: normalizeText(extraction?.promptVersion || ''),
+      matrix_extract_promptVersion: normalizeText(extraction?.matrixExtractPromptVersion || ''),
+      lab_document_layout: docLayout,
+    },
   };
 
   const legacy = mapStructuredToLegacyItems(structuredItems);

@@ -8,6 +8,123 @@ const labIngestTrace = require('./lab_ingest_trace_service');
 const labSessionRepository = require('../repositories/lab_session_repository');
 const labMetaExtractService = require('./lab_meta_extract_service');
 const geminiItems = require('./lab_gemini_items_service');
+const { buildLabExtractPrompt } = require('./lab_extract_prompt_builder_service');
+
+function normalizeIngestText(value) {
+  return String(value || '').trim();
+}
+
+function envForceLabReextract() {
+  const s = normalizeIngestText(process.env.FORCE_LAB_REEXTRACT).toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
+
+function distinctParsedHasRealYmd(distinctList) {
+  return distinctList.some((d) => {
+    const t = normalizeIngestText(d);
+    if (!t || t === geminiItems.UNKNOWN_OBSERVED_DATE) return false;
+    return /^\d{4}-\d{2}-\d{2}$/.test(t);
+  });
+}
+
+/**
+ * キャッシュ済みパネルが古い／matrix 検証不能な場合にフル抽出へ落とす。
+ */
+function cachedPanelNeedsFreshExtract(panel) {
+  const reasons = [];
+  if (!panel || typeof panel !== 'object') return { bust: false, reasons };
+
+  if (envForceLabReextract()) {
+    reasons.push('FORCE_LAB_REEXTRACT');
+    return { bust: true, reasons };
+  }
+
+  const fp = panel.labExtractCacheFingerprint;
+  if (!fp || typeof fp !== 'object') {
+    return { bust: true, reasons: ['missing_labExtractCacheFingerprint'] };
+  }
+
+  const envCv = normalizeIngestText(process.env.LAB_EXTRACT_CACHE_VERSION) || '0';
+  const fpCv = normalizeIngestText(fp.lab_extract_cache_version) || '0';
+  if (envCv !== '0' && envCv !== fpCv) {
+    reasons.push('lab_extract_cache_version_mismatch');
+  }
+
+  let expectedPrimary = '';
+  try {
+    expectedPrimary = normalizeIngestText(buildLabExtractPrompt({}).promptVersion || '');
+  } catch (_e) {
+    expectedPrimary = 'lab_extract_v3_matrix_primary';
+  }
+
+  const cachedPrimary = normalizeIngestText(
+    fp.primary_lab_extract_promptVersion
+      || panel.analysisConfidence?.promptVersion
+      || panel.promptVersion
+      || ''
+  );
+  if (expectedPrimary && cachedPrimary && cachedPrimary !== expectedPrimary) {
+    reasons.push('primary_lab_extract_promptVersion_mismatch');
+  } else if (expectedPrimary && !cachedPrimary) {
+    reasons.push('missing_cached_primary_lab_extract_promptVersion');
+  }
+
+  const layout = normalizeIngestText(panel.labDocumentLayout);
+  const cachedMatrixPv = normalizeIngestText(fp.matrix_extract_promptVersion || '');
+  if (layout === 'lab_multi_date_matrix' && !cachedMatrixPv) {
+    reasons.push('missing_matrix_extract_promptVersion_for_multi_date_layout');
+  }
+
+  const items = Array.isArray(panel.itemsStructured) ? panel.itemsStructured : [];
+  const qualified = geminiItems.countQualifiedParsedItems(items);
+  const distinctOd = geminiItems.distinctObservedDateStringsFromParsedItems(items);
+
+  if (qualified > 0 && !distinctParsedHasRealYmd(distinctOd)) {
+    reasons.push('observed_dates_unknown_or_missing_only');
+  }
+
+  const examDatesArr = Array.isArray(panel.examDates) ? panel.examDates : [];
+  if (
+    qualified > 0
+    && examDatesArr.length > 0
+    && examDatesArr.every((d) => {
+      const x = normalizeIngestText(d);
+      return !x || x === geminiItems.UNKNOWN_OBSERVED_DATE;
+    })
+  ) {
+    reasons.push('exam_dates_json_unknown_only');
+  }
+
+  const hasMatrixSource = items.some((x) => normalizeIngestText(x?.source) === 'lab_multi_date_matrix');
+  const multiExamHint = examDatesArr.filter((d) => normalizeIngestText(d)).length >= 2;
+  if (
+    qualified >= 3
+    && !hasMatrixSource
+    && (layout === 'lab_multi_date_matrix' || multiExamHint)
+  ) {
+    reasons.push('multi_date_context_missing_lab_multi_date_matrix_source');
+  }
+
+  const sj = panel.structuredJson && typeof panel.structuredJson === 'object'
+    ? panel.structuredJson
+    : (panel.rawPayload && typeof panel.rawPayload === 'object' ? panel.rawPayload : null);
+  if (sj && String(expectedPrimary).includes('matrix_primary')) {
+    const rows = Array.isArray(sj.rows) ? sj.rows : [];
+    const hasMatrixRowValues = rows.some(
+      (r) => Array.isArray(r?.values) && r.values.some((v) => {
+        if (v == null) return false;
+        const val = typeof v === 'object' && 'value' in v ? v.value : v;
+        return Boolean(normalizeIngestText(String(val ?? '')));
+      })
+    );
+    const dataLen = Array.isArray(sj.data) ? sj.data.length : 0;
+    if (dataLen >= 5 && !hasMatrixRowValues) {
+      reasons.push('structured_json_data_only_under_matrix_primary_prompt');
+    }
+  }
+
+  return { bust: reasons.length > 0, reasons };
+}
 
 function summarizeLabPanel(panel = {}) {
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -167,7 +284,20 @@ function enrichPanelFromRecoverablePayload(panel = {}, label = '') {
 }
 
 async function ingestLabDocument({ userId, imagePayload } = {}) {
-  const cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
+  let cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
+  if (cached) {
+    const { bust, reasons } = cachedPanelNeedsFreshExtract(cached);
+    if (bust) {
+      console.info('[phasee-new] lab_ingest_cache_bypass_reextract', {
+        renderGitCommit: String(process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_SHA || ''),
+        userId: String(userId || ''),
+        reasons,
+        note: 'full_pipeline_extractStructuredLab_will_run'
+      });
+      console.log(`[phasee-new] lab_ingest_cache_bypass_reextract_json ${JSON.stringify({ userId: String(userId || ''), reasons })}`);
+      cached = null;
+    }
+  }
   if (cached) {
     console.info('[phasee-new] lab_ingest_cache_hit_skip_extract', {
       renderGitCommit: String(process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_SHA || ''),

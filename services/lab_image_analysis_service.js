@@ -209,7 +209,13 @@ async function analyzeLabImage(imagePayload) {
     trendSummary: buildTrendSummary({ items: extraction.items }),
     rawText: [classification.rawText, extraction.rawText].filter(Boolean).join('\n'),
     rawPayload: extraction?.rawPayload || null,
-    promptVersion: extraction?.promptVersion || ''
+    promptVersion: extraction?.promptVersion || '',
+    labExtractCacheFingerprint: {
+      lab_extract_cache_version: String(process.env.LAB_EXTRACT_CACHE_VERSION || '').trim() || '0',
+      primary_lab_extract_promptVersion: normalizeText(extraction?.promptVersion || ''),
+      matrix_extract_promptVersion: '',
+      lab_document_layout: 'lab_single_day_report',
+    },
   };
 
   return panel;
