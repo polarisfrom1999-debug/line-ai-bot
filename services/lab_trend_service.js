@@ -47,6 +47,28 @@ function sortByDate(rows) {
   return [...rows].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
+const NK_TO_DISPLAY = {
+  triglycerides_tg: '中性脂肪',
+  ast_got: 'AST',
+  alt_gpt: 'ALT',
+  ldl_cholesterol: 'LDL',
+  hdl_cholesterol: 'HDL',
+  hba1c: 'HbA1c',
+  creatinine: 'クレアチニン',
+  hemoglobin: '血色素量',
+  glucose: '血糖',
+  wbc: 'WBC'
+};
+
+function structuredItemMatchesTarget(it, safeName) {
+  const display = normalizeItemName(it?.name || it?.rawName || it?.itemName || '');
+  if (display && normalizeItemName(display) === safeName) return true;
+  const nk = normalizeText(it?.normalizedKey || '').toLowerCase();
+  const mapped = NK_TO_DISPLAY[nk];
+  if (mapped && normalizeItemName(mapped) === safeName) return true;
+  return false;
+}
+
 function collectTrendRows(panel, itemName) {
   const safeName = normalizeItemName(itemName);
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -84,6 +106,23 @@ function collectTrendRows(panel, itemName) {
         referenceHigh: item?.referenceHigh ?? null
       });
     }
+  }
+
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
+  for (const it of structured) {
+    if (!structuredItemMatchesTarget(it, safeName)) continue;
+    const date = normalizeDate(it?.observedDate || it?.observed_date || it?.date || '');
+    const value = normalizeText(it?.value || '');
+    if (!date || !value) continue;
+    rows.push({
+      date,
+      itemName: safeName,
+      value,
+      unit: normalizeText(it?.unit || ''),
+      flag: normalizeText(it?.flag || ''),
+      referenceLow: it?.referenceLow ?? null,
+      referenceHigh: it?.referenceHigh ?? null
+    });
   }
 
   return sortByDate(uniqueBy(rows, (row) => `${row.date}:${row.itemName}:${row.value}:${row.unit}:${row.flag}`));

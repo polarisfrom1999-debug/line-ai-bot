@@ -32,9 +32,10 @@ function mergeLabPanels(sessionPanel, canonicalPanel) {
   }
   const items = [...byName.values()];
 
-  const patientName = normalizeText(s.patientName) || normalizeText(c.patientName) || '';
-  const facilityName = normalizeText(s.facilityName) || normalizeText(c.facilityName) || '';
-  const printDate = normalizeText(s.printDate) || normalizeText(c.printDate) || '';
+  // DB 最新（canonical）をメタの正とする。セッション内メモリが古いままでも訂正後の施設名が勝つ。
+  const patientName = normalizeText(c.patientName) || normalizeText(s.patientName) || '';
+  const facilityName = normalizeText(c.facilityName) || normalizeText(s.facilityName) || '';
+  const printDate = normalizeText(c.printDate) || normalizeText(s.printDate) || '';
   return {
     ...c,
     ...s,

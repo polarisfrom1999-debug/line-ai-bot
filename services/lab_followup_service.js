@@ -182,7 +182,38 @@ function findItem(panel, targetName) {
   }
   const raw = normalizeText(targetName);
   if (!raw) return null;
-  return items.find((item) => namesLikelyMatch(normalizeItemName(raw), item?.itemName || '')) || null;
+  const fromItems = items.find((item) => namesLikelyMatch(normalizeItemName(raw), item?.itemName || '')) || null;
+  if (fromItems) return fromItems;
+  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
+  const canon = safe || normalizeTarget(raw) || normalizeItemName(raw);
+  if (!canon) return null;
+  const st = structured.find((it) => {
+    const display = normalizeItemName(it?.name || it?.rawName || it?.itemName || '');
+    if (display && normalizeItemName(display) === canon) return true;
+    const nk = normalizeText(it?.normalizedKey || '').toLowerCase();
+    const map = {
+      triglycerides_tg: '中性脂肪',
+      ast_got: 'AST',
+      alt_gpt: 'ALT',
+      ldl_cholesterol: 'LDL',
+      hdl_cholesterol: 'HDL',
+      hba1c: 'HbA1c',
+      creatinine: 'クレアチニン',
+      hemoglobin: '血色素量',
+      glucose: '血糖',
+      wbc: 'WBC'
+    };
+    const mapped = map[nk];
+    return mapped && normalizeItemName(mapped) === canon;
+  });
+  if (!st) return null;
+  return {
+    itemName: canon,
+    value: normalizeText(st.value || ''),
+    unit: normalizeText(st.unit || ''),
+    flag: normalizeText(st.flag || ''),
+    history: []
+  };
 }
 
 function findValueForDate(panel, targetName, selectedDate) {

@@ -6,6 +6,7 @@ const { mergeLabPanels, isWeakLabPanel } = require('../lab_panel_merge_service')
 const { countQualifiedPanelRecords, distinctObservedDateStringsFromParsedItems } = require('../../lab_gemini_items_service');
 const labSessionRepository = require('../../../repositories/lab_session_repository');
 const labHistoryCompare = require('../../lab_history_compare_service');
+const activeContextStoreService = require('../active_context_store_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -323,6 +324,57 @@ async function resolveLabFollowup(text, panel, meta = {}) {
         correction_patch_applied: patch
       });
       if (upd?.ok) {
+        const row = upd.row || {};
+        console.info('[phasee-new] lab_correction_post_readback', {
+          session_id: row.id,
+          facility_name: normalizeText(row.facility_name || ''),
+          patient_name: normalizeText(row.patient_name || ''),
+          print_date: normalizeText(row.print_date || ''),
+          correction_type: 'meta',
+          patch,
+          post_correction_readback: {
+            facility_name: normalizeText(row.facility_name || ''),
+            patient_name: normalizeText(row.patient_name || ''),
+            print_date: normalizeText(row.print_date || '')
+          }
+        });
+        const { context } = await activeContextStoreService.getActiveContext(userId);
+        const dom = normalizeText(context?.domain || context?.type || '');
+        const lpSrc = context?.payload?.labPanel;
+        if (lpSrc && typeof lpSrc === 'object' && (dom === 'lab_image_session' || dom === 'lab_followup_session')) {
+          const lp = { ...lpSrc };
+          if (Object.prototype.hasOwnProperty.call(patch, 'patientName')) {
+            lp.patientName = normalizeText(row.patient_name || '');
+          }
+          if (Object.prototype.hasOwnProperty.call(patch, 'facilityName')) {
+            lp.facilityName = normalizeText(row.facility_name || '');
+          }
+          if (Object.prototype.hasOwnProperty.call(patch, 'printDate')) {
+            lp.printDate = normalizeText(row.print_date || '');
+          }
+          const prevMeta = lp.meta && typeof lp.meta === 'object' ? lp.meta : {};
+          lp.meta = {
+            ...prevMeta,
+            patientName: normalizeText(lp.patientName || prevMeta.patientName || ''),
+            facilityName: normalizeText(lp.facilityName || prevMeta.facilityName || ''),
+            printDate: normalizeText(lp.printDate || prevMeta.printDate || '')
+          };
+          const expMs = Date.parse(context.expiresAt || '');
+          const ttlMs = Number.isFinite(expMs) && expMs > Date.now()
+            ? Math.max(expMs - Date.now(), 5 * 60 * 1000)
+            : activeContextStoreService.DEFAULT_TTL_MS;
+          await activeContextStoreService.setActiveContext(userId, {
+            domain: dom,
+            ttlMs,
+            payload: { ...context.payload, labPanel: lp }
+          }).catch(() => null);
+          console.info('[phasee-new] lab_correction_active_context_patch', {
+            userId: normalizeText(userId),
+            domain: dom,
+            facilityName: lp.facilityName,
+            patientName: lp.patientName
+          });
+        }
         const fixed = [];
         if (patch.patientName) fixed.push(`患者名=${patch.patientName}`);
         if (patch.facilityName) fixed.push(`施設名=${patch.facilityName}`);

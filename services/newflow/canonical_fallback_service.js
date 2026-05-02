@@ -55,6 +55,10 @@ function toLabPanel(labSession) {
   const { metaAdoption, metaExtraction, metaConfidence } = parseLabMetaFromGeminiRaw(
     labSession.gemini_raw
   );
+  const parsed = Array.isArray(labSession.parsed_items_json) ? labSession.parsed_items_json : [];
+  const itemsStructured = parsed.some((x) => x && typeof x === 'object' && normalizeText(x?.normalizedKey))
+    ? parsed
+    : null;
   return {
     sourceSessionId: labSession.id || null,
     patientName,
@@ -69,7 +73,8 @@ function toLabPanel(labSession) {
     metaExtraction: metaExtraction || null,
     metaConfidence: metaConfidence || null,
     examDates: dates,
-    items: sanitizeLabItems(labSession.parsed_items_json),
+    items: sanitizeLabItems(parsed),
+    ...(itemsStructured ? { itemsStructured } : {}),
     rawText: normalizeText(labSession.raw_text || ''),
     latestExamDate: dates.length ? String(dates[dates.length - 1] || '') : '',
   };
