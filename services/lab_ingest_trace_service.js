@@ -99,6 +99,9 @@ function logPreInsert({ userId, insertPayload }) {
       if (out.supabaseInsertRow.parsed_items_json != null) {
         out.supabaseInsertRow.parsed_items_json = clipFull(out.supabaseInsertRow.parsed_items_json);
       }
+      if (Array.isArray(out.supabaseInsertRow.exam_dates_json)) {
+        out.supabaseInsertRow.exam_dates_json = JSON.stringify(out.supabaseInsertRow.exam_dates_json);
+      }
     }
   }
   console.info('[lab-ingest-trace] stage:db_pre_insert', {
@@ -112,12 +115,21 @@ function logPreInsert({ userId, insertPayload }) {
  */
 function logPostInsertReadback({ userId, sessionId, readRow, readError, insertError }) {
   let rowLog = readRow;
+  const exDebug = readRow && Array.isArray(readRow.exam_dates_json) ? readRow.exam_dates_json : [];
   if (rowLog && typeof rowLog === 'object') {
     rowLog = { ...rowLog };
     if (rowLog.gemini_raw != null) rowLog.gemini_raw = clipFull(rowLog.gemini_raw);
     if (rowLog.structured_json != null) rowLog.structured_json = clipFull(rowLog.structured_json);
     if (rowLog.parsed_items_json != null) rowLog.parsed_items_json = clipFull(rowLog.parsed_items_json);
+    if (Array.isArray(rowLog.exam_dates_json)) {
+      rowLog.exam_dates_json = JSON.stringify(rowLog.exam_dates_json);
+    }
   }
+  console.info('[lab-ingest-trace] stage:exam_dates_debug_json', {
+    userId: String(userId || ''),
+    session_id: String(sessionId || ''),
+    exam_dates_debug_json: JSON.stringify(exDebug)
+  });
   console.info('[lab-ingest-trace] stage:db_post_insert_read', {
     userId: String(userId || ''),
     session_id: String(sessionId || ''),

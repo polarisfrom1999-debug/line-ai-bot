@@ -3,7 +3,7 @@
 const labFollowupService = require('../../lab_followup_service');
 const responseBuilderService = require('../response_builder_service');
 const { mergeLabPanels, isWeakLabPanel } = require('../lab_panel_merge_service');
-const { countQualifiedPanelRecords } = require('../../lab_gemini_items_service');
+const { countQualifiedPanelRecords, distinctObservedDateStringsFromParsedItems } = require('../../lab_gemini_items_service');
 const labSessionRepository = require('../../../repositories/lab_session_repository');
 const labHistoryCompare = require('../../lab_history_compare_service');
 
@@ -165,7 +165,9 @@ function parseLabMetaCorrection(text) {
   const safe = normalizeText(text);
   if (!safe) return null;
   const patient = safe.match(/(?:患者名|氏名)\s*(?:は|:|：)?\s*([^\n。]+)/);
-  const facilityThis = safe.match(/(?:この医療機関|この病院)\s*(?:は|:|：)\s*([^\n。]+)/);
+  const facilityThis = safe.match(
+    /(?:この医療機関|この病院)\s*(?:は|:|：)\s*(.+?)(?:\s*だよ|\s*です|\s*だった)?[。．\s]*$/i
+  );
   const facilityFromLead = safe.match(
     /(?:これは|これ|この医療機関は|この病院は|病院は|施設は|施設名は|病院名は|医療機関は)\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所|内科))/
   );
@@ -178,6 +180,7 @@ function parseLabMetaCorrection(text) {
     .replace(/です$|だよ$|だった$|だ$/g, '')
     .replace(/^(これは|これ|この医療機関は|この病院は|病院は|施設は|医療機関は|施設名は|病院名は)\s*/g, '')
     .replace(/^[、,]\s*/g, '')
+    .replace(/[。．]+$/g, '')
     .trim();
   const invalid = (v) => !v || /[?？]/.test(v) || v.length > 80;
   if (patient) {
@@ -267,11 +270,9 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     ? (labFollowupService.RESEND_PROMPT || 'もう一度鮮明に送り直すと、読み取れやすくなります。')
     : '';
 
-  const currentObservedDates = Array.from(new Set(
-    (Array.isArray(p?.itemsStructured) ? p.itemsStructured : [])
-      .map((x) => normalizeText(x?.observedDate || x?.observed_date || ''))
-      .filter(Boolean)
-  )).sort();
+  const currentObservedDates = distinctObservedDateStringsFromParsedItems(
+    Array.isArray(p?.itemsStructured) ? p.itemsStructured : []
+  );
 
   const record = (id, logExtra = {}) => {
     logLabFollowupContext({
@@ -296,7 +297,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   };
 
   if (/((これは|これ|この医療機関は|この病院は|病院は|施設は|医療機関は|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|内科|病院|医療機関|患者名|氏名|印刷日|検査日|採血日))|((患者名|氏名|施設名|病院名).*(だよ|です|だった))/i.test(safeText)) {
-    const patch = parseLabMetaCorrection(safeText);
+    let patch = parseLabMetaCorrection(safeText);
+    if (!patch && /(この医療機関は|この病院は|病院は|施設は|医療機関は)/.test(safeText) && /(クリニック|医院|病院|診療所|内科)/.test(safeText)) {
+      patch = parseLabMetaCorrection(safeText.replace(/\u3000/g, ' '));
+    }
     if (patch && normalizeText(userId)) {
       const upd = await labSessionRepository.updateLatestLabSessionMeta(userId, patch);
       await labSessionRepository.appendLatestLabSessionCorrectionAudit(userId, {
@@ -393,13 +397,7 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     )
   ) {
     const arr = await loadHistory();
-    const panelDates = currentObservedDates.length
-      ? currentObservedDates
-      : Array.from(new Set(
-        (Array.isArray(p?.examDates) ? p.examDates : [])
-          .map((d) => normalizeText(d))
-          .filter(Boolean)
-      ));
+    const panelDates = currentObservedDates;
     const panelDateLine = panelDates.length
       ? `この画像内で読み取れた日付候補は ${panelDates.join(' / ')} です。`
       : '';

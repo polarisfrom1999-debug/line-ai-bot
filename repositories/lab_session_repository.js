@@ -25,7 +25,7 @@ function stripLeadingPunctuationAndSpaces(s) {
 }
 
 const LAB_META_NAME_INTRO_RE =
-  /^(これは|これ|ここ|ここは|病院は|施設は|医療機関は|病院名は|施設名は)\s*[、,]?\s*/u;
+  /^(これは|これ|ここ|ここは|この医療機関は|この病院は|病院は|施設は|医療機関は|病院名は|施設名は)\s*[、,]?\s*/u;
 
 function sanitizeLabMetaNameField(value) {
   let s = normalizeText(value);
@@ -57,6 +57,26 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+/** exam_dates_json は string[] のみ（オブジェクト行が混ざっても文字列化） */
+function toExamDatesStringArray(value) {
+  const arr = Array.isArray(value) ? value : [];
+  const out = [];
+  for (const x of arr) {
+    if (x == null) continue;
+    if (typeof x === 'string') {
+      const s = normalizeText(x);
+      if (s) out.push(s);
+    } else if (typeof x === 'object') {
+      const s = normalizeText(x.normalized_date || x.normalizedDate || x.value || '');
+      if (s) out.push(s);
+    } else {
+      const s = String(x).trim();
+      if (s) out.push(s);
+    }
+  }
+  return out;
+}
+
 function isMissingColumnError(error, columnName) {
   const msg = normalizeText(error?.message || '');
   return Boolean(columnName && new RegExp(`column.*${columnName}|Could not find the '${columnName}' column`, 'i').test(msg));
@@ -76,7 +96,7 @@ async function createLabSession(params = {}) {
     patient_id: normalizeText(params.patientId || ''),
     facility_name: normalizeText(params.facilityName || ''),
     print_date: normalizeText(params.printDate || '') || null,
-    exam_dates_json: toArray(params.examDates),
+    exam_dates_json: toExamDatesStringArray(params.examDates),
     parsed_items_json: toArray(params.parsedItems),
     raw_text: normalizeText(params.rawText || ''),
     confidence: Number(params.confidence || 0) || 0,

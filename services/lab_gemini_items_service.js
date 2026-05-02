@@ -280,6 +280,41 @@ function rowFallbackActive(mergedMinItems, primaryCount, normalizeRowCount) {
   return normalizeRowCount > 0;
 }
 
+/** parsed_items_json 由来の検査日ラベル（YYYY-MM-DD または unknown_date）を一意に並べる */
+const UNKNOWN_OBSERVED_DATE = 'unknown_date';
+
+function distinctObservedDateStringsFromParsedItems(items) {
+  const set = new Set();
+  for (const it of Array.isArray(items) ? items : []) {
+    const d = normalizeText(it?.observedDate || it?.observed_date || '');
+    if (!d) continue;
+    if (d === UNKNOWN_OBSERVED_DATE) set.add(UNKNOWN_OBSERVED_DATE);
+    else {
+      const y = normalizeYmd(d);
+      if (y) set.add(y);
+    }
+  }
+  return [...set].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+/** DB exam_dates_json: string[] のみ。distinct が空でレコードがあるときは ["unknown_date"] */
+function examDatesStringArrayForInsert(distinctDatesList, hasQualifiedRecords) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(distinctDatesList) ? distinctDatesList : []) {
+    const s = typeof raw === 'string' ? raw.trim() : String(raw || '').trim();
+    if (!s) continue;
+    const key = s === UNKNOWN_OBSERVED_DATE ? UNKNOWN_OBSERVED_DATE : normalizeYmd(s);
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  out.sort((a, b) => String(a).localeCompare(String(b)));
+  if (out.length) return out;
+  return hasQualifiedRecords ? [UNKNOWN_OBSERVED_DATE] : [];
+}
+
 module.exports = {
   flattenReports,
   buildMinItem,
@@ -291,5 +326,8 @@ module.exports = {
   countQualifiedPanelRecords,
   isMinSchemaParsedItems,
   rowFallbackActive,
-  rowNormalizeToFallbackMinItem
+  rowNormalizeToFallbackMinItem,
+  UNKNOWN_OBSERVED_DATE,
+  distinctObservedDateStringsFromParsedItems,
+  examDatesStringArrayForInsert
 };

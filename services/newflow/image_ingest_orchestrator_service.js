@@ -10,7 +10,13 @@ const mealRecalcRepository = require('../../repositories/meal_recalc_repository'
 const contextMemoryService = require('../context_memory_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const labIngestTrace = require('../lab_ingest_trace_service');
-const { countPersistableParsedRecords, extractPrimaryGeminiMinItems } = require('../lab_gemini_items_service');
+const {
+  countPersistableParsedRecords,
+  extractPrimaryGeminiMinItems,
+  distinctObservedDateStringsFromParsedItems,
+  examDatesStringArrayForInsert,
+  UNKNOWN_OBSERVED_DATE
+} = require('../lab_gemini_items_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -128,7 +134,7 @@ function normalizeYmd(v) {
   return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
 }
 
-const UNKNOWN_OBSERVED = 'unknown_date';
+const UNKNOWN_OBSERVED = UNKNOWN_OBSERVED_DATE;
 
 function printDateNormalized(lab = {}) {
   return normalizeYmd(lab?.printDate || lab?.meta?.printDate || '');
@@ -189,20 +195,6 @@ function dedupeLabParsedItems(items) {
     map.set(key, w);
   }
   return [...map.values()];
-}
-
-function distinctObservedDatesFromParsed(items) {
-  const set = new Set();
-  for (const it of Array.isArray(items) ? items : []) {
-    const d = normalizeText(it?.observedDate || it?.observed_date || '');
-    if (!d) continue;
-    if (d === UNKNOWN_OBSERVED) set.add(UNKNOWN_OBSERVED);
-    else {
-      const y = normalizeYmd(d);
-      if (y) set.add(y);
-    }
-  }
-  return [...set].sort((a, b) => String(a).localeCompare(String(b)));
 }
 
 async function resolveImagePayload(input) {
@@ -331,10 +323,18 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     parsed_items_len: preDbParsed.length,
     qualified_records: qualifiedForDb
   });
-  const observedDatesFromItems = distinctObservedDatesFromParsed(preDbParsed);
-  const examDatesForInsert = observedDatesFromItems.length
-    ? observedDatesFromItems
-    : [];
+  const observedDatesFromItems = distinctObservedDateStringsFromParsedItems(preDbParsed);
+  const examDatesForInsert = examDatesStringArrayForInsert(observedDatesFromItems, qualifiedForDb > 0);
+  console.info('[lab-ingest-trace] stage:exam_dates_from_parsed_items', {
+    userId: input.userId,
+    exam_dates_json: JSON.stringify(examDatesForInsert),
+    observed_dates_distinct: JSON.stringify(observedDatesFromItems),
+    exam_dates_debug_json: JSON.stringify({
+      parsed_len: preDbParsed.length,
+      distinct_len: observedDatesFromItems.length,
+      sample_observed: (preDbParsed[0] && (preDbParsed[0].observedDate || preDbParsed[0].observed_date)) || ''
+    })
+  });
   const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),
@@ -450,7 +450,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         sourceImageId: normalizeText(imagePayload?.id || ''),
         sourceMessageId: normalizeText(input?.messageId || ''),
         labSessionId: persist?.session?.id || null,
-        observedDates: observedDatesFromItems,
+        observedDates: examDatesForInsert,
         labPanel: lab
       }
     }).catch(() => null);
