@@ -1,6 +1,7 @@
 'use strict';
 
 const { KEY_TO_ITEM_NAME } = require('./lab_lab_display_names');
+const classifier = require('./lab_document_classifier_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -10,7 +11,14 @@ function flattenReports(payload) {
   if (!payload) return [];
   if (Array.isArray(payload.extracted_reports)) return payload.extracted_reports;
   if (Array.isArray(payload.reports)) return payload.reports;
-  if (Array.isArray(payload.data) || payload.document_type || payload.documentType) return [payload];
+  if (
+    Array.isArray(payload.data)
+    || Array.isArray(payload.rows)
+    || payload.document_type
+    || payload.documentType
+  ) {
+    return [payload];
+  }
   return [];
 }
 
@@ -48,6 +56,7 @@ function inferNormalizedKey(rawLabel = '') {
   if (t.includes('cre') || t.includes('クレアチニン')) return 'creatinine';
   if (t.includes('wbc') || t.includes('白血球')) return 'wbc';
   if (t.includes('rbc') || t.includes('赤血球')) return 'rbc';
+  if (t.includes('総蛋白') || t.includes('总蛋白')) return 'total_protein';
   return '';
 }
 
@@ -105,8 +114,64 @@ function buildMinItem({
   };
 }
 
+const UNKNOWN_OBSERVED_DATE = 'unknown_date';
+
+function observedDateFromMatrixCell(rawObserved, printNorm) {
+  const t = normalizeText(rawObserved);
+  if (!t || /^unknown_date$/i.test(t)) return UNKNOWN_OBSERVED_DATE;
+  const d = classifier.normalizeDateToken(t);
+  if (!d) return UNKNOWN_OBSERVED_DATE;
+  if (printNorm && d === printNorm) return UNKNOWN_OBSERVED_DATE;
+  return d;
+}
+
+/**
+ * rows[].values[] → min items（structured extract の flatten と同等の意図）
+ */
+function extractMatrixRowsToMinItemsFromReport(report = {}, printNormTop = '') {
+  const out = [];
+  const seen = new Set();
+  let anon = 0;
+  let rowIdx = 0;
+  for (const r of Array.isArray(report?.rows) ? report.rows : []) {
+    const labelIn = normalizeText(r?.rawName || r?.label_in_image || r?.labelInImage || '');
+    let nk = normalizeText(String(r?.normalized_key || r?.normalizedKey || '').toLowerCase());
+    if (!nk) nk = inferNormalizedKey(labelIn);
+    if (!nk && labelIn) nk = `raw_label:${slugifyLabel(labelIn) || `item_${rowIdx}`}`;
+    rowIdx += 1;
+    if (!nk && !labelIn) continue;
+    const name = KEY_TO_ITEM_NAME[nk] || labelIn || nk;
+    const rawName = labelIn || name;
+    for (const cell of Array.isArray(r?.values) ? r.values : []) {
+      const val = serializeValue(cell?.value);
+      if (!val) continue;
+      if (classifier.normalizeDateToken(val)) continue;
+      const odRaw = observedDateFromMatrixCell(cell?.observedDate || cell?.observed_date, printNormTop);
+      const odYmd = odRaw === UNKNOWN_OBSERVED_DATE ? UNKNOWN_OBSERVED_DATE : (normalizeYmd(odRaw) || UNKNOWN_OBSERVED_DATE);
+      const it = buildMinItem({
+        normalizedKey: nk,
+        value: val,
+        source: 'gemini_structured_multi_date',
+        rawName,
+        name,
+        unit: normalizeText(cell?.unit || ''),
+        flag: normalizeText(cell?.flag || ''),
+        confidence: cell?.confidence != null ? Number(cell.confidence) : null,
+        status: normalizeText(cell?.status || ''),
+        observedDate: odYmd
+      });
+      const id = itemIdentityKey(it, anon++);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(it);
+    }
+  }
+  return out;
+}
+
 /**
  * Gemini の data[] から行ベース正規化を経ずに直接最小 item を作る（正本）
+ * rows[].values[] があるレポートでは data[] を無視（matrix 本流と混ぜない）
  * normalized_key が無くても label_in_image + value があれば暫定 item 化する
  */
 function extractPrimaryGeminiMinItems(payload) {
@@ -123,6 +188,19 @@ function extractPrimaryGeminiMinItems(payload) {
       || (Array.isArray(report?.examDates) ? report.examDates[0] : '')
       || ''
     );
+    const printNormTop = classifier.normalizeDateToken(
+      report?.printDate || report?.print_date || report?.report_date || report?.reportDate || ''
+    );
+    const fromMatrix = extractMatrixRowsToMinItemsFromReport(report, printNormTop);
+    if (fromMatrix.length) {
+      for (const it of fromMatrix) {
+        const id = itemIdentityKey(it, anon++);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(it);
+      }
+      continue;
+    }
     for (const row of Array.isArray(report?.data) ? report.data : []) {
       const labelInImage = normalizeText(row?.label_in_image || row?.labelInImage || row?.row_label_raw || row?.rowLabelRaw || '');
       const explicitKey = normalizeText(String(row?.normalized_key || row?.normalizedKey || '').toLowerCase());
@@ -283,7 +361,6 @@ function rowFallbackActive(mergedMinItems, primaryCount, normalizeRowCount) {
 }
 
 /** parsed_items_json 由来の検査日ラベル（YYYY-MM-DD または unknown_date）を一意に並べる */
-const UNKNOWN_OBSERVED_DATE = 'unknown_date';
 
 function distinctObservedDateStringsFromParsedItems(items) {
   const set = new Set();
@@ -320,6 +397,7 @@ function examDatesStringArrayForInsert(distinctDatesList, hasQualifiedRecords) {
 module.exports = {
   flattenReports,
   buildMinItem,
+  extractMatrixRowsToMinItemsFromReport,
   extractPrimaryGeminiMinItems,
   mergePrimaryAndRowFallback,
   minItemsToRowsForGroupRows,

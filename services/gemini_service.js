@@ -380,6 +380,11 @@ async function generateContentJson({
         );
       } catch (error) {
         if (extractStatusCode(error) === 400 && schema) {
+          console.warn('[phasee-new] gemini_response_schema_rejected', {
+            model: candidate,
+            message: extractApiErrorMessage(error),
+            note: 'retrying_without_responseSchema_json_unconstrained'
+          });
           response = await retry(
             () =>
               callGenerateContent({

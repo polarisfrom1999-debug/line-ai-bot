@@ -276,12 +276,20 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     analysisConfidence: {
       v2_confidence: Number(extraction?.confidence || 0) || 0,
       classifier_confidence: Number(classification?.confidence || 0) || 0,
+      promptVersion: normalizeText(extraction?.promptVersion || ''),
       rows: rows.length,
       rows_for_structured: structRows.length,
       primary_gemini_items: extraction?.primaryGeminiItemCount ?? 0,
       row_fallback_used: Boolean(extraction?.rowFallbackUsed),
       qualified_records_count: qualifiedParsed,
       gemini_multi_date_rows_count: Number(extraction?.geminiMultiDateRowsCount || 0) || 0,
+      rows_values_count: (() => {
+        const raw = extraction?.rawPayload && typeof extraction.rawPayload === 'object' ? extraction.rawPayload : null;
+        const rr = raw && Array.isArray(raw.rows) ? raw.rows : [];
+        let n = 0;
+        for (const row of rr) n += Array.isArray(row?.values) ? row.values.length : 0;
+        return n;
+      })(),
       examDateCandidates: Array.isArray(extraction?.examDateCandidates) ? extraction.examDateCandidates : [],
       columnDates: Array.isArray(extraction?.columnDates) ? extraction.columnDates : [],
       flattened_multi_date_items_count: Number(extraction?.flattenedMultiDateItemsCount || 0) || 0,

@@ -273,6 +273,12 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
   }
   const ac = panel?.analysisConfidence && typeof panel.analysisConfidence === 'object' ? panel.analysisConfidence : {};
   const rawPl = panel?.rawPayload && typeof panel.rawPayload === 'object' ? panel.rawPayload : {};
+  let rawRowsValuesCount = 0;
+  if (Array.isArray(rawPl.rows)) {
+    for (const r of rawPl.rows) {
+      rawRowsValuesCount += Array.isArray(r?.values) ? r.values.length : 0;
+    }
+  }
   console.info('[lab-ingest-trace] stage:lab_document_ingest_pipeline', {
     userId,
     v2_top_keys: payloadTopLevelKeys(panelV2?.rawPayload),
@@ -305,7 +311,8 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     exam_dates_debug_json: JSON.stringify({
       examDateCandidates: Array.isArray(ac.examDateCandidates) ? ac.examDateCandidates : [],
       columnDates: Array.isArray(ac.columnDates) ? ac.columnDates : [],
-      raw_rows_len: Array.isArray(rawPl.rows) ? rawPl.rows.length : 0
+      raw_rows_len: Array.isArray(rawPl.rows) ? rawPl.rows.length : 0,
+      raw_rows_values_count: rawRowsValuesCount
     })
   });
   try {
