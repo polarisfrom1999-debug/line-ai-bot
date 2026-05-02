@@ -226,6 +226,11 @@ function normalizeStatus(value) {
   return 'unknown';
 }
 
+function isAmbiguousRangeStatus(value) {
+  const safe = normalizeText(value).toLowerCase();
+  return safe.includes('ambiguous_range_value') || safe.includes('value_range_as_measurement');
+}
+
 function normalizeFlag(value, numericValue, low, high) {
   const safe = normalizeText(value).toLowerCase();
   if (safe === 'h' || safe === 'high') return 'H';
@@ -338,8 +343,53 @@ function serializeCellValue(val) {
  * Gemini rows[].values[] → 1値1item（source: gemini_structured_multi_date）
  * lab_gemini_items_service と同一実装（二重定義を避ける）
  */
-function flattenGeminiRowsValuesToMinItems(report = {}, printNorm = '') {
-  return geminiItems.extractMatrixRowsToMinItemsFromReport(report, printNorm);
+function flattenGeminiRowsValuesToMinItems(report = {}, printNorm = '', statsOut = null) {
+  return geminiItems.extractMatrixRowsToMinItemsFromReport(report, printNorm, statsOut);
+}
+
+function pruneLabExamDatesList(dates, printNormTop, rangeOnlySet) {
+  const printY = classifier.normalizeDateToken(printNormTop || '');
+  const rs = rangeOnlySet instanceof Set ? rangeOnlySet : new Set(Array.isArray(rangeOnlySet) ? rangeOnlySet : []);
+  return uniqueSortedDates(dates).filter((d) => {
+    if (!d || d === geminiItems.UNKNOWN_OBSERVED_DATE) return false;
+    if (printY && d === printY) return false;
+    if (printY && d > printY) return false;
+    if (rs.has(d)) return false;
+    return true;
+  });
+}
+
+function buildColumnDateValidationFromRows(report = {}, printNormTop = '') {
+  const byDate = new Map();
+  const futureDates = new Set();
+  const printY = classifier.normalizeDateToken(printNormTop || '');
+  for (const row of Array.isArray(report?.rows) ? report.rows : []) {
+    for (const cell of Array.isArray(row?.values) ? row.values : []) {
+      const rawVal = serializeCellValue(cell?.value);
+      if (!rawVal) continue;
+      if (classifier.normalizeDateToken(rawVal)) continue;
+      const rawObs = normalizeText(cell?.observedDate || cell?.observed_date || '');
+      const dProbe = classifier.normalizeDateToken(rawObs);
+      if (dProbe && printY && dProbe > printY) {
+        futureDates.add(dProbe);
+        continue;
+      }
+      if (!dProbe || (printY && dProbe === printY)) continue;
+      const ymd = dProbe;
+      const stat = byDate.get(ymd) || { date: ymd, valueCells: 0, rangeLikeCells: 0, nonRangeCells: 0 };
+      stat.valueCells += 1;
+      if (geminiItems.isReferenceRangeLikeValue(rawVal)) stat.rangeLikeCells += 1;
+      else stat.nonRangeCells += 1;
+      byDate.set(ymd, stat);
+    }
+  }
+  const stats = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return {
+    stats,
+    validExamDates: stats.filter((x) => x.nonRangeCells >= 2).map((x) => x.date),
+    rangeOnlyColumnDates: stats.filter((x) => x.valueCells > 0 && x.nonRangeCells === 0).map((x) => x.date),
+    futureAgainstPrintDateDates: [...futureDates].sort((a, b) => String(a).localeCompare(String(b)))
+  };
 }
 
 function uniqueSortedDates(values) {
@@ -367,11 +417,16 @@ function normalizeRows(report) {
     if (!normalizedKey) continue;
     const itemName = KEY_TO_ITEM_NAME[normalizedKey] || labelIn || normalizedKey;
     const date = inferObservedDate(row, defaultDate || '');
+    const rowValueText = normalizeText(row?.value || '');
+    const rowRangeLike = geminiItems.isReferenceRangeLikeValue(rowValueText);
+    if (rowRangeLike && !isAmbiguousRangeStatus(row?.status || '')) continue;
     const numericValue = normalizeMaybeNumber(row?.value) ?? numberFromSourceText(row?.source_text || row?.sourceText || '');
     const multiDateValues = row?.values_by_date && typeof row.values_by_date === 'object' && !Array.isArray(row.values_by_date) ? row.values_by_date : null;
     if (multiDateValues) {
       for (const [k, v] of Object.entries(multiDateValues)) {
         const nd = classifier.normalizeDateToken(k);
+        const rangeLike = geminiItems.isReferenceRangeLikeValue(v);
+        if (rangeLike && !isAmbiguousRangeStatus(row?.status || '')) continue;
         const nv = normalizeMaybeNumber(v) ?? numberFromSourceText(v);
         if (!nd || nv == null) continue;
         const referenceLow = normalizeMaybeNumber(row?.reference_low ?? row?.referenceLow);
@@ -390,7 +445,8 @@ function normalizeRows(report) {
           status: normalizeStatus(row?.status || 'readable'),
           sourceText: normalizeText(row?.source_text || row?.sourceText || row?.value || ''),
           rowLabelRaw: normalizeText(row?.row_label_raw || row?.rowLabelRaw || row?.label_in_image || row?.labelInImage || ''),
-          columnHeaderRaw: normalizeText(row?.column_header_raw || row?.columnHeaderRaw || k)
+          columnHeaderRaw: normalizeText(row?.column_header_raw || row?.columnHeaderRaw || k),
+          referenceRange: rangeLike ? normalizeText(v) : ''
         });
       }
       continue;
@@ -412,7 +468,8 @@ function normalizeRows(report) {
       status: normalizeStatus(row?.status || 'readable'),
       sourceText: normalizeText(row?.source_text || row?.sourceText || row?.value || ''),
       rowLabelRaw: normalizeText(row?.row_label_raw || row?.rowLabelRaw || row?.label_in_image || row?.labelInImage || ''),
-      columnHeaderRaw: normalizeText(row?.column_header_raw || row?.columnHeaderRaw || row?.date || '')
+      columnHeaderRaw: normalizeText(row?.column_header_raw || row?.columnHeaderRaw || row?.date || ''),
+      referenceRange: rowRangeLike ? rowValueText : ''
     });
   }
   return rows;
@@ -890,7 +947,14 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       .map((x) => classifier.normalizeDateToken(x))
       .filter(Boolean)
   ).filter((d) => !printDateNormTop || d !== printDateNormTop);
-  const geminiExamDateCandidates = uniqueSortedDates([...examDateCandidatesLog, ...columnDatesLog]);
+  const columnDateValidation = buildColumnDateValidationFromRows(report, printDateNormTop);
+  const validatedColumnDates = uniqueSortedDates(
+    columnDatesLog.filter((d) => columnDateValidation.validExamDates.includes(d))
+  );
+  const validatedExamDateCandidates = uniqueSortedDates(
+    examDateCandidatesLog.filter((d) => !columnDateValidation.rangeOnlyColumnDates.includes(d))
+  );
+  const geminiExamDateCandidates = uniqueSortedDates([...validatedExamDateCandidates, ...validatedColumnDates]);
   let examDates = uniqueSortedDates([
     ...(report.exam_dates || report.examDates || []),
     ...historyDates,
@@ -905,7 +969,12 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     || (examDates.length ? examDates[examDates.length - 1] : '')
     || '';
   const primaryFromData = geminiItems.extractPrimaryGeminiMinItems(payload);
-  const geminiMultiMin = flattenGeminiRowsValuesToMinItems(report, printDateNormTop);
+  const matrixFlattenStats = {
+    range_values_dropped_count: 0,
+    unknown_observed_dropped_flatten: 0,
+    future_dates_dropped_flatten: 0
+  };
+  const geminiMultiMin = flattenGeminiRowsValuesToMinItems(report, printDateNormTop, matrixFlattenStats);
   const geminiMultiMinHasRealDates = geminiMultiMin.some((it) => geminiItems.minItemHasRealObservedYmd(it));
   let multiDateFlattenFallbackReason = 'legacy_data_path';
   let primaryGeminiMinItems;
@@ -940,10 +1009,47 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       source: 'lab_multi_date_matrix'
     }));
   }
-  if (parsedObservedDates.length) {
-    examDates = uniqueSortedDates([...examDates, ...parsedObservedDates]);
-    latestExamDate = latestExamDate || examDates[examDates.length - 1] || '';
+  const rangeOnlySet = new Set(columnDateValidation.rangeOnlyColumnDates || []);
+  const parsedSaveValidation = geminiItems.filterParsedMinItemsForDb(parsedMinItems, printDateNormTop, rangeOnlySet);
+  parsedMinItems = parsedSaveValidation.items;
+  const parsedSaveValidationStats = parsedSaveValidation.stats;
+  const parsedDistinctReal = geminiItems.distinctObservedDateStringsFromParsedItems(parsedMinItems)
+    .filter((d) => d && d !== geminiItems.UNKNOWN_OBSERVED_DATE);
+  if (parsedDistinctReal.length) {
+    examDates = uniqueSortedDates(parsedDistinctReal);
+  } else {
+    examDates = pruneLabExamDatesList(examDates, printDateNormTop, rangeOnlySet);
+    if (!examDates.length && reportDate && (!printDateNormTop || reportDate !== printDateNormTop)) {
+      examDates = [reportDate];
+    }
   }
+  latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '')
+    || (examDates.length ? examDates[examDates.length - 1] : '')
+    || latestExamDate
+    || '';
+  const parsedObservedDatesPost = parsedMinItems
+    .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
+    .filter(Boolean);
+  const validationLogPayload = {
+    userId: meta.userId || '',
+    range_values_dropped_count: (matrixFlattenStats.range_values_dropped_count || 0)
+      + (parsedSaveValidationStats.range_values_dropped_count || 0),
+    future_dates_dropped_count: (parsedSaveValidationStats.future_dates_dropped_count || 0)
+      + (matrixFlattenStats.future_dates_dropped_flatten || 0),
+    reference_range_detected_count: parsedSaveValidationStats.reference_range_detected_count || 0,
+    validated_parsed_items_count: parsedSaveValidationStats.validated_parsed_items_count || 0,
+    exam_dates_after_validation: parsedDistinctReal,
+    rejected_exam_dates: parsedSaveValidationStats.rejected_exam_dates || [],
+    rejected_range_samples: parsedSaveValidationStats.rejected_range_samples || [],
+    future_against_printDate_dates: columnDateValidation.futureAgainstPrintDateDates || [],
+    flatten_unknown_observed_dropped: matrixFlattenStats.unknown_observed_dropped_flatten || 0,
+    flatten_future_cells_dropped: matrixFlattenStats.future_dates_dropped_flatten || 0,
+    same_print_date_dropped_final: parsedSaveValidationStats.same_print_date_dropped_count || 0,
+    range_only_date_dropped_final: parsedSaveValidationStats.range_only_date_dropped_count || 0,
+    unknown_date_dropped_final: parsedSaveValidationStats.unknown_date_dropped_count || 0
+  };
+  console.info('[phasee-new] lab_parsed_items_save_validation', validationLogPayload);
+  console.log(`[phasee-new] lab_parsed_items_save_validation_json ${JSON.stringify(validationLogPayload)}`);
   const dateForSyntheticRows = latestExamDate || reportDate || '';
   const rowsForStructured = parsedMinItems.length
     ? geminiItems.minItemsToRowsForGroupRows(parsedMinItems, dateForSyntheticRows)
@@ -985,9 +1091,9 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       userId: meta.userId || '',
       parsed_items_count: parsedMinItems.length,
       qualified_records_count: qualifiedRecords,
-      observed_dates: uniqueSortedDates(parsedObservedDates),
+      observed_dates: uniqueSortedDates(parsedObservedDatesPost),
       reason: parsedMinItems.length
-        ? (parsedObservedDates.length ? '' : 'observed_dates_empty_after_mapping')
+        ? (parsedObservedDatesPost.length ? '' : 'observed_dates_empty_after_mapping')
         : (matrixDiagFinal?.reason || 'matrix_detected_but_empty')
     });
   }
@@ -1030,15 +1136,19 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     rows_count: Array.isArray(report.rows) ? report.rows.length : 0,
     rows_values_count: countRowsValueCells(report),
     gemini_multi_date_rows_count: Array.isArray(report.rows) ? report.rows.length : 0,
-    examDateCandidates: examDateCandidatesLog,
-    columnDates: columnDatesLog,
+    examDateCandidates: validatedExamDateCandidates,
+    columnDates: validatedColumnDates,
+    future_against_printDate_dates: columnDateValidation.futureAgainstPrintDateDates,
+    range_only_column_dates: columnDateValidation.rangeOnlyColumnDates,
     flattened_multi_date_items_count: geminiMultiMin.length,
     legacy_data_items_count: primaryFromData.length,
     fallback_used_reason: multiDateFlattenFallbackReason,
     exam_dates_debug_json: JSON.stringify({
       printDateNormTop,
-      examDateCandidates: examDateCandidatesLog,
-      columnDates: columnDatesLog,
+      examDateCandidates: validatedExamDateCandidates,
+      columnDates: validatedColumnDates,
+      future_against_printDate_dates: columnDateValidation.futureAgainstPrintDateDates,
+      range_only_column_dates: columnDateValidation.rangeOnlyColumnDates,
       merged_exam_hint_dates: geminiExamDateCandidates
     })
   });
@@ -1079,15 +1189,19 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     fallback_not_used_reason: rowFallbackUnusedReason,
     item_chain: itemChain,
     gemini_multi_date_rows_count: Array.isArray(report.rows) ? report.rows.length : 0,
-    examDateCandidates: examDateCandidatesLog,
-    columnDates: columnDatesLog,
+    examDateCandidates: validatedExamDateCandidates,
+    columnDates: validatedColumnDates,
+    future_against_printDate_dates: columnDateValidation.futureAgainstPrintDateDates,
+    range_only_column_dates: columnDateValidation.rangeOnlyColumnDates,
     flattened_multi_date_items_count: geminiMultiMin.length,
     legacy_data_items_count: primaryFromData.length,
     fallback_used_reason: multiDateFlattenFallbackReason,
     exam_dates_debug_json: JSON.stringify({
       printDateNormTop,
-      examDateCandidates: examDateCandidatesLog,
-      columnDates: columnDatesLog,
+      examDateCandidates: validatedExamDateCandidates,
+      columnDates: validatedColumnDates,
+      future_against_printDate_dates: columnDateValidation.futureAgainstPrintDateDates,
+      range_only_column_dates: columnDateValidation.rangeOnlyColumnDates,
       merged_exam_hint_dates: geminiExamDateCandidates
     })
   });
@@ -1165,7 +1279,15 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     fallback_used_reason: multiDateFlattenFallbackReason,
     lab_multi_date_matrix_tagged_items: parsedMinItems.filter((x) => normalizeText(x?.source) === 'lab_multi_date_matrix').length,
     qualified_records: qualifiedRecords,
-    route_completed: true
+    route_completed: true,
+    range_values_dropped_count: validationLogPayload.range_values_dropped_count,
+    future_dates_dropped_count: validationLogPayload.future_dates_dropped_count,
+    reference_range_detected_count: validationLogPayload.reference_range_detected_count,
+    validated_parsed_items_count: validationLogPayload.validated_parsed_items_count,
+    exam_dates_after_validation: validationLogPayload.exam_dates_after_validation,
+    rejected_exam_dates: validationLogPayload.rejected_exam_dates,
+    rejected_range_samples: validationLogPayload.rejected_range_samples,
+    future_against_printDate_dates: validationLogPayload.future_against_printDate_dates
   });
 
   const __extractReturn = {
@@ -1189,8 +1311,8 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     runMatrix,
     matrixExtractPromptVersion: runMatrix ? 'lab_matrix_extract_v1' : '',
     geminiMultiDateRowsCount: Array.isArray(report.rows) ? report.rows.length : 0,
-    examDateCandidates: examDateCandidatesLog,
-    columnDates: columnDatesLog,
+    examDateCandidates: validatedExamDateCandidates,
+    columnDates: validatedColumnDates,
     flattenedMultiDateItemsCount: geminiMultiMin.length,
     legacyDataPrimaryCount: primaryFromData.length,
     multiDateFlattenFallbackReason

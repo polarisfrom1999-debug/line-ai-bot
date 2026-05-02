@@ -43,6 +43,39 @@ function normalizeYmd(value) {
   return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
 }
 
+function parseYmd(value) {
+  const d = normalizeYmd(value);
+  if (!d) return null;
+  const [y, m, day] = d.split('-').map((x) => Number(x));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(day)) return null;
+  return { y, m, d: day, ymd: d };
+}
+
+function hasExplicitYearInDateToken(value) {
+  const s = normalizeText(value);
+  return /(19|20)\d{2}\s*[\/\.\-年]/.test(s);
+}
+
+function compareYmd(a, b) {
+  const pa = parseYmd(a);
+  const pb = parseYmd(b);
+  if (!pa || !pb) return 0;
+  if (pa.ymd === pb.ymd) return 0;
+  return pa.ymd > pb.ymd ? 1 : -1;
+}
+
+const RANGE_VALUE_RE = /^\d+(?:\.\d+)?\s*[-〜~−–—]\s*\d+(?:\.\d+)?$/;
+
+function isReferenceRangeLikeValue(value) {
+  const s = normalizeText(value).replace(/[－–—]/g, '-');
+  return RANGE_VALUE_RE.test(s);
+}
+
+function minItemAllowsAmbiguousRangeValue(it = {}) {
+  const s = normalizeText(it?.status || '').toLowerCase();
+  return s.includes('ambiguous_range_value') || s.includes('value_range_as_measurement');
+}
+
 function inferNormalizedKey(rawLabel = '') {
   const t = normalizeText(rawLabel).toLowerCase();
   if (!t) return '';
@@ -86,7 +119,8 @@ function buildMinItem({
   referenceHigh = null,
   confidence = null,
   status = '',
-  observedDate = ''
+  observedDate = '',
+  referenceRange = ''
 } = {}) {
   const nk = normalizeText(String(normalizedKey || '').toLowerCase());
   const val = serializeValue(value);
@@ -108,6 +142,7 @@ function buildMinItem({
     ...(referenceHigh != null ? { referenceHigh } : {}),
     ...(confidence != null ? { confidence: Number(confidence) || 0 } : {}),
     ...(status ? { status: normalizeText(status) } : {}),
+    ...(referenceRange ? { referenceRange: normalizeText(referenceRange) } : {}),
     ...(normalizeText(observedDate || '') === 'unknown_date'
       ? { observedDate: 'unknown_date' }
       : (normalizeYmd(observedDate) ? { observedDate: normalizeYmd(observedDate) } : {}))
@@ -124,21 +159,80 @@ function minItemHasRealObservedYmd(it) {
 
 function observedDateFromMatrixCell(rawObserved, printNorm) {
   const t = normalizeText(rawObserved);
-  if (!t || /^unknown_date$/i.test(t)) return UNKNOWN_OBSERVED_DATE;
+  if (!t || /^unknown_date$/i.test(t)) {
+    return {
+      observedDate: UNKNOWN_OBSERVED_DATE,
+      yearInferred: false,
+      futureAgainstPrintDate: false,
+      ambiguousYear: false,
+      confidence: 0,
+      rawObserved: t,
+      rawHasExplicitYear: false
+    };
+  }
   const d = classifier.normalizeDateToken(t);
-  if (!d) return UNKNOWN_OBSERVED_DATE;
-  if (printNorm && d === printNorm) return UNKNOWN_OBSERVED_DATE;
-  return d;
+  if (!d) {
+    return {
+      observedDate: UNKNOWN_OBSERVED_DATE,
+      yearInferred: false,
+      futureAgainstPrintDate: false,
+      ambiguousYear: false,
+      confidence: 0,
+      rawObserved: t,
+      rawHasExplicitYear: hasExplicitYearInDateToken(t)
+    };
+  }
+  let observedDate = d;
+  const rawHasExplicitYear = hasExplicitYearInDateToken(t);
+  const printDate = normalizeYmd(printNorm);
+  let futureAgainstPrintDate = false;
+  let yearInferred = false;
+  let ambiguousYear = false;
+  let confidence = rawHasExplicitYear ? 0.9 : 0.65;
+  if (!rawHasExplicitYear) {
+    yearInferred = true;
+    ambiguousYear = true;
+  }
+  if (printDate && observedDate === printDate) {
+    observedDate = UNKNOWN_OBSERVED_DATE;
+    confidence = 0.55;
+  } else if (printDate && compareYmd(observedDate, printDate) > 0) {
+    futureAgainstPrintDate = true;
+    confidence = rawHasExplicitYear ? 0.35 : 0.3;
+    /** 印刷日より未来は確定検査日として採用しない（DB・parsed から除外） */
+    observedDate = UNKNOWN_OBSERVED_DATE;
+  }
+  return {
+    observedDate,
+    yearInferred,
+    futureAgainstPrintDate,
+    ambiguousYear,
+    confidence,
+    rawObserved: t,
+    rawHasExplicitYear
+  };
+}
+
+function isAmbiguousRangeValueCell(cell = {}, row = {}) {
+  const status = normalizeText(cell?.status || row?.status || '').toLowerCase();
+  if (status.includes('ambiguous_range_value')) return true;
+  if (status.includes('value_range_as_measurement')) return true;
+  return false;
 }
 
 /**
  * rows[].values[] → min items（structured extract の flatten と同等の意図）
+ * @param {object} statsOut 省略可。集計はログ用（flatten 段階の除外件数）。
  */
-function extractMatrixRowsToMinItemsFromReport(report = {}, printNormTop = '') {
+function extractMatrixRowsToMinItemsFromReport(report = {}, printNormTop = '', statsOut = null) {
   const out = [];
   const seen = new Set();
   let anon = 0;
   let rowIdx = 0;
+  const bump = (key) => {
+    if (!statsOut || typeof statsOut !== 'object') return;
+    statsOut[key] = (Number(statsOut[key]) || 0) + 1;
+  };
   for (const r of Array.isArray(report?.rows) ? report.rows : []) {
     const labelIn = normalizeText(r?.rawName || r?.label_in_image || r?.labelInImage || '');
     let nk = normalizeText(String(r?.normalized_key || r?.normalizedKey || '').toLowerCase());
@@ -148,12 +242,36 @@ function extractMatrixRowsToMinItemsFromReport(report = {}, printNormTop = '') {
     if (!nk && !labelIn) continue;
     const name = KEY_TO_ITEM_NAME[nk] || labelIn || nk;
     const rawName = labelIn || name;
+    const rowRefRange = normalizeText(r?.referenceRange || r?.reference_range || '');
     for (const cell of Array.isArray(r?.values) ? r.values : []) {
       const val = serializeValue(cell?.value);
       if (!val) continue;
       if (classifier.normalizeDateToken(val)) continue;
-      const odRaw = observedDateFromMatrixCell(cell?.observedDate || cell?.observed_date, printNormTop);
-      const odYmd = odRaw === UNKNOWN_OBSERVED_DATE ? UNKNOWN_OBSERVED_DATE : (normalizeYmd(odRaw) || UNKNOWN_OBSERVED_DATE);
+      const dateMeta = observedDateFromMatrixCell(cell?.observedDate || cell?.observed_date, printNormTop);
+      const odYmd = dateMeta.observedDate === UNKNOWN_OBSERVED_DATE
+        ? UNKNOWN_OBSERVED_DATE
+        : (normalizeYmd(dateMeta.observedDate) || UNKNOWN_OBSERVED_DATE);
+      const rangeLike = isReferenceRangeLikeValue(val);
+      if (rangeLike && !isAmbiguousRangeValueCell(cell, r)) {
+        bump('range_values_dropped_count');
+        continue;
+      }
+      if (odYmd === UNKNOWN_OBSERVED_DATE) {
+        bump('unknown_observed_dropped_flatten');
+        if (dateMeta.futureAgainstPrintDate) bump('future_dates_dropped_flatten');
+        continue;
+      }
+      const statusText = normalizeText(cell?.status || '');
+      const mergedStatus = [
+        statusText,
+        rangeLike ? 'ambiguous_range_value' : '',
+        dateMeta.futureAgainstPrintDate ? 'future_against_printDate' : '',
+        dateMeta.yearInferred ? 'year_inferred' : '',
+        dateMeta.ambiguousYear ? 'ambiguous_year' : ''
+      ].filter(Boolean).join('|');
+      const refRangeField = rangeLike
+        ? val
+        : (normalizeText(cell?.referenceRange || '') || rowRefRange);
       const it = buildMinItem({
         normalizedKey: nk,
         value: val,
@@ -162,8 +280,9 @@ function extractMatrixRowsToMinItemsFromReport(report = {}, printNormTop = '') {
         name,
         unit: normalizeText(cell?.unit || ''),
         flag: normalizeText(cell?.flag || ''),
-        confidence: cell?.confidence != null ? Number(cell.confidence) : null,
-        status: normalizeText(cell?.status || ''),
+        confidence: cell?.confidence != null ? Number(cell.confidence) : dateMeta.confidence,
+        status: mergedStatus,
+        referenceRange: refRangeField,
         observedDate: odYmd
       });
       const id = itemIdentityKey(it, anon++);
@@ -215,6 +334,7 @@ function extractPrimaryGeminiMinItems(payload) {
       const nk = explicitKey || inferredKey || (labelInImage ? `raw_label:${slugifyLabel(labelInImage) || `item_${anon}`}` : '');
       const val = serializeValue(row?.value);
       if (!val) continue;
+      if (isReferenceRangeLikeValue(val)) continue;
       const rawName = labelInImage;
       if (!nk && !rawName) continue;
       const identity = itemIdentityKey({ normalizedKey: nk, rawName }, anon++);
@@ -254,6 +374,7 @@ function rowNormalizeToFallbackMinItem(row) {
   if (!row?.normalizedKey) return null;
   const val = serializeValue(row?.value);
   if (!val) return null;
+  if (isReferenceRangeLikeValue(val)) return null;
   const rawName = normalizeText(row?.rowLabelRaw || row?.labelInImage || '');
   const name = normalizeText(row?.itemName || '') || KEY_TO_ITEM_NAME[row.normalizedKey] || rawName || row.normalizedKey;
   return buildMinItem({
@@ -325,7 +446,9 @@ function minItemsToRowsForGroupRows(minItems, latestExamDate) {
 /** records_count: normalizedKey があり value が空でない item 数（parsed_items_json 最小スキーマ用） */
 function countQualifiedParsedItems(items) {
   return (Array.isArray(items) ? items : []).filter(
-    (it) => normalizeText(it?.normalizedKey) && normalizeText(serializeValue(it?.value))
+    (it) => normalizeText(it?.normalizedKey)
+      && normalizeText(serializeValue(it?.value))
+      && !isReferenceRangeLikeValue(serializeValue(it?.value))
   ).length;
 }
 
@@ -401,6 +524,76 @@ function examDatesStringArrayForInsert(distinctDatesList, hasQualifiedRecords) {
   return hasQualifiedRecords ? [UNKNOWN_OBSERVED_DATE] : [];
 }
 
+function pushSampleArr(arr, val, maxLen) {
+  const s = normalizeText(serializeValue(val));
+  if (!s || arr.includes(s)) return;
+  if (arr.length < maxLen) arr.push(s);
+}
+
+/**
+ * parsed_items_json 保存直前の最終ガード（範囲値・未来日・印刷日同一・unknown 再除去）
+ */
+function filterParsedMinItemsForDb(items, printNormTop, rangeOnlyDates = new Set()) {
+  const printY = normalizeYmd(classifier.normalizeDateToken(printNormTop || ''));
+  const stats = {
+    range_values_dropped_count: 0,
+    future_dates_dropped_count: 0,
+    reference_range_detected_count: 0,
+    unknown_date_dropped_count: 0,
+    same_print_date_dropped_count: 0,
+    range_only_date_dropped_count: 0,
+    ambiguous_range_kept_count: 0,
+    rejected_range_samples: [],
+    rejected_exam_dates: [],
+    validated_parsed_items_count: 0,
+    raw_input_items_count: Array.isArray(items) ? items.length : 0
+  };
+  const rejectedDates = new Set();
+  const out = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const val = serializeValue(it?.value);
+    if (!normalizeText(val)) continue;
+    const amb = minItemAllowsAmbiguousRangeValue(it);
+    if (isReferenceRangeLikeValue(val)) {
+      stats.reference_range_detected_count += 1;
+      if (!amb) {
+        stats.range_values_dropped_count += 1;
+        pushSampleArr(stats.rejected_range_samples, val, 12);
+        continue;
+      }
+      stats.ambiguous_range_kept_count += 1;
+    }
+    const odRaw = normalizeText(it?.observedDate || it?.observed_date || '');
+    if (!odRaw || odRaw === UNKNOWN_OBSERVED_DATE) {
+      stats.unknown_date_dropped_count += 1;
+      continue;
+    }
+    const y = normalizeYmd(classifier.normalizeDateToken(odRaw) || odRaw);
+    if (!y) {
+      stats.unknown_date_dropped_count += 1;
+      continue;
+    }
+    if (printY && y === printY) {
+      stats.same_print_date_dropped_count += 1;
+      continue;
+    }
+    if (printY && compareYmd(y, printY) > 0) {
+      stats.future_dates_dropped_count += 1;
+      rejectedDates.add(y);
+      continue;
+    }
+    if (rangeOnlyDates && typeof rangeOnlyDates.has === 'function' && rangeOnlyDates.has(y)) {
+      stats.range_only_date_dropped_count += 1;
+      rejectedDates.add(y);
+      continue;
+    }
+    out.push(it);
+  }
+  stats.rejected_exam_dates = [...rejectedDates].sort((a, b) => String(a).localeCompare(String(b)));
+  stats.validated_parsed_items_count = out.length;
+  return { items: out, stats };
+}
+
 module.exports = {
   flattenReports,
   buildMinItem,
@@ -416,6 +609,10 @@ module.exports = {
   rowFallbackActive,
   rowNormalizeToFallbackMinItem,
   UNKNOWN_OBSERVED_DATE,
+  isReferenceRangeLikeValue,
+  observedDateFromMatrixCell,
+  compareYmd,
+  filterParsedMinItemsForDb,
   distinctObservedDateStringsFromParsedItems,
   examDatesStringArrayForInsert
 };
