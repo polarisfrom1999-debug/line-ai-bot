@@ -108,13 +108,16 @@ function buildMatrixDiagnostics(rows = []) {
  */
 async function extractMatrixTable(imagePayload, meta = {}) {
   const spec = buildLabMatrixExtractSpec(meta);
-  console.info('[phasee-new] lab_matrix_extract_v1_called', {
+  const v1CallPayload = {
     renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
     userId: normalizeText(meta.userId || ''),
     matrix_extract_called: true,
+    lab_matrix_extract_v1_called: true,
     promptVersion: spec.promptVersion || 'lab_matrix_extract_v1',
     runMatrix: true
-  });
+  };
+  console.info('[phasee-new] lab_matrix_extract_v1_called', v1CallPayload);
+  console.log(`[phasee-new] lab_matrix_extract_v1_called_json ${JSON.stringify(v1CallPayload)}`);
   try {
     const dispatch = await geminiDispatchService.generateStructuredImageJson({
       imagePayload,

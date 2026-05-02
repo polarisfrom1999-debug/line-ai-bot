@@ -169,6 +169,12 @@ function enrichPanelFromRecoverablePayload(panel = {}, label = '') {
 async function ingestLabDocument({ userId, imagePayload } = {}) {
   const cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
   if (cached) {
+    console.info('[phasee-new] lab_ingest_cache_hit_skip_extract', {
+      renderGitCommit: String(process.env.RENDER_GIT_COMMIT || process.env.RENDER_GIT_SHA || ''),
+      userId: String(userId || ''),
+      note: 'extractStructuredLab_not_called_use_cached_panel'
+    });
+    console.log(`[phasee-new] lab_ingest_cache_hit_skip_extract_json ${JSON.stringify({ userId: String(userId || ''), cached: true })}`);
     if (geminiItems.countQualifiedPanelRecords(cached) === 0) {
       const cacheEnrich = enrichPanelFromRecoverablePayload(cached, 'cache_raw_recovery');
       if (cacheEnrich.enriched) {

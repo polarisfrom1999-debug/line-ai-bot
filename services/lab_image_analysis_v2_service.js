@@ -159,7 +159,11 @@ function hasMajorKeyCoverage(items = []) {
 
 async function analyzeLabImageV2(imagePayload, opts = {}) {
   const classification = await classifierService.classifyLabDocument(imagePayload);
-  const extraction = await extractService.extractStructuredLab(imagePayload, { ...classification, userId: opts.userId || '' });
+  const extraction = await extractService.extractStructuredLab(imagePayload, {
+    ...classification,
+    userId: opts.userId || '',
+    extractCaller: 'lab_image_analysis_v2'
+  });
   const rawText = [classification?.rawText, extraction?.rawText].filter(Boolean).join('\n');
   const rows = Array.isArray(extraction?.rows) ? extraction.rows : [];
   const structRows = Array.isArray(extraction?.rowsForStructured) && extraction.rowsForStructured.length

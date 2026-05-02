@@ -171,7 +171,10 @@ async function analyzeLabImage(imagePayload) {
     return buildIgnoredPanel('not_lab_document', classification);
   }
 
-  const extraction = await extractService.extractStructuredLab(imagePayload, classification);
+  const extraction = await extractService.extractStructuredLab(imagePayload, {
+    ...classification,
+    extractCaller: 'lab_image_analysis_v1'
+  });
 
   if (documentKind === 'chat_screenshot' || normalizeText(extraction.documentType || '') === 'chat_screenshot') {
     return buildIgnoredPanel('chat_screenshot', classification);

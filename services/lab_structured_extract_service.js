@@ -472,12 +472,44 @@ function groupRowsToItems(rows, latestExamDate) {
 
 async function extractStructuredLab(imagePayload, meta = {}) {
   const builder = buildLabExtractPrompt(meta);
+  const traceOutcome = {
+    renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
+    userId: normalizeText(meta.userId || ''),
+    extractCaller: normalizeText(meta.extractCaller || ''),
+    primary_lab_extract_promptVersion: builder.promptVersion || '',
+    matrixStructuredPrimaryOk: false,
+    runMatrix: false,
+    matrix_extract_called: false,
+    promptVersion: '',
+    matrix_rows_count: 0,
+    matrix_v1_first_pass_rows: 0,
+    matrix_dates_count: 0,
+    matrix_items_count: 0,
+    matrix_headers_distinct_sample: [],
+    parsed_items_observedDate_sample: [],
+    parsed_items_source_sample: [],
+    exam_dates_json: [],
+    fallback_used_reason: '',
+    lab_multi_date_matrix_tagged_items: 0,
+    qualified_records: 0,
+    route_error: '',
+    route_completed: false,
+    runMatrix_false_reason: ''
+  };
+  console.info('[phasee-new] lab_extract_route_entered', traceOutcome);
+  console.log(`[phasee-new] lab_extract_route_entered_json ${JSON.stringify(traceOutcome)}`);
   console.info('[lab-ingest-trace] stage:extract_prompt_info', {
     userId: meta.userId,
     prompt_version: builder?.promptVersion || '',
     domain: builder?.domain || '',
     preferred_model: builder?.preferredModel || ''
   });
+  try {
+  let matrixStructuredPrimaryOk = false;
+  let runMatrix = false;
+  let matrixV1FirstPassRowCount = 0;
+  let matrixMergedPayloadDataRowCount = 0;
+  let matrixMergedPayloadDiag = null;
   let payload = {};
   let rawText = '';
   let ok = false;
@@ -709,7 +741,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     previewReport.printDate || previewReport.print_date || previewReport.report_date || previewReport.reportDate || meta.reportDate || ''
   );
   const geminiMatrixStructured = flattenGeminiRowsValuesToMinItems(previewReport, printEarly);
-  const matrixStructuredPrimaryOk = geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0
+  matrixStructuredPrimaryOk = geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0
     && geminiMatrixStructured.some((it) => geminiItems.minItemHasRealObservedYmd(it));
   if (geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0 && !matrixStructuredPrimaryOk) {
     console.info('[phasee-new] lab_matrix_2nd_pass_eligible', {
@@ -718,12 +750,35 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       qualified_matrix_cells: geminiItems.countQualifiedParsedItems(geminiMatrixStructured)
     });
   }
-  const runMatrix = !isChatLayout
+  runMatrix = !isChatLayout
     && !matrixStructuredPrimaryOk
     && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimaryItems.length || matrixByDateGap);
-  let matrixV1FirstPassRowCount = 0;
-  let matrixMergedPayloadDataRowCount = 0;
-  let matrixMergedPayloadDiag = null;
+  traceOutcome.matrixStructuredPrimaryOk = matrixStructuredPrimaryOk;
+  traceOutcome.runMatrix = runMatrix;
+  traceOutcome.matrix_extract_called = runMatrix;
+  traceOutcome.runMatrix_false_reason = !runMatrix
+    ? (isChatLayout
+      ? 'isChatLayout'
+      : matrixStructuredPrimaryOk
+        ? 'matrixStructuredPrimaryOk_blocks_second_pass'
+        : (!(layoutClassifier === 'multi_date_timeseries') && afterAllRescuesPrimaryItems.length > 0 && !matrixByDateGap)
+          ? 'layout_not_multi_date_and_items_without_matrixByDateGap'
+          : 'unknown_gate')
+    : '';
+  console.info('[phasee-new] lab_extract_matrix_gate', {
+    ...traceOutcome,
+    layoutClassifier,
+    matrixByDateGap,
+    afterAllRescuesPrimaryItems_len: afterAllRescuesPrimaryItems.length,
+    observedInPrimary
+  });
+  console.log(`[phasee-new] lab_extract_matrix_gate_json ${JSON.stringify({
+    matrixStructuredPrimaryOk,
+    runMatrix,
+    runMatrix_false_reason: traceOutcome.runMatrix_false_reason,
+    layoutClassifier,
+    matrixByDateGap
+  })}`);
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
     const m1Rows = Array.isArray(m1?.data) ? m1.data : [];
@@ -1087,9 +1142,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     observedDate: normalizeText(x?.observedDate || x?.observed_date || ''),
     source: normalizeText(x?.source || '')
   }));
-  console.info('[phasee-new] lab_extract_prod_validation', {
-    renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
-    userId: normalizeText(meta.userId || ''),
+  Object.assign(traceOutcome, {
     matrixStructuredPrimaryOk,
     runMatrix,
     matrix_extract_called: runMatrix,
@@ -1105,12 +1158,13 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     parsed_items_observedDate_sample: parsedSampleForLog.map((x) => x.observedDate),
     parsed_items_source_sample: parsedSampleForLog.map((x) => x.source),
     exam_dates_json: examDatesJsonLog,
-    multiDateFlattenFallbackReason,
+    fallback_used_reason: multiDateFlattenFallbackReason,
     lab_multi_date_matrix_tagged_items: parsedMinItems.filter((x) => normalizeText(x?.source) === 'lab_multi_date_matrix').length,
-    qualified_records: qualifiedRecords
+    qualified_records: qualifiedRecords,
+    route_completed: true
   });
 
-  return {
+  const __extractReturn = {
     ok,
     documentType,
     reportDate,
@@ -1135,6 +1189,18 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     legacyDataPrimaryCount: primaryFromData.length,
     multiDateFlattenFallbackReason
   };
+  return __extractReturn;
+  } catch (routeErr) {
+    traceOutcome.route_error = String(routeErr?.message || routeErr);
+    traceOutcome.route_completed = false;
+    traceOutcome.fallback_used_reason = traceOutcome.fallback_used_reason || `route_exception:${traceOutcome.route_error.slice(0, 120)}`;
+    console.error('[phasee-new] lab_extract_route_error', traceOutcome);
+    console.log(`[phasee-new] lab_extract_route_error_json ${JSON.stringify(traceOutcome)}`);
+    throw routeErr;
+  } finally {
+    console.info('[phasee-new] lab_extract_prod_validation', traceOutcome);
+    console.log(`[phasee-new] lab_extract_prod_validation_json ${JSON.stringify(traceOutcome)}`);
+  }
 }
 
 module.exports = {
