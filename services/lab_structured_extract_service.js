@@ -773,11 +773,15 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     observedInPrimary
   });
   console.log(`[phasee-new] lab_extract_matrix_gate_json ${JSON.stringify({
+    extractCaller: traceOutcome.extractCaller,
     matrixStructuredPrimaryOk,
     runMatrix,
     runMatrix_false_reason: traceOutcome.runMatrix_false_reason,
     layoutClassifier,
-    matrixByDateGap
+    matrixByDateGap,
+    afterAllRescuesPrimaryItems_len: afterAllRescuesPrimaryItems.length,
+    observedInPrimary,
+    isChatLayout
   })}`);
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
