@@ -86,6 +86,7 @@ function normalizeDocumentType(value) {
   const safe = normalizeText(value).toLowerCase();
   if (!safe) return 'unknown';
   if (safe.includes('chat') || safe.includes('screenshot')) return 'chat_screenshot';
+  if (safe.includes('blood_lab_report') || safe.includes('blood_lab')) return 'multi_date_timeseries';
   if (safe.includes('multi')) return 'multi_date_timeseries';
   if (safe.includes('single')) return 'single_day_report';
   return 'unknown';

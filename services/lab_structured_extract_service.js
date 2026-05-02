@@ -123,6 +123,15 @@ function coerceStructuredPayloadShape(payload, rawText, rawCandidateText, meta =
     const obj = { ...payload };
     if (!Array.isArray(obj.data)) obj.data = [];
     if (!Array.isArray(obj.rows)) obj.rows = [];
+    let dt = normalizeText(obj.documentType || obj.document_type || '');
+    if (!dt && meta?.documentType) dt = normalizeText(meta.documentType);
+    if (!dt) {
+      obj.documentType = 'blood_lab_report';
+      obj.document_type = 'blood_lab_report';
+    } else {
+      if (!obj.document_type) obj.document_type = dt;
+      if (!obj.documentType) obj.documentType = dt;
+    }
     if (!obj.document_type && meta?.documentType) obj.document_type = meta.documentType;
     return obj;
   }
@@ -341,7 +350,7 @@ function flattenGeminiRowsValuesToMinItems(report = {}, printNorm = '') {
   const out = [];
   let rowIdx = 0;
   for (const r of Array.isArray(report?.rows) ? report.rows : []) {
-    const labelIn = normalizeText(r?.label_in_image || r?.labelInImage || '');
+    const labelIn = normalizeText(r?.rawName || r?.label_in_image || r?.labelInImage || '');
     let nk = normalizeKey(r?.normalized_key || r?.normalizedKey, labelIn);
     if (!nk && labelIn) nk = normalizeKey('', labelIn);
     if (!nk && labelIn) nk = `raw_label:${slugifyLabelRaw(labelIn) || `item_${rowIdx}`}`;
@@ -381,7 +390,10 @@ function flattenReports(payload) {
   if (!payload) return [];
   if (Array.isArray(payload.extracted_reports)) return payload.extracted_reports;
   if (Array.isArray(payload.reports)) return payload.reports;
-  if (Array.isArray(payload.data) || payload.document_type || payload.documentType) return [payload];
+  if (Array.isArray(payload.data)
+    || Array.isArray(payload.rows)
+    || payload.document_type
+    || payload.documentType) return [payload];
   return [];
 }
 
@@ -637,7 +649,9 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     }
   }
 
-  const layoutClassifier = classifier.normalizeDocumentType(meta.documentType || payload?.document_type || '');
+  const layoutClassifier = classifier.normalizeDocumentType(
+    meta.documentType || payload?.document_type || payload?.documentType || ''
+  );
   const layoutLabel = layoutClassifier === 'multi_date_timeseries' ? 'lab_multi_date_matrix' : 'lab_single_day_report';
   console.info('[phasee-new] lab_document_layout_type', { userId: meta.userId || '', layout: layoutLabel, classifier_doc: layoutClassifier });
 
@@ -650,7 +664,15 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   const matrixByDateGap = afterAllRescuesPrimary.length > 0
     && observedInPrimary === 0
     && (rawDateHintCount >= 2 || payloadDateHintCount >= 2 || matrixHintLikely || afterAllRescuesPrimary.length >= 8);
-  const runMatrix = !isChatLayout && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length || matrixByDateGap);
+  const previewReport = flattenReports(payload)[0] || payload || {};
+  const printEarly = classifier.normalizeDateToken(
+    previewReport.printDate || previewReport.print_date || previewReport.report_date || previewReport.reportDate || meta.reportDate || ''
+  );
+  const geminiMatrixStructured = flattenGeminiRowsValuesToMinItems(previewReport, printEarly);
+  const matrixStructuredPrimaryOk = geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0;
+  const runMatrix = !isChatLayout
+    && !matrixStructuredPrimaryOk
+    && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimary.length || matrixByDateGap);
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
     const m1Rows = Array.isArray(m1?.data) ? m1.data : [];
@@ -733,7 +755,9 @@ async function extractStructuredLab(imagePayload, meta = {}) {
 
   const reports = flattenReports(payload);
   const report = reports[0] || payload || {};
-  const documentType = classifier.normalizeDocumentType(report.document_type || report.documentType || meta.documentType || '');
+  const documentType = classifier.normalizeDocumentType(
+    report.document_type || report.documentType || meta.documentType || ''
+  );
   const printDateNormTop = classifier.normalizeDateToken(
     report.printDate || report.print_date || report.report_date || report.reportDate || meta.reportDate || ''
   );
@@ -767,17 +791,17 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     || '';
   const primaryFromData = geminiItems.extractPrimaryGeminiMinItems(payload);
   const geminiMultiMin = flattenGeminiRowsValuesToMinItems(report, printDateNormTop);
-  let multiDateFlattenFallbackReason = 'legacy_data_extract_primary';
+  let multiDateFlattenFallbackReason = 'legacy_data_path';
   let primaryGeminiMinItems;
   if (geminiMultiMin.length > 0) {
     primaryGeminiMinItems = geminiMultiMin;
-    multiDateFlattenFallbackReason = 'used_gemini_rows_values_flatten';
+    multiDateFlattenFallbackReason = 'matrix_structured_primary';
   } else if (hasGeminiRowsWithValueCells(report)) {
     primaryGeminiMinItems = primaryFromData;
     multiDateFlattenFallbackReason = 'rows_present_but_flatten_produced_zero';
   } else {
     primaryGeminiMinItems = primaryFromData;
-    multiDateFlattenFallbackReason = 'legacy_data_extract_primary';
+    multiDateFlattenFallbackReason = 'legacy_data_path';
   }
   const rowsForMerge = geminiMultiMin.length > 0 ? [] : rows;
   let parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rowsForMerge);
@@ -785,7 +809,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
     .filter(Boolean);
   const parsedObservedDistinct = uniqueSortedDates(parsedObservedDates);
-  if (runMatrix && parsedObservedDistinct.length >= 2) {
+  if (!geminiMultiMin.length && runMatrix && parsedObservedDistinct.length >= 2) {
     parsedMinItems = parsedMinItems.map((x) => ({
       ...x,
       source: 'lab_multi_date_matrix'

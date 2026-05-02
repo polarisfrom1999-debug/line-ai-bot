@@ -4,9 +4,35 @@ function buildLabExtractPrompt(meta = {}) {
   const examDates = Array.isArray(meta.examDates) ? meta.examDates.filter(Boolean) : [];
   const issues = Array.isArray(meta.issues) ? meta.issues.filter(Boolean) : [];
 
+  const rowItemSchema = {
+    type: 'object',
+    properties: {
+      rawName: { type: 'string' },
+      label_in_image: { type: 'string' },
+      normalized_key: { type: 'string' },
+      values: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            observedDate: { type: 'string' },
+            value: { type: ['number', 'string'] },
+            unit: { type: 'string' },
+            flag: { type: 'string' },
+            confidence: { type: 'number' },
+            status: { type: 'string' }
+          },
+          required: ['observedDate', 'value']
+        }
+      }
+    },
+    required: ['values']
+  };
+
   const schema = {
     type: 'object',
     properties: {
+      documentType: { type: 'string' },
       document_type: { type: 'string' },
       patient_name: { type: 'string' },
       report_date: { type: 'string' },
@@ -17,29 +43,7 @@ function buildLabExtractPrompt(meta = {}) {
       missing_reason: { type: 'string' },
       rows: {
         type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            label_in_image: { type: 'string' },
-            normalized_key: { type: 'string' },
-            values: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  observedDate: { type: 'string' },
-                  value: { type: ['number', 'string'] },
-                  unit: { type: 'string' },
-                  flag: { type: 'string' },
-                  confidence: { type: 'number' },
-                  status: { type: 'string' }
-                },
-                required: ['observedDate', 'value']
-              }
-            }
-          },
-          required: ['label_in_image', 'values']
-        }
+        items: rowItemSchema
       },
       data: {
         type: 'array',
@@ -77,40 +81,30 @@ function buildLabExtractPrompt(meta = {}) {
       issues: { type: 'array', items: { type: 'string' } },
       confidence: { type: 'number' }
     },
-    required: ['document_type', 'data']
+    required: ['documentType', 'rows', 'data']
   };
 
   const prompt = [
-    'あなたは「ここから。」の血液検査構造化抽出担当です。返答はJSONのみです。',
-    '目的は、単日票または推移表を構造化し、後で保存・照会できるようにすることです。',
-    '最重要: data[] を最優先で埋めてください。日付情報だけで返答を終えないでください。',
-    '最重要: data の各行は「検査項目 + 値」を表すこと。日付だけの行は data に入れないでください。',
-    '最重要: normalized_key が不明でも、label_in_image と value が取れた行は必ず data に残してください。',
-    '最重要: document_type が unknown でも、data に項目行があるならそのまま返してください。',
-    '最重要: data が空の場合は missing_reason に理由を必ず書いてください（例: value_not_readable / item_labels_not_detected / non_lab_image_like など）。',
-    '横に複数の採血日・検査日・測定日・列見出し日付がある表（推移表）では、rows[] を必ず使ってください。',
-    'rows[] の各行: label_in_image に項目名、values[] に「その列の実検査日」とセル数値を1セル1要素で入れてください。',
-    'values[].observedDate は YYYY-MM-DD。画像に検査日・採血日・列見出しの日付が読めないセルは observedDate に unknown_date のみ（推測で日付を作らない）。',
-    'printDate / report_date は印刷・発行日のみ。印刷日を observedDate や検査日候補にコピーしないでください。',
-    'examDateCandidates と columnDates には、画像から読み取れた検査日・採血日・列見出しの日付のみを YYYY-MM-DD で列挙（印刷日は含めない）。単日で列見出しに検査日が無ければ空配列でよい。',
-    '単日票でも rows を使う場合は values を1件にし、検査日が読めなければ observedDate=unknown_date。',
-    'rows と data は併用可。後方互換のため data[] も従来どおり埋めてください（rows が空なら data のみでよい）。',
-    '採血日・検査日の列やラベル付き日付を最優先で読み、各 data 行の date と exam_dates / latest_exam_date に反映してください（印刷日だけで埋めない）。',
-    '読めない時は推測せず status="unclear" にしてください。',
-    '重要: document_type は single_day_report / multi_date_timeseries / unknown のいずれかにしてください。',
-    '重要: normalized_key は既定の正規化キーを優先してください。',
-    '重要: 各値には confidence と status を付けてください。',
-    '可能なら bbox_value / bbox_label を 0-1000 正規化座標で入れてください。読めないなら省略可です。',
+    'あなたは「ここから。」の血液検査表 OCR です。返答は JSON のみ。表を横方向＝採血日・検査日の列、縦方向＝検査項目の matrix として読んでください。',
+    '本流（必須）: documentType は "blood_lab_report" 固定。',
+    '本流（必須）: rows[] に、各行 rawName＝画像の項目名、values[]＝その項目の各日付列のセルを1要素ずつ入れてください。',
+    'values[].observedDate は列見出し・採血日・検査日・測定日から読んだ YYYY-MM-DD。読めない場合のみ "unknown_date"。推測で日付を作らない。',
+    'printDate は印刷・発行日のみ。printDate を observedDate や examDateCandidates / columnDates にコピーしないでください。',
+    'examDateCandidates と columnDates には、表から読み取れた検査日・採血日・列見出しの日付のみを YYYY-MM-DD で列挙（印刷日は含めない）。単日で列に検査日が無ければ空配列。',
+    '保険用 data[]: rows で数値を表現できない場合や読み取り失敗時のみ、従来形式の data[] に label_in_image と value を入れてください。',
+    'rows で全セルを表現できているときは data は空配列 [] でよい。',
+    '日付だけの疑似行は data に入れない。数値セルが無い行は rows に含めない。',
+    '読めないセルは status="unclear"。normalized_key が取れるときは rows に入れてよい（取れなくても rawName があれば可）。',
     `分類済み document_type 補助: ${meta.documentType || 'unknown'}`,
     `分類済み report_date 補助: ${meta.reportDate || 'なし'}`,
     examDates.length ? `分類済み exam_dates 補助: ${examDates.join(', ')}` : '分類済み exam_dates 補助: なし',
     issues.length ? `分類時の注意: ${issues.join(' / ')}` : '分類時の注意: なし',
-    '優先 normalized_key 一覧: ast_got, alt_gpt, gamma_gtp, creatinine, uric_acid, bun, glucose, hba1c, triglycerides_tg, total_cholesterol, hdl_cholesterol, ldl_cholesterol, ldl_hdl_ratio, sodium, potassium, chloride, egfr, wbc, rbc, hemoglobin, hematocrit, mcv, mch, mchc, platelets, cpk, ldh, total_protein, bilirubin, calcium'
+    '優先 normalized_key: ast_got, alt_gpt, gamma_gtp, creatinine, uric_acid, bun, glucose, hba1c, triglycerides_tg, total_cholesterol, hdl_cholesterol, ldl_cholesterol, ldl_hdl_ratio, sodium, potassium, chloride, egfr, wbc, rbc, hemoglobin, hematocrit, mcv, mch, mchc, platelets, cpk, ldh, total_protein, bilirubin, calcium'
   ].join('\n');
 
   return {
     domain: 'lab_image',
-    promptVersion: 'lab_extract_v2',
+    promptVersion: 'lab_extract_v3_matrix_primary',
     schema,
     prompt,
     temperature: 0.05,
