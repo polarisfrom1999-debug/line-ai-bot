@@ -17,6 +17,10 @@ const {
   examDatesStringArrayForInsert,
   UNKNOWN_OBSERVED_DATE
 } = require('../lab_gemini_items_service');
+const {
+  normalizeDateToken: normalizeLabDateToken,
+  extractExamDateFromBlobText
+} = require('../lab_document_classifier_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -110,11 +114,19 @@ function buildBaseMealPayload(parsedMeal, input = {}) {
   };
 }
 
-function buildLabReply(lab = {}) {
-  const examDate = normalizeText(lab?.latestExamDate || lab?.examDate || '');
+function buildLabReply(lab = {}, examDatesForInsert = []) {
+  const datesAreUnknown = !Array.isArray(examDatesForInsert) || !examDatesForInsert.length
+    || (examDatesForInsert.length === 1 && examDatesForInsert[0] === UNKNOWN_OBSERVED_DATE);
+  const fromInsert = (examDatesForInsert || [])
+    .filter((x) => normalizeText(x) && normalizeText(x) !== UNKNOWN_OBSERVED_DATE)
+    .sort();
+  const latestFromInsert = fromInsert.length ? fromInsert[fromInsert.length - 1] : '';
+  const examDate = latestFromInsert || normalizeText(lab?.latestExamDate || lab?.examDate || '');
   return [
     '血液検査画像として受け取りました。',
-    examDate ? `最新の検査日: ${examDate}` : '検査日は確認中です。',
+    datesAreUnknown
+      ? 'この画像では検査日は明確には読み取れませんでした。'
+      : (examDate ? `最新の検査日: ${examDate}` : '検査日は確認中です。'),
     '「TGは？」「患者名は？」「異常がある項目は？」のように聞いてください。'
   ].join('\n');
 }
@@ -127,41 +139,233 @@ function hasUsableLabMeta(lab = {}) {
   );
 }
 
-function normalizeYmd(v) {
-  const s = normalizeText(v).replace(/\//g, '-');
+const UNKNOWN_OBSERVED = UNKNOWN_OBSERVED_DATE;
+
+const MAX_DATE_SCAN_CHARS = 280000;
+const DATEISH_KEY_RE = /date|exam|採血|検査|実施|受診|header|column|timepoint|作成|印刷|report|年月日|歳月日/i;
+
+/** 検査日ラベル用 YYYY-MM-DD（和暦・2桁年・スラッシュ等は classifier に委譲） */
+function normalizeExamDateIso(v) {
+  const t = normalizeText(v);
+  if (!t) return '';
+  const via = normalizeLabDateToken(t);
+  if (via) return via;
+  const s = t.replace(/\//g, '-');
   const m = s.match(/(20\d{2})-(\d{1,2})-(\d{1,2})/);
   if (!m) return '';
   return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
 }
 
-const UNKNOWN_OBSERVED = UNKNOWN_OBSERVED_DATE;
-
 function printDateNormalized(lab = {}) {
-  return normalizeYmd(lab?.printDate || lab?.meta?.printDate || '');
+  return normalizeExamDateIso(lab?.printDate || lab?.meta?.printDate || '');
 }
 
-function inferObservedDateForLabItem(it, lab = {}) {
-  const direct = normalizeYmd(it?.observedDate || it?.observed_date || '');
-  if (direct) return direct;
+function safeJsonSlice(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    return s.length > MAX_DATE_SCAN_CHARS ? s.slice(0, MAX_DATE_SCAN_CHARS) : s;
+  } catch (_e) {
+    return '';
+  }
+}
+
+function harvestRegexDateSnippets(text) {
+  const safe = normalizeText(text).slice(0, MAX_DATE_SCAN_CHARS);
+  if (!safe) return [];
+  const out = [];
+  const patterns = [
+    /(20\d{2}[年／\/\-\.]\s*0?\d{1,2}[月／\/\-\.]\s*0?\d{1,2}日?)/g,
+    /(20\d{2}-\d{1,2}-\d{1,2})/g,
+    /(20\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})/g,
+    /(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/g,
+    /(R\s*\d{1,2}\s*年?\s*\d{1,2}\s*月?\s*\d{1,2}日?)/gi
+  ];
+  for (const re of patterns) {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(safe)) !== null) {
+      if (m[0]) out.push(m[0]);
+    }
+  }
+  return out;
+}
+
+function walkLabObjectForDateishStrings(obj, depth, acc) {
+  if (depth <= 0 || obj == null) return;
+  if (typeof obj === 'string') {
+    if (obj.length && obj.length < 400) acc.push(obj);
+    return;
+  }
+  if (Array.isArray(obj)) {
+    for (const el of obj) walkLabObjectForDateishStrings(el, depth - 1, acc);
+    return;
+  }
+  if (typeof obj !== 'object') return;
+  for (const [k, v] of Object.entries(obj)) {
+    if (DATEISH_KEY_RE.test(k) && typeof v === 'string' && v.length < 400) acc.push(v);
+    walkLabObjectForDateishStrings(v, depth - 1, acc);
+  }
+}
+
+function scanItemStringsForAcceptedDate(it, accepted, pd, depth = 3) {
+  if (!it || typeof it !== 'object' || !Array.isArray(accepted) || !accepted.length || depth <= 0) return '';
+  for (const v of Object.values(it)) {
+    if (typeof v === 'string') {
+      const n = normalizeExamDateIso(v);
+      if (n && (!pd || n !== pd) && accepted.includes(n)) return n;
+      continue;
+    }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const inner = scanItemStringsForAcceptedDate(v, accepted, pd, depth - 1);
+      if (inner) return inner;
+    }
+  }
+  return '';
+}
+
+function buildLabExamDateContext(lab = {}, itemsPre = []) {
+  const rawSet = new Set();
+  const pushRaw = (x) => {
+    const t = normalizeText(x);
+    if (t) rawSet.add(t);
+  };
+
+  pushRaw(lab?.printDate);
+  pushRaw(lab?.meta?.printDate);
+  if (Array.isArray(lab?.examDates)) lab.examDates.forEach(pushRaw);
+  if (Array.isArray(lab?.examDateEntries)) {
+    for (const e of lab.examDateEntries) {
+      pushRaw(e?.value);
+      pushRaw(e?.original_text);
+      pushRaw(e?.originalText);
+      pushRaw(e?.normalized_date);
+      pushRaw(e?.normalizedDate);
+    }
+  }
+  pushRaw(lab?.latestExamDate);
+  pushRaw(lab?.examDate);
+  pushRaw(lab?.rawText);
+  pushRaw(lab?.geminiRaw?.classifier?.rawText);
+  pushRaw(lab?.geminiRaw?.extraction?.rawText);
+
+  const struct = lab?.structuredJson && typeof lab.structuredJson === 'object' ? lab.structuredJson : null;
+  const rawPayload = lab?.rawPayload && typeof lab.rawPayload === 'object' ? lab.rawPayload : null;
+  const acc = [];
+  walkLabObjectForDateishStrings(struct, 14, acc);
+  walkLabObjectForDateishStrings(rawPayload, 14, acc);
+  acc.forEach(pushRaw);
+
+  for (const it of Array.isArray(itemsPre) ? itemsPre : []) {
+    if (!it || typeof it !== 'object') continue;
+    for (const v of Object.values(it)) {
+      if (typeof v === 'string') pushRaw(v);
+    }
+  }
+
+  const blobForPriority = [
+    lab?.rawText,
+    lab?.geminiRaw?.classifier?.rawText,
+    lab?.geminiRaw?.extraction?.rawText
+  ].filter(Boolean).join('\n');
+  const linePriority = extractExamDateFromBlobText(blobForPriority);
+  if (linePriority) pushRaw(linePriority);
+
+  for (const chunk of [blobForPriority, safeJsonSlice(struct), safeJsonSlice(rawPayload)]) {
+    for (const snip of harvestRegexDateSnippets(chunk)) pushRaw(snip);
+  }
+
+  const raw_date_candidates = Array.from(rawSet).sort();
   const pd = printDateNormalized(lab);
-  const fromExams = [];
+  const printDisplay = pd || normalizeText(lab?.printDate || lab?.meta?.printDate || '');
+
+  const normalized_candidates = [...new Set(
+    raw_date_candidates.map((r) => normalizeExamDateIso(r)).filter(Boolean)
+  )].sort();
+
+  const rejected_candidates = [];
+  for (const raw of raw_date_candidates) {
+    const n = normalizeExamDateIso(raw);
+    if (!n) {
+      rejected_candidates.push({ candidate: raw, reason: 'unparseable' });
+      continue;
+    }
+    if (pd && n === pd) {
+      rejected_candidates.push({ candidate: n, reason: 'same_as_printDate' });
+    }
+  }
+
+  const accepted_exam_dates = normalized_candidates.filter((n) => !pd || n !== pd);
+
+  let fallback_reason = 'no_exam_date_candidate_found';
+  if (!raw_date_candidates.length) fallback_reason = 'no_raw_date_tokens';
+  else if (!normalized_candidates.length) fallback_reason = 'no_parseable_date';
+  else if (!accepted_exam_dates.length && normalized_candidates.length && pd && normalized_candidates.every((n) => n === pd)) {
+    fallback_reason = 'all_candidates_same_as_printDate';
+  }
+
+  const debug = {
+    raw_date_candidates,
+    normalized_candidates,
+    printDate: printDisplay,
+    accepted_exam_dates,
+    rejected_candidates,
+    fallback: UNKNOWN_OBSERVED,
+    fallback_reason
+  };
+
+  return {
+    debug,
+    printDateNorm: pd,
+    acceptedExamDatesSorted: accepted_exam_dates
+  };
+}
+
+function inferObservedDateForLabItem(it, lab = {}, ctx = {}) {
+  const pd = ctx.printDateNorm != null ? ctx.printDateNorm : printDateNormalized(lab);
+  const accepted = Array.isArray(ctx.acceptedExamDatesSorted) ? ctx.acceptedExamDatesSorted : [];
+
+  const itemFieldKeys = [
+    'observedDate', 'observed_date', 'date', 'examDate', 'exam_date',
+    'column_header_raw', 'columnHeaderRaw', 'columnDate', 'headerDate', 'header_date',
+    'timepoint_raw', 'timepoint'
+  ];
+  for (const k of itemFieldKeys) {
+    const n = normalizeExamDateIso(it?.[k]);
+    if (!n) continue;
+    if (pd && n === pd) continue;
+    return n;
+  }
+
+  const scanned = scanItemStringsForAcceptedDate(it, accepted, pd);
+  if (scanned) return scanned;
+
+  if (accepted.length === 1) return accepted[0];
+  if (accepted.length > 1) {
+    const hdr = normalizeExamDateIso(it?.column_header_raw || it?.columnHeaderRaw || '');
+    if (hdr && accepted.includes(hdr) && (!pd || hdr !== pd)) return hdr;
+    return accepted[accepted.length - 1];
+  }
+
+  const fromExams = [...accepted];
   if (Array.isArray(lab?.examDates)) {
     for (const d of lab.examDates) {
-      const x = normalizeYmd(d);
+      const x = normalizeExamDateIso(d);
       if (x && (!pd || x !== pd)) fromExams.push(x);
     }
   }
   if (Array.isArray(lab?.examDateEntries)) {
     for (const e of lab.examDateEntries) {
-      const x = normalizeYmd(e?.normalized_date || e?.normalizedDate || e?.value || '');
+      const x = normalizeExamDateIso(e?.normalized_date || e?.normalizedDate || e?.value || '');
       if (x && (!pd || x !== pd)) fromExams.push(x);
     }
   }
-  const latest = normalizeYmd(lab?.latestExamDate || lab?.examDate || '');
-  if (latest && (!pd || latest !== pd)) return latest;
   const uniq = Array.from(new Set(fromExams)).sort();
   if (uniq.length === 1) return uniq[0];
   if (uniq.length > 1) return uniq[uniq.length - 1];
+
+  const latest = normalizeExamDateIso(lab?.latestExamDate || lab?.examDate || '');
+  if (latest && (!pd || latest !== pd)) return latest;
+
   return UNKNOWN_OBSERVED;
 }
 
@@ -175,7 +379,11 @@ function dedupeLabParsedItems(items) {
     return 3;
   };
   const nk = (it) => String(it?.normalizedKey || '').trim().toLowerCase();
-  const od = (it) => String(it?.observedDate || it?.observed_date || UNKNOWN_OBSERVED).trim() || UNKNOWN_OBSERVED;
+  const od = (it) => {
+    const raw = String(it?.observedDate || it?.observed_date || UNKNOWN_OBSERVED).trim() || UNKNOWN_OBSERVED;
+    if (raw === UNKNOWN_OBSERVED) return UNKNOWN_OBSERVED;
+    return normalizeExamDateIso(raw) || UNKNOWN_OBSERVED;
+  };
   const val = (it) => String(it?.value ?? '').trim();
   const map = new Map();
   for (const it of items) {
@@ -290,9 +498,10 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   const preDbParsedCandidate = toParsedItemsFromLabPanel(lab);
   const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
   const preDbParsedRaw = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
+  const examDateCtx = buildLabExamDateContext(lab, preDbParsedRaw);
   const withObserved = (Array.isArray(preDbParsedRaw) ? preDbParsedRaw : []).map((it) => {
     if (!it || typeof it !== 'object') return it;
-    const observedDate = inferObservedDateForLabItem(it, lab);
+    const observedDate = inferObservedDateForLabItem(it, lab, examDateCtx);
     return { ...it, observedDate };
   });
   const preDbParsed = dedupeLabParsedItems(withObserved);
@@ -325,15 +534,18 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   });
   const observedDatesFromItems = distinctObservedDateStringsFromParsedItems(preDbParsed);
   const examDatesForInsert = examDatesStringArrayForInsert(observedDatesFromItems, qualifiedForDb > 0);
+  const examDatesDebugPayload = {
+    ...examDateCtx.debug,
+    post_assign_distinct_observed: observedDatesFromItems,
+    parsed_len: preDbParsed.length,
+    distinct_len: observedDatesFromItems.length,
+    sample_observed: (preDbParsed[0] && (preDbParsed[0].observedDate || preDbParsed[0].observed_date)) || ''
+  };
   console.info('[lab-ingest-trace] stage:exam_dates_from_parsed_items', {
     userId: input.userId,
     exam_dates_json: JSON.stringify(examDatesForInsert),
     observed_dates_distinct: JSON.stringify(observedDatesFromItems),
-    exam_dates_debug_json: JSON.stringify({
-      parsed_len: preDbParsed.length,
-      distinct_len: observedDatesFromItems.length,
-      sample_observed: (preDbParsed[0] && (preDbParsed[0].observedDate || preDbParsed[0].observed_date)) || ''
-    })
+    exam_dates_debug_json: JSON.stringify(examDatesDebugPayload)
   });
   const insertPayload = {
     userId: input.userId,
@@ -455,7 +667,7 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
       }
     }).catch(() => null);
   }
-  return { handled: true, intentType: 'newflow_lab_image', replyText: buildLabReply(lab) };
+  return { handled: true, intentType: 'newflow_lab_image', replyText: buildLabReply(lab, examDatesForInsert) };
 }
 
 module.exports = {
