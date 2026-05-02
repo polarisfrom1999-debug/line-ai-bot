@@ -108,6 +108,13 @@ function buildMatrixDiagnostics(rows = []) {
  */
 async function extractMatrixTable(imagePayload, meta = {}) {
   const spec = buildLabMatrixExtractSpec(meta);
+  console.info('[phasee-new] lab_matrix_extract_v1_called', {
+    renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
+    userId: normalizeText(meta.userId || ''),
+    matrix_extract_called: true,
+    promptVersion: spec.promptVersion || 'lab_matrix_extract_v1',
+    runMatrix: true
+  });
   try {
     const dispatch = await geminiDispatchService.generateStructuredImageJson({
       imagePayload,

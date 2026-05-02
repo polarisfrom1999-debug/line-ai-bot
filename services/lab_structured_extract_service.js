@@ -709,13 +709,25 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     previewReport.printDate || previewReport.print_date || previewReport.report_date || previewReport.reportDate || meta.reportDate || ''
   );
   const geminiMatrixStructured = flattenGeminiRowsValuesToMinItems(previewReport, printEarly);
-  const matrixStructuredPrimaryOk = geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0;
+  const matrixStructuredPrimaryOk = geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0
+    && geminiMatrixStructured.some((it) => geminiItems.minItemHasRealObservedYmd(it));
+  if (geminiItems.countQualifiedParsedItems(geminiMatrixStructured) > 0 && !matrixStructuredPrimaryOk) {
+    console.info('[phasee-new] lab_matrix_2nd_pass_eligible', {
+      userId: meta.userId || '',
+      reason: 'primary_rows_values_are_unknown_date_only_need_lab_matrix_extract_v1',
+      qualified_matrix_cells: geminiItems.countQualifiedParsedItems(geminiMatrixStructured)
+    });
+  }
   const runMatrix = !isChatLayout
     && !matrixStructuredPrimaryOk
     && (layoutClassifier === 'multi_date_timeseries' || !afterAllRescuesPrimaryItems.length || matrixByDateGap);
+  let matrixV1FirstPassRowCount = 0;
+  let matrixMergedPayloadDataRowCount = 0;
+  let matrixMergedPayloadDiag = null;
   if (runMatrix) {
     const m1 = await labMatrixExtractService.extractMatrixTable(imagePayload, { ...meta, userId: meta.userId });
     const m1Rows = Array.isArray(m1?.data) ? m1.data : [];
+    matrixV1FirstPassRowCount = m1Rows.length;
     matrixRowsCount = m1Rows.length;
     const m1Diag = m1Rows.length ? labMatrixExtractService.buildMatrixDiagnostics(m1Rows) : null;
     const needRescue = !m1Rows.length
@@ -791,6 +803,10 @@ async function extractStructuredLab(imagePayload, meta = {}) {
         };
       }
     }
+    matrixMergedPayloadDataRowCount = Array.isArray(payload.data) ? payload.data.length : 0;
+    matrixMergedPayloadDiag = matrixMergedPayloadDataRowCount
+      ? labMatrixExtractService.buildMatrixDiagnostics(payload.data)
+      : null;
   }
 
   const reports = flattenReports(payload);
@@ -831,14 +847,18 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     || '';
   const primaryFromData = geminiItems.extractPrimaryGeminiMinItems(payload);
   const geminiMultiMin = flattenGeminiRowsValuesToMinItems(report, printDateNormTop);
+  const geminiMultiMinHasRealDates = geminiMultiMin.some((it) => geminiItems.minItemHasRealObservedYmd(it));
   let multiDateFlattenFallbackReason = 'legacy_data_path';
   let primaryGeminiMinItems;
-  if (geminiMultiMin.length > 0) {
+  if (geminiMultiMin.length > 0 && geminiMultiMinHasRealDates) {
     primaryGeminiMinItems = geminiMultiMin;
     multiDateFlattenFallbackReason = 'matrix_structured_primary';
     if (Array.isArray(payload.data) && payload.data.length) {
       payload.data = [];
     }
+  } else if (geminiMultiMin.length > 0 && !geminiMultiMinHasRealDates) {
+    primaryGeminiMinItems = primaryFromData;
+    multiDateFlattenFallbackReason = 'matrix_rows_unknown_date_only_prefer_flat_data_for_dates';
   } else if (hasGeminiRowsWithValueCells(report)) {
     primaryGeminiMinItems = primaryFromData;
     multiDateFlattenFallbackReason = 'rows_present_but_flatten_produced_zero';
@@ -855,7 +875,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
     .filter(Boolean);
   const parsedObservedDistinct = uniqueSortedDates(parsedObservedDates);
-  if (!geminiMultiMin.length && runMatrix && parsedObservedDistinct.length >= 2) {
+  if (runMatrix && parsedObservedDistinct.length >= 2) {
     parsedMinItems = parsedMinItems.map((x) => ({
       ...x,
       source: 'lab_multi_date_matrix'
@@ -974,7 +994,7 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     } else {
       itemChain = 'no_items:merged_min_items_empty';
     }
-  } else if (geminiMultiMin.length) {
+  } else if (geminiMultiMin.length && geminiMultiMinHasRealDates) {
     itemChain = rowFallbackUsed ? 'ok:multi_date_flatten_plus_row_fallback_merge' : 'ok:gemini_multi_date_rows_flatten';
   } else if (primaryFromData.length) {
     itemChain = rowFallbackUsed ? 'ok:gemini_primary_plus_row_fallback_merge' : 'ok:gemini_primary_only';
@@ -1060,6 +1080,35 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       structuredJsonParsed: payload
     });
   }
+
+  const observedDistinctForDbLog = geminiItems.distinctObservedDateStringsFromParsedItems(parsedMinItems);
+  const examDatesJsonLog = geminiItems.examDatesStringArrayForInsert(observedDistinctForDbLog, qualifiedRecords > 0);
+  const parsedSampleForLog = parsedMinItems.slice(0, 8).map((x) => ({
+    observedDate: normalizeText(x?.observedDate || x?.observed_date || ''),
+    source: normalizeText(x?.source || '')
+  }));
+  console.info('[phasee-new] lab_extract_prod_validation', {
+    renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
+    userId: normalizeText(meta.userId || ''),
+    matrixStructuredPrimaryOk,
+    runMatrix,
+    matrix_extract_called: runMatrix,
+    promptVersion: runMatrix ? 'lab_matrix_extract_v1' : '',
+    primary_lab_extract_promptVersion: builder.promptVersion,
+    matrix_rows_count: runMatrix ? matrixMergedPayloadDataRowCount : 0,
+    matrix_v1_first_pass_rows: runMatrix ? matrixV1FirstPassRowCount : 0,
+    matrix_dates_count: runMatrix && matrixMergedPayloadDiag ? matrixMergedPayloadDiag.headersDistinct.length : 0,
+    matrix_items_count: runMatrix && matrixMergedPayloadDiag ? matrixMergedPayloadDiag.mappings.length : 0,
+    matrix_headers_distinct_sample: runMatrix && matrixMergedPayloadDiag
+      ? matrixMergedPayloadDiag.headersDistinct.slice(0, 8)
+      : [],
+    parsed_items_observedDate_sample: parsedSampleForLog.map((x) => x.observedDate),
+    parsed_items_source_sample: parsedSampleForLog.map((x) => x.source),
+    exam_dates_json: examDatesJsonLog,
+    multiDateFlattenFallbackReason,
+    lab_multi_date_matrix_tagged_items: parsedMinItems.filter((x) => normalizeText(x?.source) === 'lab_multi_date_matrix').length,
+    qualified_records: qualifiedRecords
+  });
 
   return {
     ok,

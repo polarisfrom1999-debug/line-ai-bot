@@ -7,6 +7,7 @@ const { countQualifiedPanelRecords, distinctObservedDateStringsFromParsedItems }
 const labSessionRepository = require('../../../repositories/lab_session_repository');
 const labHistoryCompare = require('../../lab_history_compare_service');
 const activeContextStoreService = require('../active_context_store_service');
+const labIngestTrace = require('../../lab_ingest_trace_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -464,7 +465,16 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       current_session_observed_dates: currentObservedDates,
       returned_dates_list: panelDates
     });
-    return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim() };
+    const replyOtherDates = `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim();
+    console.info('[phasee-new] lab_followup_other_dates_reply', {
+      renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
+      userId: normalizeText(userId),
+      question_id: 'lab_saved_dates_inventory',
+      current_session_observed_dates: currentObservedDates,
+      returned_dates_list: panelDates,
+      replyText: replyOtherDates
+    });
+    return { intentType: 'newflow_lab_followup', replyText: replyOtherDates };
   }
 
   if (/(バランスは\?|バランスどう|バランス|脂質系|肝機能系|糖代謝系|腎機能系)/.test(safeText)) {

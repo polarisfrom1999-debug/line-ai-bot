@@ -116,6 +116,12 @@ function buildMinItem({
 
 const UNKNOWN_OBSERVED_DATE = 'unknown_date';
 
+function minItemHasRealObservedYmd(it) {
+  const od = normalizeText(it?.observedDate || it?.observed_date || '');
+  if (!od || od === UNKNOWN_OBSERVED_DATE) return false;
+  return Boolean(normalizeYmd(od));
+}
+
 function observedDateFromMatrixCell(rawObserved, printNorm) {
   const t = normalizeText(rawObserved);
   if (!t || /^unknown_date$/i.test(t)) return UNKNOWN_OBSERVED_DATE;
@@ -192,7 +198,8 @@ function extractPrimaryGeminiMinItems(payload) {
       report?.printDate || report?.print_date || report?.report_date || report?.reportDate || ''
     );
     const fromMatrix = extractMatrixRowsToMinItemsFromReport(report, printNormTop);
-    if (fromMatrix.length) {
+    const matrixHasRealYmd = fromMatrix.some(minItemHasRealObservedYmd);
+    if (fromMatrix.length && matrixHasRealYmd) {
       for (const it of fromMatrix) {
         const id = itemIdentityKey(it, anon++);
         if (seen.has(id)) continue;
@@ -398,6 +405,7 @@ module.exports = {
   flattenReports,
   buildMinItem,
   extractMatrixRowsToMinItemsFromReport,
+  minItemHasRealObservedYmd,
   extractPrimaryGeminiMinItems,
   mergePrimaryAndRowFallback,
   minItemsToRowsForGroupRows,

@@ -139,6 +139,17 @@ function logPostInsertReadback({ userId, sessionId, readRow, readError, insertEr
   });
 }
 
+/** 本番確認用（Render / CI のコミット。未設定なら空文字） */
+function getRenderGitCommitForLogs() {
+  return String(
+    process.env.RENDER_GIT_COMMIT
+    || process.env.RENDER_GIT_SHA
+    || process.env.GIT_COMMIT_SHORT
+    || process.env.GIT_COMMIT
+    || ''
+  );
+}
+
 module.exports = {
   logGeminiAndStructured,
   logLabPanelCreated,
@@ -146,5 +157,6 @@ module.exports = {
   logPreInsert,
   logPostInsertReadback,
   clipFull,
-  safeStringify
+  safeStringify,
+  getRenderGitCommitForLogs
 };
