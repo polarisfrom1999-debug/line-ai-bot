@@ -128,6 +128,83 @@ function normalizeYmd(v) {
   return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
 }
 
+const UNKNOWN_OBSERVED = 'unknown_date';
+
+function printDateNormalized(lab = {}) {
+  return normalizeYmd(lab?.printDate || lab?.meta?.printDate || '');
+}
+
+function inferObservedDateForLabItem(it, lab = {}) {
+  const direct = normalizeYmd(it?.observedDate || it?.observed_date || '');
+  if (direct) return direct;
+  const pd = printDateNormalized(lab);
+  const fromExams = [];
+  if (Array.isArray(lab?.examDates)) {
+    for (const d of lab.examDates) {
+      const x = normalizeYmd(d);
+      if (x && (!pd || x !== pd)) fromExams.push(x);
+    }
+  }
+  if (Array.isArray(lab?.examDateEntries)) {
+    for (const e of lab.examDateEntries) {
+      const x = normalizeYmd(e?.normalized_date || e?.normalizedDate || e?.value || '');
+      if (x && (!pd || x !== pd)) fromExams.push(x);
+    }
+  }
+  const latest = normalizeYmd(lab?.latestExamDate || lab?.examDate || '');
+  if (latest && (!pd || latest !== pd)) return latest;
+  const uniq = Array.from(new Set(fromExams)).sort();
+  if (uniq.length === 1) return uniq[0];
+  if (uniq.length > 1) return uniq[uniq.length - 1];
+  return UNKNOWN_OBSERVED;
+}
+
+function dedupeLabParsedItems(items) {
+  if (!Array.isArray(items) || items.length < 2) return items;
+  const rank = (s) => {
+    const t = String(s || '').toLowerCase();
+    if (t === 'gemini_structured') return 0;
+    if (t.includes('lab_multi') || t.includes('matrix')) return 1;
+    if (t === 'row_fallback') return 2;
+    return 3;
+  };
+  const nk = (it) => String(it?.normalizedKey || '').trim().toLowerCase();
+  const od = (it) => String(it?.observedDate || it?.observed_date || UNKNOWN_OBSERVED).trim() || UNKNOWN_OBSERVED;
+  const val = (it) => String(it?.value ?? '').trim();
+  const map = new Map();
+  for (const it of items) {
+    const key = `${nk(it)}|${od(it)}|${val(it)}`;
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, { ...it });
+      continue;
+    }
+    const keep = rank(it.source) < rank(prev.source) ? it : prev;
+    const drop = keep === it ? prev : it;
+    let w = { ...keep };
+    if (nk(w).startsWith('raw_label:')) {
+      const altNk = nk(drop);
+      if (altNk && !altNk.startsWith('raw_label:')) w.normalizedKey = drop.normalizedKey;
+    }
+    map.set(key, w);
+  }
+  return [...map.values()];
+}
+
+function distinctObservedDatesFromParsed(items) {
+  const set = new Set();
+  for (const it of Array.isArray(items) ? items : []) {
+    const d = normalizeText(it?.observedDate || it?.observed_date || '');
+    if (!d) continue;
+    if (d === UNKNOWN_OBSERVED) set.add(UNKNOWN_OBSERVED);
+    else {
+      const y = normalizeYmd(d);
+      if (y) set.add(y);
+    }
+  }
+  return [...set].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
 async function resolveImagePayload(input) {
   if (input?.webImagePayload?.buffer) {
     return {
@@ -221,13 +298,15 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
   const preDbParsedCandidate = toParsedItemsFromLabPanel(lab);
   const recoveredPrimaryParsed = recoverParsedItemsFromStructuredJson(lab);
   const preDbParsedRaw = preDbParsedCandidate.length ? preDbParsedCandidate : recoveredPrimaryParsed;
-  const observedDateFallback = normalizeYmd(lab?.latestExamDate || lab?.examDate || '');
-  const preDbParsed = (Array.isArray(preDbParsedRaw) ? preDbParsedRaw : []).map((it) => {
+  const withObserved = (Array.isArray(preDbParsedRaw) ? preDbParsedRaw : []).map((it) => {
     if (!it || typeof it !== 'object') return it;
-    const od = normalizeYmd(it.observedDate || it.observed_date || '');
-    if (od || !observedDateFallback) return it;
-    return { ...it, observedDate: observedDateFallback };
+    const observedDate = inferObservedDateForLabItem(it, lab);
+    return { ...it, observedDate };
   });
+  const preDbParsed = dedupeLabParsedItems(withObserved);
+  if (preDbParsed.length) {
+    lab.itemsStructured = preDbParsed;
+  }
   const qualifiedForDb = countPersistableParsedRecords(preDbParsed);
   const labGeminiRaw = lab?.geminiRaw && typeof lab.geminiRaw === 'object' ? { ...lab.geminiRaw } : {};
   if (lab?.metaAdoption || lab?.metaExtraction) {
@@ -252,14 +331,10 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
     parsed_items_len: preDbParsed.length,
     qualified_records: qualifiedForDb
   });
-  const observedDatesFromItems = Array.from(new Set(
-    preDbParsed
-      .map((it) => normalizeYmd(it?.observedDate || it?.observed_date || ''))
-      .filter(Boolean)
-  )).sort();
+  const observedDatesFromItems = distinctObservedDatesFromParsed(preDbParsed);
   const examDatesForInsert = observedDatesFromItems.length
     ? observedDatesFromItems
-    : (Array.isArray(lab?.examDates) ? lab.examDates : []);
+    : [];
   const insertPayload = {
     userId: input.userId,
     sourceImageId: normalizeText(imagePayload?.id || ''),

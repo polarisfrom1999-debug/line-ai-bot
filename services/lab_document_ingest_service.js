@@ -7,6 +7,7 @@ const labReportStoreService = require('./lab_report_store_service');
 const labIngestTrace = require('./lab_ingest_trace_service');
 const labSessionRepository = require('../repositories/lab_session_repository');
 const labMetaExtractService = require('./lab_meta_extract_service');
+const geminiItems = require('./lab_gemini_items_service');
 
 function summarizeLabPanel(panel = {}) {
   const items = Array.isArray(panel?.items) ? panel.items : [];
@@ -93,17 +94,86 @@ function buildPipelineComparison(v1 = {}, v2 = {}) {
   };
 }
 
-function panelQualifiedCount(panel = {}) {
-  const structured = Array.isArray(panel?.itemsStructured) ? panel.itemsStructured : [];
-  const items = Array.isArray(panel?.items) ? panel.items : [];
-  const structuredCount = structured.filter((x) => x && typeof x === 'object' && String(x.value || '').trim()).length;
-  const itemCount = items.filter((x) => x && typeof x === 'object' && String(x.value || x.currentValue || '').trim()).length;
-  return Math.max(structuredCount, itemCount);
+function payloadTopLevelKeys(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+  return Object.keys(obj).slice(0, 24);
+}
+
+/** DB 保存可能な行に近い「強さ」。pending v1（items 空・rawPayload のみ）や nested structured も数える。 */
+function effectivePersistableStrength(panel = {}) {
+  const fromPanel = geminiItems.countQualifiedPanelRecords(panel);
+  const raw = panel?.structuredJson && typeof panel.structuredJson === 'object'
+    ? panel.structuredJson
+    : (panel?.rawPayload && typeof panel.rawPayload === 'object' ? panel.rawPayload : null);
+  const recovered = raw ? geminiItems.extractPrimaryGeminiMinItems(raw) : [];
+  const fromRaw = geminiItems.countPersistableParsedRecords(recovered);
+  const qHint = Number(panel?.analysisConfidence?.qualified_records_count || 0) || 0;
+  return Math.max(fromPanel, fromRaw, qHint);
+}
+
+function mergeRawPayloadsPreferData(a, b) {
+  const base = (b && typeof b === 'object' && !Array.isArray(b)) ? { ...b } : {};
+  const extra = (a && typeof a === 'object' && !Array.isArray(a)) ? { ...a } : {};
+  const out = { ...base, ...extra };
+  const da = Array.isArray(a?.data) ? a.data : [];
+  const db = Array.isArray(b?.data) ? b.data : [];
+  if (da.length || db.length) {
+    const merged = [...db, ...da];
+    const seen = new Set();
+    out.data = merged.filter((row) => {
+      if (!row || typeof row !== 'object') return false;
+      const k = `${String(row.label_in_image || row.labelInImage || '')}|${String(row.value || '')}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * items / itemsStructured が空でも rawPayload / structuredJson の data[] から最小 item を復元してパネルに載せる。
+ */
+function enrichPanelFromRecoverablePayload(panel = {}, label = '') {
+  const p = panel && typeof panel === 'object' ? panel : {};
+  if (geminiItems.countQualifiedPanelRecords(p) > 0) {
+    return { panel: p, enriched: false, label: '' };
+  }
+  const raw = p.structuredJson && typeof p.structuredJson === 'object'
+    ? p.structuredJson
+    : (p.rawPayload && typeof p.rawPayload === 'object' ? p.rawPayload : null);
+  if (!raw) return { panel: p, enriched: false, label: '' };
+  const recovered = geminiItems.extractPrimaryGeminiMinItems(raw);
+  const n = geminiItems.countPersistableParsedRecords(recovered);
+  if (!n) return { panel: p, enriched: false, label: '' };
+  const next = {
+    ...p,
+    itemsStructured: recovered,
+    isLabImage: true,
+    labLike: true,
+    analysisConfidence: {
+      ...(p.analysisConfidence && typeof p.analysisConfidence === 'object' ? p.analysisConfidence : {}),
+      qualified_records_count: n,
+      ingest_recovered_from_raw: true,
+      ingest_recovery_label: label || 'raw_payload'
+    }
+  };
+  return { panel: next, enriched: true, label: label || 'raw_payload' };
 }
 
 async function ingestLabDocument({ userId, imagePayload } = {}) {
   const cached = await labDocumentStoreService.getCachedPanelByPayload(userId, imagePayload);
   if (cached) {
+    if (geminiItems.countQualifiedPanelRecords(cached) === 0) {
+      const cacheEnrich = enrichPanelFromRecoverablePayload(cached, 'cache_raw_recovery');
+      if (cacheEnrich.enriched) {
+        console.info('[lab-ingest-trace] stage:lab_document_cache_enriched', {
+          userId,
+          qualified_after: geminiItems.countQualifiedPanelRecords(cacheEnrich.panel)
+        });
+        return { ok: true, source: 'cache_enriched', panel: cacheEnrich.panel };
+      }
+    }
     return {
       ok: true,
       source: 'cache',
@@ -117,11 +187,23 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     labImageAnalysisV2Service.analyzeLabImageV2(imagePayload, { sourceImageId: imagePayload?.id || '', userId })
   ]);
   const comparison = buildPipelineComparison(panelV1, panelV2);
+  const v2Strength = effectivePersistableStrength(panelV2);
+  const v1Strength = effectivePersistableStrength(panelV1);
+  const v2PanelCount = geminiItems.countQualifiedPanelRecords(panelV2);
+  const v1PanelCount = geminiItems.countQualifiedPanelRecords(panelV1);
+  const v2RawRecoverable = geminiItems.countPersistableParsedRecords(
+    geminiItems.extractPrimaryGeminiMinItems(panelV2?.structuredJson || panelV2?.rawPayload || {})
+  );
+  const v1RawRecoverable = geminiItems.countPersistableParsedRecords(
+    geminiItems.extractPrimaryGeminiMinItems(panelV1?.structuredJson || panelV1?.rawPayload || {})
+  );
+  let v1FallbackInvoked = false;
+  let v1FallbackSkippedReason = '';
   console.info('[lab-pipeline] compare_v1_v2', { userId, mode, ...comparison });
-  const v2Count = panelQualifiedCount(panelV2);
-  const v1Count = panelQualifiedCount(panelV1);
   let panel = panelV2;
-  if (v2Count === 0 && v1Count > 0) {
+  if (v2Strength === 0 && v1Strength > 0) {
+    v1FallbackInvoked = true;
+    v1FallbackSkippedReason = '';
     panel = {
       ...panelV1,
       geminiRaw: panelV2?.geminiRaw || panelV1?.geminiRaw || null,
@@ -133,10 +215,81 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     };
     console.info('[lab-pipeline] v2_empty_fallback_to_v1', {
       userId,
-      v2_count: v2Count,
-      v1_count: v1Count
+      v2_effective_strength: v2Strength,
+      v1_effective_strength: v1Strength
     });
+  } else {
+    v1FallbackSkippedReason = v2Strength === 0 && v1Strength === 0
+      ? 'v1_and_v2_effective_strength_zero'
+      : 'v2_kept_v2_effective_strength_nonzero';
   }
+  let ingestRecoveryChain = [];
+  let enf = enrichPanelFromRecoverablePayload(panel, 'selected_panel_raw');
+  if (enf.enriched) {
+    panel = enf.panel;
+    ingestRecoveryChain.push(enf.label);
+  }
+  if (geminiItems.countQualifiedPanelRecords(panel) === 0) {
+    const mergedRaw = mergeRawPayloadsPreferData(panelV2?.rawPayload, panelV1?.rawPayload);
+    if (mergedRaw) {
+      const mergedMin = geminiItems.extractPrimaryGeminiMinItems(mergedRaw);
+      const mn = geminiItems.countPersistableParsedRecords(mergedMin);
+      if (mn) {
+        panel = {
+          ...panel,
+          rawPayload: mergedRaw,
+          structuredJson: mergedRaw,
+          itemsStructured: mergedMin,
+          isLabImage: true,
+          labLike: true,
+          analysisConfidence: {
+            ...(panel.analysisConfidence && typeof panel.analysisConfidence === 'object' ? panel.analysisConfidence : {}),
+            qualified_records_count: mn,
+            ingest_recovered_from_raw: true,
+            ingest_recovery_label: 'merged_v1_v2_raw_payload'
+          }
+        };
+        ingestRecoveryChain.push('merged_v1_v2_raw_payload');
+      }
+    }
+  }
+  if (geminiItems.countQualifiedPanelRecords(panel) === 0 && v1Strength > 0 && !v1FallbackInvoked) {
+    enf = enrichPanelFromRecoverablePayload(panelV1, 'v1_only_raw');
+    if (enf.enriched) {
+      panel = {
+        ...panelV1,
+        ...enf.panel,
+        geminiRaw: panelV2?.geminiRaw || panelV1?.geminiRaw || null,
+        examDateEntries: Array.isArray(panelV2?.examDateEntries) ? panelV2.examDateEntries : (panelV1?.examDateEntries || []),
+        pageInfo: panelV2?.pageInfo || panelV1?.pageInfo || panelV1?.pageInfo
+      };
+      ingestRecoveryChain.push('v1_panel_raw_enrich_after_v2_empty');
+    }
+  }
+  console.info('[lab-ingest-trace] stage:lab_document_ingest_pipeline', {
+    userId,
+    v2_top_keys: payloadTopLevelKeys(panelV2?.rawPayload),
+    v1_top_keys: payloadTopLevelKeys(panelV1?.rawPayload),
+    v2_items_len: Array.isArray(panelV2?.items) ? panelV2.items.length : 0,
+    v2_items_structured_len: Array.isArray(panelV2?.itemsStructured) ? panelV2.itemsStructured.length : 0,
+    v2_classifier_rows: Number(panelV2?.analysisConfidence?.rows || 0),
+    v2_primary_gemini: Number(panelV2?.analysisConfidence?.primary_gemini_items || 0),
+    v2_qualified_panel: v2PanelCount,
+    v2_raw_recoverable_min: v2RawRecoverable,
+    v2_effective_strength: v2Strength,
+    v1_items_len: Array.isArray(panelV1?.items) ? panelV1.items.length : 0,
+    v1_structured_rows_len: Array.isArray(panelV1?.structuredRows) ? panelV1.structuredRows.length : 0,
+    v1_qualified_panel: v1PanelCount,
+    v1_raw_recoverable_min: v1RawRecoverable,
+    v1_effective_strength: v1Strength,
+    v1_fallback_invoked: v1FallbackInvoked,
+    v1_fallback_skipped_reason: v1FallbackInvoked ? '' : v1FallbackSkippedReason,
+    ingest_recovery_chain: ingestRecoveryChain,
+    final_qualified_panel: geminiItems.countQualifiedPanelRecords(panel),
+    final_raw_recoverable: geminiItems.countPersistableParsedRecords(
+      geminiItems.extractPrimaryGeminiMinItems(panel?.structuredJson || panel?.rawPayload || {})
+    )
+  });
   try {
     await applyMetaLayerToPanel({ userId, imagePayload, panel });
   } catch (err) {
@@ -170,6 +323,7 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     || panel?.labLike
     || (Array.isArray(panel?.items) && panel.items.length > 0)
     || Number(panel?.analysisConfidence?.rows || 0) > 0
+    || geminiItems.countQualifiedPanelRecords(panel) > 0
   );
   if (geminiLabLike) {
     await labReportStoreService.saveLabReport({

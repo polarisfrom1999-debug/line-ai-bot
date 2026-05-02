@@ -689,6 +689,21 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     ? geminiItems.minItemsToRowsForGroupRows(parsedMinItems, dateForSyntheticRows)
     : rows;
   const rowFallbackUsed = geminiItems.rowFallbackActive(parsedMinItems, primaryGeminiMinItems.length, rows.length);
+  let rowFallbackUnusedReason = '';
+  if (!rowFallbackUsed) {
+    if (!parsedMinItems.length) {
+      if (!primaryGeminiMinItems.length && !rows.length) rowFallbackUnusedReason = 'no_primary_items_and_normalize_rows_empty';
+      else if (!primaryGeminiMinItems.length && rows.length) {
+        rowFallbackUnusedReason = 'normalize_rows_present_but_merge_returned_empty_or_unqualified_keys';
+      } else if (primaryGeminiMinItems.length) {
+        rowFallbackUnusedReason = 'primary_items_present_row_fallback_flag_only_when_row_source_used';
+      } else rowFallbackUnusedReason = 'parsed_min_empty_unknown';
+    } else {
+      rowFallbackUnusedReason = primaryGeminiMinItems.length
+        ? 'merged_items_from_primary_no_row_fallback_tag'
+        : 'merged_items_from_rows_only';
+    }
+  }
   const issues = [
     ...(Array.isArray(meta.issues) ? meta.issues : []),
     ...(Array.isArray(report.issues) ? report.issues : []),
@@ -764,6 +779,22 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   } else {
     itemChain = 'ok:row_fallback_only';
   }
+  console.info('[lab-ingest-trace] stage:extract_pipeline_summary', {
+    userId: meta.userId,
+    run_matrix: runMatrix,
+    matrix_primary_rows: matrixRowsCount,
+    matrix_rescue_rows: matrixRescueRowsCount,
+    text_rescue_rows: textRescueRowCount,
+    normalize_rows: rows.length,
+    legacy_map_called: true,
+    legacy_group_rows_items: items.length,
+    primary_gemini_min: primaryGeminiMinItems.length,
+    parsed_min_items: parsedMinItems.length,
+    qualified_records: qualifiedRecords,
+    row_fallback_used: rowFallbackUsed,
+    fallback_not_used_reason: rowFallbackUnusedReason,
+    item_chain: itemChain
+  });
   if (!parsedMinItems.length) {
     const topLevelKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
       ? Object.keys(payload).slice(0, 20)
@@ -775,12 +806,17 @@ async function extractStructuredLab(imagePayload, meta = {}) {
       gemini_raw_empty: !normalizeText(rawCandidateText || rawText),
       gemini_top_level_keys: topLevelKeys,
       structured_result_present: Boolean(payload && (Array.isArray(payload?.data) || topLevelKeys.length)),
+      payload_data_len: dataArr.length,
       matrix_candidates_count: matrixRowsCount,
-      rows_candidates_count: rows.length,
+      matrix_rescue_appended: matrixRescueRowsCount,
+      normalize_rows_count: rows.length,
+      legacy_map_items_count: items.length,
       text_fallback_candidates_count: textRescueRowCount,
       row_fallback_used: rowFallbackUsed,
-      row_fallback_unused_reason: rowFallbackUsed ? '' : 'row_fallback_rows_empty_or_unmapped',
+      row_fallback_unused_reason: rowFallbackUsed ? '' : rowFallbackUnusedReason,
+      fallback_not_used_reason: rowFallbackUnusedReason,
       date_only_payload_rows: dateOnlyRows.length,
+      parsed_min_items_count: parsedMinItems.length,
       parsed_items_empty_reason: itemChain
     });
   }

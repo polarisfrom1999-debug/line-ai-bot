@@ -165,20 +165,30 @@ function parseLabMetaCorrection(text) {
   const safe = normalizeText(text);
   if (!safe) return null;
   const patient = safe.match(/(?:患者名|氏名)\s*(?:は|:|：)?\s*([^\n。]+)/);
-  const facilityFromLead = safe.match(/(?:これは|施設名は|病院名は|医療機関は)?\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所|内科))/);
-  const facility = safe.match(/(?:施設名|病院名|クリニック|医院|医療機関)\s*(?:は|:|：)?\s*([^\n。]+)/);
+  const facilityThis = safe.match(/(?:この医療機関|この病院)\s*(?:は|:|：)\s*([^\n。]+)/);
+  const facilityFromLead = safe.match(
+    /(?:これは|これ|この医療機関は|この病院は|病院は|施設は|施設名は|病院名は|医療機関は)\s*([^\s。]{1,40}(?:クリニック|医院|病院|診療所|内科))/
+  );
+  const facility = safe.match(
+    /(?:施設名|病院名|クリニック|医院|医療機関|この医療機関|この病院)\s*(?:は|:|：)?\s*([^\n。]+)/
+  );
   const printDate = safe.match(/(?:印刷日|検査日|採血日)\s*(?:は|:|：)?\s*((?:20\d{2}[-\/\.年]\d{1,2}[-\/\.月]\d{1,2}日?)|(?:\d{2}[-\/]\d{1,2}[-\/]\d{1,2}))/);
   const out = {};
   const clean = (v) => normalizeText(v)
     .replace(/です$|だよ$|だった$|だ$/g, '')
-    .replace(/^(これは|これ)\s*/, '')
+    .replace(/^(これは|これ|この医療機関は|この病院は|病院は|施設は|医療機関は|施設名は|病院名は)\s*/g, '')
+    .replace(/^[、,]\s*/g, '')
     .trim();
   const invalid = (v) => !v || /[?？]/.test(v) || v.length > 80;
   if (patient) {
     const v = clean(patient[1]);
     if (!invalid(v)) out.patientName = v;
   }
-  if (facility) {
+  if (facilityThis) {
+    const v = clean(facilityThis[1]);
+    if (!invalid(v)) out.facilityName = v;
+  }
+  if (!out.facilityName && facility) {
     const v = clean(facility[1]);
     if (!invalid(v)) out.facilityName = v;
   }
@@ -285,7 +295,7 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     return Array.isArray(rows) ? rows : [];
   };
 
-  if (/((これは|これ|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|内科|病院|医療機関|患者名|氏名|印刷日|検査日|採血日))|((患者名|氏名|施設名|病院名).*(だよ|です|だった))/i.test(safeText)) {
+  if (/((これは|これ|この医療機関は|この病院は|病院は|施設は|医療機関は|訂正|修正|違う|ちがう|にして|です|だった|だよ).*(クリニック|内科|病院|医療機関|患者名|氏名|印刷日|検査日|採血日))|((患者名|氏名|施設名|病院名).*(だよ|です|だった))/i.test(safeText)) {
     const patch = parseLabMetaCorrection(safeText);
     if (patch && normalizeText(userId)) {
       const upd = await labSessionRepository.updateLatestLabSessionMeta(userId, patch);
@@ -537,7 +547,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     record('patient');
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildPatientNameReply(p)}`.trim() };
   }
-  if (/^病院名|施設名|医院|クリニック(名|は)|医療(機関)?(名|は)/.test(safeText) && !/患者/.test(safeText)) {
+  if (
+    /^(?!この)(病院名|施設名|医院|クリニック(名|は)|医療機関名|医療機関は)/.test(safeText)
+    && !/患者/.test(safeText)
+  ) {
     record('facility');
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${labFollowupService.buildFacilityNameReply(p)}`.trim() };
   }
