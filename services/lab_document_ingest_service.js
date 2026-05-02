@@ -128,6 +128,11 @@ function mergeRawPayloadsPreferData(a, b) {
       return true;
     });
   }
+  const ra = Array.isArray(a?.rows) ? a.rows : [];
+  const rb = Array.isArray(b?.rows) ? b.rows : [];
+  if (ra.length || rb.length) {
+    out.rows = [...rb, ...ra];
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -266,6 +271,8 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
       ingestRecoveryChain.push('v1_panel_raw_enrich_after_v2_empty');
     }
   }
+  const ac = panel?.analysisConfidence && typeof panel.analysisConfidence === 'object' ? panel.analysisConfidence : {};
+  const rawPl = panel?.rawPayload && typeof panel.rawPayload === 'object' ? panel.rawPayload : {};
   console.info('[lab-ingest-trace] stage:lab_document_ingest_pipeline', {
     userId,
     v2_top_keys: payloadTopLevelKeys(panelV2?.rawPayload),
@@ -288,7 +295,18 @@ async function ingestLabDocument({ userId, imagePayload } = {}) {
     final_qualified_panel: geminiItems.countQualifiedPanelRecords(panel),
     final_raw_recoverable: geminiItems.countPersistableParsedRecords(
       geminiItems.extractPrimaryGeminiMinItems(panel?.structuredJson || panel?.rawPayload || {})
-    )
+    ),
+    gemini_multi_date_rows_count: Number(ac.gemini_multi_date_rows_count ?? rawPl.rows?.length ?? 0) || 0,
+    examDateCandidates: Array.isArray(ac.examDateCandidates) ? ac.examDateCandidates : [],
+    columnDates: Array.isArray(ac.columnDates) ? ac.columnDates : [],
+    flattened_multi_date_items_count: Number(ac.flattened_multi_date_items_count || 0) || 0,
+    legacy_data_items_count: Number(ac.legacy_data_items_count || 0) || 0,
+    fallback_used_reason: String(ac.fallback_used_reason || ''),
+    exam_dates_debug_json: JSON.stringify({
+      examDateCandidates: Array.isArray(ac.examDateCandidates) ? ac.examDateCandidates : [],
+      columnDates: Array.isArray(ac.columnDates) ? ac.columnDates : [],
+      raw_rows_len: Array.isArray(rawPl.rows) ? rawPl.rows.length : 0
+    })
   });
   try {
     await applyMetaLayerToPanel({ userId, imagePayload, panel });

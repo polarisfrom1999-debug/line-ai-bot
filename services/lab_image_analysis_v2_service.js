@@ -193,10 +193,14 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
     ...parseDateTokens(extraction?.rawText || ''),
     ...parseDateTokens(classification?.rawText || ''),
     ...parseDateTokens(extraction?.latestExamDate || ''),
-    ...parseDateTokens(classification?.reportDate || '')
+    ...(Array.isArray(extraction?.examDateCandidates) ? extraction.examDateCandidates : []),
+    ...(Array.isArray(extraction?.columnDates) ? extraction.columnDates : [])
   ]));
-  const fallbackObservedDate = dateHints[dateHints.length - 1] || '';
-  if (fallbackObservedDate) {
+  const classifierPrint = classifierService.normalizeDateToken(classification?.reportDate || '');
+  const dateHintsNoPrint = dateHints.filter((d) => !classifierPrint || d !== classifierPrint);
+  const fallbackObservedDate = dateHintsNoPrint[dateHintsNoPrint.length - 1] || '';
+  const skipObservedFallback = Number(extraction?.flattenedMultiDateItemsCount || 0) > 0;
+  if (!skipObservedFallback && fallbackObservedDate) {
     parsedMinItemsFinal = parsedMinItemsFinal.map((it) => ({
       ...it,
       observedDate: normalizeText(it?.observedDate || it?.observed_date || fallbackObservedDate)
@@ -276,7 +280,13 @@ async function analyzeLabImageV2(imagePayload, opts = {}) {
       rows_for_structured: structRows.length,
       primary_gemini_items: extraction?.primaryGeminiItemCount ?? 0,
       row_fallback_used: Boolean(extraction?.rowFallbackUsed),
-      qualified_records_count: qualifiedParsed
+      qualified_records_count: qualifiedParsed,
+      gemini_multi_date_rows_count: Number(extraction?.geminiMultiDateRowsCount || 0) || 0,
+      examDateCandidates: Array.isArray(extraction?.examDateCandidates) ? extraction.examDateCandidates : [],
+      columnDates: Array.isArray(extraction?.columnDates) ? extraction.columnDates : [],
+      flattened_multi_date_items_count: Number(extraction?.flattenedMultiDateItemsCount || 0) || 0,
+      legacy_data_items_count: Number(extraction?.legacyDataPrimaryCount || 0) || 0,
+      fallback_used_reason: normalizeText(extraction?.multiDateFlattenFallbackReason || '')
     },
     sourceImageId: normalizeText(opts?.sourceImageId || '')
   };

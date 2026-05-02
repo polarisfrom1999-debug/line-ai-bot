@@ -122,6 +122,7 @@ function coerceStructuredPayloadShape(payload, rawText, rawCandidateText, meta =
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     const obj = { ...payload };
     if (!Array.isArray(obj.data)) obj.data = [];
+    if (!Array.isArray(obj.rows)) obj.rows = [];
     if (!obj.document_type && meta?.documentType) obj.document_type = meta.documentType;
     return obj;
   }
@@ -298,6 +299,78 @@ function normalizeKey(key, label) {
   if (safeLabel.includes('ビリルビン')) return 'bilirubin';
   if (safeLabel === 'ca') return 'calcium';
   return '';
+}
+
+function slugifyLabelRaw(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_\-ぁ-んァ-ヶ一-龠]/g, '')
+    .slice(0, 80);
+}
+
+function hasGeminiRowsWithValueCells(report = {}) {
+  for (const r of Array.isArray(report?.rows) ? report.rows : []) {
+    if (!Array.isArray(r?.values) || !r.values.length) continue;
+    for (const c of r.values) {
+      if (normalizeText(serializeCellValue(c?.value)) !== '') return true;
+    }
+  }
+  return false;
+}
+
+function serializeCellValue(val) {
+  if (val == null) return '';
+  if (typeof val === 'number' && Number.isFinite(val)) return String(val);
+  return normalizeText(val);
+}
+
+function observedDateFromGeminiCell(rawObserved, printNorm) {
+  const t = normalizeText(rawObserved);
+  if (!t || /^unknown_date$/i.test(t)) return geminiItems.UNKNOWN_OBSERVED_DATE;
+  const d = classifier.normalizeDateToken(t);
+  if (!d) return geminiItems.UNKNOWN_OBSERVED_DATE;
+  if (printNorm && d === printNorm) return geminiItems.UNKNOWN_OBSERVED_DATE;
+  return d;
+}
+
+/**
+ * Gemini rows[].values[] → 1値1item（source: gemini_structured_multi_date）
+ */
+function flattenGeminiRowsValuesToMinItems(report = {}, printNorm = '') {
+  const out = [];
+  let rowIdx = 0;
+  for (const r of Array.isArray(report?.rows) ? report.rows : []) {
+    const labelIn = normalizeText(r?.label_in_image || r?.labelInImage || '');
+    let nk = normalizeKey(r?.normalized_key || r?.normalizedKey, labelIn);
+    if (!nk && labelIn) nk = normalizeKey('', labelIn);
+    if (!nk && labelIn) nk = `raw_label:${slugifyLabelRaw(labelIn) || `item_${rowIdx}`}`;
+    rowIdx += 1;
+    if (!nk && !labelIn) continue;
+    const name = KEY_TO_ITEM_NAME[nk] || labelIn || nk;
+    const rawName = labelIn || name;
+    for (const cell of Array.isArray(r?.values) ? r.values : []) {
+      const val = serializeCellValue(cell?.value);
+      if (!val) continue;
+      if (classifier.normalizeDateToken(val)) continue;
+      const od = observedDateFromGeminiCell(cell?.observedDate, printNorm);
+      out.push(
+        geminiItems.buildMinItem({
+          normalizedKey: nk,
+          value: val,
+          source: 'gemini_structured_multi_date',
+          rawName,
+          name,
+          unit: normalizeUnit(cell?.unit || ''),
+          flag: normalizeText(cell?.flag || ''),
+          confidence: cell?.confidence != null ? Number(cell.confidence) : null,
+          status: normalizeStatus(cell?.status || 'readable'),
+          observedDate: od
+        })
+      );
+    }
+  }
+  return out;
 }
 
 function uniqueSortedDates(values) {
@@ -661,15 +734,53 @@ async function extractStructuredLab(imagePayload, meta = {}) {
   const reports = flattenReports(payload);
   const report = reports[0] || payload || {};
   const documentType = classifier.normalizeDocumentType(report.document_type || report.documentType || meta.documentType || '');
+  const printDateNormTop = classifier.normalizeDateToken(
+    report.printDate || report.print_date || report.report_date || report.reportDate || meta.reportDate || ''
+  );
   const reportDate = classifier.normalizeDateToken(report.report_date || report.reportDate || meta.reportDate || '');
   const patientName = normalizeText(report.patient_name || report.patientName || meta.patientName || '');
   const rows = normalizeRows(report);
   const historyDates = uniqueSortedDates(rows.map((row) => row.date));
-  let examDates = uniqueSortedDates([...(report.exam_dates || report.examDates || []), ...historyDates, ...(meta.examDates || [])]);
-  if (!examDates.length && reportDate) examDates = [reportDate];
-  let latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '') || examDates[examDates.length - 1] || reportDate || '';
-  const primaryGeminiMinItems = geminiItems.extractPrimaryGeminiMinItems(payload);
-  let parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rows);
+  const examDateCandidatesLog = uniqueSortedDates(
+    (Array.isArray(report.examDateCandidates) ? report.examDateCandidates : [])
+      .map((x) => classifier.normalizeDateToken(x))
+      .filter(Boolean)
+  ).filter((d) => !printDateNormTop || d !== printDateNormTop);
+  const columnDatesLog = uniqueSortedDates(
+    (Array.isArray(report.columnDates) ? report.columnDates : [])
+      .map((x) => classifier.normalizeDateToken(x))
+      .filter(Boolean)
+  ).filter((d) => !printDateNormTop || d !== printDateNormTop);
+  const geminiExamDateCandidates = uniqueSortedDates([...examDateCandidatesLog, ...columnDatesLog]);
+  let examDates = uniqueSortedDates([
+    ...(report.exam_dates || report.examDates || []),
+    ...historyDates,
+    ...(meta.examDates || []),
+    ...geminiExamDateCandidates
+  ].map((x) => classifier.normalizeDateToken(x)).filter(Boolean))
+    .filter((d) => !printDateNormTop || d !== printDateNormTop);
+  if (!examDates.length && reportDate && (!printDateNormTop || reportDate !== printDateNormTop)) {
+    examDates = [reportDate];
+  }
+  let latestExamDate = classifier.normalizeDateToken(report.latest_exam_date || report.latestExamDate || meta.latestExamDate || '')
+    || (examDates.length ? examDates[examDates.length - 1] : '')
+    || '';
+  const primaryFromData = geminiItems.extractPrimaryGeminiMinItems(payload);
+  const geminiMultiMin = flattenGeminiRowsValuesToMinItems(report, printDateNormTop);
+  let multiDateFlattenFallbackReason = 'legacy_data_extract_primary';
+  let primaryGeminiMinItems;
+  if (geminiMultiMin.length > 0) {
+    primaryGeminiMinItems = geminiMultiMin;
+    multiDateFlattenFallbackReason = 'used_gemini_rows_values_flatten';
+  } else if (hasGeminiRowsWithValueCells(report)) {
+    primaryGeminiMinItems = primaryFromData;
+    multiDateFlattenFallbackReason = 'rows_present_but_flatten_produced_zero';
+  } else {
+    primaryGeminiMinItems = primaryFromData;
+    multiDateFlattenFallbackReason = 'legacy_data_extract_primary';
+  }
+  const rowsForMerge = geminiMultiMin.length > 0 ? [] : rows;
+  let parsedMinItems = geminiItems.mergePrimaryAndRowFallback(primaryGeminiMinItems, rowsForMerge);
   const parsedObservedDates = parsedMinItems
     .map((x) => classifier.normalizeDateToken(x?.observedDate || x?.observed_date || ''))
     .filter(Boolean);
@@ -764,17 +875,35 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     primary_gemini_items: primaryGeminiMinItems.length,
     parsed_items_json_length: parsedMinItems.length
   });
+  console.info('[lab-ingest-trace] stage:gemini_multi_date_flatten', {
+    userId: meta.userId,
+    gemini_multi_date_rows_count: Array.isArray(report.rows) ? report.rows.length : 0,
+    examDateCandidates: examDateCandidatesLog,
+    columnDates: columnDatesLog,
+    flattened_multi_date_items_count: geminiMultiMin.length,
+    legacy_data_items_count: primaryFromData.length,
+    fallback_used_reason: multiDateFlattenFallbackReason,
+    exam_dates_debug_json: JSON.stringify({
+      printDateNormTop,
+      examDateCandidates: examDateCandidatesLog,
+      columnDates: columnDatesLog,
+      merged_exam_hint_dates: geminiExamDateCandidates
+    })
+  });
   let itemChain = 'ok';
   if (!parsedMinItems.length) {
     const dr = report?.data;
-    if (!Array.isArray(dr) || dr.length === 0) {
+    const rr = report?.rows;
+    if ((!Array.isArray(dr) || dr.length === 0) && (!Array.isArray(rr) || rr.length === 0)) {
       itemChain = 'no_items:report_data_empty';
     } else if (!primaryGeminiMinItems.length && !rows.length) {
       itemChain = 'no_items:gemini_primary_empty_and_normalizeRows_dropped_all';
     } else {
       itemChain = 'no_items:merged_min_items_empty';
     }
-  } else if (primaryGeminiMinItems.length) {
+  } else if (geminiMultiMin.length) {
+    itemChain = rowFallbackUsed ? 'ok:multi_date_flatten_plus_row_fallback_merge' : 'ok:gemini_multi_date_rows_flatten';
+  } else if (primaryFromData.length) {
     itemChain = rowFallbackUsed ? 'ok:gemini_primary_plus_row_fallback_merge' : 'ok:gemini_primary_only';
   } else {
     itemChain = 'ok:row_fallback_only';
@@ -793,7 +922,19 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     qualified_records: qualifiedRecords,
     row_fallback_used: rowFallbackUsed,
     fallback_not_used_reason: rowFallbackUnusedReason,
-    item_chain: itemChain
+    item_chain: itemChain,
+    gemini_multi_date_rows_count: Array.isArray(report.rows) ? report.rows.length : 0,
+    examDateCandidates: examDateCandidatesLog,
+    columnDates: columnDatesLog,
+    flattened_multi_date_items_count: geminiMultiMin.length,
+    legacy_data_items_count: primaryFromData.length,
+    fallback_used_reason: multiDateFlattenFallbackReason,
+    exam_dates_debug_json: JSON.stringify({
+      printDateNormTop,
+      examDateCandidates: examDateCandidatesLog,
+      columnDates: columnDatesLog,
+      merged_exam_hint_dates: geminiExamDateCandidates
+    })
   });
   if (!parsedMinItems.length) {
     const topLevelKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
@@ -861,7 +1002,13 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     confidence,
     rawText,
     rawPayload: payload,
-    promptVersion: builder.promptVersion
+    promptVersion: builder.promptVersion,
+    geminiMultiDateRowsCount: Array.isArray(report.rows) ? report.rows.length : 0,
+    examDateCandidates: examDateCandidatesLog,
+    columnDates: columnDatesLog,
+    flattenedMultiDateItemsCount: geminiMultiMin.length,
+    legacyDataPrimaryCount: primaryFromData.length,
+    multiDateFlattenFallbackReason
   };
 }
 

@@ -10,8 +10,37 @@ function buildLabExtractPrompt(meta = {}) {
       document_type: { type: 'string' },
       patient_name: { type: 'string' },
       report_date: { type: 'string' },
+      printDate: { type: 'string' },
+      examDateCandidates: { type: 'array', items: { type: 'string' } },
+      columnDates: { type: 'array', items: { type: 'string' } },
       exam_dates: { type: 'array', items: { type: 'string' } },
       missing_reason: { type: 'string' },
+      rows: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            label_in_image: { type: 'string' },
+            normalized_key: { type: 'string' },
+            values: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  observedDate: { type: 'string' },
+                  value: { type: ['number', 'string'] },
+                  unit: { type: 'string' },
+                  flag: { type: 'string' },
+                  confidence: { type: 'number' },
+                  status: { type: 'string' }
+                },
+                required: ['observedDate', 'value']
+              }
+            }
+          },
+          required: ['label_in_image', 'values']
+        }
+      },
       data: {
         type: 'array',
         items: {
@@ -59,6 +88,13 @@ function buildLabExtractPrompt(meta = {}) {
     '最重要: normalized_key が不明でも、label_in_image と value が取れた行は必ず data に残してください。',
     '最重要: document_type が unknown でも、data に項目行があるならそのまま返してください。',
     '最重要: data が空の場合は missing_reason に理由を必ず書いてください（例: value_not_readable / item_labels_not_detected / non_lab_image_like など）。',
+    '横に複数の採血日・検査日・測定日・列見出し日付がある表（推移表）では、rows[] を必ず使ってください。',
+    'rows[] の各行: label_in_image に項目名、values[] に「その列の実検査日」とセル数値を1セル1要素で入れてください。',
+    'values[].observedDate は YYYY-MM-DD。画像に検査日・採血日・列見出しの日付が読めないセルは observedDate に unknown_date のみ（推測で日付を作らない）。',
+    'printDate / report_date は印刷・発行日のみ。印刷日を observedDate や検査日候補にコピーしないでください。',
+    'examDateCandidates と columnDates には、画像から読み取れた検査日・採血日・列見出しの日付のみを YYYY-MM-DD で列挙（印刷日は含めない）。単日で列見出しに検査日が無ければ空配列でよい。',
+    '単日票でも rows を使う場合は values を1件にし、検査日が読めなければ observedDate=unknown_date。',
+    'rows と data は併用可。後方互換のため data[] も従来どおり埋めてください（rows が空なら data のみでよい）。',
     '採血日・検査日の列やラベル付き日付を最優先で読み、各 data 行の date と exam_dates / latest_exam_date に反映してください（印刷日だけで埋めない）。',
     '読めない時は推測せず status="unclear" にしてください。',
     '重要: document_type は single_day_report / multi_date_timeseries / unknown のいずれかにしてください。',
@@ -74,7 +110,7 @@ function buildLabExtractPrompt(meta = {}) {
 
   return {
     domain: 'lab_image',
-    promptVersion: 'lab_extract_v1',
+    promptVersion: 'lab_extract_v2',
     schema,
     prompt,
     temperature: 0.05,

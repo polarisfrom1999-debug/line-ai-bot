@@ -99,7 +99,9 @@ function buildMinItem({
     ...(referenceHigh != null ? { referenceHigh } : {}),
     ...(confidence != null ? { confidence: Number(confidence) || 0 } : {}),
     ...(status ? { status: normalizeText(status) } : {}),
-    ...(normalizeYmd(observedDate) ? { observedDate: normalizeYmd(observedDate) } : {})
+    ...(normalizeText(observedDate || '') === 'unknown_date'
+      ? { observedDate: 'unknown_date' }
+      : (normalizeYmd(observedDate) ? { observedDate: normalizeYmd(observedDate) } : {}))
   };
 }
 
