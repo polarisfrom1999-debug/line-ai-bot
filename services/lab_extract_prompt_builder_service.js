@@ -1,5 +1,49 @@
 'use strict';
 
+/**
+ * Gemini REST の responseSchema は JSON Schema ではなく Schema 表記（type: OBJECT 等）を期待する。
+ * 小文字の object/string だと 400 Unknown name "type" 系で弾かれることがある。
+ */
+function toGeminiResponseSchema(node) {
+  if (node == null) return node;
+  if (Array.isArray(node)) return node.map((x) => toGeminiResponseSchema(x));
+  if (typeof node !== 'object') return node;
+  const TYPE_MAP = {
+    object: 'OBJECT',
+    array: 'ARRAY',
+    string: 'STRING',
+    number: 'NUMBER',
+    integer: 'INTEGER',
+    boolean: 'BOOLEAN'
+  };
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'type' && typeof v === 'string') {
+      const low = v.toLowerCase();
+      out.type = TYPE_MAP[low] || v.toUpperCase();
+      continue;
+    }
+    if (k === 'properties' && v && typeof v === 'object' && !Array.isArray(v)) {
+      const props = {};
+      for (const [pk, pv] of Object.entries(v)) {
+        props[pk] = toGeminiResponseSchema(pv);
+      }
+      out.properties = props;
+      continue;
+    }
+    if (k === 'items') {
+      out.items = toGeminiResponseSchema(v);
+      continue;
+    }
+    if (k === 'additionalProperties' && typeof v === 'object') {
+      out.additionalProperties = toGeminiResponseSchema(v);
+      continue;
+    }
+    out[k] = toGeminiResponseSchema(v);
+  }
+  return out;
+}
+
 function buildLabExtractPrompt(meta = {}) {
   const examDates = Array.isArray(meta.examDates) ? meta.examDates.filter(Boolean) : [];
   const issues = Array.isArray(meta.issues) ? meta.issues.filter(Boolean) : [];
@@ -112,7 +156,7 @@ function buildLabExtractPrompt(meta = {}) {
   return {
     domain: 'lab_image',
     promptVersion: 'lab_extract_v3_matrix_primary',
-    schema,
+    schema: toGeminiResponseSchema(schema),
     prompt,
     temperature: 0.05,
     preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
@@ -156,7 +200,7 @@ function buildLabMetaPrompt(meta = {}) {
   return {
     domain: 'lab_meta',
     promptVersion: 'lab_meta_extract_v1',
-    schema,
+    schema: toGeminiResponseSchema(schema),
     prompt,
     temperature: 0,
     preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
@@ -189,7 +233,10 @@ function buildLabMatrixExtractSpec(meta = {}) {
             status: { type: 'string' },
             row_label_raw: { type: 'string' },
             column_header_raw: { type: 'string' },
-            values_by_date: { type: 'object' }
+            values_by_date: {
+              type: 'object',
+              additionalProperties: { type: 'string' }
+            }
           }
         }
       }
@@ -210,7 +257,7 @@ function buildLabMatrixExtractSpec(meta = {}) {
   return {
     domain: 'lab_image_matrix',
     promptVersion: 'lab_matrix_extract_v1',
-    schema,
+    schema: toGeminiResponseSchema(schema),
     prompt,
     preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
   };
@@ -263,7 +310,7 @@ function buildLabMatrixRetryExtractSpec(meta = {}) {
   return {
     domain: 'lab_image_matrix_retry',
     promptVersion: 'lab_extract_v3_matrix_retry_rows_only',
-    schema,
+    schema: toGeminiResponseSchema(schema),
     prompt,
     temperature: 0.05,
     preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
@@ -274,5 +321,6 @@ module.exports = {
   buildLabExtractPrompt,
   buildLabMetaPrompt,
   buildLabMatrixExtractSpec,
-  buildLabMatrixRetryExtractSpec
+  buildLabMatrixRetryExtractSpec,
+  toGeminiResponseSchema
 };

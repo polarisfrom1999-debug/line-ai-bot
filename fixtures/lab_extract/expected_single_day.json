@@ -1,0 +1,23 @@
+{
+  "description": "単日 data[] 期待: 8項目すべて parsed_items に残る",
+  "expected_keys": [
+    "triglycerides_tg",
+    "hba1c",
+    "hemoglobin",
+    "total_protein",
+    "glucose",
+    "creatinine",
+    "ast_got",
+    "alt_gpt"
+  ],
+  "expected_values": {
+    "triglycerides_tg": "131",
+    "hba1c": "5.6",
+    "hemoglobin": "14.3",
+    "total_protein": "7.3",
+    "glucose": "90",
+    "creatinine": "0.85",
+    "ast_got": "21",
+    "alt_gpt": "14"
+  }
+}

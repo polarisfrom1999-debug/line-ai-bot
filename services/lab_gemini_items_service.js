@@ -90,6 +90,7 @@ function inferNormalizedKey(rawLabel = '') {
   if (t.includes('wbc') || t.includes('白血球')) return 'wbc';
   if (t.includes('rbc') || t.includes('赤血球')) return 'rbc';
   if (t.includes('総蛋白') || t.includes('总蛋白')) return 'total_protein';
+  if (t === 'ldh') return 'ldh';
   return '';
 }
 
@@ -531,7 +532,8 @@ function pushSampleArr(arr, val, maxLen) {
 }
 
 /**
- * parsed_items_json 保存直前の最終ガード（範囲値・未来日・印刷日同一・unknown 再除去）
+ * parsed_items_json 保存直前の最終ガード（範囲値・未来日・印刷日同一・range-only 列日付）。
+ * observedDate が空 / unknown_date の項目は単日帳票などで残す（検査値は落とさない）。
  */
 function filterParsedMinItemsForDb(items, printNormTop, rangeOnlyDates = new Set()) {
   const printY = normalizeYmd(classifier.normalizeDateToken(printNormTop || ''));
@@ -540,6 +542,7 @@ function filterParsedMinItemsForDb(items, printNormTop, rangeOnlyDates = new Set
     future_dates_dropped_count: 0,
     reference_range_detected_count: 0,
     unknown_date_dropped_count: 0,
+    unknown_date_preserved_count: 0,
     same_print_date_dropped_count: 0,
     range_only_date_dropped_count: 0,
     ambiguous_range_kept_count: 0,
@@ -564,28 +567,29 @@ function filterParsedMinItemsForDb(items, printNormTop, rangeOnlyDates = new Set
       stats.ambiguous_range_kept_count += 1;
     }
     const odRaw = normalizeText(it?.observedDate || it?.observed_date || '');
-    if (!odRaw || odRaw === UNKNOWN_OBSERVED_DATE) {
-      stats.unknown_date_dropped_count += 1;
-      continue;
-    }
-    const y = normalizeYmd(classifier.normalizeDateToken(odRaw) || odRaw);
-    if (!y) {
-      stats.unknown_date_dropped_count += 1;
-      continue;
-    }
-    if (printY && y === printY) {
-      stats.same_print_date_dropped_count += 1;
-      continue;
-    }
-    if (printY && compareYmd(y, printY) > 0) {
-      stats.future_dates_dropped_count += 1;
-      rejectedDates.add(y);
-      continue;
-    }
-    if (rangeOnlyDates && typeof rangeOnlyDates.has === 'function' && rangeOnlyDates.has(y)) {
-      stats.range_only_date_dropped_count += 1;
-      rejectedDates.add(y);
-      continue;
+    const isUnknownOrMissing = !odRaw || odRaw === UNKNOWN_OBSERVED_DATE;
+    if (!isUnknownOrMissing) {
+      const y = normalizeYmd(classifier.normalizeDateToken(odRaw) || odRaw);
+      if (!y) {
+        stats.unknown_date_dropped_count += 1;
+        continue;
+      }
+      if (printY && y === printY) {
+        stats.same_print_date_dropped_count += 1;
+        continue;
+      }
+      if (printY && compareYmd(y, printY) > 0) {
+        stats.future_dates_dropped_count += 1;
+        rejectedDates.add(y);
+        continue;
+      }
+      if (rangeOnlyDates && typeof rangeOnlyDates.has === 'function' && rangeOnlyDates.has(y)) {
+        stats.range_only_date_dropped_count += 1;
+        rejectedDates.add(y);
+        continue;
+      }
+    } else {
+      stats.unknown_date_preserved_count += 1;
     }
     out.push(it);
   }

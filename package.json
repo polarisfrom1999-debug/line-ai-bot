@@ -11,6 +11,7 @@
     "smoke:homecare-core": "node scripts/homecare_core_smoke_inputs.js",
     "smoke:image-processor-load": "node scripts/image_processor_load_smoke.js",
     "smoke:lab-pipeline-compare": "node scripts/lab_pipeline_regression_compare.js",
+    "smoke:lab-extract-fixtures": "node scripts/lab_extract_fixture_e2e.js",
     "smoke:lab-followup-regression": "node scripts/lab_followup_regression_cases.js",
     "smoke:phase2-migration-db": "node scripts/smoke_phase2_migration_db.js",
     "smoke:phase2-followup-intents": "node scripts/smoke_phase2_followup_intents.js",

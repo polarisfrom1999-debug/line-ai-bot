@@ -1,0 +1,17 @@
+{
+  "documentType": "blood_lab_report",
+  "printDate": "2025-03-24",
+  "columnDates": [],
+  "examDateCandidates": [],
+  "rows": [],
+  "data": [
+    { "normalized_key": "triglycerides_tg", "label_in_image": "中性脂肪", "value": "131" },
+    { "normalized_key": "hba1c", "label_in_image": "HbA1c", "value": "5.6" },
+    { "normalized_key": "hemoglobin", "label_in_image": "ヘモグロビン", "value": "14.3" },
+    { "normalized_key": "total_protein", "label_in_image": "総蛋白", "value": "7.3" },
+    { "normalized_key": "glucose", "label_in_image": "血糖", "value": "90" },
+    { "normalized_key": "creatinine", "label_in_image": "クレアチニン", "value": "0.85" },
+    { "normalized_key": "ast_got", "label_in_image": "AST", "value": "21" },
+    { "normalized_key": "alt_gpt", "label_in_image": "ALT", "value": "14" }
+  ]
+}

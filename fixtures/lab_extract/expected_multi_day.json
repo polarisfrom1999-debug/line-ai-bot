@@ -1,0 +1,6 @@
+{
+  "description": "複数日 matrix 期待（fixture 照合用の目安。実画像と照合で LDH 等は調整可）",
+  "min_triglycerides_tg_values_sample": ["134", "144", "100"],
+  "exam_dates_should_not_include_print_year_future_vs_2016_series": true,
+  "reference_range_not_in_value": ["30-149", "6.5-8.2"]
+}

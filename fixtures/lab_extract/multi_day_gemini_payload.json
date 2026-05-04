@@ -1,0 +1,25 @@
+{
+  "documentType": "blood_lab_report",
+  "printDate": "2017-05-10",
+  "columnDates": ["2016-01-21", "2016-02-25", "2016-05-10"],
+  "examDateCandidates": [],
+  "rows": [
+    {
+      "rawName": "中性脂肪",
+      "referenceRange": "30-149",
+      "values": [
+        { "observedDate": "2016-01-21", "value": "134", "unit": "", "flag": "" },
+        { "observedDate": "2016-02-25", "value": "144", "unit": "", "flag": "" },
+        { "observedDate": "2016-05-10", "value": "100", "unit": "", "flag": "" }
+      ]
+    },
+    {
+      "rawName": "LDH",
+      "referenceRange": "115-245",
+      "values": [
+        { "observedDate": "2017-04-11", "value": "213", "unit": "", "flag": "" }
+      ]
+    }
+  ],
+  "data": []
+}

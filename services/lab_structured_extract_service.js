@@ -1046,7 +1046,8 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     flatten_future_cells_dropped: matrixFlattenStats.future_dates_dropped_flatten || 0,
     same_print_date_dropped_final: parsedSaveValidationStats.same_print_date_dropped_count || 0,
     range_only_date_dropped_final: parsedSaveValidationStats.range_only_date_dropped_count || 0,
-    unknown_date_dropped_final: parsedSaveValidationStats.unknown_date_dropped_count || 0
+    unknown_date_dropped_final: parsedSaveValidationStats.unknown_date_dropped_count || 0,
+    unknown_date_preserved_final: parsedSaveValidationStats.unknown_date_preserved_count || 0
   };
   console.info('[phasee-new] lab_parsed_items_save_validation', validationLogPayload);
   console.log(`[phasee-new] lab_parsed_items_save_validation_json ${JSON.stringify(validationLogPayload)}`);
@@ -1287,7 +1288,8 @@ async function extractStructuredLab(imagePayload, meta = {}) {
     exam_dates_after_validation: validationLogPayload.exam_dates_after_validation,
     rejected_exam_dates: validationLogPayload.rejected_exam_dates,
     rejected_range_samples: validationLogPayload.rejected_range_samples,
-    future_against_printDate_dates: validationLogPayload.future_against_printDate_dates
+    future_against_printDate_dates: validationLogPayload.future_against_printDate_dates,
+    unknown_date_preserved_final: validationLogPayload.unknown_date_preserved_final || 0
   });
 
   const __extractReturn = {
