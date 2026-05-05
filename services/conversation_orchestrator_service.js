@@ -710,6 +710,32 @@ function buildPreviousCorrections(recentMessages = []) {
     .slice(-8);
 }
 
+function buildProposedActionFromJudgment(judgment = {}, text = '') {
+  const surfaceIntent = normalizeText(judgment?.surface_intent || '');
+  if (surfaceIntent === 'meal_correction') {
+    return {
+      type: 'meal_correction',
+      source_text: normalizeText(text)
+    };
+  }
+  if (surfaceIntent === 'meal_record_text') {
+    return {
+      type: 'meal_record_text',
+      source_text: normalizeText(text)
+    };
+  }
+  if (surfaceIntent === 'body_condition_note') {
+    return {
+      type: 'body_condition_note',
+      body_note: normalizeText(text)
+    };
+  }
+  return {
+    type: surfaceIntent || 'normal_chat',
+    source_text: normalizeText(text)
+  };
+}
+
 function adjustIntentForFollowupContext(intent, text, shortMemory = {}) {
   if (intent !== 'help') return intent;
   const safe = normalizeText(text);
@@ -3046,21 +3072,25 @@ async function orchestrateConversation(input) {
 
     let text = normalizeText(input.rawText || '');
     let resumedFromPendingConfirmation = false;
+    let pendingAppliedAction = null;
     if (input?.messageType === 'text' && text) {
       const pending = await pendingConfirmationService.readPendingConfirmation(input.userId);
       if (pending) {
         if (pendingConfirmationService.isConfirmationPositive(text)) {
           await pendingConfirmationService.clearPendingConfirmation(input.userId);
           text = normalizeText(pending?.payload?.userText || text);
+          pendingAppliedAction = pending?.payload?.proposed_action_json || null;
           resumedFromPendingConfirmation = true;
-          console.info('[pending_confirmation_apply]', {
+          console.info('[pending_confirmation_applied]', {
             user_id: input.userId,
             original_confirmation_text: normalizeText(input.rawText || '').slice(0, 60),
-            resumed_text: text.slice(0, 120)
+            resumed_text: text.slice(0, 120),
+            proposed_action_type: normalizeText(pendingAppliedAction?.type || '')
           });
         }
         if (/^(いいえ|違う|ちがう|キャンセル|やめる)$/i.test(text)) {
           await pendingConfirmationService.clearPendingConfirmation(input.userId);
+          console.info('[pending_confirmation_rejected]', { user_id: input.userId, text: text.slice(0, 120) });
           const ngReply = '了解しました。いったん記録は更新しません。必要なときに言い直してもらえれば大丈夫です。';
           const ngOut = await withSurfaceReply(input, ngReply, { recentMessages, longMemory }, 'pending_confirmation_reject');
           await appendTurn(input.userId, input.rawText || '', ngOut);
@@ -3070,7 +3100,7 @@ async function orchestrateConversation(input) {
     }
 
     let compassionateJudgment = null;
-    if (input?.messageType === 'text' && text) {
+    if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
       const latestMealSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
       const todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
       const latestExerciseSummary = {
@@ -3107,16 +3137,64 @@ async function orchestrateConversation(input) {
         should_write_db: compassionateJudgment.should_write_db
       });
 
-      if (!resumedFromPendingConfirmation && compassionateJudgment?.needs_confirmation && compassionateJudgment?.confirmation_question) {
+      if (compassionateJudgment?.surface_intent === 'normal_chat') {
+        console.info('[contextual_intent_normal_chat]', { text: text.slice(0, 120) });
+      }
+
+      if (
+        compassionateJudgment?.surface_intent === 'body_condition_note'
+        && compassionateJudgment?.should_write_db
+        && !compassionateJudgment?.needs_confirmation
+      ) {
+        const bodyNote = normalizeText(compassionateJudgment?.entities?.body_note || text);
+        await contextMemoryService.addDailyRecord(input.userId, {
+          type: 'body_condition',
+          name: '体調メモ',
+          summary: bodyNote,
+          bodyNote
+        });
+        console.info('[contextual_intent_applied]', { intent: 'body_condition_note', user_id: input.userId });
+        console.info('[body_condition_note_saved]', { user_id: input.userId, body_note: bodyNote });
+        const reply = '腰の重さ、メモしておきますね。今日は無理に追い込まず、軽めにしておくと安心です。';
+        const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'body_condition_note', responseMode: 'record' } };
+      }
+
+      if (compassionateJudgment?.needs_confirmation && compassionateJudgment?.confirmation_question) {
+        const proposedAction = buildProposedActionFromJudgment(compassionateJudgment, text);
         await pendingConfirmationService.savePendingConfirmation(input.userId, {
           userText: text,
-          judgment: compassionateJudgment
+          judgment: compassionateJudgment,
+          proposed_action_json: proposedAction
+        });
+        console.info('[pending_confirmation_created]', {
+          user_id: input.userId,
+          text: text.slice(0, 120),
+          surface_intent: compassionateJudgment.surface_intent,
+          proposed_action_type: normalizeText(proposedAction?.type || '')
         });
         const confirmText = `${compassionateJudgment.confirmation_question}\n${nextStepSupportService.buildNextStepSupport(compassionateJudgment, { longMemory })}`;
         const confirmOut = await withSurfaceReply(input, confirmText, { recentMessages, longMemory }, 'compassionate_confirmation');
         await appendTurn(input.userId, input.rawText || '', confirmOut);
         return { ok: true, replyMessages: [{ type: 'text', text: confirmOut }], internal: { intentType: 'compassionate_confirmation', responseMode: 'answer' } };
       }
+    }
+
+    if (resumedFromPendingConfirmation && pendingAppliedAction?.type === 'body_condition_note') {
+      const bodyNote = normalizeText(pendingAppliedAction?.body_note || text);
+      await contextMemoryService.addDailyRecord(input.userId, {
+        type: 'body_condition',
+        name: '体調メモ',
+        summary: bodyNote,
+        bodyNote
+      });
+      console.info('[contextual_intent_applied]', { intent: 'body_condition_note', user_id: input.userId });
+      console.info('[body_condition_note_saved]', { user_id: input.userId, body_note: bodyNote });
+      const reply = '腰の重さ、メモしておきますね。今日は無理に追い込まず、軽めにしておくと安心です。';
+      const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note');
+      await appendTurn(input.userId, input.rawText || '', out);
+      return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'body_condition_note', responseMode: 'record' } };
     }
 
     let priority = input?.messageType === 'text'
@@ -3136,6 +3214,11 @@ async function orchestrateConversation(input) {
         priority.route = 'meal_correction';
         priority.reason = 'compassionate_layer_surface_intent';
       }
+    }
+    if (resumedFromPendingConfirmation && pendingAppliedAction?.type === 'meal_correction') {
+      priority.route = 'meal_correction';
+      priority.reason = 'pending_confirmation_applied_action';
+      console.info('[contextual_intent_applied]', { intent: 'meal_correction', user_id: input.userId });
     }
     const activeContextType = normalizeText(
       shortMemory?.followUpContext?.imageType
@@ -3214,7 +3297,7 @@ async function orchestrateConversation(input) {
         return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_log_correction', responseMode: 'record' } };
       }
       console.info('[meal_correction_target_not_found]', { user_id: input.userId, text: text.slice(0, 120) });
-      const out = await withSurfaceReply(input, '食事補正の対象を特定できませんでした。直近の食事に対する補正なら「半分食べた」、品目指定なら「ごはん半分」のように送ってください。', { recentMessages, longMemory }, 'meal_correction_target_not_found');
+      const out = await withSurfaceReply(input, '直前の食事が見つからないため、どの食事を半分にするか教えてください。', { recentMessages, longMemory }, 'meal_correction_target_not_found');
       await appendTurn(input.userId, input.rawText || '', out);
       return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_correction_target_not_found', responseMode: 'answer' } };
     }

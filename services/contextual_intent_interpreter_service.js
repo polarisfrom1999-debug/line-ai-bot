@@ -85,11 +85,17 @@ async function interpretContextualIntent(payload = {}) {
   });
   const ai = await callOpenAIForInterpretation(prompt);
   const merged = ai && typeof ai === 'object' ? ai : fallback;
-  return {
+  const result = {
     surface_intent: normalizeText(merged.surface_intent || fallback.surface_intent) || 'unknown',
     confidence: Number(merged.confidence ?? fallback.confidence ?? 0.5) || 0.5,
     entities: merged.entities && typeof merged.entities === 'object' ? merged.entities : {},
   };
+  console.info('[contextual_intent_interpreter_result]', {
+    text: normalizeText(payload?.userText || '').slice(0, 120),
+    surface_intent: result.surface_intent,
+    confidence: result.confidence
+  });
+  return result;
 }
 
 module.exports = {

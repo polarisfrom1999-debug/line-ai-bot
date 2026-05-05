@@ -22,7 +22,7 @@ async function readPendingConfirmation(userId) {
 
 function isConfirmationPositive(text) {
   const safe = normalizeText(text);
-  return /^(はい|ok|OK|了解|お願いします|それで|うん|yes)$/i.test(safe);
+  return /^(はい|そう|ok|OK|了解|お願いします|それで|うん|yes)$/i.test(safe);
 }
 
 async function clearPendingConfirmation(userId) {
