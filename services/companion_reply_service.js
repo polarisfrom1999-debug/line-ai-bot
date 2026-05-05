@@ -39,6 +39,19 @@ function shouldSkip(intentType) {
   return /^constitution_|^onboarding|^style_feedback|^newflow_image_hard_stop/.test(safe);
 }
 
+function buildRoutineLine(pattern = {}) {
+  if (pattern?.stable_breakfast_pattern) {
+    return '朝の形が安定していますね。迷わず選べる朝食があるのは、続ける上で大きな強みです。';
+  }
+  if (pattern?.stable_meal_timing) {
+    return '食べる時間帯のリズムが整ってきています。体調維持にはこの安定が効いてきます。';
+  }
+  if (pattern?.stable_favorite_food) {
+    return '好みに合う定番が定着しているのは良い流れです。無理に崩さなくて大丈夫です。';
+  }
+  return '';
+}
+
 async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
   if (!rawReply || shouldSkip(params.intentType)) {
@@ -47,6 +60,8 @@ async function enhanceReply(params = {}) {
 
   const intent = inferIntentTag(params.intentType);
   const pattern = userPatternInsightService.buildPatternInsights({
+    userId: params.userId,
+    userText: params.userText || '',
     recentMessages: params.recentMessages || [],
     hour: params.hour || 0
   });
@@ -63,7 +78,8 @@ async function enhanceReply(params = {}) {
   const nextStep = threeStepsAheadService.buildThreeStepsAhead({
     intent,
     userText: params.userText,
-    microChanges: micro.changes
+    microChanges: micro.changes,
+    patternInsight: pattern
   });
 
   console.info('[companion_reply_context]', {
@@ -78,7 +94,21 @@ async function enhanceReply(params = {}) {
 
   const core = avoidBareTemplate(rawReply);
   const lines = [core];
-  if (pattern.hasRecentPatterns) lines.push(`\n${pattern.insights[0]}という流れが見えています。`);
+  if (pattern.stable_routine_detected) {
+    const routineLine = buildRoutineLine(pattern);
+    if (routineLine) lines.push(`\n${routineLine}`);
+    console.info('[stable_routine_reply_generated]', {
+      user_id: params.userId,
+      routine_type: pattern.pattern_type,
+      suggested_action: pattern.suggest_micro_adjustment_only ? 'suggest_micro_adjustment_only' : 'suggest_keep_routine',
+      preserved_existing_pattern: Boolean(pattern.suggest_keep_routine || pattern.suggest_micro_adjustment_only)
+    });
+  } else if (pattern.hasRecentPatterns) {
+    lines.push(`\n${pattern.insights[0]}という流れが見えています。`);
+  }
+  if (pattern.routine_disruption_detected && pattern.user_may_feel_anxious_about_change) {
+    lines.push('\nいつもの流れが崩れると落ち着かないこともありますよね。今日は代わりの形で十分です。');
+  }
   if (motivation) lines.push(`\n${motivation}`);
   if (nextStep) lines.push(`\n${nextStep}`);
   const text = lines.join('\n').trim();
