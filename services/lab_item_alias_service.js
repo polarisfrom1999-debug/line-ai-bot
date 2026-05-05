@@ -19,6 +19,7 @@ const LAB_ITEM_ALIASES = {
   wbc: ['wbc', '白血球', '白血球数'],
   ast: ['ast', 'got'],
   alt: ['alt', 'gpt'],
+  ldh: ['ldh', '乳酸脱水素酵素', '乳酸脱水素'],
   ggt: ['γgtp', 'γ-gtp', 'ggt', 'γgt', 'g-gtp'],
   ua: ['ua', '尿酸'],
   cr: ['cr', 'cre', 'creatinine', 'クレアチニン'],
@@ -52,6 +53,7 @@ function canonicalToLabel(key) {
     case 'wbc': return 'WBC';
     case 'ast': return 'AST';
     case 'alt': return 'ALT';
+    case 'ldh': return 'LDH';
     case 'ggt': return 'γ-GTP';
     case 'ua': return '尿酸';
     case 'cr': return 'クレアチニン';

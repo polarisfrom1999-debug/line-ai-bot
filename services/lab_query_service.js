@@ -244,7 +244,7 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
 
   const canonical = canonicalFromQuestion
     || (targetName ? labItemAliasService.normalizeLabCanonicalKey(targetName) : '');
-  if (!canonical) {
+  if (!canonical && !targetName) {
     const p = syntheticPanelFromSession(shortMemory, latestCache);
     return labFollowupService.buildReadableInventoryReply(p);
   }
@@ -287,11 +287,12 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   });
   if (selectedSessionId) {
     const selectedDate = normalizeText(latestCache?.examDate || '');
+    const readerTargetLabel = targetName || canonical || safe;
     const fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
       lineUserId: lineUserId,
       userId: lineUserId,
       labSessionId: selectedSessionId,
-      targetLabel: targetName || canonical,
+      targetLabel: readerTargetLabel,
       selectedDate
     }).catch(() => null);
     if (fr?.replyText) {
