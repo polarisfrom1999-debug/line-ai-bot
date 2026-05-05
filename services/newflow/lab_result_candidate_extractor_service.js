@@ -24,6 +24,27 @@ function normalizeText(v) {
   return String(v || '').trim();
 }
 
+/** parsed_items_json で raw_label: 付きラベルが先に来ても、保存・正規化用の表示名を復元する */
+function stripRawLabelPrefix(s) {
+  const t = normalizeText(s);
+  const m = /^raw_label:\s*(.+)$/i.exec(t);
+  return m ? normalizeText(m[1]) : t;
+}
+
+function pickParsedItemRawName(it) {
+  if (!it || typeof it !== 'object') return '';
+  const fields = [it.name, it.rawName, it.itemName, it.label, it.displayName, it.display_name];
+  for (const f of fields) {
+    const t = stripRawLabelPrefix(f);
+    if (t && !normalizeText(t).startsWith('unmapped:')) return t;
+  }
+  const nk = stripRawLabelPrefix(it.normalizedKey || it.normalized_key || '');
+  if (nk && !normalizeText(nk).startsWith('unmapped:')) return nk;
+  return stripRawLabelPrefix(
+    normalizeText(it.normalizedKey || it.name || it.rawName || it.itemName || it.label || '')
+  );
+}
+
 function isPlainObject(x) {
   return x != null && typeof x === 'object' && !Array.isArray(x);
 }
@@ -107,6 +128,7 @@ function extractCandidatesFromJson(root, options = {}) {
         break;
       }
     }
+    rawName = stripRawLabelPrefix(rawName);
     return { rawName, valueText, unit, referenceRange, flag, observedDateText };
   }
 
@@ -174,8 +196,7 @@ function extractFromParsedItemsJson(arr) {
   for (let i = 0; i < arr.length; i += 1) {
     const it = arr[i];
     if (!it || typeof it !== 'object') continue;
-    const rawName =
-      normalizeText(it.name || it.rawName || it.itemName || it.normalizedKey || it.label || '');
+    const rawName = pickParsedItemRawName(it);
     const valueText = normalizeText(it.value || it.result_value || it.currentValue || '');
     const unit = normalizeText(it.unit || '');
     const referenceRange = normalizeText(it.referenceLow != null && it.referenceHigh != null
@@ -184,7 +205,7 @@ function extractFromParsedItemsJson(arr) {
     const flag = normalizeText(it.flag || '');
     const observedDateText = normalizeText(it.observedDate || it.observed_date || it.date || '');
     out.push({
-      rawName: rawName || normalizeText(it.normalizedKey),
+      rawName: rawName || stripRawLabelPrefix(it.normalizedKey || it.normalized_key || ''),
       valueText,
       unit,
       referenceRange,

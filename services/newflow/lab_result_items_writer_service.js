@@ -75,6 +75,7 @@ async function writeLabResultItemsFromSession(params = {}) {
       logLabItemNormalizerDebug({
         rawName: normalizeText(c.rawName),
         incomingNormalizedKey: incomingKey || null,
+        candidateNames: norm.candidateNames || [],
         resolvedNormalizedKey: norm.normalized_key,
         resolvedBy: norm.resolvedBy,
         displayName: norm.display_name
@@ -149,7 +150,11 @@ async function writeLabResultItemsFromSession(params = {}) {
     ...dedupeStats
   });
 
-  await labResultItemRepository.deleteByLabSessionId(labSessionId).catch(() => null);
+  const delOut = await labResultItemRepository.deleteByLabSessionId(labSessionId).catch(() => ({ ok: false }));
+  console.info('[lab_result_items_session_clear]', {
+    lab_session_id: labSessionId,
+    delete_ok: delOut?.ok !== false
+  });
 
   let inserted_count = 0;
   let failed_count = 0;
@@ -215,18 +220,10 @@ async function writeLabResultItemsFromSession(params = {}) {
 
   console.info('[lab_result_items_upsert_summary]', {
     lab_session_id: labSessionId,
-    user_id: userId,
-    candidate_count: candidates.length,
-    normalized_count: normalizedRows.length,
-    deduped_count: deduped.length,
+    inserted_count,
     canonical_key_count,
     raw_label_key_count,
-    unmapped_count: unmapped_key_count,
-    inserted_count,
-    updated_count: 0,
-    skipped_count: dedupeStats.skipped_duplicate_count,
-    failed_count,
-    needs_manual_review_count
+    unmapped_count: unmapped_key_count
   });
 
   console.info('[lab_result_items_validation_summary]', {
@@ -254,6 +251,7 @@ async function backfillLabResultItemsForSession({ labSessionId }) {
   }
   if (!supabase || labSessionId == null) return { ok: false, reason: 'missing' };
   const sid = Number(labSessionId);
+  console.info('[lab_result_items_backfill_start]', { lab_session_id: sid });
   const q = await supabase
     .from('lab_sessions')
     .select('id,user_id,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,gemini_raw,structured_json')
@@ -261,6 +259,11 @@ async function backfillLabResultItemsForSession({ labSessionId }) {
     .maybeSingle();
   if (q?.error || !q?.data) return { ok: false, reason: 'session_not_found' };
   const row = q.data;
+  console.info('[lab_result_items_backfill_session_loaded]', {
+    lab_session_id: sid,
+    user_id: normalizeText(row.user_id),
+    parsed_items_len: Array.isArray(row.parsed_items_json) ? row.parsed_items_json.length : 0
+  });
   const structuredJson = row.structured_json || (row.gemini_raw && typeof row.gemini_raw === 'object' ? row.gemini_raw : null);
   const res = await writeLabResultItemsFromSession({
     userId: row.user_id,

@@ -141,6 +141,7 @@ async function resolveLabItemForPersistence(rawName, rawItemJson, masterRows) {
   const rows = Array.isArray(masterRows) ? masterRows : await labItemMasterRepository.getAllActiveMasterRows();
   const incomingNorm = extractIncomingNormalizedKey(rawItemJson);
   const ordered = buildOrderedLookupStrings(rawName, rawItemJson);
+  const candidateNames = ordered.map((o) => o.text);
 
   for (const { text, source } of ordered) {
     if (isGarbageNormalizedKey(text)) continue;
@@ -151,7 +152,8 @@ async function resolveLabItemForPersistence(rawName, rawItemJson, masterRows) {
         normalized_key: r.normalized_key,
         display_name: r.display_name,
         from_master: true,
-        resolvedBy
+        resolvedBy,
+        candidateNames
       };
     }
   }
@@ -163,7 +165,8 @@ async function resolveLabItemForPersistence(rawName, rawItemJson, masterRows) {
         normalized_key: normalizeText(hit.normalized_key),
         display_name: normalizeText(hit.display_name_ja) || hit.normalized_key,
         from_master: true,
-        resolvedBy: 'incoming_canonical'
+        resolvedBy: 'incoming_canonical',
+        candidateNames
       };
     }
   }
@@ -178,7 +181,8 @@ async function resolveLabItemForPersistence(rawName, rawItemJson, masterRows) {
         normalized_key: fbKey,
         display_name: hit ? normalizeText(hit.display_name_ja) || fbKey : normalizeText(text) || fbKey,
         from_master: Boolean(hit),
-        resolvedBy: 'fallback_map'
+        resolvedBy: 'fallback_map',
+        candidateNames
       };
     }
   }
@@ -188,7 +192,8 @@ async function resolveLabItemForPersistence(rawName, rawItemJson, masterRows) {
     normalized_key: stableUnmappedKey(primaryLabel),
     display_name: primaryLabel,
     from_master: false,
-    resolvedBy: 'unmapped'
+    resolvedBy: 'unmapped',
+    candidateNames
   };
 }
 
@@ -196,6 +201,7 @@ function logLabItemNormalizerDebug(payload) {
   console.info('[lab_item_normalizer_debug]', {
     rawName: payload.rawName,
     incomingNormalizedKey: payload.incomingNormalizedKey ?? null,
+    candidateNames: Array.isArray(payload.candidateNames) ? payload.candidateNames : [],
     resolvedNormalizedKey: payload.resolvedNormalizedKey,
     resolvedBy: payload.resolvedBy,
     displayName: payload.displayName
