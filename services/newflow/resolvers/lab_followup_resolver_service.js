@@ -725,13 +725,15 @@ async function resolveLabFollowup(text, panel, meta = {}) {
         selectedDate
       });
       if (fr.replyText) {
+        const src =
+          fr.usedSource === 'lab_result_items_label_fallback' ? 'lab_result_items_label_fallback' : 'lab_result_items';
         labResultItemsReader.logResultItemsSource({
           question: safeText.slice(0, 400),
           detected_item_label: target,
           canonical_normalized_key: fr.canonical_normalized_key || null,
           selected_lab_session_id: selectedSid,
           answer_source_session_id: answerSourceSessionId || selectedSid,
-          used_source: 'lab_result_items',
+          used_source: src,
           result_count: 1,
           fallback_reason: null
         });
