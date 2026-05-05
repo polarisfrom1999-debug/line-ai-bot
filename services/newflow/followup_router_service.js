@@ -59,7 +59,7 @@ function looksLikeExerciseRecordText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
   if (/[?？]/.test(safe)) return false;
-  return /(ジョギング|ランニング|ウォーキング|散歩|筋トレ|スクワット|腕立て|走った|歩いた|運動).*(した|やった|分|km|ｋｍ|キロ)|(^|\s)\d+\s*分/.test(safe);
+  return /(ジョギング|ランニング|ウォーキング|散歩|筋トレ|スクワット|腕立て伏せ|腕立て|腹筋|背筋|プランク|体幹トレーニング|体幹トレ|コアトレ|走った|歩いた|運動).*(した|やった|分|回|km|ｋｍ|キロ)|(^|\s)\d+\s*(分|回)/.test(safe);
 }
 
 function looksLikeExplicitLabFollowupText(text) {

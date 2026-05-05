@@ -37,6 +37,13 @@ function extractDistanceKm(text) {
   return Number(match[1]);
 }
 
+function extractReps(text) {
+  const safe = toHalfWidth(text);
+  const m = safe.match(/([0-9]+)\s*回/);
+  if (!m) return null;
+  return Number(m[1]);
+}
+
 /** 800m / 1500m / ８００メートル など */
 function extractTrackDistanceKm(text) {
   const safe = toHalfWidth(text);
@@ -48,6 +55,12 @@ function extractTrackDistanceKm(text) {
 }
 
 function detectKind(safe) {
+  if (/腕立て伏せ|腕立て|プッシュアップ/.test(safe)) return 'push_up';
+  if (/腹筋|シットアップ/.test(safe)) return 'sit_up';
+  if (/スクワット/.test(safe)) return 'squat';
+  if (/背筋|バックエクステンション/.test(safe)) return 'back_extension';
+  if (/プランク/.test(safe)) return 'plank';
+  if (/体幹|体幹トレ|コアトレ/.test(safe)) return 'core_training';
   if (/筋トレ|筋力|ダンベル/.test(safe)) return 'strength';
   if (/ウォーキング|散歩|歩いた/.test(safe)) return 'walking';
   if (/ジョギング/.test(safe) && !/ランニング/.test(safe)) return 'jogging';
@@ -58,6 +71,12 @@ function detectKind(safe) {
 }
 
 function getDisplayName(kind) {
+  if (kind === 'push_up') return '腕立て伏せ';
+  if (kind === 'sit_up') return '腹筋';
+  if (kind === 'squat') return 'スクワット';
+  if (kind === 'back_extension') return '背筋';
+  if (kind === 'plank') return 'プランク';
+  if (kind === 'core_training') return '体幹トレーニング';
   if (kind === 'walking') return 'ウォーキング';
   if (kind === 'jogging') return 'ジョギング';
   if (kind === 'running') return 'ランニング';
@@ -92,6 +111,40 @@ function estimateKcal({ kind, minutes, distanceKm, weightKg }) {
   return null;
 }
 
+function estimateBodyweightExerciseKcal({ kind, reps, minutes }) {
+  const r = reps != null ? Number(reps) : null;
+  const m = minutes != null ? Number(minutes) : null;
+  if (kind === 'push_up') {
+    if (r != null) return Math.round(Math.max(12, r * 0.55));
+    if (m != null) return Math.round(m * 5.5);
+    return 40;
+  }
+  if (kind === 'sit_up') {
+    if (r != null) return Math.round(Math.max(8, r * 0.45));
+    if (m != null) return Math.round(m * 5);
+    return 30;
+  }
+  if (kind === 'squat') {
+    if (r != null) return Math.round(Math.max(15, r * 0.6));
+    if (m != null) return Math.round(m * 6);
+    return 50;
+  }
+  if (kind === 'back_extension') {
+    if (r != null) return Math.round(Math.max(8, r * 0.4));
+    if (m != null) return Math.round(m * 4.5);
+    return 25;
+  }
+  if (kind === 'plank') {
+    if (m != null) return Math.round(Math.max(5, m * 6.5));
+    return 8;
+  }
+  if (kind === 'core_training') {
+    if (m != null) return Math.round(m * 5.5);
+    return 40;
+  }
+  return null;
+}
+
 /**
  * 運動記録っぽいテキストなら DB 保存用レコードを組み立て（しない場合は null）
  */
@@ -112,11 +165,14 @@ function tryParseExerciseRecord(text, options = {}) {
 
   let minutes = extractMinutes(safe);
   let distanceKm = extractDistanceKm(safe);
+  const reps = extractReps(safe);
   const trackKm = extractTrackDistanceKm(safe);
   if (trackKm != null) distanceKm = trackKm;
 
   const weightKg = Number(options.weightKg || 60) || 60;
-  const estimatedCalories = estimateKcal({ kind, minutes, distanceKm, weightKg });
+  const estimatedCalories =
+    estimateBodyweightExerciseKcal({ kind, reps, minutes })
+    || estimateKcal({ kind, minutes, distanceKm, weightKg });
   if (estimatedCalories == null || !Number.isFinite(estimatedCalories)) return null;
 
   return {
@@ -126,6 +182,7 @@ function tryParseExerciseRecord(text, options = {}) {
     summary: safe,
     minutes,
     distanceKm: distanceKm != null ? distanceKm : null,
+    reps: reps != null ? reps : null,
     steps: null,
     estimatedCalories,
   };
@@ -135,7 +192,9 @@ function formatEffortLine(record) {
   const name = record?.name || '運動';
   const minutes = record?.minutes != null ? Number(record.minutes) : null;
   const distanceKm = record?.distanceKm != null ? Number(record.distanceKm) : null;
+  const reps = record?.reps != null ? Number(record.reps) : null;
   if (minutes != null && Number.isFinite(minutes)) return `${name} ${minutes}分`;
+  if (reps != null && Number.isFinite(reps)) return `${name} ${reps}回`;
   if (distanceKm != null && Number.isFinite(distanceKm)) return `${name} ${round1(distanceKm)}km`;
   return name;
 }
@@ -177,6 +236,7 @@ async function recordExerciseFromText(lineUserId, text, options = {}) {
     user_id: uid,
     exercise_type: String(record.exerciseType || ''),
     duration_minutes: record.minutes != null ? Number(record.minutes) : null,
+    reps: record.reps != null ? Number(record.reps) : null,
     distance_km: record.distanceKm != null ? Number(record.distanceKm) : null,
     estimated_calories: Number(record.estimatedCalories || 0),
   });
