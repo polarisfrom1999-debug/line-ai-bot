@@ -50,6 +50,7 @@ function formatMealReplyText(parsedMeal, options = {}) {
   const foods = pickFoods(parsedMeal);
   const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
   const comment = normalizeText(parsedMeal?.comment || '') || pickMotivationComment(nut, todayTotals);
+  const calorieSource = normalizeText(parsedMeal?.calorie_source || '');
 
   const lines = ['🍽️ 食事として受け取りました', '', '【食べ物】'];
   if (foods.length) {
@@ -79,6 +80,13 @@ function formatMealReplyText(parsedMeal, options = {}) {
   lines.push('');
   lines.push(`🏃‍♂️ 運動消費：${Math.round(Math.max(0, exerciseKcal)).toLocaleString('ja-JP')} kcal`);
   lines.push(`🔥 摂取 − 消費：${Math.round(netKcal).toLocaleString('ja-JP')} kcal`);
+  if (/nutrition_label|menu_declared|confirmed_product/.test(calorieSource)) {
+    lines.push('表示されている数値を優先して記録しました。');
+  } else if (/gemini_estimate/.test(calorieSource)) {
+    lines.push('写真からの推定として記録しました。');
+  } else if (/fallback_estimate/.test(calorieSource)) {
+    lines.push('写真からの概算なので、違っていればあとで直せます。');
+  }
   lines.push('', 'ひとこと：');
   lines.push(comment);
 

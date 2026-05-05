@@ -1524,6 +1524,11 @@ function buildMealRecordPayload(text, parsedMeal, input = {}) {
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
     comment: parsedMeal?.comment || '',
+    calorie_source: normalizeText(parsedMeal?.calorie_source || 'gemini_estimate'),
+    calorie_confidence: normalizeText(parsedMeal?.calorie_confidence || 'medium'),
+    original_gemini_calories: Number(parsedMeal?.original_gemini_calories || parsedMeal?.estimatedNutrition?.kcal || 0),
+    final_calories: Number(parsedMeal?.final_calories || parsedMeal?.estimatedNutrition?.kcal || 0),
+    correction_reason: normalizeText(parsedMeal?.correction_reason || ''),
     sourceLineMessageId: normalizeText(input?.messageId || ''),
     dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
   };
@@ -1548,6 +1553,11 @@ function buildImageMealRecordPayload(parsedMeal, input = {}) {
     amountNote: parsedMeal?.amountNote || '',
     confidence: parsedMeal?.confidence != null ? Number(parsedMeal.confidence) : null,
     comment: parsedMeal?.comment || '',
+    calorie_source: normalizeText(parsedMeal?.calorie_source || 'gemini_estimate'),
+    calorie_confidence: normalizeText(parsedMeal?.calorie_confidence || 'medium'),
+    original_gemini_calories: Number(parsedMeal?.original_gemini_calories || parsedMeal?.estimatedNutrition?.kcal || 0),
+    final_calories: Number(parsedMeal?.final_calories || parsedMeal?.estimatedNutrition?.kcal || 0),
+    correction_reason: normalizeText(parsedMeal?.correction_reason || ''),
     sourceLineMessageId: normalizeText(input?.messageId || ''),
     dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
   };

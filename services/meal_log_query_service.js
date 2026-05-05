@@ -202,8 +202,17 @@ async function fetchAggregateMealLogsFromDb(lineUserId, fromYmd, toYmdInclusive,
   const raw = await getMealLogsByDateRange(lineUserId, fromYmd, toYmdInclusive);
   const deduped = deduplicateMealLogs(raw);
   const totals = sumMealLogs(deduped);
+  const duplicateDetected = raw.length !== deduped.length;
   console.info('[meal] fetched_records_count', { scope: logScope, fromYmd, toYmdInclusive, rawRows: raw.length, dedupedRows: deduped.length });
   console.info('[meal] total_calculated', { scope: logScope, count: totals.count, kcal: round1(totals.kcal), protein: round1(totals.protein), fat: round1(totals.fat), carbs: round1(totals.carbs) });
+  console.info('[meal_daily_total_integrity_check]', {
+    user_id: normalizeText(lineUserId || ''),
+    date: `${fromYmd}..${toYmdInclusive}`,
+    meal_count: totals.count,
+    unique_meal_ids: deduped.map((m) => m.id).filter(Boolean).length,
+    total_calories: round1(totals.kcal),
+    duplicate_detected: duplicateDetected
+  });
   return { raw, deduped, totals };
 }
 

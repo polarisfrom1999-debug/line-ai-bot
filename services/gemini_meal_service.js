@@ -346,13 +346,29 @@ async function applyPostProcessToMealResult(raw = {}, context = {}) {
     mismatch: { level: 'unknown' }
   });
 
+  const originalKcal = Number(normalized.estimated_kcal || 0);
+  const attemptedKcal = Number(personalized?.adjusted?.kcal || 0);
+  if (originalKcal > 0 && attemptedKcal > 0 && Math.abs(attemptedKcal - originalKcal) >= 1) {
+    console.info('[meal_calorie_overwrite_blocked]', {
+      user_id: String(context?.userId || ''),
+      original_gemini_calories: originalKcal,
+      attempted_recomputed_calories: attemptedKcal,
+      reason: 'gemini_meal_postprocess_keep_original'
+    });
+  }
+
   return {
     ...normalized,
-    estimated_kcal: personalized.adjusted.kcal,
-    protein_g: personalized.adjusted.protein,
-    fat_g: personalized.adjusted.fat,
-    carbs_g: personalized.adjusted.carbs,
+    estimated_kcal: Number(normalized.estimated_kcal || 0),
+    protein_g: Number(normalized.protein_g || 0),
+    fat_g: Number(normalized.fat_g || 0),
+    carbs_g: Number(normalized.carbs_g || 0),
     confidence: personalized.confidence,
+    calorie_source: Number(normalized.estimated_kcal || 0) > 0 ? 'gemini_estimate' : 'fallback_estimate',
+    calorie_confidence: Number(normalized.confidence || 0) >= 0.85 ? 'high' : (Number(normalized.confidence || 0) >= 0.65 ? 'medium' : 'low'),
+    original_gemini_calories: Number(normalized.estimated_kcal || 0),
+    final_calories: Number(normalized.estimated_kcal || 0),
+    correction_reason: Number(normalized.estimated_kcal || 0) > 0 ? 'gemini_priority_preserved' : 'gemini_value_missing_or_low',
     personalization: {
       ratio: personalized.appliedRatio,
       confidence: personalized.personalizationConfidence,

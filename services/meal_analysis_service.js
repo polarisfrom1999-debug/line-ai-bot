@@ -100,6 +100,30 @@ function normalizeMealData(raw) {
   };
 }
 
+function detectCalorieSourceFromRaw(raw = {}) {
+  const sourceText = normalizeText(
+    raw?.calorie_source
+    || raw?.calorieSource
+    || raw?.nutrition_source
+    || raw?.source
+    || ''
+  ).toLowerCase();
+  const notes = normalizeText(raw?.notes || raw?.comment || '').toLowerCase();
+  if (/nutrition_label|栄養成分|栄養表示/.test(sourceText) || /栄養成分|栄養表示/.test(notes)) {
+    return { calorie_source: 'nutrition_label', calorie_confidence: 'high' };
+  }
+  if (/menu_declared|メニュー表|店内表示/.test(sourceText) || /メニュー表|店内表示/.test(notes)) {
+    return { calorie_source: 'menu_declared', calorie_confidence: 'high' };
+  }
+  if (/confirmed_product|商品ラベル|商品名一致/.test(sourceText) || /商品ラベル|商品名一致/.test(notes)) {
+    return { calorie_source: 'confirmed_product', calorie_confidence: 'high' };
+  }
+  if (/fallback|heuristic|仮推定/.test(sourceText) || /仮推定/.test(notes)) {
+    return { calorie_source: 'fallback_estimate', calorie_confidence: 'low' };
+  }
+  return { calorie_source: 'gemini_estimate', calorie_confidence: 'medium' };
+}
+
 async function fetchRecentMeals(userId, limit = 30) {
   if (!normalizeText(userId)) return [];
   try {
@@ -376,24 +400,52 @@ async function analyzeMealImage(imagePayload, userId = null, rawText = '') {
     const { prompt } = buildMealExtractPrompt({ rawText });
     const result = await geminiImageAnalysisService.analyzeImage(imagePayload, prompt);
     const mealData = normalizeMealData(result?.data);
-    const recentMeals = await fetchRecentMeals(userId, 40);
-    const personalized = mealPersonalizationService.applyPersonalization({
+    const rawNutrition = {
+      kcal: Number(mealData?.estimatedNutrition?.kcal || 0),
+      protein: Number(mealData?.estimatedNutrition?.protein || 0),
+      fat: Number(mealData?.estimatedNutrition?.fat || 0),
+      carbs: Number(mealData?.estimatedNutrition?.carbs || 0),
+    };
+    const sourceInfo = detectCalorieSourceFromRaw(mealData?.raw || {});
+    const attemptedPersonalized = mealPersonalizationService.applyPersonalization({
       mealLabel: (mealData.items || [])[0] || '',
-      nutrition: mealData.estimatedNutrition,
-      recentMeals,
+      nutrition: rawNutrition,
+      recentMeals: await fetchRecentMeals(userId, 40),
       textProvided: Boolean(normalizeText(rawText))
     });
-    const patterns = mealPersonalizationService.analyzeMealPatterns(recentMeals);
-    const feedback = mealPersonalizationService.buildSingleFeedback({
-      nutrition: personalized.adjusted,
-      patterns,
-      mismatch: { level: 'unknown' }
-    });
+    const attemptedKcal = Number(attemptedPersonalized?.adjusted?.kcal || 0);
+    if (rawNutrition.kcal > 0 && attemptedKcal > 0 && Math.abs(attemptedKcal - rawNutrition.kcal) >= 1) {
+      console.info('[meal_calorie_overwrite_blocked]', {
+        user_id: String(userId || ''),
+        original_gemini_calories: rawNutrition.kcal,
+        attempted_recomputed_calories: attemptedKcal,
+        reason: 'keep_gemini_priority_no_post_adjustment'
+      });
+    }
 
-    mealData.estimatedNutrition = personalized.adjusted;
-    mealData.estimated_nutrition = personalized.adjusted;
-    mealData.confidence = personalized.confidence;
-    if (feedback) mealData.comment = feedback;
+    mealData.estimatedNutrition = rawNutrition;
+    mealData.estimated_nutrition = rawNutrition;
+    mealData.calorie_source = sourceInfo.calorie_source;
+    mealData.calorie_confidence = sourceInfo.calorie_confidence;
+    mealData.original_gemini_calories = rawNutrition.kcal;
+    mealData.final_calories = rawNutrition.kcal;
+    mealData.correction_reason = sourceInfo.calorie_source === 'fallback_estimate'
+      ? 'gemini_value_missing_or_low'
+      : 'gemini_priority_preserved';
+    mealData.comment = sourceInfo.calorie_source === 'fallback_estimate'
+      ? (mealData.comment || '写真からの概算なので、違っていればあとで直せます。')
+      : (/nutrition_label|menu_declared|confirmed_product/.test(sourceInfo.calorie_source)
+        ? '表示されている数値を優先して記録しました。'
+        : '写真からの推定として記録しました。');
+    console.info('[meal_calorie_source_selected]', {
+      user_id: String(userId || ''),
+      meal_label: String((mealData.items || [])[0] || ''),
+      calorie_source: mealData.calorie_source,
+      original_gemini_calories: mealData.original_gemini_calories,
+      final_calories: mealData.final_calories,
+      calorie_confidence: mealData.calorie_confidence,
+      correction_reason: mealData.correction_reason
+    });
 
     await saveMealToDb(mealData, userId);
     return mealData;
