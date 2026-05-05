@@ -471,14 +471,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
         dbDateLine = `正本DBに保存された検査日の候補は ${bits.join(' / ')} です。`;
       }
       labResultItemsReader.logResultItemsSource({
-        user_id: userId,
-        question: safeText.slice(0, 120),
-        normalized_key: 'other_dates',
+        question: safeText.slice(0, 400),
+        detected_item_label: 'other_dates',
+        canonical_normalized_key: null,
         selected_lab_session_id: sidForDates,
         answer_source_session_id: answerSourceSessionId || sidForDates,
         used_source: dbDateLine ? 'lab_result_items' : 'panel_only',
         result_count: distinct.length,
-        has_needs_manual_review: distinct.some((d) => d.observed_date_status === 'needs_review'),
         fallback_reason: dbDateLine ? null : 'no_lab_result_items_dates'
       });
     }
@@ -689,14 +688,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
         labSessionId: sidInv
       }).catch(() => null);
       labResultItemsReader.logResultItemsSource({
-        user_id: userId,
-        question: safeText.slice(0, 120),
-        normalized_key: 'inventory',
+        question: safeText.slice(0, 400),
+        detected_item_label: 'inventory',
+        canonical_normalized_key: null,
         selected_lab_session_id: sidInv,
         answer_source_session_id: answerSourceSessionId || sidInv,
         used_source: invBody ? 'lab_result_items' : 'parsed_items_json_fallback',
         result_count: invBody ? 1 : 0,
-        has_needs_manual_review: false,
         fallback_reason: invBody ? null : 'no_lab_result_items_inventory'
       });
     }
@@ -713,8 +711,9 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const selectedDate = p?.latestExamDate || p?.examDate || '';
     const selectedSid = answerSourceSessionId || currentSessionId;
     let fbReason = 'no_lab_result_items';
+    let fr = null;
     if (normalizeText(userId) && selectedSid) {
-      const fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
+      fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
         userId,
         labSessionId: selectedSid,
         targetLabel: target,
@@ -722,14 +721,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       });
       if (fr.replyText) {
         labResultItemsReader.logResultItemsSource({
-          user_id: userId,
-          question: safeText.slice(0, 120),
-          normalized_key: target,
+          question: safeText.slice(0, 400),
+          detected_item_label: target,
+          canonical_normalized_key: fr.canonical_normalized_key || null,
           selected_lab_session_id: selectedSid,
           answer_source_session_id: answerSourceSessionId || selectedSid,
           used_source: 'lab_result_items',
           result_count: 1,
-          has_needs_manual_review: Boolean(fr.row?.validation_status === 'needs_manual_review'),
           fallback_reason: null
         });
         return { intentType: 'newflow_lab_followup', replyText: `${pre} ${fr.replyText}`.trim() };
@@ -737,15 +735,23 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       fbReason = fr.usedSource || 'not_found';
     }
     const body = labFollowupService.buildItemReply(p, target, selectedDate);
+    let canonicalForLog = fr?.canonical_normalized_key ?? null;
+    if (canonicalForLog == null) {
+      try {
+        const km = await labResultItemsReader.resolveCanonicalKeysForFollowup(target);
+        canonicalForLog = km.primaryCanonicalKey;
+      } catch (_e) {
+        canonicalForLog = null;
+      }
+    }
     labResultItemsReader.logResultItemsSource({
-      user_id: userId,
-      question: safeText.slice(0, 120),
-      normalized_key: target,
+      question: safeText.slice(0, 400),
+      detected_item_label: target,
+      canonical_normalized_key: canonicalForLog,
       selected_lab_session_id: selectedSid || null,
       answer_source_session_id: answerSourceSessionId || selectedSid,
       used_source: 'parsed_items_json_fallback',
       result_count: 0,
-      has_needs_manual_review: false,
       fallback_reason: fbReason
     });
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}`.trim() };

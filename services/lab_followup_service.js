@@ -56,6 +56,9 @@ function normalizeTarget(text) {
   if (safe.includes('LDL')) return 'LDL';
   if (safe.includes('HDL')) return 'HDL';
   if (safe.includes('HBA1C') || safe.includes('HB1AC')) return 'HbA1c';
+  if (safe.includes('LDH')) return 'LDH';
+  if (safe.includes('ヘモグロビン') || safe.includes('HGB')) return 'ヘモグロビン';
+  if (!safe.includes('HBA1C') && !safe.includes('HB1AC') && /(^|[^A-Z])HB([^A-Z]|$)/.test(safe)) return 'ヘモグロビン';
   if (safe.includes('中性脂肪') || safe.includes('TG') || safe.includes('トリグリ')) return '中性脂肪';
   if (safe.includes('AST') || safe.includes('GOT')) return 'AST';
   if (safe.includes('ALT') || safe.includes('GPT')) return 'ALT';
