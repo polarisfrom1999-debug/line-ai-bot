@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const labItemMasterRepository = require('../../repositories/lab_item_master_repository');
 const labResultItemRepository = require('../../repositories/lab_result_item_repository');
 const { mergeExtractorOutputs } = require('./lab_result_candidate_extractor_service');
-const { normalizeLabItemName } = require('./lab_item_normalizer_service');
+const { resolveLabItemForPersistence, logLabItemNormalizerDebug } = require('./lab_item_normalizer_service');
 const { parseLabValueFields } = require('./lab_result_value_parser_service');
 const { resolveObservedDate, extractYmd } = require('./lab_result_date_resolver_service');
 const { applyValidationRules } = require('./lab_result_validation_service');
@@ -65,7 +65,20 @@ async function writeLabResultItemsFromSession(params = {}) {
   const normalizedRows = [];
   for (const c of candidates) {
     try {
-      const norm = await normalizeLabItemName(c.rawName, masterRows);
+      const incomingKey =
+        c.rawItemJson && typeof c.rawItemJson === 'object'
+          ? normalizeText(
+              c.rawItemJson.normalizedKey || c.rawItemJson.normalized_key || c.rawItemJson.canonical_key || ''
+            )
+          : '';
+      const norm = await resolveLabItemForPersistence(c.rawName, c.rawItemJson, masterRows);
+      logLabItemNormalizerDebug({
+        rawName: normalizeText(c.rawName),
+        incomingNormalizedKey: incomingKey || null,
+        resolvedNormalizedKey: norm.normalized_key,
+        resolvedBy: norm.resolvedBy,
+        displayName: norm.display_name
+      });
       const parsed = parseLabValueFields(c);
       const ymdFromCand = extractYmd(c.observedDateText || '');
       const dateCtx = resolveObservedDate({
@@ -193,12 +206,22 @@ async function writeLabResultItemsFromSession(params = {}) {
     }
   }
 
+  const canonical_key_count = deduped.filter((r) => {
+    const nk = normalizeText(r.normalized_key);
+    return nk && !nk.startsWith('unmapped:') && !/^raw_label:/i.test(nk);
+  }).length;
+  const raw_label_key_count = deduped.filter((r) => /^raw_label:/i.test(normalizeText(r.normalized_key))).length;
+  const unmapped_key_count = deduped.filter((r) => normalizeText(r.normalized_key).startsWith('unmapped:')).length;
+
   console.info('[lab_result_items_upsert_summary]', {
     lab_session_id: labSessionId,
     user_id: userId,
     candidate_count: candidates.length,
     normalized_count: normalizedRows.length,
-    unmapped_count: normalizedRows.filter((x) => normalizeText(x.normalized_key).startsWith('unmapped:')).length,
+    deduped_count: deduped.length,
+    canonical_key_count,
+    raw_label_key_count,
+    unmapped_count: unmapped_key_count,
     inserted_count,
     updated_count: 0,
     skipped_count: dedupeStats.skipped_duplicate_count,
