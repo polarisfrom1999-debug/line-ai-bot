@@ -113,6 +113,26 @@ async function saveVideoFromLineMessage({
   } catch (error) {
     const errMsg = String(error?.message || error || 'unknown');
     console.error('[athlete_video_save_error]', { lineUserId: uid, messageId: mid, error: errMsg.slice(0, 500) });
+    try {
+      await supabase
+        .from('athlete_video_records')
+        .insert({
+          line_user_id: uid,
+          message_id: mid || null,
+          line_content_id: null,
+          storage_bucket: bucket,
+          storage_path: null,
+          public_url: null,
+          content_type: null,
+          file_size_bytes: null,
+          duration_ms: durationMs != null && Number.isFinite(Number(durationMs)) ? Math.round(Number(durationMs)) : null,
+          status: 'save_failed',
+          error_message: errMsg.slice(0, 500),
+          updated_at: new Date().toISOString(),
+        });
+    } catch (_saveFailedInsertError) {
+      // best-effort only; webhook must keep responding
+    }
     return { text: failureText(), ok: false, error };
   }
 }
