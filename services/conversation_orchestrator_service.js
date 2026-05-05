@@ -60,6 +60,9 @@ const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
 const exerciseRecordService = require('./exercise_record_service');
+const compassionateJudgmentService = require('./compassionate_judgment_service');
+const pendingConfirmationService = require('./pending_confirmation_service');
+const nextStepSupportService = require('./next_step_support_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
 const aiPersonaConfig = require('../config/ai_persona_config');
 
@@ -691,6 +694,20 @@ function detectPriorityRouteForText(text, shortMemory = {}) {
     return { route: 'normal_chat', reason: 'greeting_text' };
   }
   return { route: '', reason: '' };
+}
+
+function buildRecentUncertaintySignals(recentMessages = [], text = '') {
+  const window = (Array.isArray(recentMessages) ? recentMessages : []).slice(-12);
+  const source = [text, ...window.map((m) => normalizeText(m?.content || ''))].filter(Boolean);
+  return source.filter((line) => /(たぶん|覚えてない|まあいいや|かも|曖昧|わからない|半分くらい)/.test(line)).slice(-8);
+}
+
+function buildPreviousCorrections(recentMessages = []) {
+  const window = (Array.isArray(recentMessages) ? recentMessages : []).slice(-20);
+  return window
+    .map((m) => normalizeText(m?.content || ''))
+    .filter((line) => /(半分|1\/4|食べてない|完食|補正|修正)/.test(line))
+    .slice(-8);
 }
 
 function adjustIntentForFollowupContext(intent, text, shortMemory = {}) {
@@ -3027,10 +3044,99 @@ async function orchestrateConversation(input) {
     const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
-    const text = normalizeText(input.rawText || '');
-    const priority = input?.messageType === 'text'
+    let text = normalizeText(input.rawText || '');
+    let resumedFromPendingConfirmation = false;
+    if (input?.messageType === 'text' && text) {
+      const pending = await pendingConfirmationService.readPendingConfirmation(input.userId);
+      if (pending) {
+        if (pendingConfirmationService.isConfirmationPositive(text)) {
+          await pendingConfirmationService.clearPendingConfirmation(input.userId);
+          text = normalizeText(pending?.payload?.userText || text);
+          resumedFromPendingConfirmation = true;
+          console.info('[pending_confirmation_apply]', {
+            user_id: input.userId,
+            original_confirmation_text: normalizeText(input.rawText || '').slice(0, 60),
+            resumed_text: text.slice(0, 120)
+          });
+        }
+        if (/^(いいえ|違う|ちがう|キャンセル|やめる)$/i.test(text)) {
+          await pendingConfirmationService.clearPendingConfirmation(input.userId);
+          const ngReply = '了解しました。いったん記録は更新しません。必要なときに言い直してもらえれば大丈夫です。';
+          const ngOut = await withSurfaceReply(input, ngReply, { recentMessages, longMemory }, 'pending_confirmation_reject');
+          await appendTurn(input.userId, input.rawText || '', ngOut);
+          return { ok: true, replyMessages: [{ type: 'text', text: ngOut }], internal: { intentType: 'pending_confirmation_reject', responseMode: 'answer' } };
+        }
+      }
+    }
+
+    let compassionateJudgment = null;
+    if (input?.messageType === 'text' && text) {
+      const latestMealSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+      const todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+      const latestExerciseSummary = {
+        todayExerciseKcal: Number(todayEnergyBalance?.exerciseBurnKcal || 0),
+        activityCount: Number(todayEnergyBalance?.activityCount || 0)
+      };
+      compassionateJudgment = await compassionateJudgmentService.judgeWithCompassion({
+        userText: text,
+        activeContext: shortMemory?.followUpContext || {},
+        latestMealSummary,
+        latestExerciseSummary,
+        latestLabSummary: shortMemory?.followUpContext?.labPanel || {},
+        todayNutritionSummary: latestMealSummary,
+        todayEnergyBalance,
+        recentConversationSummary: recentSummary,
+        recentUncertaintySignals: buildRecentUncertaintySignals(recentMessages, text),
+        previousCorrections: buildPreviousCorrections(recentMessages),
+        userProfile: {
+          age: longMemory?.age || null,
+          goal: longMemory?.goal || '',
+          preferredName: longMemory?.preferredName || ''
+        },
+        timeOfDay: `${getJapanNow().hour}:00`,
+        energyLevel: longMemory?.currentEnergyLevel || ''
+      });
+
+      console.info('[compassionate_judgment_decision]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        surface_intent: compassionateJudgment.surface_intent,
+        confidence: compassionateJudgment.confidence,
+        risk_level: compassionateJudgment.risk_level,
+        needs_confirmation: compassionateJudgment.needs_confirmation,
+        should_write_db: compassionateJudgment.should_write_db
+      });
+
+      if (!resumedFromPendingConfirmation && compassionateJudgment?.needs_confirmation && compassionateJudgment?.confirmation_question) {
+        await pendingConfirmationService.savePendingConfirmation(input.userId, {
+          userText: text,
+          judgment: compassionateJudgment
+        });
+        const confirmText = `${compassionateJudgment.confirmation_question}\n${nextStepSupportService.buildNextStepSupport(compassionateJudgment, { longMemory })}`;
+        const confirmOut = await withSurfaceReply(input, confirmText, { recentMessages, longMemory }, 'compassionate_confirmation');
+        await appendTurn(input.userId, input.rawText || '', confirmOut);
+        return { ok: true, replyMessages: [{ type: 'text', text: confirmOut }], internal: { intentType: 'compassionate_confirmation', responseMode: 'answer' } };
+      }
+    }
+
+    let priority = input?.messageType === 'text'
       ? detectPriorityRouteForText(text, shortMemory)
       : { route: '', reason: '' };
+    if (priority.route === '' && compassionateJudgment?.surface_intent) {
+      if (compassionateJudgment.surface_intent === 'exercise_record') {
+        priority.route = 'exercise_record';
+        priority.reason = 'compassionate_layer_surface_intent';
+      } else if (compassionateJudgment.surface_intent === 'lab_followup') {
+        priority.route = 'lab_followup';
+        priority.reason = 'compassionate_layer_surface_intent';
+      } else if (compassionateJudgment.surface_intent === 'daily_summary_request') {
+        priority.route = 'today_meal_totals';
+        priority.reason = 'compassionate_layer_surface_intent';
+      } else if (compassionateJudgment.surface_intent === 'meal_correction') {
+        priority.route = 'meal_correction';
+        priority.reason = 'compassionate_layer_surface_intent';
+      }
+    }
     const activeContextType = normalizeText(
       shortMemory?.followUpContext?.imageType
       || shortMemory?.followUpContext?.source
