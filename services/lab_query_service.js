@@ -7,6 +7,7 @@ const labReportStoreService = require('./lab_report_store_service');
 const labItemAliasService = require('./lab_item_alias_service');
 const labResultItemsReader = require('./newflow/lab_result_items_reader_service');
 const canonicalFallbackService = require('./newflow/canonical_fallback_service');
+const labResultItemRepository = require('../repositories/lab_result_item_repository');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -248,13 +249,42 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
     return labFollowupService.buildReadableInventoryReply(p);
   }
 
-  let selectedSessionId = shortMemory?.followUpContext?.latestLabCache?.sourceSessionId
+  const currentSessionId = shortMemory?.followUpContext?.latestLabCache?.sourceSessionId
     || shortMemory?.followUpContext?.labSessionId
     || null;
+  let canonicalFallbackSessionId = null;
+  const latestResultItemsSessionId = await labResultItemRepository.getLatestLabSessionIdByUser({
+    userId: lineUserId
+  }).catch(() => null);
+  let selectedSessionId = latestResultItemsSessionId || null;
+  let selectedReason = latestResultItemsSessionId ? 'latest_lab_result_items_session' : '';
+  if (!selectedSessionId && currentSessionId) {
+    const currentPack = await labResultItemRepository.fetchBySessionForFollowup({
+      lineUserId: lineUserId,
+      labSessionId: Number(currentSessionId),
+      excludeValidation: ['rejected', 'superseded']
+    }).catch(() => ({ rows: [] }));
+    if (Array.isArray(currentPack?.rows) && currentPack.rows.length) {
+      selectedSessionId = Number(currentSessionId);
+      selectedReason = 'current_session_with_result_items';
+    }
+  }
   if (!selectedSessionId) {
     const canonicalPanel = await canonicalFallbackService.getCanonicalLabPanel(lineUserId).catch(() => null);
-    selectedSessionId = canonicalPanel?.sourceSessionId || null;
+    canonicalFallbackSessionId = canonicalPanel?.sourceSessionId || null;
+    selectedSessionId = canonicalFallbackSessionId || null;
+    selectedReason = selectedSessionId ? 'canonical_fallback_session' : '';
+  } else if (currentSessionId && Number(currentSessionId) === Number(selectedSessionId)) {
+    selectedReason = 'current_session_has_latest_lab_result_items';
   }
+  console.info('[lab_followup_session_resolution]', {
+    user_id: lineUserId,
+    requested_text: safe.slice(0, 200),
+    canonical_fallback_session_id: canonicalFallbackSessionId,
+    latest_result_items_session_id: latestResultItemsSessionId,
+    selected_lab_result_items_session_id: selectedSessionId,
+    reason: selectedReason || 'no_session_selected'
+  });
   if (selectedSessionId) {
     const selectedDate = normalizeText(latestCache?.examDate || '');
     const fr = await labResultItemsReader.buildItemFollowupReplyFromResults({

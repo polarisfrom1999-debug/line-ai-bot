@@ -182,6 +182,25 @@ async function fetchDistinctObservedDatesForSession({ userId, labSessionId }) {
   return [...dates.values()];
 }
 
+async function getLatestLabSessionIdByUser({ userId }) {
+  if (!supabase) return null;
+  const uid = normalizeText(userId);
+  if (!uid) return null;
+  try {
+    const q = await supabase
+      .from('lab_result_items')
+      .select('lab_session_id')
+      .eq('user_id', uid)
+      .order('lab_session_id', { ascending: false })
+      .limit(1);
+    if (q?.error || !Array.isArray(q.data) || !q.data.length) return null;
+    const sid = Number(q.data[0]?.lab_session_id);
+    return Number.isFinite(sid) ? sid : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 module.exports = {
   deleteByLabSessionId,
   insertRow,
@@ -189,5 +208,6 @@ module.exports = {
   fetchBySessionForFollowup,
   fetchBySession,
   fetchLatestByUserAndKey,
-  fetchDistinctObservedDatesForSession
+  fetchDistinctObservedDatesForSession,
+  getLatestLabSessionIdByUser
 };
