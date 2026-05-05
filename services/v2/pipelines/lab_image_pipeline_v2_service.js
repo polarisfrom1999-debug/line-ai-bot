@@ -88,6 +88,29 @@ async function handleLabImageV2({ input, imagePayload }) {
     expiresAt,
   }).catch(() => ({ ok: false, reason: 'insert_exception' }));
 
+  if (persist?.ok && persist?.session?.id) {
+    try {
+      const labResultItemsWriter = require('../../newflow/lab_result_items_writer_service');
+      await labResultItemsWriter.writeLabResultItemsFromSession({
+        userId: input.userId,
+        labSessionId: persist.session.id,
+        parsedItemsJson: Array.isArray(lab?.itemsStructured) ? lab.itemsStructured : (Array.isArray(lab?.items) ? lab.items : []),
+        structuredJson: lab?.structuredJson ?? lab?.rawPayload ?? null,
+        patientName: lab?.patientName || '',
+        facilityName: lab?.facilityName || '',
+        printDate: lab?.printDate || '',
+        examDatesJson: Array.isArray(lab?.examDates) ? lab.examDates : []
+      });
+    } catch (e) {
+      console.info('[lab_result_items_writer_error]', {
+        lab_session_id: persist.session.id,
+        source_json_path: '',
+        raw_name: '',
+        error_message: String(e?.message || e || 'writer_exception')
+      });
+    }
+  }
+
   await contextMemoryService.saveShortMemory(input.userId, {
     lastImageType: hasItems ? 'lab' : 'lab_pending',
     followUpContext: {

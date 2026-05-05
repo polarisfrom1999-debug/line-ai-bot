@@ -8,6 +8,7 @@ const labSessionRepository = require('../../../repositories/lab_session_reposito
 const labHistoryCompare = require('../../lab_history_compare_service');
 const activeContextStoreService = require('../active_context_store_service');
 const labIngestTrace = require('../../lab_ingest_trace_service');
+const labResultItemsReader = require('../lab_result_items_reader_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -454,8 +455,35 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const panelDateLine = panelDates.length
       ? `この画像内で読み取れた日付候補は ${panelDates.join(' / ')} です。`
       : '';
+    let dbDateLine = '';
+    const sidForDates = answerSourceSessionId || currentSessionId;
+    if (normalizeText(userId) && sidForDates) {
+      const distinct = await labResultItemsReader.getDistinctObservedDates({
+        userId,
+        labSessionId: sidForDates
+      }).catch(() => []);
+      if (distinct.length) {
+        const bits = distinct.map((d) => {
+          if (d.observed_date) return String(d.observed_date).slice(0, 10);
+          if (d.observed_date_text) return `${d.observed_date_text}(${d.observed_date_status || 'unknown'})`;
+          return `(${d.observed_date_status || 'unknown'})`;
+        });
+        dbDateLine = `正本DBに保存された検査日の候補は ${bits.join(' / ')} です。`;
+      }
+      labResultItemsReader.logResultItemsSource({
+        user_id: userId,
+        question: safeText.slice(0, 120),
+        normalized_key: 'other_dates',
+        selected_lab_session_id: sidForDates,
+        answer_source_session_id: answerSourceSessionId || sidForDates,
+        used_source: dbDateLine ? 'lab_result_items' : 'panel_only',
+        result_count: distinct.length,
+        has_needs_manual_review: distinct.some((d) => d.observed_date_status === 'needs_review'),
+        fallback_reason: dbDateLine ? null : 'no_lab_result_items_dates'
+      });
+    }
     const savedCountLine = `保存済みセッション件数は ${(arr || []).length} 件です。`;
-    const body = [panelDateLine, savedCountLine].filter(Boolean).join(' ');
+    const body = [panelDateLine, dbDateLine, savedCountLine].filter(Boolean).join(' ');
     record('lab_saved_dates_inventory', {
       history_sessions_count: (arr || []).length,
       comparison_available: (arr || []).length >= 2,
@@ -653,16 +681,73 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   }
   if (/(何読み取れた|何を読み取った|全部教えて|どの項目が保存された|読み取れた項目を見せて|10件は何を読み取った|保存項目)/.test(safeText)) {
     record('item_inventory');
+    const sidInv = answerSourceSessionId || currentSessionId;
+    let invBody = null;
+    if (normalizeText(userId) && sidInv) {
+      invBody = await labResultItemsReader.buildInventorySummaryFromSession({
+        userId,
+        labSessionId: sidInv
+      }).catch(() => null);
+      labResultItemsReader.logResultItemsSource({
+        user_id: userId,
+        question: safeText.slice(0, 120),
+        normalized_key: 'inventory',
+        selected_lab_session_id: sidInv,
+        answer_source_session_id: answerSourceSessionId || sidInv,
+        used_source: invBody ? 'lab_result_items' : 'parsed_items_json_fallback',
+        result_count: invBody ? 1 : 0,
+        has_needs_manual_review: false,
+        fallback_reason: invBody ? null : 'no_lab_result_items_inventory'
+      });
+    }
+    const fallback = labFollowupService.buildNaturalAllValuesReply(p);
+    const core = invBody || fallback;
     return {
       intentType: 'newflow_lab_followup',
-      replyText: `${pre} ${labFollowupService.buildNaturalAllValuesReply(p)}${tail ? ` ${tail}` : ''}`.trim()
+      replyText: `${pre} ${core}${tail ? ` ${tail}` : ''}`.trim()
     };
   }
   const target = labFollowupService.normalizeTarget(safeText);
   if (target) {
     record(`item_${target}`);
     const selectedDate = p?.latestExamDate || p?.examDate || '';
+    const selectedSid = answerSourceSessionId || currentSessionId;
+    let fbReason = 'no_lab_result_items';
+    if (normalizeText(userId) && selectedSid) {
+      const fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
+        userId,
+        labSessionId: selectedSid,
+        targetLabel: target,
+        selectedDate
+      });
+      if (fr.replyText) {
+        labResultItemsReader.logResultItemsSource({
+          user_id: userId,
+          question: safeText.slice(0, 120),
+          normalized_key: target,
+          selected_lab_session_id: selectedSid,
+          answer_source_session_id: answerSourceSessionId || selectedSid,
+          used_source: 'lab_result_items',
+          result_count: 1,
+          has_needs_manual_review: Boolean(fr.row?.validation_status === 'needs_manual_review'),
+          fallback_reason: null
+        });
+        return { intentType: 'newflow_lab_followup', replyText: `${pre} ${fr.replyText}`.trim() };
+      }
+      fbReason = fr.usedSource || 'not_found';
+    }
     const body = labFollowupService.buildItemReply(p, target, selectedDate);
+    labResultItemsReader.logResultItemsSource({
+      user_id: userId,
+      question: safeText.slice(0, 120),
+      normalized_key: target,
+      selected_lab_session_id: selectedSid || null,
+      answer_source_session_id: answerSourceSessionId || selectedSid,
+      used_source: 'parsed_items_json_fallback',
+      result_count: 0,
+      has_needs_manual_review: false,
+      fallback_reason: fbReason
+    });
     return { intentType: 'newflow_lab_followup', replyText: `${pre} ${body}`.trim() };
   }
   if (/削除(した|できた|できた?)|消え(た|た?)/.test(safeText)) {

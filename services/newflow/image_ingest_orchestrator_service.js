@@ -440,6 +440,28 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
 
   labIngestTrace.logPreInsert({ userId: input.userId, insertPayload: { source: 'newflow_image_ingest_orchestrator', createLabSessionParams: insertPayload } });
   const persist = await labSessionRepository.createLabSession(insertPayload).catch(() => ({ ok: false, reason: 'insert_exception' }));
+  if (persist?.ok && persist?.session?.id) {
+    try {
+      const labResultItemsWriter = require('./lab_result_items_writer_service');
+      await labResultItemsWriter.writeLabResultItemsFromSession({
+        userId: input.userId,
+        labSessionId: persist.session.id,
+        parsedItemsJson: insertPayload.parsedItems || [],
+        structuredJson: insertPayload.structuredJson ?? null,
+        patientName: insertPayload.patientName,
+        facilityName: insertPayload.facilityName,
+        printDate: insertPayload.printDate,
+        examDatesJson: insertPayload.examDates || []
+      });
+    } catch (e) {
+      console.info('[lab_result_items_writer_error]', {
+        lab_session_id: persist.session.id,
+        source_json_path: '',
+        raw_name: '',
+        error_message: String(e?.message || e || 'writer_exception')
+      });
+    }
+  }
   if (!persist?.ok) {
     await activeContextStoreService.setActiveContext(input.userId, {
       domain: 'lab_image_session_failed',

@@ -4,6 +4,7 @@
   "description": "Kokokara LINE AI bot",
   "main": "index.js",
   "scripts": {
+    "build": "node scripts/lab_result_items_fixture_test.js",
     "start": "node index.js",
     "flags:stage-entry": "node scripts/stage_entry_flag_report.js",
     "smoke:stage-entry": "node scripts/stage_entry_smoke_inputs.js",
