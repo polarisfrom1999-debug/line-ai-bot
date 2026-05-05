@@ -185,33 +185,218 @@ function sessionRowHasUsableFollowupContent(row) {
   return false;
 }
 
-async function getLatestLabSession(userId) {
-  if (!supabase) return null;
-  const safeUserId = normalizeText(userId);
-  if (!safeUserId) return null;
-  const sel = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at';
-  const selNarrow = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at';
-  try {
-    let q = await supabase
+/** 低いほど follow-up で優先（ok > null/その他 > needs_manual_review）。superseded は候補から除外。 */
+function validationPriorityTier(validationStatus) {
+  const s = normalizeText(validationStatus).toLowerCase();
+  if (!s) return 2;
+  if (s === 'ok') return 1;
+  if (s === 'needs_manual_review') return 3;
+  if (s === 'superseded') return 99;
+  return 2;
+}
+
+function resolveEffectiveLabSessionRow(row, idMap, depth = 0) {
+  if (!row || depth > 14) return row || null;
+  if (normalizeText(row.validation_status).toLowerCase() !== 'superseded') return row;
+  const sid = row.superseded_by_session_id;
+  if (sid == null || sid === '') return row;
+  const next = idMap.get(Number(sid));
+  if (!next || next === row) return row;
+  return resolveEffectiveLabSessionRow(next, idMap, depth + 1);
+}
+
+async function expandSupersedeClosure(rows, selectWide, selectNarrow) {
+  const idMap = new Map();
+  for (const r of rows) {
+    if (r && r.id != null) idMap.set(Number(r.id), r);
+  }
+  const hasValCols = rows.length && Object.prototype.hasOwnProperty.call(rows[0], 'validation_status');
+  if (!hasValCols) return { idMap, hasValidationColumns: false };
+
+  let pending = new Set();
+  for (const r of rows) {
+    if (normalizeText(r?.validation_status).toLowerCase() === 'superseded' && r.superseded_by_session_id != null) {
+      const sid = Number(r.superseded_by_session_id);
+      if (!idMap.has(sid)) pending.add(sid);
+    }
+  }
+  while (pending.size) {
+    const ids = [...pending];
+    pending = new Set();
+    let rq = await supabase.from('lab_sessions').select(selectWide).in('id', ids);
+    if (rq?.error && (isMissingColumnError(rq.error, 'gemini_raw') || isMissingColumnError(rq.error, 'structured_json'))) {
+      rq = await supabase.from('lab_sessions').select(selectNarrow).in('id', ids);
+    }
+    const chunk = Array.isArray(rq?.data) ? rq.data : [];
+    for (const row of chunk) {
+      idMap.set(Number(row.id), row);
+      if (normalizeText(row?.validation_status).toLowerCase() === 'superseded' && row.superseded_by_session_id != null) {
+        const sid = Number(row.superseded_by_session_id);
+        if (!idMap.has(sid)) pending.add(sid);
+      }
+    }
+  }
+  return { idMap, hasValidationColumns: true };
+}
+
+function pickBestEffectiveLabSessionRow(initialRowsOrderedNewestFirst, idMap) {
+  const skippedSuperseded = [];
+  const replacedFromIds = [];
+  const candidates = [];
+  const seenEff = new Set();
+
+  for (const orig of initialRowsOrderedNewestFirst) {
+    if (!orig) continue;
+    if (normalizeText(orig.validation_status).toLowerCase() === 'superseded') {
+      skippedSuperseded.push(Number(orig.id));
+    }
+    const eff = resolveEffectiveLabSessionRow(orig, idMap, 0);
+    if (!eff) continue;
+    if (normalizeText(eff.validation_status).toLowerCase() === 'superseded') continue;
+    if (Number(eff.id) !== Number(orig.id)) {
+      replacedFromIds.push({ from: Number(orig.id), to: Number(eff.id) });
+    }
+    if (seenEff.has(Number(eff.id))) continue;
+    seenEff.add(Number(eff.id));
+    candidates.push(eff);
+  }
+
+  const uniqSkipped = [...new Set(skippedSuperseded.filter((x) => Number.isFinite(x)))];
+  candidates.sort((a, b) => {
+    const ta = validationPriorityTier(a.validation_status);
+    const tb = validationPriorityTier(b.validation_status);
+    if (ta !== tb) return ta - tb;
+    const ca = String(a.created_at || '');
+    const cb = String(b.created_at || '');
+    if (ca !== cb) return cb.localeCompare(ca);
+    return Number(b.id) - Number(a.id);
+  });
+
+  let selectionReason = 'usable_content_or_meta';
+  if (candidates.length >= 2) {
+    const t0 = validationPriorityTier(candidates[0].validation_status);
+    const t1 = validationPriorityTier(candidates[1].validation_status);
+    if (t0 !== t1) selectionReason = 'validation_tier_preference';
+  }
+  if (replacedFromIds.length) {
+    selectionReason = `supersede_chain:${replacedFromIds.slice(0, 5).map((x) => `${x.from}->${x.to}`).join(',')}`;
+  }
+
+  for (const eff of candidates) {
+    if (sessionRowHasUsableFollowupContent(eff)) {
+      return {
+        row: eff,
+        trace: {
+          skipped_superseded_session_ids: uniqSkipped,
+          replaced_from_ids: replacedFromIds,
+          selection_reason: selectionReason,
+          selected_session_id: Number(eff.id),
+          selected_validation_status: eff.validation_status != null ? String(eff.validation_status) : null,
+          selected_superseded_by_session_id: eff.superseded_by_session_id != null ? Number(eff.superseded_by_session_id) : null
+        }
+      };
+    }
+  }
+  return {
+    row: null,
+    trace: {
+      skipped_superseded_session_ids: uniqSkipped,
+      replaced_from_ids: replacedFromIds,
+      selection_reason: candidates.length ? 'no_usable_followup_content' : 'no_candidates',
+      selected_session_id: null,
+      selected_validation_status: null,
+      selected_superseded_by_session_id: null
+    }
+  };
+}
+
+async function fetchUserLabSessionsNewest(userId, limit, sel, selNarrow) {
+  let q = await supabase
+    .from('lab_sessions')
+    .select(sel)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
+    q = await supabase
       .from('lab_sessions')
-      .select(sel)
-      .eq('user_id', safeUserId)
+      .select(selNarrow)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(limit);
+  }
+  if (q?.error && isMissingColumnError(q.error, 'validation_status')) {
+    const selNoVal = sel.replace(/,validation_status,superseded_by_session_id/g, '');
+    const narrowNoVal = selNarrow.replace(/,validation_status,superseded_by_session_id/g, '');
+    q = await supabase
+      .from('lab_sessions')
+      .select(selNoVal)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
     if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
       q = await supabase
         .from('lab_sessions')
-        .select(selNarrow)
-        .eq('user_id', safeUserId)
+        .select(narrowNoVal)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(limit);
     }
-    if (q?.error || !Array.isArray(q.data)) return null;
-    for (const row of q.data) {
-      if (sessionRowHasUsableFollowupContent(row)) return row;
+  }
+  return q;
+}
+
+async function getLatestLabSessionWithSelection(userId) {
+  const emptyTrace = {
+    skipped_superseded_session_ids: [],
+    replaced_from_ids: [],
+    selection_reason: 'missing_supabase_or_user',
+    selected_session_id: null,
+    selected_validation_status: null,
+    selected_superseded_by_session_id: null
+  };
+  if (!supabase) return { session: null, selectionTrace: emptyTrace };
+  const safeUserId = normalizeText(userId);
+  if (!safeUserId) return { session: null, selectionTrace: { ...emptyTrace, selection_reason: 'missing_user' } };
+  const sel =
+    'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,gemini_raw,structured_json,created_at,validation_status,superseded_by_session_id';
+  const selNarrow =
+    'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at,validation_status,superseded_by_session_id';
+  try {
+    const q = await fetchUserLabSessionsNewest(safeUserId, 20, sel, selNarrow);
+    if (q?.error || !Array.isArray(q.data)) {
+      return { session: null, selectionTrace: { ...emptyTrace, selection_reason: normalizeText(q?.error?.message || 'fetch_failed') } };
     }
-    return null;
-  } catch (_error) {
+    const { idMap } = await expandSupersedeClosure(q.data, sel, selNarrow);
+    const picked = pickBestEffectiveLabSessionRow(q.data, idMap);
+    return { session: picked.row, selectionTrace: picked.trace };
+  } catch (_e) {
+    return { session: null, selectionTrace: { ...emptyTrace, selection_reason: 'exception' } };
+  }
+}
+
+async function getLatestLabSession(userId) {
+  const pack = await getLatestLabSessionWithSelection(userId);
+  return pack.session;
+}
+
+/** active context の session が superseded か判定するための軽量取得 */
+async function getLabSessionValidationBrief(sessionId) {
+  if (!supabase || sessionId == null) return null;
+  const sid = Number(sessionId);
+  if (!Number.isFinite(sid)) return null;
+  try {
+    let q = await supabase
+      .from('lab_sessions')
+      .select('id,validation_status,superseded_by_session_id')
+      .eq('id', sid)
+      .maybeSingle();
+    if (q?.error && isMissingColumnError(q.error, 'validation_status')) {
+      q = await supabase.from('lab_sessions').select('id').eq('id', sid).maybeSingle();
+    }
+    if (q?.error || !q?.data) return null;
+    return q.data;
+  } catch (_e) {
     return null;
   }
 }
@@ -230,8 +415,9 @@ async function getRecentLabSessions(userId, limit = 10, opts = {}) {
   if (!safeUserId) return null;
   const mult = Number(opts.fetchMultiplier) > 0 ? Number(opts.fetchMultiplier) : 8;
   const fetchN = Math.min(200, Math.max(Number(limit) || 10, 1) * mult);
+  const sel =
+    'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at,updated_at,validation_status,superseded_by_session_id';
   try {
-    const sel = 'id,user_id,status,patient_name,facility_name,print_date,exam_dates_json,parsed_items_json,raw_text,created_at,updated_at';
     let q = await supabase
       .from('lab_sessions')
       .select(`${sel},gemini_raw,structured_json`)
@@ -246,9 +432,44 @@ async function getRecentLabSessions(userId, limit = 10, opts = {}) {
         .order('created_at', { ascending: false })
         .limit(fetchN);
     }
+    if (q?.error && isMissingColumnError(q.error, 'validation_status')) {
+      const selLegacy = sel.replace(/,validation_status,superseded_by_session_id/g, '');
+      q = await supabase
+        .from('lab_sessions')
+        .select(`${selLegacy},gemini_raw,structured_json`)
+        .eq('user_id', safeUserId)
+        .order('created_at', { ascending: false })
+        .limit(fetchN);
+      if (q?.error && (isMissingColumnError(q.error, 'gemini_raw') || isMissingColumnError(q.error, 'structured_json'))) {
+        q = await supabase
+          .from('lab_sessions')
+          .select(selLegacy)
+          .eq('user_id', safeUserId)
+          .order('created_at', { ascending: false })
+          .limit(fetchN);
+      }
+    }
     if (q?.error) return null;
     const raw = Array.isArray(q.data) ? q.data : [];
-    const withRep = raw.map((r) => ({ ...r, _rep: repDateForRow(r) }));
+    const selForExpand = sel.includes('validation_status')
+      ? sel
+      : sel.replace(/,validation_status,superseded_by_session_id/g, '');
+    const { idMap } = await expandSupersedeClosure(
+      raw,
+      `${selForExpand},gemini_raw,structured_json`,
+      selForExpand
+    );
+    const orderedEffective = [];
+    const seenEff = new Set();
+    for (const orig of raw) {
+      const eff = resolveEffectiveLabSessionRow(orig, idMap, 0);
+      if (!eff) continue;
+      if (normalizeText(eff.validation_status).toLowerCase() === 'superseded') continue;
+      if (seenEff.has(Number(eff.id))) continue;
+      seenEff.add(Number(eff.id));
+      orderedEffective.push(eff);
+    }
+    const withRep = orderedEffective.map((r) => ({ ...r, _rep: repDateForRow(r) }));
     withRep.sort((a, b) => {
       const ra = a._rep;
       const rb = b._rep;
@@ -279,20 +500,14 @@ async function updateLatestLabSessionMeta(userId, patch = {}) {
   if (!Object.keys(next).length) return { ok: false, reason: 'empty_patch' };
   next.updated_at = new Date().toISOString();
   try {
-    const latest = await supabase
-      .from('lab_sessions')
-      .select('id')
-      .eq('user_id', safeUserId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latest?.error || !latest?.data?.id) {
-      return { ok: false, reason: normalizeText(latest?.error?.message || 'latest_not_found') };
+    const latest = await getLatestLabSession(safeUserId);
+    if (!latest?.id) {
+      return { ok: false, reason: 'latest_not_found' };
     }
     const upd = await supabase
       .from('lab_sessions')
       .update(next)
-      .eq('id', latest.data.id)
+      .eq('id', latest.id)
       .select('id,user_id,patient_name,facility_name,print_date,updated_at')
       .limit(1)
       .maybeSingle();
@@ -312,18 +527,20 @@ async function appendLatestLabSessionCorrectionAudit(userId, entry = {}) {
   const correctionType = normalizeText(entry?.correctionType || '');
   if (!correctionType) return { ok: false, reason: 'missing_correction_type' };
   try {
-    const latest = await supabase
+    const latest = await getLatestLabSession(safeUserId);
+    if (!latest?.id) {
+      return { ok: false, reason: 'latest_not_found' };
+    }
+    const gr = await supabase
       .from('lab_sessions')
       .select('id,gemini_raw')
-      .eq('user_id', safeUserId)
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .eq('id', latest.id)
       .maybeSingle();
-    if (latest?.error || !latest?.data?.id) {
-      return { ok: false, reason: normalizeText(latest?.error?.message || 'latest_not_found') };
+    if (gr?.error || !gr?.data?.id) {
+      return { ok: false, reason: normalizeText(gr?.error?.message || 'read_failed') };
     }
-    const currentGeminiRaw = latest.data.gemini_raw && typeof latest.data.gemini_raw === 'object'
-      ? { ...latest.data.gemini_raw }
+    const currentGeminiRaw = gr.data.gemini_raw && typeof gr.data.gemini_raw === 'object'
+      ? { ...gr.data.gemini_raw }
       : {};
     const currentAudit = Array.isArray(currentGeminiRaw.correction_audit)
       ? [...currentGeminiRaw.correction_audit]
@@ -346,7 +563,7 @@ async function appendLatestLabSessionCorrectionAudit(userId, entry = {}) {
         },
         updated_at: new Date().toISOString()
       })
-      .eq('id', latest.data.id)
+      .eq('id', latest.id)
       .select('id,updated_at,gemini_raw')
       .limit(1)
       .maybeSingle();
@@ -381,6 +598,8 @@ function repDateForRow(row) {
 module.exports = {
   createLabSession,
   getLatestLabSession,
+  getLatestLabSessionWithSelection,
+  getLabSessionValidationBrief,
   getRecentLabSessions,
   repDateForRow,
   updateLatestLabSessionMeta,

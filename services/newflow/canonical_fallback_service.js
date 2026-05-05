@@ -80,8 +80,10 @@ function toLabPanel(labSession) {
   };
 }
 
-async function getCanonicalLabPanel(userId, { logReachability = true } = {}) {
-  const latest = await labSessionRepository.getLatestLabSession(userId).catch(() => null);
+async function getCanonicalLabPanel(userId, { logReachability = true, withSelectionTrace = false } = {}) {
+  const pack = await labSessionRepository.getLatestLabSessionWithSelection(userId).catch(() => ({ session: null, selectionTrace: null }));
+  const latest = pack?.session || null;
+  const selectionTrace = pack?.selectionTrace || null;
   if (logReachability) {
     console.info('[phasee-new] canonical_lab_reached', { userId: normalizeText(userId), found: Boolean(latest?.id) });
     phaseeReachabilityService.recordReachability('canonical_lab_reached', ['services/newflow/canonical_fallback_service.js'], {
@@ -89,7 +91,9 @@ async function getCanonicalLabPanel(userId, { logReachability = true } = {}) {
       found: Boolean(latest?.id)
     }).catch(() => null);
   }
-  return toLabPanel(latest);
+  const panel = toLabPanel(latest);
+  if (withSelectionTrace) return { panel, selectionTrace };
+  return panel;
 }
 
 async function getCanonicalMeal(userId) {

@@ -6,6 +6,8 @@ const canonicalFallbackService = require('./canonical_fallback_service');
 const { resolveLabFollowup, mergeLabPanels, isWeakLabPanel } = require('./resolvers/lab_followup_resolver_service');
 const { resolveMealFollowup, resolveCanonicalMealFollowup } = require('./resolvers/meal_followup_resolver_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
+const labSessionRepository = require('../../repositories/lab_session_repository');
+const { mergeLabPanelsCanonicalItemsWin } = require('./lab_panel_merge_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -36,6 +38,10 @@ function looksLikeGeneralConversation(text) {
   return !/(TG|LDL|HDL|HbA1c|中性脂肪|検査|患者|氏名|クリニック|病院|医療(機関)?|採血|日付|悪い|値|何が|読め|異常|H\/L|高い数値|低い数値|前回より|前回と比|比較|バランス|麺|カロリー|半分|食べてない|0kcal|食事|合計|詳細|内訳|トータル|収支|運動|活動)/i.test(
     safe
   );
+}
+
+function logLabFollowupSessionValidationChoice(payload = {}) {
+  console.info('[phasee-new] lab_followup_session_validation_choice', payload);
 }
 
 function inferDomainFromText(text) {
@@ -96,14 +102,36 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
       let canonicalLabReached = false;
       const currentSessionId = active?.payload?.labSessionId || null;
       let answerSourceSessionId = currentSessionId || null;
-      if (isWeakLabPanel(panel)) {
-        const canonical = await canonicalFallbackService.getCanonicalLabPanel(input.userId, { logReachability: false });
-        if (canonical) {
-          panel = mergeLabPanels(panel, canonical);
-          canonicalLabReached = true;
-          answerSourceSessionId = canonical?.sourceSessionId || answerSourceSessionId;
-        }
+      const canonBundle = await canonicalFallbackService.getCanonicalLabPanel(input.userId, {
+        logReachability: false,
+        withSelectionTrace: true
+      });
+      const canonical = canonBundle.panel;
+      const selectionTrace = canonBundle.selectionTrace;
+      const brief = currentSessionId
+        ? await labSessionRepository.getLabSessionValidationBrief(currentSessionId).catch(() => null)
+        : null;
+      const activeIsSuperseded = normalizeText(brief?.validation_status).toLowerCase() === 'superseded';
+      if (canonical && activeIsSuperseded) {
+        panel = mergeLabPanelsCanonicalItemsWin(panel, canonical);
+        canonicalLabReached = true;
+        answerSourceSessionId = canonical?.sourceSessionId || answerSourceSessionId;
+      } else if (isWeakLabPanel(panel) && canonical) {
+        panel = mergeLabPanels(panel, canonical);
+        canonicalLabReached = true;
+        answerSourceSessionId = canonical?.sourceSessionId || answerSourceSessionId;
       }
+      logLabFollowupSessionValidationChoice({
+        requested_text: safeText.slice(0, 400),
+        current_session_id: currentSessionId,
+        selected_session_id: selectionTrace?.selected_session_id ?? null,
+        answer_source_session_id: answerSourceSessionId,
+        selected_validation_status: selectionTrace?.selected_validation_status ?? null,
+        selected_superseded_by_session_id: selectionTrace?.selected_superseded_by_session_id ?? null,
+        skipped_superseded_session_ids: selectionTrace?.skipped_superseded_session_ids || [],
+        selection_reason: selectionTrace?.selection_reason || '',
+        active_context_superseded: activeIsSuperseded
+      });
       return await resolveLabFollowup(safeText, panel, {
         userId: input.userId,
         sessionLabReached,
@@ -122,8 +150,24 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   if (status?.expired) {
     const inferred = inferDomainFromText(safeText);
     if (inferred === 'lab') {
-      const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
+      const canonBundle = await canonicalFallbackService.getCanonicalLabPanel(input?.userId, {
+        logReachability: true,
+        withSelectionTrace: true
+      });
+      const panel = canonBundle.panel;
+      const selectionTrace = canonBundle.selectionTrace;
       if (panel) {
+        logLabFollowupSessionValidationChoice({
+          requested_text: safeText.slice(0, 400),
+          current_session_id: null,
+          selected_session_id: selectionTrace?.selected_session_id ?? null,
+          answer_source_session_id: panel?.sourceSessionId || null,
+          selected_validation_status: selectionTrace?.selected_validation_status ?? null,
+          selected_superseded_by_session_id: selectionTrace?.selected_superseded_by_session_id ?? null,
+          skipped_superseded_session_ids: selectionTrace?.skipped_superseded_session_ids || [],
+          selection_reason: selectionTrace?.selection_reason || '',
+          active_context_superseded: false
+        });
         return await resolveLabFollowup(safeText, panel, {
           userId: input.userId,
           sessionLabReached: false,
@@ -148,17 +192,33 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
 
   // 3) active なしでも canonicalで答えられるものは答える
   const inferred = inferDomainFromText(safeText);
-    if (inferred === 'lab') {
-      const panel = await canonicalFallbackService.getCanonicalLabPanel(input?.userId);
-      if (panel) {
-        return await resolveLabFollowup(safeText, panel, {
-          userId: input.userId,
-          sessionLabReached: false,
-          canonicalLabReached: true,
-          currentSessionId: null,
-          answerSourceSessionId: panel?.sourceSessionId || null
-        });
-      }
+  if (inferred === 'lab') {
+    const canonBundle = await canonicalFallbackService.getCanonicalLabPanel(input?.userId, {
+      logReachability: true,
+      withSelectionTrace: true
+    });
+    const panel = canonBundle.panel;
+    const selectionTrace = canonBundle.selectionTrace;
+    if (panel) {
+      logLabFollowupSessionValidationChoice({
+        requested_text: safeText.slice(0, 400),
+        current_session_id: null,
+        selected_session_id: selectionTrace?.selected_session_id ?? null,
+        answer_source_session_id: panel?.sourceSessionId || null,
+        selected_validation_status: selectionTrace?.selected_validation_status ?? null,
+        selected_superseded_by_session_id: selectionTrace?.selected_superseded_by_session_id ?? null,
+        skipped_superseded_session_ids: selectionTrace?.skipped_superseded_session_ids || [],
+        selection_reason: selectionTrace?.selection_reason || '',
+        active_context_superseded: false
+      });
+      return await resolveLabFollowup(safeText, panel, {
+        userId: input.userId,
+        sessionLabReached: false,
+        canonicalLabReached: true,
+        currentSessionId: null,
+        answerSourceSessionId: panel?.sourceSessionId || null
+      });
+    }
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
   if (inferred === 'meal') {

@@ -59,6 +59,96 @@ function mergeLabPanels(sessionPanel, canonicalPanel) {
   };
 }
 
+/**
+ * active が superseded のとき: DB canonical の items / structured を優先し、メモリ側は埋まっていない穴だけ補完。
+ */
+function mergeLabPanelsCanonicalItemsWin(sessionPanel, canonicalPanel) {
+  if (!sessionPanel) return canonicalPanel && typeof canonicalPanel === 'object' ? { ...canonicalPanel } : null;
+  if (!canonicalPanel) return { ...sessionPanel };
+  const s = sessionPanel;
+  const c = canonicalPanel;
+  const byName = new Map();
+  for (const it of [...(c.items || []), ...(s.items || [])]) {
+    const k = itemKey(it) || `anon_${byName.size}`;
+    if (!byName.has(k)) {
+      byName.set(k, { ...it });
+      continue;
+    }
+    const prev = byName.get(k);
+    const v = normalizeText(it?.value || it?.currentValue || '');
+    const pv = normalizeText(prev?.value || prev?.currentValue || '');
+    if (v && !pv) byName.set(k, { ...prev, ...it });
+  }
+  const items = [...byName.values()];
+  const patientName = normalizeText(c.patientName) || normalizeText(s.patientName) || '';
+  const facilityName = normalizeText(c.facilityName) || normalizeText(s.facilityName) || '';
+  const printDate = normalizeText(c.printDate) || normalizeText(s.printDate) || '';
+  return {
+    ...c,
+    ...s,
+    patientName,
+    facilityName,
+    printDate,
+    meta: {
+      patientName,
+      facilityName,
+      printDate
+    },
+    latestExamDate:
+      normalizeText(c.latestExamDate) ||
+      normalizeText(c.examDate) ||
+      normalizeText(s.latestExamDate) ||
+      normalizeText(s.examDate) ||
+      '',
+    examDate: normalizeText(c.examDate) || normalizeText(s.examDate) || '',
+    examDates: Array.isArray(c.examDates) && c.examDates.length ? c.examDates : (s.examDates || []),
+    items,
+    rawText: normalizeText(c.rawText) || normalizeText(s.rawText) || '',
+    itemsStructured: mergeItemsStructuredPanelsPreferCanonical(s?.itemsStructured, c?.itemsStructured),
+    metaAdoption: c.metaAdoption || s.metaAdoption || null,
+    metaExtraction: c.metaExtraction || s.metaExtraction || null,
+    metaConfidence: c.metaConfidence || s.metaConfidence || null,
+    sourceSessionId: c.sourceSessionId || s.sourceSessionId || null
+  };
+}
+
+function mergeItemsStructuredPanelsPreferCanonical(sessionStructured, canonicalStructured) {
+  const s = Array.isArray(sessionStructured) ? sessionStructured : [];
+  const c = Array.isArray(canonicalStructured) ? canonicalStructured : [];
+  if (!s.length && c.length) return [...c];
+  if (s.length && !c.length) return [...s];
+  if (!s.length) return [];
+  if (isMinSchemaParsedItems(s) && isMinSchemaParsedItems(c)) {
+    const byKey = new Map();
+    for (const it of c) {
+      const k = normalizeText(it?.normalizedKey);
+      if (k) byKey.set(k, { ...it });
+    }
+    for (const it of s) {
+      const k = normalizeText(it?.normalizedKey);
+      if (!k) continue;
+      const prev = byKey.get(k);
+      if (!prev) {
+        byKey.set(k, { ...it });
+        continue;
+      }
+      const v = normalizeText(it?.value || '');
+      const pv = normalizeText(prev?.value || '');
+      if (pv && !v) {
+        byKey.set(k, { ...prev });
+        continue;
+      }
+      if (v && !pv) {
+        byKey.set(k, { ...prev, ...it });
+        continue;
+      }
+      byKey.set(k, { ...prev, ...it });
+    }
+    return [...byKey.values()];
+  }
+  return [...c.length ? c : s];
+}
+
 function mergeItemsStructuredPanels(sessionStructured, canonicalStructured) {
   const s = Array.isArray(sessionStructured) ? sessionStructured : [];
   const c = Array.isArray(canonicalStructured) ? canonicalStructured : [];
@@ -109,5 +199,6 @@ function isWeakLabPanel(panel) {
 
 module.exports = {
   mergeLabPanels,
+  mergeLabPanelsCanonicalItemsWin,
   isWeakLabPanel
 };
