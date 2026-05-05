@@ -30,6 +30,15 @@ function buildThreeStepsAhead(params = {}) {
   if (/meal/.test(intent)) {
     return '次に食べる時は、たんぱく質か温かい汁物を少し足すだけでも安定しやすいです。';
   }
+  if (/lab/.test(intent)) {
+    return '検査値は読み取り結果と原本を見比べながら、気になる項目を一つずつ確認していくのが安心です。';
+  }
+  if (/video/.test(intent)) {
+    return '次に「この動画を解析」と送ってもらえれば、動きの流れを一緒に整理できます。';
+  }
+  if (/normal_chat/.test(intent)) {
+    return '';
+  }
   return '次の一歩は小さくて十分です。続けられる形を優先していきましょう。';
 }
 
