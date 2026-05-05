@@ -56,7 +56,8 @@ const newFlowFollowupRouterService = require('./newflow/followup_router_service'
 const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
-const mealDisplayFormatterService = require('./meal_display_formatter_service');
+const mealReplyFormatterService = require('./meal_reply_formatter_service');
+const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
 const exerciseRecordService = require('./exercise_record_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
@@ -1418,11 +1419,11 @@ function looksLikePain(text) {
 }
 
 function buildMealReply(parsedMeal, options = {}) {
-  return mealDisplayFormatterService.formatMealLineReply(parsedMeal, {
-    mealReplyMode: options?.mealReplyMode === 'text' ? 'text' : 'image',
+  return mealReplyFormatterService.formatMealReplyText(parsedMeal, {
     todayTotals: options?.todayTotals || null,
     mealCount: options?.mealCount != null ? Number(options.mealCount) : null,
     exerciseBurnKcal: Number(options?.exerciseBurnKcal || 0),
+    netKcal: Number(options?.netKcal || 0),
   });
 }
 
@@ -2336,13 +2337,14 @@ async function maybeHandleMealImage(input, imagePayload) {
       return { handled: false, analysis: meal || null };
     }
 
-    const todayYmd = contextMemoryService.getTokyoTodayYmd();
-    const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
-      input.userId,
-      todayYmd,
-      todayYmd,
-      'meal_image_reply'
-    );
+    const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+    const dbTotals = {
+      kcal: Number(summary.kcal || 0),
+      protein: Number(summary.protein || 0),
+      fat: Number(summary.fat || 0),
+      carbs: Number(summary.carbs || 0),
+      count: Number(summary.meal_count || 0),
+    };
     const mk = Number(meal?.estimatedNutrition?.kcal || 0);
     const mp = Number(meal?.estimatedNutrition?.protein || 0);
     const mf = Number(meal?.estimatedNutrition?.fat || 0);
@@ -2354,11 +2356,17 @@ async function maybeHandleMealImage(input, imagePayload) {
       carbs: round1(dbTotals.carbs + mc)
     };
     const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    console.info('[meal_reply_format_start]', {
+      user_id: input.userId,
+      meal_record_id: '',
+      has_calories: Number.isFinite(mk) && mk > 0,
+      has_pfc: (Number(mp) > 0 || Number(mf) > 0 || Number(mc) > 0),
+    });
     const replyText = buildMealReply(meal, {
       todayTotals,
-      mealReplyMode: 'image',
       mealCount: dbTotals.count + 1,
       exerciseBurnKcal: energyBal.exerciseBurnKcal,
+      netKcal: todayTotals.kcal - Number(energyBal.exerciseBurnKcal || 0),
     });
 
     await contextMemoryService.saveShortMemory(input.userId, {
@@ -2398,13 +2406,14 @@ async function maybeHandleMealText(input) {
   const parsedMeal = mealAnalysisService.parseMealText(text);
   if (Number(parsedMeal?.confidence || 0) < 0.4) return null;
 
-  const todayYmd = contextMemoryService.getTokyoTodayYmd();
-  const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
-    input.userId,
-    todayYmd,
-    todayYmd,
-    'meal_text_reply'
-  );
+  const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+  const dbTotals = {
+    kcal: Number(summary.kcal || 0),
+    protein: Number(summary.protein || 0),
+    fat: Number(summary.fat || 0),
+    carbs: Number(summary.carbs || 0),
+    count: Number(summary.meal_count || 0),
+  };
   const mk = Number(parsedMeal?.estimatedNutrition?.kcal || 0);
   const mp = Number(parsedMeal?.estimatedNutrition?.protein || 0);
   const mf = Number(parsedMeal?.estimatedNutrition?.fat || 0);
@@ -2416,11 +2425,17 @@ async function maybeHandleMealText(input) {
     carbs: round1(dbTotals.carbs + mc)
   };
   const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+  console.info('[meal_reply_format_start]', {
+    user_id: input.userId,
+    meal_record_id: '',
+    has_calories: Number.isFinite(mk) && mk > 0,
+    has_pfc: (Number(mp) > 0 || Number(mf) > 0 || Number(mc) > 0),
+  });
   const replyText = buildMealReply(parsedMeal, {
     todayTotals,
-    mealReplyMode: 'text',
     mealCount: dbTotals.count + 1,
     exerciseBurnKcal: energyBal.exerciseBurnKcal,
+    netKcal: todayTotals.kcal - Number(energyBal.exerciseBurnKcal || 0),
   });
 
   await contextMemoryService.saveShortMemory(input.userId, {

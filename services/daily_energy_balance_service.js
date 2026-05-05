@@ -43,7 +43,7 @@ async function fetchTodayEnergyBalance(lineUserId) {
       exerciseBurnKcal = 0;
     }
   }
-  return {
+  const out = {
     ymd,
     intakeKcal,
     exerciseBurnKcal,
@@ -53,6 +53,14 @@ async function fetchTodayEnergyBalance(lineUserId) {
     fat: Number(totals.fat || 0),
     carbs: Number(totals.carbs || 0),
   };
+  console.info('[daily_energy_balance_summary]', {
+    user_id: uid,
+    date: out.ymd,
+    intake_calories: out.intakeKcal,
+    exercise_calories: out.exerciseBurnKcal,
+    net_calories: out.netKcal,
+  });
+  return out;
 }
 
 module.exports = {

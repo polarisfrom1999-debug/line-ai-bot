@@ -173,6 +173,13 @@ async function recordExerciseFromText(lineUserId, text, options = {}) {
   const uid = String(lineUserId || '').trim();
   const record = tryParseExerciseRecord(text, options);
   if (!record || !uid) return null;
+  console.info('[exercise_calorie_detected]', {
+    user_id: uid,
+    exercise_type: String(record.exerciseType || ''),
+    duration_minutes: record.minutes != null ? Number(record.minutes) : null,
+    distance_km: record.distanceKm != null ? Number(record.distanceKm) : null,
+    estimated_calories: Number(record.estimatedCalories || 0),
+  });
 
   await contextMemoryService.addDailyRecord(uid, record);
   const user = await ensureUser(supabase, uid, 'Asia/Tokyo');
