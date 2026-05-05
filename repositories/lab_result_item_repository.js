@@ -38,28 +38,104 @@ async function insertRow(row) {
   }
 }
 
-async function fetchBySession({ userId, labSessionId, excludeValidation }) {
-  if (!supabase) return [];
-  const uid = normalizeText(userId);
+/**
+ * lab_session_id のみ（正本 follow-up: user 表記ゆれ・内部ID誤渡し対策の土台）
+ * @returns {{ rows: object[], error: string|null }}
+ */
+async function fetchRowsByLabSessionIdOnly({ labSessionId, excludeValidation }) {
+  if (!supabase) return { rows: [], error: 'missing_supabase' };
   const sid = Number(labSessionId);
-  if (!uid || !Number.isFinite(sid)) return [];
+  if (!Number.isFinite(sid)) return { rows: [], error: 'bad_lab_session_id' };
   try {
-    let q = await supabase
+    const q = await supabase
       .from('lab_result_items')
       .select('*')
-      .eq('user_id', uid)
       .eq('lab_session_id', sid)
       .order('normalized_key', { ascending: true });
-    if (q?.error && isMissingColumnError(q.error, 'lab_result_items')) return [];
-    if (q?.error || !Array.isArray(q.data)) return [];
+    if (q?.error && isMissingColumnError(q.error, 'lab_result_items')) return { rows: [], error: null };
+    if (q?.error) return { rows: [], error: normalizeText(q.error.message || String(q.error)) || 'query_error' };
+    if (!Array.isArray(q.data)) return { rows: [], error: 'bad_response' };
     let rows = q.data;
     if (excludeValidation && Array.isArray(excludeValidation)) {
       rows = rows.filter((r) => !excludeValidation.includes(normalizeText(r.validation_status)));
     }
-    return rows;
-  } catch (_e) {
-    return [];
+    return { rows, error: null };
+  } catch (e) {
+    return { rows: [], error: normalizeText(e?.message || e || 'exception') };
   }
+}
+
+/**
+ * LINE user_id（lab_result_items.user_id に保存されている文字列）と一致する行を優先。
+ * 一致が0件だがセッションに行がある場合はセッション全行を返す（保存は LINE ID・参照が内部IDだった場合の救済）。
+ */
+async function fetchBySessionForFollowup({ lineUserId, labSessionId, excludeValidation }) {
+  const { rows: sessionRows, error } = await fetchRowsByLabSessionIdOnly({ labSessionId, excludeValidation });
+  if (error) {
+    return {
+      rows: [],
+      error,
+      userMismatch: false,
+      matchedByUserFilter: false,
+      sessionRowCount: 0,
+      sessionUserIdSample: [],
+      sessionKeySample: []
+    };
+  }
+  const uid = normalizeText(lineUserId);
+  const sessionUserIdSample = [...new Set(sessionRows.map((r) => normalizeText(r.user_id)).filter(Boolean))].slice(0, 3);
+  const sessionKeySample = sessionRows.slice(0, 12).map((r) => normalizeText(r.normalized_key));
+  if (!uid) {
+    return {
+      rows: sessionRows,
+      error: null,
+      userMismatch: false,
+      matchedByUserFilter: false,
+      sessionRowCount: sessionRows.length,
+      sessionUserIdSample,
+      sessionKeySample
+    };
+  }
+  const matched = sessionRows.filter((r) => normalizeText(r.user_id) === uid);
+  if (matched.length) {
+    return {
+      rows: matched,
+      error: null,
+      userMismatch: false,
+      matchedByUserFilter: true,
+      sessionRowCount: sessionRows.length,
+      sessionUserIdSample,
+      sessionKeySample
+    };
+  }
+  if (sessionRows.length) {
+    return {
+      rows: sessionRows,
+      error: null,
+      userMismatch: true,
+      matchedByUserFilter: false,
+      sessionRowCount: sessionRows.length,
+      sessionUserIdSample,
+      sessionKeySample
+    };
+  }
+  return {
+    rows: [],
+    error: null,
+    userMismatch: false,
+    matchedByUserFilter: false,
+    sessionRowCount: 0,
+    sessionUserIdSample,
+    sessionKeySample
+  };
+}
+
+/** @deprecated 互換: 内部は fetchBySessionForFollowup（セッション優先） */
+async function fetchBySession({ userId, labSessionId, excludeValidation }) {
+  const sid = Number(labSessionId);
+  if (!Number.isFinite(sid)) return [];
+  const pack = await fetchBySessionForFollowup({ lineUserId: userId, labSessionId, excludeValidation });
+  return pack.rows;
 }
 
 async function fetchLatestByUserAndKey({ userId, normalizedKey, limit = 5 }) {
@@ -109,6 +185,8 @@ async function fetchDistinctObservedDatesForSession({ userId, labSessionId }) {
 module.exports = {
   deleteByLabSessionId,
   insertRow,
+  fetchRowsByLabSessionIdOnly,
+  fetchBySessionForFollowup,
   fetchBySession,
   fetchLatestByUserAndKey,
   fetchDistinctObservedDatesForSession

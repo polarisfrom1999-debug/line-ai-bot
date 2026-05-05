@@ -134,6 +134,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
       });
       return await resolveLabFollowup(safeText, panel, {
         userId: input.userId,
+        lineUserId: input.lineUserId || input.userId,
         sessionLabReached,
         canonicalLabReached,
         currentSessionId,
@@ -170,6 +171,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
         });
         return await resolveLabFollowup(safeText, panel, {
           userId: input.userId,
+          lineUserId: input.lineUserId || input.userId,
           sessionLabReached: false,
           canonicalLabReached: true,
           currentSessionId: null,
@@ -213,6 +215,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
       });
       return await resolveLabFollowup(safeText, panel, {
         userId: input.userId,
+        lineUserId: input.lineUserId || input.userId,
         sessionLabReached: false,
         canonicalLabReached: true,
         currentSessionId: null,

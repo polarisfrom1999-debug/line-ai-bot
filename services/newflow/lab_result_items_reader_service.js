@@ -40,6 +40,25 @@ const FOLLOWUP_DETECTED_LABEL_TO_DB_KEY = {
   CPK: 'cpk'
 };
 
+function logReaderDebug(payload) {
+  console.info('[lab_result_items_reader_debug]', {
+    userId_received: payload.userId_received,
+    userId_type: payload.userId_type,
+    labSessionId_received: payload.labSessionId_received,
+    canonicalKeys: payload.canonicalKeys,
+    query_user_id_used: payload.query_user_id_used,
+    query_lab_session_id_used: payload.query_lab_session_id_used,
+    repositoryError: payload.repositoryError ?? null,
+    fetchedRowsCount: payload.fetchedRowsCount,
+    fetchedRowUserIdSample: payload.fetchedRowUserIdSample ?? null,
+    fetchedRowKeySample: payload.fetchedRowKeySample ?? null,
+    userMismatchFallback: payload.userMismatchFallback ?? false,
+    matchedByUserFilter: payload.matchedByUserFilter ?? null,
+    matchedRowsCount: payload.matchedRowsCount,
+    matchedRowSample: payload.matchedRowSample ?? null
+  });
+}
+
 /**
  * @returns {Promise<{ keys: string[], primaryCanonicalKey: string|null, detectedLabel: string, fromMaster: boolean }>}
  */
@@ -66,48 +85,79 @@ async function resolveCanonicalKeysForFollowup(detectedItemLabel) {
   };
 }
 
-async function getLatestLabResultByKey({ userId, normalizedKey, labSessionId }) {
-  const uid = normalizeText(userId);
+async function getLatestLabResultByKey({ userId, lineUserId, normalizedKey, labSessionId }) {
+  const uid = normalizeText(lineUserId || userId);
   const nk = normalizeText(normalizedKey);
   const sid = Number(labSessionId);
-  if (!uid || !nk || !Number.isFinite(sid)) return null;
-  const rows = await labResultItemRepository.fetchBySession({
-    userId: uid,
+  if (!nk || !Number.isFinite(sid)) return null;
+  const pack = await labResultItemRepository.fetchBySessionForFollowup({
+    lineUserId: uid,
     labSessionId: sid,
     excludeValidation: ['rejected', 'superseded']
   });
-  const hit = rows.filter((r) => normalizeText(r.normalized_key) === nk);
+  if (pack.error) return null;
+  const hit = pack.rows.filter((r) => normalizeText(r.normalized_key) === nk);
   return hit.length ? hit.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] : null;
 }
 
-async function getLabResultsByKey({ userId, normalizedKey, limit = 10 }) {
-  return labResultItemRepository.fetchLatestByUserAndKey({ userId, normalizedKey: normalizeText(normalizedKey), limit });
+async function getLabResultsByKey({ userId, lineUserId, normalizedKey, limit = 10 }) {
+  return labResultItemRepository.fetchLatestByUserAndKey({
+    userId: normalizeText(lineUserId || userId),
+    normalizedKey: normalizeText(normalizedKey),
+    limit
+  });
 }
 
-async function getReadableItemsForSession({ userId, labSessionId }) {
-  const rows = await labResultItemRepository.fetchBySession({
-    userId,
+async function getReadableItemsForSession({ userId, lineUserId, labSessionId }) {
+  const uid = normalizeText(lineUserId || userId);
+  const pack = await labResultItemRepository.fetchBySessionForFollowup({
+    lineUserId: uid,
     labSessionId,
     excludeValidation: ['rejected']
   });
-  return rows.filter((r) => normalizeText(r.value_text) || r.value_numeric != null);
+  if (pack.error) return [];
+  return pack.rows.filter((r) => normalizeText(r.value_text) || r.value_numeric != null);
 }
 
-async function getDistinctObservedDates({ userId, labSessionId }) {
-  return labResultItemRepository.fetchDistinctObservedDatesForSession({ userId, labSessionId });
+async function getDistinctObservedDates({ userId, lineUserId, labSessionId }) {
+  return labResultItemRepository.fetchDistinctObservedDatesForSession({
+    userId: normalizeText(lineUserId || userId),
+    labSessionId
+  });
 }
 
 /**
- * @returns {{ replyText: string|null, usedSource: string, row: object|null, canonical_normalized_key: string|null, tried_keys: string[] }}
+ * @returns {{ replyText: string|null, usedSource: string, row: object|null, canonical_normalized_key: string|null, tried_keys: string[], repositoryError?: string|null }}
  */
 async function buildItemFollowupReplyFromResults({
   userId,
+  lineUserId,
   labSessionId,
   targetLabel,
   selectedDate
 }) {
+  const rawUserReceived = lineUserId !== undefined && lineUserId !== null ? lineUserId : userId;
+  const lineUid = normalizeText(lineUserId || userId);
+  const sid = Number(labSessionId);
+
   const { keys, primaryCanonicalKey, detectedLabel } = await resolveCanonicalKeysForFollowup(targetLabel);
   if (!keys.length) {
+    logReaderDebug({
+      userId_received: rawUserReceived,
+      userId_type: rawUserReceived === '' || rawUserReceived == null ? 'empty' : typeof rawUserReceived,
+      labSessionId_received: labSessionId,
+      canonicalKeys: keys,
+      query_user_id_used: lineUid,
+      query_lab_session_id_used: Number.isFinite(sid) ? sid : null,
+      repositoryError: null,
+      fetchedRowsCount: 0,
+      fetchedRowUserIdSample: null,
+      fetchedRowKeySample: null,
+      userMismatchFallback: false,
+      matchedByUserFilter: null,
+      matchedRowsCount: 0,
+      matchedRowSample: null
+    });
     return {
       replyText: null,
       usedSource: 'no_key_map',
@@ -117,16 +167,66 @@ async function buildItemFollowupReplyFromResults({
     };
   }
 
-  const uid = normalizeText(userId);
-  const sid = Number(labSessionId);
-  const allRows =
-    uid && Number.isFinite(sid)
-      ? await labResultItemRepository.fetchBySession({
-        userId: uid,
-        labSessionId: sid,
-        excludeValidation: ['rejected', 'superseded']
-      })
-      : [];
+  if (!Number.isFinite(sid)) {
+    logReaderDebug({
+      userId_received: rawUserReceived,
+      userId_type: rawUserReceived === '' || rawUserReceived == null ? 'empty' : typeof rawUserReceived,
+      labSessionId_received: labSessionId,
+      canonicalKeys: keys,
+      query_user_id_used: lineUid,
+      query_lab_session_id_used: null,
+      repositoryError: null,
+      fetchedRowsCount: 0,
+      fetchedRowUserIdSample: null,
+      fetchedRowKeySample: null,
+      userMismatchFallback: false,
+      matchedByUserFilter: null,
+      matchedRowsCount: 0,
+      matchedRowSample: null
+    });
+    return {
+      replyText: null,
+      usedSource: 'not_found',
+      row: null,
+      canonical_normalized_key: primaryCanonicalKey,
+      tried_keys: keys
+    };
+  }
+
+  const pack = await labResultItemRepository.fetchBySessionForFollowup({
+    lineUserId: lineUid,
+    labSessionId: sid,
+    excludeValidation: ['rejected', 'superseded']
+  });
+
+  if (pack.error) {
+    logReaderDebug({
+      userId_received: rawUserReceived,
+      userId_type: rawUserReceived === '' || rawUserReceived == null ? 'empty' : typeof rawUserReceived,
+      labSessionId_received: labSessionId,
+      canonicalKeys: keys,
+      query_user_id_used: lineUid,
+      query_lab_session_id_used: sid,
+      repositoryError: pack.error,
+      fetchedRowsCount: 0,
+      fetchedRowUserIdSample: null,
+      fetchedRowKeySample: null,
+      userMismatchFallback: false,
+      matchedByUserFilter: null,
+      matchedRowsCount: 0,
+      matchedRowSample: null
+    });
+    return {
+      replyText: null,
+      usedSource: 'repository_error',
+      row: null,
+      canonical_normalized_key: primaryCanonicalKey,
+      tried_keys: keys,
+      repositoryError: pack.error
+    };
+  }
+
+  const allRows = pack.rows;
 
   const pickRowForKey = (nk) => {
     const hit = allRows.filter((r) => normalizeText(r.normalized_key) === normalizeText(nk));
@@ -138,48 +238,86 @@ async function buildItemFollowupReplyFromResults({
     return byDate || sorted[0];
   };
 
+  let matchedRow = null;
+  let matchedKey = null;
+  let matchedHitCount = 0;
+
   for (const nk of keys) {
     const row = pickRowForKey(nk);
     if (!row) continue;
+    const hits = allRows.filter((r) => normalizeText(r.normalized_key) === normalizeText(nk));
+    matchedHitCount = hits.length;
     if (selectedDate) {
       const want = String(selectedDate).slice(0, 10);
       if (row.observed_date && String(row.observed_date).slice(0, 10) !== want) continue;
     }
-    const u = normalizeText(row.unit);
-    const val = row.value_text != null ? String(row.value_text) : String(row.value_numeric ?? '');
-    const name = normalizeText(row.display_name) || detectedLabel;
-    if (!val) {
-      return {
-        replyText: null,
-        usedSource: 'empty_value',
-        row,
-        canonical_normalized_key: nk,
-        tried_keys: keys
-      };
-    }
-    if (row.validation_status === 'needs_manual_review') {
-      return {
-        replyText: `${name}として ${val}${u ? ` ${u}` : ''} が読み取られていますが、データ上の確認が必要です。原本の確認をおすすめします。`,
-        usedSource: 'lab_result_items',
-        row,
-        canonical_normalized_key: nk,
-        tried_keys: keys
-      };
-    }
+    matchedRow = row;
+    matchedKey = nk;
+    break;
+  }
+
+  const matchedRowSample = matchedRow
+    ? {
+        normalized_key: normalizeText(matchedRow.normalized_key),
+        validation_status: normalizeText(matchedRow.validation_status),
+        value_text: matchedRow.value_text != null ? String(matchedRow.value_text).slice(0, 48) : null,
+        value_numeric: matchedRow.value_numeric
+      }
+    : null;
+
+  logReaderDebug({
+    userId_received: rawUserReceived,
+    userId_type: rawUserReceived === '' || rawUserReceived == null ? 'empty' : typeof rawUserReceived,
+    labSessionId_received: labSessionId,
+    canonicalKeys: keys,
+    query_user_id_used: lineUid,
+    query_lab_session_id_used: sid,
+    repositoryError: null,
+    fetchedRowsCount: pack.sessionRowCount,
+    fetchedRowUserIdSample: pack.sessionUserIdSample.length ? pack.sessionUserIdSample : null,
+    fetchedRowKeySample: pack.sessionKeySample.length ? pack.sessionKeySample : null,
+    userMismatchFallback: Boolean(pack.userMismatch),
+    matchedByUserFilter: pack.matchedByUserFilter,
+    matchedRowsCount: matchedRow ? matchedHitCount : 0,
+    matchedRowSample
+  });
+
+  if (!matchedRow) {
     return {
-      replyText: `${name}は ${val}${u ? ` ${u}` : ''} と読み取れています。`,
-      usedSource: 'lab_result_items',
-      row,
-      canonical_normalized_key: nk,
+      replyText: null,
+      usedSource: 'not_found',
+      row: null,
+      canonical_normalized_key: primaryCanonicalKey,
       tried_keys: keys
     };
   }
 
+  const u = normalizeText(matchedRow.unit);
+  const val = matchedRow.value_text != null ? String(matchedRow.value_text) : String(matchedRow.value_numeric ?? '');
+  const name = normalizeText(matchedRow.display_name) || detectedLabel;
+  if (!val) {
+    return {
+      replyText: null,
+      usedSource: 'empty_value',
+      row: matchedRow,
+      canonical_normalized_key: matchedKey,
+      tried_keys: keys
+    };
+  }
+  if (matchedRow.validation_status === 'needs_manual_review') {
+    return {
+      replyText: `${name}として ${val}${u ? ` ${u}` : ''} が読み取られていますが、データ上の確認が必要です。原本の確認をおすすめします。`,
+      usedSource: 'lab_result_items',
+      row: matchedRow,
+      canonical_normalized_key: matchedKey,
+      tried_keys: keys
+    };
+  }
   return {
-    replyText: null,
-    usedSource: 'not_found',
-    row: null,
-    canonical_normalized_key: primaryCanonicalKey,
+    replyText: `${name}は ${val}${u ? ` ${u}` : ''} と読み取れています。`,
+    usedSource: 'lab_result_items',
+    row: matchedRow,
+    canonical_normalized_key: matchedKey,
     tried_keys: keys
   };
 }
@@ -198,8 +336,8 @@ function logResultItemsSource(payload) {
 }
 
 /** 正本行から「何読み取れた」用の箇条書き */
-async function buildInventorySummaryFromSession({ userId, labSessionId }) {
-  const rows = await getReadableItemsForSession({ userId, labSessionId });
+async function buildInventorySummaryFromSession({ userId, lineUserId, labSessionId }) {
+  const rows = await getReadableItemsForSession({ userId, lineUserId, labSessionId });
   if (!rows.length) return null;
   const lines = rows
     .map((r) => {
@@ -221,5 +359,6 @@ module.exports = {
   buildItemFollowupReplyFromResults,
   buildInventorySummaryFromSession,
   resolveCanonicalKeysForFollowup,
-  logResultItemsSource
+  logResultItemsSource,
+  logReaderDebug
 };

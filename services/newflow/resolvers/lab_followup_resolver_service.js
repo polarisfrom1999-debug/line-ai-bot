@@ -257,11 +257,13 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   const p = panel && typeof panel === 'object' ? panel : null;
   const {
     userId = '',
+    lineUserId = '',
     sessionLabReached = false,
     canonicalLabReached = false,
     currentSessionId = null,
     answerSourceSessionId = null
   } = meta;
+  const lineUid = normalizeText(lineUserId || userId);
 
   if (!p) {
     logLabFollowupContext({ userId, questionId: 'no_panel', sessionLabReached, canonicalLabReached, panel: null, logExtra: {} });
@@ -457,9 +459,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       : '';
     let dbDateLine = '';
     const sidForDates = answerSourceSessionId || currentSessionId;
-    if (normalizeText(userId) && sidForDates) {
+    if (sidForDates) {
       const distinct = await labResultItemsReader.getDistinctObservedDates({
-        userId,
+        lineUserId: lineUid,
+        userId: lineUid,
         labSessionId: sidForDates
       }).catch(() => []);
       if (distinct.length) {
@@ -682,9 +685,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     record('item_inventory');
     const sidInv = answerSourceSessionId || currentSessionId;
     let invBody = null;
-    if (normalizeText(userId) && sidInv) {
+    if (sidInv) {
       invBody = await labResultItemsReader.buildInventorySummaryFromSession({
-        userId,
+        lineUserId: lineUid,
+        userId: lineUid,
         labSessionId: sidInv
       }).catch(() => null);
       labResultItemsReader.logResultItemsSource({
@@ -712,9 +716,10 @@ async function resolveLabFollowup(text, panel, meta = {}) {
     const selectedSid = answerSourceSessionId || currentSessionId;
     let fbReason = 'no_lab_result_items';
     let fr = null;
-    if (normalizeText(userId) && selectedSid) {
+    if (selectedSid) {
       fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
-        userId,
+        lineUserId: lineUid,
+        userId: lineUid,
         labSessionId: selectedSid,
         targetLabel: target,
         selectedDate
@@ -750,7 +755,7 @@ async function resolveLabFollowup(text, panel, meta = {}) {
       canonical_normalized_key: canonicalForLog,
       selected_lab_session_id: selectedSid || null,
       answer_source_session_id: answerSourceSessionId || selectedSid,
-      used_source: 'parsed_items_json_fallback',
+      used_source: fr?.usedSource === 'repository_error' ? 'repository_error' : 'parsed_items_json_fallback',
       result_count: 0,
       fallback_reason: fbReason
     });
