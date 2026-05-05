@@ -55,6 +55,13 @@ function inferDomainFromText(text) {
   return 'unknown';
 }
 
+function looksLikeExerciseRecordText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/[?？]/.test(safe)) return false;
+  return /(ジョギング|ランニング|ウォーキング|散歩|筋トレ|スクワット|腕立て|走った|歩いた|運動).*(した|やった|分|km|ｋｍ|キロ)|(^|\s)\d+\s*分/.test(safe);
+}
+
 /**
  * Phase A skeleton:
  * - active context は必ず active_context_store_service 経由で1件取得
@@ -80,6 +87,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
   if (hasActiveImageSession) {
     const isGeneral = looksLikeGeneralConversation(safeText);
     if (imageFollowupOnly && isGeneral) {
+      if (looksLikeExerciseRecordText(safeText)) return null;
       return {
         intentType: 'newflow_followup_block_legacy',
         replyText: '前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。',
@@ -230,13 +238,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     if (mealReply?.replyText) return mealReply;
     return { intentType: 'newflow_canonical_insufficient', replyText: responseBuilderService.buildCanonicalInsufficientReply() };
   }
-  if (imageFollowupOnly) {
-    return {
-      intentType: 'newflow_followup_block_legacy',
-      replyText: '前の画像の続きとして扱うため、確認したい項目を短く指定してください。',
-      blockLegacyFollowup: true
-    };
-  }
+  // active context が無い通常テキストは legacy 側へ流してよい（運動/通常会話を止めない）
   return null;
 }
 

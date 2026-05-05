@@ -369,9 +369,12 @@ async function maybeHandleMealDayScopeSummary(input, text) {
     'meal_day_scope_summary'
   );
   const records = { meals: mealLogsToRecordMeals(deduped) };
+  const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
   const replyText = buildTodayMealTotalsAnswer(records, {
     dayScopeHeader: true,
-    includeAnomalyNote: true
+    includeAnomalyNote: true,
+    includeEnergyBalance: true,
+    exerciseBurnKcal: energyBal.exerciseBurnKcal
   });
   return { replyText };
 }
@@ -997,6 +1000,12 @@ function buildTodayMealTotalsAnswer(records, options = {}) {
     '━━━━━━━━━━━━━',
     options.dayScopeHeader ? '数字はDBに残っている食事だけを足し直した結果です。' : 'このまま次の食事も足していけば、1日の流れを見やすく追えます。',
   ].filter(Boolean);
+
+  if (options.includeEnergyBalance) {
+    const ex = Number(options.exerciseBurnKcal || 0);
+    const net = Number(totals.kcal || 0) - ex;
+    lines.push('', `🏃‍♂️ 運動消費: 約${round1(ex)} kcal`, `🔥 摂取 − 消費: 約${round1(net)} kcal`);
+  }
 
   if (warn) lines.push('', warn);
   return lines.join('\n');
@@ -3012,15 +3021,6 @@ async function orchestrateConversation(input) {
             internal: { intentType: newFlowFollowup.intentType || 'newflow_followup', responseMode: 'answer' }
           };
         }
-        if (imageFollowupOn && !generalFollowupOn) {
-          const guardedOut = await withSurfaceReply(input, '前の画像の続きとして扱います。確認したい内容を短く指定してください（例: TGは？ / 半分食べた）。', { recentMessages, longMemory }, 'newflow_followup_block_legacy');
-          await appendTurn(input.userId, input.rawText || '', guardedOut);
-          return {
-            ok: true,
-            replyMessages: [{ type: 'text', text: guardedOut }],
-            internal: { intentType: 'newflow_followup_block_legacy', responseMode: 'answer' }
-          };
-        }
       }
       if (!archOn) {
         const topFollowup = await followupQueryV2Service.resolveFollowupV2({
@@ -3692,9 +3692,12 @@ async function orchestrateConversation(input) {
         'today_meal_totals'
       );
       const records = { meals: mealLogsToRecordMeals(rawLogs) };
+      const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
       const replyText = buildTodayMealTotalsAnswer(records, {
         dayScopeHeader: true,
-        includeAnomalyNote: true
+        includeAnomalyNote: true,
+        includeEnergyBalance: true,
+        exerciseBurnKcal: energyBal.exerciseBurnKcal
       });
       const mealTotOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_totals');
       await appendTurn(input.userId, input.rawText || '', mealTotOut);

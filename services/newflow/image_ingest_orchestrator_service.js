@@ -8,6 +8,9 @@ const labDocumentIngestService = require('../lab_document_ingest_service');
 const labSessionRepository = require('../../repositories/lab_session_repository');
 const mealRecalcRepository = require('../../repositories/meal_recalc_repository');
 const contextMemoryService = require('../context_memory_service');
+const mealReplyFormatterService = require('../meal_reply_formatter_service');
+const dailyNutritionSummaryService = require('../daily_nutrition_summary_service');
+const dailyEnergyBalanceService = require('../daily_energy_balance_service');
 const phaseeReachabilityService = require('../phasee_reachability_service');
 const labIngestTrace = require('../lab_ingest_trace_service');
 const {
@@ -43,20 +46,6 @@ function recoverParsedItemsFromStructuredJson(lab = {}) {
     : ((lab?.rawPayload && typeof lab.rawPayload === 'object') ? lab.rawPayload : null);
   if (!structured) return [];
   return extractPrimaryGeminiMinItems(structured);
-}
-
-function buildMealReply(meal) {
-  const items = Array.isArray(meal?.items) ? meal.items.filter(Boolean).join('、') : '';
-  const kcal = round1(meal?.estimatedNutrition?.kcal || 0);
-  const protein = round1(meal?.estimatedNutrition?.protein || 0);
-  const fat = round1(meal?.estimatedNutrition?.fat || 0);
-  const carbs = round1(meal?.estimatedNutrition?.carbs || 0);
-  return [
-    '🍽️ 食事画像として受け取りました。',
-    `見立て: ${items || '品目未特定'}`,
-    `目安: ${kcal} kcal / P ${protein}g / F ${fat}g / C ${carbs}g`,
-    '✨ 必要なら「麺だけ0kcal」「半分食べた」のように続けて補正できます。'
-  ].join('\n');
 }
 
 function buildImageMealRecordPayload(parsedMeal, input = {}) {
@@ -288,7 +277,38 @@ async function handleImageIngest({ input, textHint = '' } = {}) {
         meal
       }
     }).catch(() => null);
-    return { handled: true, intentType: 'newflow_meal_image', replyText: buildMealReply(meal) };
+    const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+    const dbTotals = {
+      kcal: Number(summary.kcal || 0),
+      protein: Number(summary.protein || 0),
+      fat: Number(summary.fat || 0),
+      carbs: Number(summary.carbs || 0),
+      count: Number(summary.meal_count || 0),
+    };
+    const mk = Number(meal?.estimatedNutrition?.kcal || 0);
+    const mp = Number(meal?.estimatedNutrition?.protein || 0);
+    const mf = Number(meal?.estimatedNutrition?.fat || 0);
+    const mc = Number(meal?.estimatedNutrition?.carbs || 0);
+    const todayTotals = {
+      kcal: round1(dbTotals.kcal + mk),
+      protein: round1(dbTotals.protein + mp),
+      fat: round1(dbTotals.fat + mf),
+      carbs: round1(dbTotals.carbs + mc),
+    };
+    const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    console.info('[meal_reply_format_start]', {
+      user_id: input.userId,
+      meal_record_id: '',
+      has_calories: Number.isFinite(mk) && mk > 0,
+      has_pfc: (Number(mp) > 0 || Number(mf) > 0 || Number(mc) > 0),
+    });
+    const replyText = mealReplyFormatterService.formatMealReplyText(meal, {
+      todayTotals,
+      mealCount: dbTotals.count + 1,
+      exerciseBurnKcal: Number(energyBal.exerciseBurnKcal || 0),
+      netKcal: Number(todayTotals.kcal || 0) - Number(energyBal.exerciseBurnKcal || 0),
+    });
+    return { handled: true, intentType: 'newflow_meal_image', replyText };
   }
 
   const ingest = await labDocumentIngestService.ingestLabDocument({ userId: input.userId, imagePayload }).catch(() => null);

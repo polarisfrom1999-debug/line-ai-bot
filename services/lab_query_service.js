@@ -5,6 +5,8 @@ const labFollowupService = require('./lab_followup_service');
 const contextMemoryService = require('./context_memory_service');
 const labReportStoreService = require('./lab_report_store_service');
 const labItemAliasService = require('./lab_item_alias_service');
+const labResultItemsReader = require('./newflow/lab_result_items_reader_service');
+const canonicalFallbackService = require('./newflow/canonical_fallback_service');
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -244,6 +246,37 @@ async function answerLabQuery(lineUserId, text, shortMemory = {}) {
   if (!canonical) {
     const p = syntheticPanelFromSession(shortMemory, latestCache);
     return labFollowupService.buildReadableInventoryReply(p);
+  }
+
+  let selectedSessionId = shortMemory?.followUpContext?.latestLabCache?.sourceSessionId
+    || shortMemory?.followUpContext?.labSessionId
+    || null;
+  if (!selectedSessionId) {
+    const canonicalPanel = await canonicalFallbackService.getCanonicalLabPanel(lineUserId).catch(() => null);
+    selectedSessionId = canonicalPanel?.sourceSessionId || null;
+  }
+  if (selectedSessionId) {
+    const selectedDate = normalizeText(latestCache?.examDate || '');
+    const fr = await labResultItemsReader.buildItemFollowupReplyFromResults({
+      lineUserId: lineUserId,
+      userId: lineUserId,
+      labSessionId: selectedSessionId,
+      targetLabel: targetName || canonical,
+      selectedDate
+    }).catch(() => null);
+    if (fr?.replyText) {
+      labResultItemsReader.logResultItemsSource({
+        question: safe.slice(0, 400),
+        detected_item_label: targetName || canonical,
+        canonical_normalized_key: fr.canonical_normalized_key || canonical,
+        selected_lab_session_id: selectedSessionId,
+        answer_source_session_id: selectedSessionId,
+        used_source: fr.usedSource === 'lab_result_items_label_fallback' ? 'lab_result_items_label_fallback' : 'lab_result_items',
+        result_count: 1,
+        fallback_reason: null
+      });
+      return fr.replyText;
+    }
   }
 
   const resolved = await resolveCanonicalWithFallbacks(lineUserId, canonical, latestCache, sessionPanel);
