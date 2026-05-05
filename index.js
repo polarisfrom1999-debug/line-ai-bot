@@ -34,6 +34,7 @@ const featureFlags = require('./config/feature_flags');
 const assistantRepeatGuard = require('./services/assistant_repeat_guard');
 const sessionStateRepository = require('./repositories/session_state_repository');
 const responseGuardService = require('./services/newflow/response_guard_service');
+const athleteVideoRecordService = require('./services/athlete_video_record_service');
 
 function buildNewFlowRuntimeStatus() {
   const arch = runtimeFlag('ENABLE_NEW_FLOW_ARCH', featureFlags.ENABLE_NEW_FLOW_ARCH);
@@ -142,7 +143,8 @@ function inferTimeBand(hour) {
 }
 
 function isMealVisualReply(text) {
-  return /📸 お食事の解析が終わりました/.test(String(text || ''));
+  const s = String(text || '');
+  return /📸 お食事の解析が終わりました/.test(s) || /🍽️ .*食事として受け取りました/.test(s);
 }
 
 function inferEnergyLevel(inputText, shortMemory) {
@@ -317,6 +319,9 @@ async function applyGlobalPersonaAdjustments(input, result) {
     'today_meal_totals',
     'meal_scope_query',
     'admin_check',
+    'athlete_video_save',
+    'athlete_video_webhook_only',
+    'athlete_video_analyze_stub',
   ].includes(intentType);
 
   const ctx = {
@@ -388,6 +393,7 @@ function inferWebSyncContext(input = {}, result = {}) {
 
   if (intent === 'web_link_code') return { reason: 'line_link', scopes: { chat: false, records: false, home: false } };
   if (intent === 'meal_image' || intent === 'meal_followup' || intent === 'meal_text') return { reason: 'line_meal', scopes: { chat: true, records: true, home: true } };
+  if (intent === 'athlete_video_save') return { reason: 'line_athlete_video', scopes: { chat: true, records: true, home: true } };
   if (intent === 'lab_image' || intent === 'lab_followup') return { reason: 'line_lab', scopes: { chat: true, records: true, home: true } };
   if (intent === 'weight_lookup' || /(体重|kg|キロ|体脂肪|%)/.test(text)) return { reason: 'line_weight', scopes: { chat: true, records: true, home: true } };
   if (/(運動|散歩|歩数|ウォーキング|筋トレ|activity)/i.test(text)) return { reason: 'line_activity', scopes: { chat: true, records: true, home: true } };
@@ -506,6 +512,40 @@ async function handleEvent(event) {
       messageType: input.messageType,
       ...flow
     });
+
+    if (event.message?.type === 'video') {
+      const lineUserId = event.source?.userId;
+      const messageId = event.message.id;
+      const durationMs = event.message.duration != null ? event.message.duration : null;
+      const lineClient = buildLineClient();
+      const saveResult = await athleteVideoRecordService.saveVideoFromLineMessage({
+        supabase,
+        client: lineClient,
+        lineUserId,
+        messageId,
+        text: '動画保存',
+        durationMs,
+      });
+      const videoResult = {
+        ok: true,
+        replyMessages: [{ type: 'text', text: saveResult.text }],
+        internal: {
+          intentType: 'athlete_video_save',
+          responseMode: 'record',
+          athleteVideoOk: Boolean(saveResult.ok),
+        },
+      };
+      const result = await applyGlobalPersonaAdjustments(input, videoResult);
+      if (result?.ok && Array.isArray(result.replyMessages) && result.replyMessages.length) {
+        await replyLineMessages(input.replyToken, result.replyMessages);
+      }
+      await chatLogService.logConversationOutcome({ input, result });
+      await conversationSummaryService.recordTurn({ input, result });
+      await persistConversationCapture(input, result);
+      refreshWebPortalCachesForLineUser(input.lineUserId || input.userId, inferWebSyncContext(input, result));
+      return;
+    }
+
     const gatewayResult = await inputGatewayService.handleLineTopLevel(input);
     const rawResult = gatewayResult?.handled
       ? { ok: true, replyMessages: gatewayResult.replyMessages, internal: gatewayResult.internal || {} }

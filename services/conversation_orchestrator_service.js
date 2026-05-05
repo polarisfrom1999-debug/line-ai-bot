@@ -9,7 +9,6 @@ const onboardingService = require('./onboarding_service');
 const weeklyReportService = require('./weekly_report_service');
 const monthlyReportService = require('./monthly_report_service');
 const pointsService = require('./points_service');
-const energyService = require('./energy_service');
 const activityCalorieService = require('./activity_calorie_service');
 const lineMediaService = require('./line_media_service');
 const imageIngestService = require('./image_ingest_service');
@@ -57,6 +56,9 @@ const newFlowFollowupRouterService = require('./newflow/followup_router_service'
 const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
+const mealDisplayFormatterService = require('./meal_display_formatter_service');
+const dailyEnergyBalanceService = require('./daily_energy_balance_service');
+const exerciseRecordService = require('./exercise_record_service');
 const constitutionSurveyConfig = require('../config/constitution_survey_config');
 const aiPersonaConfig = require('../config/ai_persona_config');
 
@@ -271,17 +273,14 @@ async function maybeHandleUnifiedMealScopeQuestion(input, text) {
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
 
   if (spec.scope === 'meal_and_exercise') {
-    const { deduped, totals: msum } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
+    const { totals: msum } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
       input.userId,
       todayYmd,
       todayYmd,
       'unified_meal_and_exercise'
     );
-    const records = await contextMemoryService.getTodayRecords(input.userId);
-    let burn = 0;
-    for (const ex of records.exercises || []) {
-      burn += Number(ex?.estimatedCalories != null ? ex.estimatedCalories : 0) || 0;
-    }
+    const bal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    const burn = Number(bal.exerciseBurnKcal || 0);
     const lines = [
       '【今日の摂取と運動（DBの食事ログ＋今日の運動記録）】',
       `食事: ${msum.count}件 / 約${round1(msum.kcal)} kcal`,
@@ -1288,19 +1287,6 @@ function detectWeightRecord(text) {
   };
 }
 
-function detectExerciseRecord(text) {
-  const safe = normalizeText(text);
-  if (!safe) return null;
-  if (/痛|できない|出来ない|無理|休む|休みたい|限界|しんど/.test(safe) && !/した|やった|歩いた|走った|できた/.test(safe)) return null;
-  if (containsQuestionTone(safe)) return null;
-
-  if (/スクワット/.test(safe)) return { type: 'exercise', summary: safe, name: 'スクワット' };
-  if (/ジョギング|ランニング|走りました|走った|歩走/.test(safe)) return { type: 'exercise', summary: safe, name: 'ジョギング' };
-  if (/歩いた|ウォーキング|散歩/.test(safe)) return { type: 'exercise', summary: safe, name: 'ウォーキング' };
-  if (/腕立て/.test(safe)) return { type: 'exercise', summary: safe, name: '腕立て' };
-  return null;
-}
-
 function looksLikeMealText(text) {
   const safe = normalizeText(text);
   if (!safe || containsQuestionTone(safe)) return false;
@@ -1340,7 +1326,7 @@ function sumMealNutrition(records) {
 function buildMealNutritionLine(nutrition) {
   return [
     `💪 タンパク質: ${round1(nutrition?.protein || 0)} g`,
-    `🍳 脂質: ${round1(nutrition?.fat || 0)} g`,
+    `🫒 脂質: ${round1(nutrition?.fat || 0)} g`,
     `🍞 糖質: ${round1(nutrition?.carbs || 0)} g`,
   ].join('\n');
 }
@@ -1432,68 +1418,12 @@ function looksLikePain(text) {
 }
 
 function buildMealReply(parsedMeal, options = {}) {
-  const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
-  const nut = parsedMeal?.estimatedNutrition || parsedMeal?.estimated_nutrition || {};
-  const todayTotals = options?.todayTotals || null;
-  const conf = Number(parsedMeal?.confidence || 0);
-  const replyMode = options?.mealReplyMode === 'text' ? 'text' : 'image';
-
-  const rawJoin = items.map((it) => normalizeText(it)).filter(Boolean).join('、');
-  const hedgeLowConf = conf > 0 && conf < 0.7;
-  const mealLabel = rawJoin
-    ? (hedgeLowConf
-      ? `画像の自信度がまだ高くないので、「${rawJoin}」っぽく見える、くらいに受け取ってください（違っていたら教えてください）。`
-      : `ざっくり見ると「${rawJoin}」のように見えます（料理名は見立てで、違っていたら教えてください）。`)
-    : '内容の輪郭がまだはっきりしにくいです。';
-  const textMealLabel = rawJoin
-    ? (hedgeLowConf
-      ? `いまの文章からは「${rawJoin}」っぽい、くらいに受け止めています（違っていたら教えてください）。`
-      : `いまの文章からは「${rawJoin}」くらいの内容として受け止めています（違っていたら教えてください）。`)
-    : '文章だけだと品目がまだはっきりしにくいです。';
-  const kcal = round1(nut.kcal || 0);
-  const protein = round1(nut.protein || 0);
-  const fat = round1(nut.fat || 0);
-  const carbs = round1(nut.carbs || 0);
-  const comment = normalizeText(parsedMeal?.comment || '') || '量や写り方によって見え方が変わるので、ずれていたら一言ください。';
-
-  const headLines = replyMode === 'text'
-    ? [
-      '🍽️ テキストで食事の内容を受け取りました。',
-      '文章だけでは断定しすぎないようにしています。足りない所があれば、一言足してもらえると助かります。',
-      '━━━━━━━━━━━━━',
-      `見立て（メニュー）: ${textMealLabel}`,
-      `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
-      '━━━━━━━━━━━━━',
-      `ひとこと: ${comment}`,
-    ]
-    : [
-      '🍽️ お食事の写真として受け取りました。',
-      '写真だけでは断定しすぎないようにしています。少し見切れている・違う場合は、教えてもらえると助かります。',
-      '━━━━━━━━━━━━━',
-      `見立て（メニュー）: ${mealLabel}`,
-      `ざっくりの栄養目安: エネルギー約 ${kcal} kcal / たんぱく質約 ${protein} g / 脂質約 ${fat} g / 糖質約 ${carbs} g`,
-      '━━━━━━━━━━━━━',
-      `ひとこと: ${comment}`,
-    ];
-
-  const lines = [...headLines];
-
-  if (todayTotals && Number(todayTotals.kcal || 0) + Number(todayTotals.protein || 0) + Number(todayTotals.fat || 0) + Number(todayTotals.carbs || 0) > 0) {
-    lines.push('');
-    if (options?.todayTotalsIncludePending) {
-      lines.push('📈 今日の目安（DBに保存済みの食事＋いまのこの内容の見立て）');
-    } else {
-      lines.push('📈 本日の合計（DB meal_logs から再集計）');
-    }
-    lines.push('┈┈┈┈┈┈┈┈┈┈┈┈┈');
-    lines.push(`🔥 エネルギー: ${round1(todayTotals.kcal)} kcal`);
-    lines.push(`💪 タンパク質: ${round1(todayTotals.protein)} g`);
-    lines.push(`🍳 脂質: ${round1(todayTotals.fat)} g`);
-    lines.push(`🍞 糖質: ${round1(todayTotals.carbs)} g`);
-    lines.push('━━━━━━━━━━━━━');
-  }
-
-  return lines.join('\n');
+  return mealDisplayFormatterService.formatMealLineReply(parsedMeal, {
+    mealReplyMode: options?.mealReplyMode === 'text' ? 'text' : 'image',
+    todayTotals: options?.todayTotals || null,
+    mealCount: options?.mealCount != null ? Number(options.mealCount) : null,
+    exerciseBurnKcal: Number(options?.exerciseBurnKcal || 0),
+  });
 }
 
 function buildMealRecordPayload(text, parsedMeal, input = {}) {
@@ -1731,10 +1661,6 @@ function buildImageIngestFailureReply() {
   return '画像の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
 }
 
-function buildVideoIngestFailureReply() {
-  return '動画の受け取りがうまくいかなかったので、もう一度送ってもらえたら大丈夫です。';
-}
-
 function buildUnhandledImageReply(kind) {
   if (kind === 'lab_record') {
     return '血液検査の画像として見ていますが、読み取りがまだ安定していません。もう一度送ってもらえると助かります。';
@@ -1773,57 +1699,6 @@ async function analyzeMotionFromFrames({ input, shortMemory, textHint, frames, s
   });
 
   return { motionResult, replyText };
-}
-
-async function analyzeMotionFromVideo({ input, shortMemory, mediaPayload, textHint }) {
-  const imageProcessor = getImageProcessorOptional();
-  if (!imageProcessor || typeof imageProcessor.extractKeyframesFromVideo !== 'function') {
-    return {
-      ok: false,
-      replyText: '動画は受け取れています。いまは静止画解析が先に動く設定なので、横からの静止画を1枚送ってもらえればすぐ見られます。',
-      reason: 'image_processor_unavailable',
-    };
-  }
-
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kokokara-video-'));
-  const ext = /quicktime|mov/i.test(mediaPayload?.mimeType || '') ? '.mov' : '.mp4';
-  const tempVideoPath = path.join(tempDir, `input${ext}`);
-  fs.writeFileSync(tempVideoPath, mediaPayload.buffer);
-
-  try {
-    const frames = await imageProcessor.extractKeyframesFromVideo({
-      videoPath: tempVideoPath,
-      frameCount: 5,
-    });
-    if (!Array.isArray(frames) || !frames.length) {
-      return {
-        ok: false,
-        replyText: '動画を受け取りましたが、解析に使えるフレームを取り出せませんでした。まずは静止画1枚でも大丈夫です。',
-        reason: 'frame_extract_empty',
-      };
-    }
-
-    const { motionResult, replyText } = await analyzeMotionFromFrames({
-      input,
-      shortMemory,
-      textHint,
-      frames,
-      sourceType: 'video',
-    });
-    return { ok: true, motionResult, replyText };
-  } catch (error) {
-    return {
-      ok: false,
-      replyText: '動画の解析中に処理が止まってしまいました。静止画1枚からでも丁寧に見られるので、まずは1枚送ってください。',
-      reason: normalizeText(error?.message || 'video_motion_error'),
-    };
-  } finally {
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (_e) {
-      // no-op
-    }
-  }
 }
 
 function looksLikeHomecareConsultation(text) {
@@ -2478,7 +2353,13 @@ async function maybeHandleMealImage(input, imagePayload) {
       fat: round1(dbTotals.fat + mf),
       carbs: round1(dbTotals.carbs + mc)
     };
-    const replyText = buildMealReply(meal, { todayTotals, todayTotalsIncludePending: true, mealReplyMode: 'image' });
+    const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    const replyText = buildMealReply(meal, {
+      todayTotals,
+      mealReplyMode: 'image',
+      mealCount: dbTotals.count + 1,
+      exerciseBurnKcal: energyBal.exerciseBurnKcal,
+    });
 
     await contextMemoryService.saveShortMemory(input.userId, {
       lastImageType: 'meal',
@@ -2534,7 +2415,13 @@ async function maybeHandleMealText(input) {
     fat: round1(dbTotals.fat + mf),
     carbs: round1(dbTotals.carbs + mc)
   };
-  const replyText = buildMealReply(parsedMeal, { todayTotals, todayTotalsIncludePending: true, mealReplyMode: 'text' });
+  const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+  const replyText = buildMealReply(parsedMeal, {
+    todayTotals,
+    mealReplyMode: 'text',
+    mealCount: dbTotals.count + 1,
+    exerciseBurnKcal: energyBal.exerciseBurnKcal,
+  });
 
   await contextMemoryService.saveShortMemory(input.userId, {
     pendingRecordCandidate: {
@@ -2678,12 +2565,14 @@ async function maybeHandleSimpleWeightRecord(input, text) {
 
 async function maybeHandleSimpleExerciseRecord(input, text, longMemoryLatest) {
   if (looksLikeCoachingOrConsultationText(text) || shouldAnswerWithChatFirst(text)) return null;
-  const record = energyService.buildExerciseRecord(text, { weightKg: Number(longMemoryLatest?.weight || 60) || 60 });
-  if (!record || record.exerciseType === 'unknown' || containsQuestionTone(text)) return null;
+  if (containsQuestionTone(text)) return null;
+  const out = await exerciseRecordService.recordExerciseFromText(input.userId, text, {
+    weightKg: Number(longMemoryLatest?.weight || 60) || 60,
+  });
+  if (!out?.record) return null;
 
-  await contextMemoryService.addDailyRecord(input.userId, record);
   await contextMemoryService.saveShortMemory(input.userId, { recentSmallTalkTopic: text, followUpContext: { source: 'text', imageType: '', lastRecordType: 'exercise' } });
-  return { replyText: energyService.buildExerciseReply(record), record };
+  return { replyText: out.replyText, record: out.record };
 }
 
 async function maybeHandleExerciseCalorieQuestion(input, text, longMemoryLatest) {
@@ -3573,37 +3462,15 @@ async function orchestrateConversation(input) {
       };
     }
 
+    // LINE の動画は index.js webhook で保存専用処理（Gemini 動画解析はここでは行わない）
     if (input?.messageType === 'video') {
-      const mediaPayload = await lineMediaService.getMediaPayload(input);
-      if (!mediaPayload?.ok || mediaPayload.kind !== 'video') {
-        const replyText = buildVideoIngestFailureReply();
-        const vidFailOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'video_ingest_ng');
-        await appendTurn(input.userId, input.rawText || '[video]', vidFailOut);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: vidFailOut }],
-          internal: { intentType: 'video_ingest_ng', responseMode: 'answer' }
-        };
-      }
-
-      const motionVideo = await analyzeMotionFromVideo({
-        input,
-        shortMemory,
-        mediaPayload,
-        textHint: text,
-      });
-      const vidIntent = motionVideo.ok ? 'motion_video' : 'motion_video_fallback';
-      const motionVidOut = await withSurfaceReply(input, motionVideo.replyText, { recentMessages, longMemory }, vidIntent);
-      await appendTurn(input.userId, input.rawText || '[video]', motionVidOut);
+      const replyText = '動画は受信ルートで保存しています。通常ここには来ません。LINE から送った場合は、先に返信が届いているはずです。';
+      const vidOut = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'athlete_video_webhook_only');
+      await appendTurn(input.userId, input.rawText || '[video]', vidOut);
       return {
         ok: true,
-        replyMessages: [{ type: 'text', text: motionVidOut }],
-        internal: {
-          intentType: motionVideo.ok ? 'motion_video' : 'motion_video_fallback',
-          responseMode: 'answer',
-          motionModel: motionVideo?.motionResult?.usedModel || '',
-          reason: motionVideo.reason || '',
-        }
+        replyMessages: [{ type: 'text', text: vidOut }],
+        internal: { intentType: 'athlete_video_webhook_only', responseMode: 'answer' }
       };
     }
 
@@ -3657,6 +3524,13 @@ async function orchestrateConversation(input) {
       const labFollowOut = await withSurfaceReply(input, labFollowUpReply, { recentMessages, longMemory }, 'lab_followup');
       await appendTurn(input.userId, input.rawText || '', labFollowOut);
       return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
+    }
+
+    if (/^この動画を解析/.test(normalizeText(text))) {
+      const stub = '動画解析は次の段階でつなげます。いまは保存だけが有効です。準備ができたらここから進めます。';
+      const vidStubOut = await withSurfaceReply(input, stub, { recentMessages, longMemory }, 'athlete_video_analyze_stub');
+      await appendTurn(input.userId, input.rawText || '', vidStubOut);
+      return { ok: true, replyMessages: [{ type: 'text', text: vidStubOut }], internal: { intentType: 'athlete_video_analyze_stub', responseMode: 'answer' } };
     }
 
     const mealDayScopeReply = await maybeHandleMealDayScopeSummary(input, text);
