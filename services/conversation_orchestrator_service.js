@@ -667,6 +667,32 @@ function detectIntent(input, _shortMemory = {}) {
   return 'normal';
 }
 
+function detectPriorityRouteForText(text, shortMemory = {}) {
+  const safe = normalizeText(text);
+  if (!safe) return { route: '', reason: '' };
+  if (exerciseRecordService.tryParseExerciseRecord(safe, { weightKg: 60 })) {
+    return { route: 'exercise_record', reason: 'explicit_exercise_record' };
+  }
+  if (/(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れた|他の日付/.test(safe)) {
+    return { route: 'lab_followup', reason: 'explicit_lab_followup' };
+  }
+  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計|1日のカロリー|一日のカロリー|本日の合計|今日の合計|今日の食事は\?|今日どれくらい/.test(safe)) {
+    return { route: 'today_meal_totals', reason: 'explicit_today_totals' };
+  }
+  if (/半分|1\/4|１\/４|麺だけ0kcal|食べてない|完食/.test(safe)) {
+    const hasMealContext = Boolean(
+      shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
+      || shortMemory?.followUpContext?.imageType === 'meal'
+      || shortMemory?.followUpContext?.lastRecordType === 'meal'
+    );
+    if (hasMealContext) return { route: 'meal_correction', reason: 'explicit_meal_correction_with_context' };
+  }
+  if (/^(こんにちは|こんばんは|おはよう|やあ|はじめまして)$/u.test(safe)) {
+    return { route: 'normal_chat', reason: 'greeting_text' };
+  }
+  return { route: '', reason: '' };
+}
+
 function adjustIntentForFollowupContext(intent, text, shortMemory = {}) {
   if (intent !== 'help') return intent;
   const safe = normalizeText(text);
@@ -3002,6 +3028,94 @@ async function orchestrateConversation(input) {
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
     const text = normalizeText(input.rawText || '');
+    const priority = input?.messageType === 'text'
+      ? detectPriorityRouteForText(text, shortMemory)
+      : { route: '', reason: '' };
+    const activeContextType = normalizeText(
+      shortMemory?.followUpContext?.imageType
+      || shortMemory?.followUpContext?.source
+      || shortMemory?.pendingRecordCandidate?.recordType
+      || ''
+    );
+    const logPriority = (route, reason) => {
+      console.info('[followup_priority_decision]', {
+        text: text.slice(0, 120),
+        decided_route: route,
+        reason,
+        active_context_type: activeContextType
+      });
+    };
+
+    if (input?.messageType === 'text' && priority.route === 'exercise_record') {
+      logPriority(priority.route, priority.reason);
+      const handled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
+      if (handled?.replyText) {
+        const out = await withSurfaceReply(input, handled.replyText, { recentMessages, longMemory }, 'exercise_record');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
+      }
+    }
+    if (input?.messageType === 'text' && priority.route === 'lab_followup') {
+      logPriority(priority.route, priority.reason);
+      const labReply = await labQueryService.answerLabQuery(input.userId, text, shortMemory) || await maybeAnswerLabFollowUp(input.userId, text, shortMemory);
+      if (labReply) {
+        const out = await withSurfaceReply(input, labReply, { recentMessages, longMemory }, 'lab_followup');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
+      }
+    }
+    if (input?.messageType === 'text' && priority.route === 'today_meal_totals') {
+      logPriority(priority.route, priority.reason);
+      const todayYmd = contextMemoryService.getTokyoTodayYmd();
+      const { deduped: rawLogs } = await mealLogQueryService.fetchAggregateMealLogsFromDb(input.userId, todayYmd, todayYmd, 'priority_today_meal_totals');
+      const records = { meals: mealLogsToRecordMeals(rawLogs) };
+      const energyBal = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+      const replyText = buildTodayMealTotalsAnswer(records, {
+        dayScopeHeader: true,
+        includeAnomalyNote: true,
+        includeEnergyBalance: true,
+        exerciseBurnKcal: energyBal.exerciseBurnKcal
+      });
+      const out = await withSurfaceReply(input, replyText, { recentMessages, longMemory }, 'today_meal_totals');
+      await appendTurn(input.userId, input.rawText || '', out);
+      return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'today_meal_totals', responseMode: 'answer' } };
+    }
+    if (input?.messageType === 'text' && priority.route === 'meal_correction') {
+      logPriority(priority.route, priority.reason);
+      const mealFollow = await maybeHandleMealFollowUp(input, shortMemory);
+      if (mealFollow?.replyText) {
+        await contextMemoryService.addDailyRecord(
+          input.userId,
+          mealFollow.correctionRecord || {
+            type: 'meal',
+            name: '食事',
+            summary: mealFollow.adjusted?.amountNote || '食事量補正',
+            estimatedNutrition: mealFollow.adjusted?.estimatedNutrition || {},
+            kcal: Number(mealFollow.adjusted?.estimatedNutrition?.kcal || 0),
+            protein: Number(mealFollow.adjusted?.estimatedNutrition?.protein || 0),
+            fat: Number(mealFollow.adjusted?.estimatedNutrition?.fat || 0),
+            carbs: Number(mealFollow.adjusted?.estimatedNutrition?.carbs || 0)
+          }
+        );
+        const out = await withSurfaceReply(input, mealFollow.replyText, { recentMessages, longMemory }, 'meal_followup');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_followup', responseMode: 'record' } };
+      }
+      const correction = await maybeHandleMealLogCorrection(input, text);
+      if (correction?.replyText) {
+        const out = await withSurfaceReply(input, correction.replyText, { recentMessages, longMemory }, 'meal_log_correction');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_log_correction', responseMode: 'record' } };
+      }
+      console.info('[meal_correction_target_not_found]', { user_id: input.userId, text: text.slice(0, 120) });
+      const out = await withSurfaceReply(input, '食事補正の対象を特定できませんでした。直近の食事に対する補正なら「半分食べた」、品目指定なら「ごはん半分」のように送ってください。', { recentMessages, longMemory }, 'meal_correction_target_not_found');
+      await appendTurn(input.userId, input.rawText || '', out);
+      return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_correction_target_not_found', responseMode: 'answer' } };
+    }
+    if (input?.messageType === 'text' && priority.route === 'normal_chat') {
+      logPriority(priority.route, priority.reason);
+    }
+
     const archOn = runtimeFlag('ENABLE_NEW_FLOW_ARCH', featureFlags.ENABLE_NEW_FLOW_ARCH);
     if (input?.messageType === 'text') {
       const imageFollowupOn = resolveNewFlowToggle('ENABLE_NEW_FLOW_IMAGE_FOLLOWUP', featureFlags.ENABLE_NEW_FLOW_IMAGE_FOLLOWUP, archOn);

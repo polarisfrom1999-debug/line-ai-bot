@@ -62,6 +62,12 @@ function looksLikeExerciseRecordText(text) {
   return /(ジョギング|ランニング|ウォーキング|散歩|筋トレ|スクワット|腕立て|走った|歩いた|運動).*(した|やった|分|km|ｋｍ|キロ)|(^|\s)\d+\s*分/.test(safe);
 }
 
+function looksLikeExplicitLabFollowupText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  return /(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れた|他の日付/.test(safe);
+}
+
 /**
  * Phase A skeleton:
  * - active context は必ず active_context_store_service 経由で1件取得
@@ -85,6 +91,7 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     && (/_image_session$/.test(activeType) || activeType === 'lab_image_session_failed')
   );
   if (hasActiveImageSession) {
+    if (looksLikeExerciseRecordText(safeText) || looksLikeExplicitLabFollowupText(safeText)) return null;
     const isGeneral = looksLikeGeneralConversation(safeText);
     if (imageFollowupOnly && isGeneral) {
       if (looksLikeExerciseRecordText(safeText)) return null;
