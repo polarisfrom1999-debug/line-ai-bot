@@ -56,6 +56,7 @@ const newFlowFollowupRouterService = require('./newflow/followup_router_service'
 const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
+const companionReplyService = require('./companion_reply_service');
 const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
@@ -2101,9 +2102,39 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
     messageType: input?.messageType || 'text'
   });
   const softened = replyIntegrityService.softenCantDoStatements(polished);
-  if (!runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD)) return softened;
+  let base = softened;
   const guarded = responseGuardService.guardReplyText(softened);
-  return guarded?.text || softened;
+  if (runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD)) {
+    base = guarded?.text || softened;
+  }
+
+  try {
+    const hour = Number(getJapanNow().hour || 0);
+    const shortMemory = await contextMemoryService.getShortMemory(input.userId);
+    const activeContextType = normalizeText(
+      shortMemory?.followUpContext?.imageType
+      || shortMemory?.followUpContext?.source
+      || shortMemory?.pendingRecordCandidate?.recordType
+      || ''
+    );
+    const todayNutritionSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+    const todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    const enhanced = await companionReplyService.enhanceReply({
+      userId: input.userId,
+      userText: input?.rawText || '',
+      rawReply: base,
+      intentType: intentType || 'surface',
+      activeContextType,
+      recentMessages: ctx?.recentMessages || [],
+      longMemory: ctx?.longMemory || {},
+      todayNutritionSummary,
+      todayEnergyBalance,
+      hour
+    });
+    return normalizeText(enhanced?.text || base) || base;
+  } catch (_e) {
+    return base;
+  }
 }
 
 async function polishReplyMessage(input, replyMessage, ctx, intentType) {
