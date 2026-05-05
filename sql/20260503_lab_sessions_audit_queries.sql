@@ -182,5 +182,5 @@ select
   superseded_by_session_id,
   created_at
 from lab_sessions
-where id in (117, 118, 119, 121)
+where id in (116, 117, 118, 119, 121)
 order by id;
