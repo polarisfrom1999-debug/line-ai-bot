@@ -76,6 +76,33 @@ function pickNonRecentPhrase(candidates = [], recentReplies = []) {
   return { phrase: first, avoided: false, replaced: false };
 }
 
+function dedupeSourceNotes(text = '', intent = '') {
+  const safeIntent = normalizeText(intent);
+  const original = String(text || '');
+  let deduped = original;
+  let removed = false;
+  if (safeIntent === 'meal') {
+    const sourcePhrase = '写真からの推定として記録しました。';
+    const matches = deduped.match(new RegExp(sourcePhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || [];
+    if (matches.length > 1) {
+      let firstKept = false;
+      deduped = deduped.replace(/写真からの推定として記録しました。/g, () => {
+        if (!firstKept) {
+          firstKept = true;
+          return '写真からの推定として記録しました。';
+        }
+        removed = true;
+        return '';
+      }).replace(/\n{3,}/g, '\n\n').trim();
+    }
+  }
+  console.info('[companion_reply_source_note_deduped]', {
+    removed_duplicate_source_note: removed,
+    intent: safeIntent || 'normal_chat'
+  });
+  return deduped;
+}
+
 async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
   if (!rawReply || shouldSkip(params.intentType)) {
@@ -158,16 +185,21 @@ async function enhanceReply(params = {}) {
     if (chatPhrase.phrase) lines.push(`\n${chatPhrase.phrase}`);
     dedupMeta = { avoided: chatPhrase.avoided, replaced: chatPhrase.replaced };
   } else {
-    const motivationPick = pickNonRecentPhrase([motivation], recentAssistantReplies);
-    if (motivationPick.phrase) lines.push(`\n${motivationPick.phrase}`);
-    const nextStepPick = pickNonRecentPhrase([nextStep], recentAssistantReplies);
-    if (nextStepPick.phrase) lines.push(`\n${nextStepPick.phrase}`);
-    dedupMeta = {
-      avoided: motivationPick.avoided || nextStepPick.avoided,
-      replaced: motivationPick.replaced || nextStepPick.replaced
-    };
+    if (intent === 'meal') {
+      // Meal reply layout is formatter-first; avoid appending generic lines here.
+      dedupMeta = { avoided: false, replaced: false };
+    } else {
+      const motivationPick = pickNonRecentPhrase([motivation], recentAssistantReplies);
+      if (motivationPick.phrase) lines.push(`\n${motivationPick.phrase}`);
+      const nextStepPick = pickNonRecentPhrase([nextStep], recentAssistantReplies);
+      if (nextStepPick.phrase) lines.push(`\n${nextStepPick.phrase}`);
+      dedupMeta = {
+        avoided: motivationPick.avoided || nextStepPick.avoided,
+        replaced: motivationPick.replaced || nextStepPick.replaced
+      };
+    }
   }
-  const text = lines.join('\n').trim();
+  const text = dedupeSourceNotes(lines.join('\n').trim(), intent);
 
   console.info('[companion_reply_phrase_dedup]', {
     avoided_recent_phrase: Boolean(dedupMeta.avoided),
