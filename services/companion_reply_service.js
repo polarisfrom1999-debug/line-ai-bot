@@ -387,6 +387,8 @@ async function enhanceReply(params = {}) {
     text,
     userText: params.userText || '',
     intent,
+    conversationMode: normalizeText(params.conversationMode || params.intentType || intent),
+    replyDepth: depthMeta.depth,
     relationshipPhase,
     userId: params.userId
   });

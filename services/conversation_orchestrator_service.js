@@ -57,6 +57,7 @@ const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const companionReplyService = require('./companion_reply_service');
+const conversationStateInterpreterService = require('./conversation_state_interpreter_service');
 const relationshipPhaseService = require('./relationship_phase_service');
 const trustSignalDetectorService = require('./trust_signal_detector_service');
 const lifeCompanionConversationService = require('./life_companion_conversation_service');
@@ -2183,6 +2184,7 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
       userText: input?.rawText || '',
       rawReply: base,
       intentType: intentType || 'surface',
+      conversationMode: intentType || 'surface',
       activeContextType,
       recentMessages: ctx?.recentMessages || [],
       longMemory: ctx?.longMemory || {},
@@ -3323,10 +3325,19 @@ async function orchestrateConversation(input) {
     let text = normalizeText(input.rawText || '');
     let resumedFromPendingConfirmation = false;
     let pendingAppliedAction = null;
+    let pendingAtInput = null;
     if (input?.messageType === 'text' && text) {
       const pending = await pendingConfirmationService.readPendingConfirmation(input.userId);
+      pendingAtInput = pending;
       if (pending) {
         if (pendingConfirmationService.isConfirmationPositive(text)) {
+          console.info('[pending_answer_detected]', {
+            user_id: input.userId,
+            text: text.slice(0, 60),
+            pending_type: normalizeText(pending?.payload?.proposed_action_json?.type || pending?.payload?.type || 'unknown'),
+            route: 'pending_confirmation',
+            reason: 'positive_pending_answer'
+          });
           await pendingConfirmationService.clearPendingConfirmation(input.userId);
           text = normalizeText(pending?.payload?.userText || text);
           pendingAppliedAction = pending?.payload?.proposed_action_json || null;
@@ -3347,6 +3358,88 @@ async function orchestrateConversation(input) {
           return { ok: true, replyMessages: [{ type: 'text', text: ngOut }], internal: { intentType: 'pending_confirmation_reject', responseMode: 'answer' } };
         }
       }
+    }
+
+    if (input?.messageType === 'text' && /^(はい|うん|そう|OK|ok|お願いします|それで)$/i.test(text) && !pendingAtInput) {
+      console.info('[yes_without_pending_context]', {
+        user_id: input.userId,
+        text: text.slice(0, 60),
+        route: 'casual_chat',
+        reason: 'no_pending_confirmation_or_question_context'
+      });
+      const casualReply = 'はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。';
+      const out = await withSurfaceReply(input, casualReply, { recentMessages, longMemory }, 'casual_chat');
+      await appendTurn(input.userId, input.rawText || '', out);
+      return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'casual_chat', responseMode: 'answer' } };
+    }
+
+    const conversationState = input?.messageType === 'text' && text
+      ? conversationStateInterpreterService.interpretConversationState({
+        userId: input.userId,
+        text,
+        shortMemory,
+        hasPendingConfirmation: Boolean(pendingAtInput)
+      })
+      : null;
+    let forcedConversationRoute = '';
+    if (conversationState?.primary_conversation_mode === 'emotional_support') {
+      console.info('[emotional_support_routed]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        risk_level: conversationState.risk_level,
+        reply_depth: conversationState.reply_depth,
+        reason: conversationState.reason
+      });
+      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
+        userId: input.userId,
+        text,
+        relationshipPhase: longMemory?.relationshipPhase,
+        longMemory,
+        userState: userStateBefore,
+        recentMessages,
+      });
+      if (lifeEarly?.replyText) {
+        console.info('[feature_route_selected_after_conversation_state]', {
+          user_id: input.userId,
+          text: text.slice(0, 120),
+          route: 'life_companion',
+          reason: 'conversation_state_emotional_support'
+        });
+        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'emotional_support');
+        await appendTurn(input.userId, input.rawText || '', lifeOut);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: lifeOut }],
+          internal: { intentType: 'emotional_support', responseMode: 'conversation_first' }
+        };
+      }
+      forcedConversationRoute = 'normal_chat';
+    } else if (conversationState?.primary_conversation_mode === 'life_companion') {
+      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
+        userId: input.userId,
+        text,
+        relationshipPhase: longMemory?.relationshipPhase,
+        longMemory,
+        userState: userStateBefore,
+        recentMessages,
+      });
+      if (lifeEarly?.replyText) {
+        console.info('[feature_route_selected_after_conversation_state]', {
+          user_id: input.userId,
+          text: text.slice(0, 120),
+          route: 'life_companion',
+          reason: 'conversation_state_life_companion'
+        });
+        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
+        await appendTurn(input.userId, input.rawText || '', lifeOut);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: lifeOut }],
+          internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
+        };
+      }
+    } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record'].includes(conversationState.route)) {
+      forcedConversationRoute = conversationState.route;
     }
 
     if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
@@ -3494,6 +3587,16 @@ async function orchestrateConversation(input) {
     let priority = input?.messageType === 'text'
       ? detectPriorityRouteForText(text, shortMemory)
       : { route: '', reason: '' };
+    if (forcedConversationRoute) {
+      priority.route = forcedConversationRoute;
+      priority.reason = 'conversation_state_interpreter';
+      console.info('[feature_route_selected_after_conversation_state]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: forcedConversationRoute,
+        reason: 'conversation_state_interpreter_forced_route'
+      });
+    }
     if (priority.route === '' && compassionateJudgment?.surface_intent) {
       if (compassionateJudgment.surface_intent === 'exercise_record') {
         priority.route = 'exercise_record';

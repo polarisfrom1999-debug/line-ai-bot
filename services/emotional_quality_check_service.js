@@ -91,6 +91,7 @@ function applyEmotionalQualityPass(params = {}) {
   let text = original;
   const userText = params.userText || '';
   const intent = normalizeText(params.intent || '');
+  const conversationMode = normalizeText(params.conversationMode || intent || '');
   const userId = normalizeText(params.userId || '');
 
   const rwGlobal = applyTemplateRewrites(text);
@@ -129,6 +130,18 @@ function applyEmotionalQualityPass(params = {}) {
     && !flags.has_template_only_phrase
     && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
   );
+  if (conversationMode === 'emotional_support' && !/(deep|normal)/.test(normalizeText(params.replyDepth || 'normal'))) {
+    flags.emotional_quality_ok = false;
+  }
+  if (conversationMode === 'life_companion' && /(記録|kcal|カロリー|DB保存済み)/.test(text)) {
+    flags.emotional_quality_ok = false;
+  }
+  if (conversationMode === 'meal_correction' && /(DB保存済み|内部|trace)/.test(text)) {
+    flags.emotional_quality_ok = false;
+  }
+  if (conversationMode === 'casual_chat' && /前の画像の続き/.test(text)) {
+    flags.emotional_quality_ok = false;
+  }
 
   if (!flags.emotional_quality_ok) {
     const echo = extractEchoSnippet(userText);
@@ -172,6 +185,7 @@ function applyEmotionalQualityPass(params = {}) {
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,
+    conversation_mode: conversationMode,
     intent,
     relationship_phase: normalizeText(params.relationshipPhase || ''),
     ...flags,
