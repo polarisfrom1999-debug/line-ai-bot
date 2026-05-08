@@ -86,6 +86,28 @@ function softenStandaloneTemplateLines(text) {
 /**
  * @param {{ text: string, userText?: string, intent?: string, relationshipPhase?: string, userId?: string }} params
  */
+function maybeStripRoutineGreeting(text, params = {}) {
+  const token = '今日も1日よろしくお願いします';
+  if (!String(text || '').includes(token)) return String(text || '');
+  let out = String(text || '');
+  const hour = Number(params.hour ?? 12);
+  const totalTurns = Number(params.totalTurns ?? 99);
+  const intent = normalizeText(params.intent || '');
+  const cm = normalizeText(params.conversationMode || intent || '');
+  const phase = normalizeText(params.relationshipPhase || '');
+  const composite = `${intent}|${cm}`;
+  if (/(meal|lab|exercise|video|image|correction|constitution|symptom|homecare|pending|newflow|v2)/i.test(composite)) {
+    return out.replace(new RegExp(`${token}[。！]?`, 'g'), '').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  const morning = hour >= 5 && hour <= 11;
+  const fewTurns = totalTurns <= 5;
+  const trusted = phase === 'phase_2_safe_openness' || phase === 'phase_3_emotional_trust' || phase === 'phase_4_life_companion';
+  if (!(morning && fewTurns && trusted)) {
+    return out.replace(new RegExp(`${token}[。！]?`, 'g'), '').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  return out;
+}
+
 function applyEmotionalQualityPass(params = {}) {
   const original = String(params.text || '');
   let text = original;
@@ -182,6 +204,14 @@ function applyEmotionalQualityPass(params = {}) {
       }
     }
   }
+
+  text = maybeStripRoutineGreeting(text, {
+    hour: params.hour,
+    totalTurns: params.totalTurns,
+    intent,
+    conversationMode,
+    relationshipPhase: params.relationshipPhase
+  });
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,

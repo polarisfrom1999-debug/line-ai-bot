@@ -1,5 +1,6 @@
 'use strict';
 
+const contextMemoryService = require('./context_memory_service');
 const userPatternInsightService = require('./user_pattern_insight_service');
 const microChangeDetectorService = require('./micro_change_detector_service');
 const motivationPhraseService = require('./motivation_phrase_service');
@@ -7,6 +8,10 @@ const threeStepsAheadService = require('./three_steps_ahead_service');
 const { PHASES } = require('./relationship_phase_service');
 const { selectConversationTone } = require('./conversation_tone_selector_service');
 const emotionalQualityCheckService = require('./emotional_quality_check_service');
+const userDailyContextBuilderService = require('./user_daily_context_builder_service');
+const contextualObservationSelectorService = require('./contextual_observation_selector_service');
+const conversationStyleProfileService = require('./conversation_style_profile_service');
+const humanPhraseVariationService = require('./human_phrase_variation_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -258,8 +263,37 @@ async function enhanceReply(params = {}) {
   });
 
   const core = avoidBareTemplate(rawReply);
-  const lines = [core];
   const recentAssistantReplies = getRecentAssistantReplies(params.recentMessages);
+
+  let observationPrefix = '';
+  let userState = { totalTurns: 0 };
+  try {
+    userState = await contextMemoryService.getUserState(params.userId);
+  } catch (_e) {
+    userState = { totalTurns: 0 };
+  }
+  try {
+    await conversationStyleProfileService.applyLightStyleUpdate(params.userId, params.userText);
+    const { today_context } = await userDailyContextBuilderService.buildUserDailyContext(params.userId);
+    const sel = contextualObservationSelectorService.selectContextualObservation({
+      userId: params.userId,
+      userText: params.userText,
+      todayContext: today_context,
+      intentTag: intent,
+      relationshipPhase
+    });
+    const oc = normalizeText(sel.observation_text || '');
+    const cr = normalizeText(core);
+    if (oc && (cr.length < 10 || !cr.includes(oc.slice(0, Math.min(24, oc.length))))) {
+      observationPrefix = oc;
+    }
+  } catch (_e) {
+    observationPrefix = '';
+  }
+
+  const lines = [];
+  if (observationPrefix) lines.push(observationPrefix);
+  lines.push(core);
   let dedupMeta = { avoided: false, replaced: false };
 
   const recentUserCorrectionHints = (Array.isArray(params.recentMessages) ? params.recentMessages : [])
@@ -361,6 +395,35 @@ async function enhanceReply(params = {}) {
 
   let text = dedupeSourceNotes(lines.join('\n').trim(), intent);
 
+  const styleProf = params.longMemory?.conversationStyleProfile || {};
+  const userSoftTone = /[\u{1F300}-\u{1FAFF}]/u.test(params.userText || '') || /(〜|ですぅ|わーい|🙌|っ+[\s。]|ちゃん)/.test(params.userText || '');
+  if (
+    userSoftTone
+    && (relationshipPhase === PHASES.P3 || relationshipPhase === PHASES.P4)
+    && (styleProf.emojiLover || styleProf.casualLover || /[\u{1F300}-\u{1FAFF}]/u.test(params.userText || ''))
+    && Math.random() < 0.3
+  ) {
+    const casualBank = ['それは良かったですぅ〜', 'わーい🙌 ちゃんと届いています。', 'たまのご褒美くらい、全然いい線ですよぉ〜'];
+    const pickC = pickNonRecentPhrase(casualBank, recentAssistantReplies);
+    if (pickC.phrase) text = `${text}\n${pickC.phrase}`.trim();
+  }
+
+  if (intent === 'meal' && depthMeta.depth === 'normal' && Math.random() < 0.4) {
+    const closingPick = humanPhraseVariationService.selectHumanPhraseVariation({
+      phrase_group: 'closing_soft',
+      recent_assistant_texts: recentAssistantReplies,
+      silent: true
+    });
+    if (closingPick.phrase && !text.includes(closingPick.phrase.slice(0, 8))) {
+      text = `${text}\n${closingPick.phrase}`.trim();
+      console.info('[human_phrase_variation_selected]', {
+        phrase_group: closingPick.phrase_group || 'closing_soft',
+        selected_phrase: closingPick.phrase,
+        avoided_recent_phrase: closingPick.avoided_recent_phrase || '(none)'
+      });
+    }
+  }
+
   console.info('[companion_reply_phrase_dedup]', {
     avoided_recent_phrase: Boolean(dedupMeta.avoided),
     replaced_phrase: Boolean(dedupMeta.replaced),
@@ -390,7 +453,9 @@ async function enhanceReply(params = {}) {
     conversationMode: normalizeText(params.conversationMode || params.intentType || intent),
     replyDepth: depthMeta.depth,
     relationshipPhase,
-    userId: params.userId
+    userId: params.userId,
+    hour: Number(params.hour || 0),
+    totalTurns: Number(userState.totalTurns || 0)
   });
 
   return { text: eq.text, meta: { intent, supportStyle, reply_depth: depthMeta.depth } };

@@ -75,7 +75,22 @@ const DEFAULT_LONG_MEMORY = {
   /** @see services/relationship_phase_service.js */
   relationshipPhase: 'phase_1_professional_trust',
   relationshipPhaseUpdatedAt: null,
-  relationshipPhaseMeta: null
+  relationshipPhaseMeta: null,
+  conversationStyleProfile: {
+    emojiLover: false,
+    casualLover: false,
+    formalLover: false,
+    wantsDetailedNumbers: false,
+    respondsToPraise: false,
+    prefersStrictTone: false,
+    anxietyProne: false,
+    mealMicroFeedbackSensitive: false,
+    weightSensitive: false,
+    happyMorningReplies: false,
+    happyFamilyShare: false,
+    confidence: 0,
+    updatedAt: null
+  }
 };
 
 const DEFAULT_USER_STATE = {
@@ -1031,6 +1046,24 @@ async function mergeLongMemory(userId, patch) {
     }
     if (Array.isArray(safePatch.lifeContext)) {
       for (const item of safePatch.lifeContext) uniquePush(next.lifeContext, item);
+    }
+    if (safePatch.conversationStyleProfile && typeof safePatch.conversationStyleProfile === 'object') {
+      const cur = next.conversationStyleProfile && typeof next.conversationStyleProfile === 'object'
+        ? next.conversationStyleProfile
+        : { ...DEFAULT_LONG_MEMORY.conversationStyleProfile };
+      const inc = safePatch.conversationStyleProfile;
+      const merged = { ...cur };
+      for (const [k, v] of Object.entries(inc)) {
+        if (k === 'confidence') {
+          merged.confidence = Math.min(1, Math.max(Number(merged.confidence) || 0, Number(v) || 0));
+        } else if (k === 'updatedAt') {
+          merged.updatedAt = v;
+        } else if (v === true) {
+          merged[k] = true;
+        }
+      }
+      merged.updatedAt = merged.updatedAt || nowIso();
+      next.conversationStyleProfile = merged;
     }
     if (safePatch.conversationStyleMemory && typeof safePatch.conversationStyleMemory === 'object') {
       const cur = next.conversationStyleMemory && typeof next.conversationStyleMemory === 'object'

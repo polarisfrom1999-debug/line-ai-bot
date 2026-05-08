@@ -3925,6 +3925,12 @@ async function orchestrateConversation(input) {
     }
 
     if (input?.messageType === 'image') {
+      try {
+        const imageContextClassifierService = require('./image_context_classifier_service');
+        imageContextClassifierService.classifyImageContext({ userCaption: text });
+      } catch (_e) {
+        /* optional */
+      }
       const imageIngestOn = resolveNewFlowToggle('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST, archOn);
       if (imageIngestOn) {
         const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text }).catch((error) => ({
