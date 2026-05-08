@@ -103,7 +103,7 @@ function applyEmotionalQualityPass(params = {}) {
   if (!replyHasUserEcho(text, userText) && userText && extractEchoSnippet(userText) && (intent === 'normal_chat' || intent === 'meal')) {
     const snip = extractEchoSnippet(userText);
     if (snip && !text.includes(snip.slice(0, Math.min(8, snip.length)))) {
-      const echo = `「${snip}」と感じていたんですね。\n`;
+      const echo = `「${snip}」の重さ、ちゃんと受け取っています。\n`;
       text = `${echo}${text}`.trim();
       rewrite_applied = true;
     }
@@ -132,7 +132,7 @@ function applyEmotionalQualityPass(params = {}) {
 
   if (!flags.emotional_quality_ok) {
     const echo = extractEchoSnippet(userText);
-    const lead = echo ? `「${echo}」と感じているんですね。` : 'そのまま話してくれてありがとうございます。';
+    const lead = echo ? `「${echo}」のこと、ここで一緒に見ていきます。` : 'そのまま話してくれてありがとうございます。';
     const close = 'ひとりで抱えすぎなくて大丈夫です。今わかる範囲だけで、一緒に整理していきましょう。';
     text = `${lead}\n${text}\n${close}`.replace(/\n{3,}/g, '\n\n').trim();
     rewrite_applied = true;
@@ -151,6 +151,23 @@ function applyEmotionalQualityPass(params = {}) {
       && !flags.has_template_only_phrase
       && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
     );
+  }
+
+  if (intent === 'lab') {
+    const blocked = [
+      'ひとりで抱えすぎなくて大丈夫です',
+      '一緒に整理しましょう',
+      '今わかる範囲だけで大丈夫です'
+    ];
+    for (const phrase of blocked) {
+      if (text.includes(phrase)) {
+        text = text.replaceAll(phrase, '').replace(/\n{3,}/g, '\n\n').trim();
+        console.info('[companion_reply_intent_phrase_blocked]', {
+          intent: 'lab',
+          blocked_phrase: phrase
+        });
+      }
+    }
   }
 
   console.info('[companion_reply_emotional_quality_check]', {

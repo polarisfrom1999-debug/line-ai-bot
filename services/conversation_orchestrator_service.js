@@ -2680,11 +2680,23 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     source: source || 'active_context'
   });
 
+  const foodShare = (() => {
+    if (targetFood === 'ご飯') return 0.4;
+    if (targetFood === '麺') return 0.5;
+    if (targetFood === 'パン') return 0.35;
+    if (targetFood === 'サラダ') return 0.15;
+    if (targetFood === '卵') return 0.2;
+    if (targetFood === '肉') return 0.3;
+    if (targetFood === '魚') return 0.25;
+    if (targetFood === 'おかず') return 0.25;
+    return 1;
+  })();
+  const effectiveRatio = foodShare >= 0.99 ? ratio : (1 - ((1 - ratio) * foodShare));
   const adjustedNutrition = {
-    kcal: round1(base.kcal * ratio),
-    protein: round1(base.protein * ratio),
-    fat: round1(base.fat * ratio),
-    carbs: round1(base.carbs * ratio)
+    kcal: round1(base.kcal * effectiveRatio),
+    protein: round1(base.protein * effectiveRatio),
+    fat: round1(base.fat * effectiveRatio),
+    carbs: round1(base.carbs * effectiveRatio)
   };
 
   const adjusted = {
@@ -2692,7 +2704,24 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     amountNote: text,
     estimatedNutrition: adjustedNutrition
   };
-  const deltaNutrition = adjustedNutrition;
+  const deltaNutrition = {
+    kcal: round1(adjustedNutrition.kcal - Number(base.kcal || 0)),
+    protein: round1(adjustedNutrition.protein - Number(base.protein || 0)),
+    fat: round1(adjustedNutrition.fat - Number(base.fat || 0)),
+    carbs: round1(adjustedNutrition.carbs - Number(base.carbs || 0))
+  };
+  if (deltaNutrition.kcal > 0) {
+    console.info('[meal_correction_positive_insert_blocked]', {
+      user_id: input.userId,
+      text: text.slice(0, 120),
+      attempted_kcal: deltaNutrition.kcal,
+      reason: 'meal_correction_must_not_increase_daily_total'
+    });
+    deltaNutrition.kcal = 0;
+    deltaNutrition.protein = 0;
+    deltaNutrition.fat = 0;
+    deltaNutrition.carbs = 0;
+  }
 
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
   const { totals: dbTotals } = await mealLogQueryService.fetchAggregateMealLogsFromDb(
@@ -2702,11 +2731,20 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     'meal_followup_adjust'
   );
   const correctedTotals = {
-    kcal: round1(dbTotals.kcal + adjustedNutrition.kcal),
-    protein: round1(dbTotals.protein + adjustedNutrition.protein),
-    fat: round1(dbTotals.fat + adjustedNutrition.fat),
-    carbs: round1(dbTotals.carbs + adjustedNutrition.carbs)
+    kcal: round1(dbTotals.kcal + deltaNutrition.kcal),
+    protein: round1(dbTotals.protein + deltaNutrition.protein),
+    fat: round1(dbTotals.fat + deltaNutrition.fat),
+    carbs: round1(dbTotals.carbs + deltaNutrition.carbs)
   };
+  console.info('[meal_correction_applied]', {
+    user_id: input.userId,
+    target_meal_id: sourceMealId,
+    target_food: targetFood,
+    previous_kcal: Number(base.kcal || 0),
+    corrected_kcal: Number(adjustedNutrition.kcal || 0),
+    delta_kcal: Number(deltaNutrition.kcal || 0),
+    method: source === 'latest_meal' ? 'latest_meal_food_share_adjustment' : 'active_context_food_share_adjustment'
+  });
 
   const memPatch = {
     pendingRecordCandidate: {
@@ -2721,11 +2759,13 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
 
   return {
     replyText: [
-      `了解です。${text}として見直しました。`,
-      `🍽️ この食事は ざっくり 約${round1(adjustedNutrition.kcal)}kcal くらいです。`,
+      `${targetFood}は${/半分/.test(text) ? '半分' : '控えめ'}だったんですね。`,
+      `では、${mealLabel || normalizeText((mealBody?.items || [])[0] || '直前の食事')}の${targetFood === '食事全体' ? '全体量' : `${targetFood}分`}を少し控えめに見直しておきます。`,
+      'こういう一言、写真だけでは分からないのでかなり助かります。',
+      `🍽️ 見直し後のこの食事: 約${round1(adjustedNutrition.kcal)}kcal`,
       buildMealNutritionLine(adjustedNutrition || {}),
       '',
-      '📈 修正後の今日の目安（DB保存済み＋この食事の見立て）',
+      '📈 今日の合計（補正後）',
       '━━━━━━━━━━━━━',
       `🔥 エネルギー: 約${round1(correctedTotals.kcal)} kcal`,
       buildMealNutritionLine(correctedTotals || {}),
@@ -3261,6 +3301,7 @@ async function orchestrateConversation(input) {
         relationshipPhase: longMemory?.relationshipPhase,
         longMemory,
         userState: userStateBefore,
+        recentMessages,
       });
       if (lifeEarly?.replyText) {
         const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
@@ -4235,6 +4276,7 @@ async function orchestrateConversation(input) {
         relationshipPhase: longMemory?.relationshipPhase,
         longMemory,
         userState: userStateBefore,
+        recentMessages,
       });
       if (lifeEarly?.replyText) {
         const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
@@ -4421,6 +4463,7 @@ async function orchestrateConversation(input) {
       relationshipPhase: longMemory?.relationshipPhase,
       longMemory,
       userState: userStateBefore,
+      recentMessages,
     });
     if (lifeLate?.replyText) {
       const lifeOut = await withSurfaceReply(input, lifeLate.replyText, { recentMessages, longMemory }, 'life_companion');

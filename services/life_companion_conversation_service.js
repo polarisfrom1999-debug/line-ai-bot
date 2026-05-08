@@ -34,26 +34,53 @@ function buildReplyForTopic(topic, phase) {
   const deep = p === PHASES.P3 || p === PHASES.P4;
 
   if (topic === 'work_stress') {
-    const base = [
-      'それは少し刺さりますね。',
-      'ちゃんと向き合っている人ほど、そういう一言が残ることがあります。',
-      '今すぐ前向きにしなくて大丈夫です。',
-      'まずは、相手の言い方が嫌だったのか、分かってもらえなかった感じが嫌だったのか、一緒に分けましょう。',
+    const variants = [
+      [
+        'それは嫌でしたね。',
+        '仕事の嫌なことって、帰ってからも少し残ることがあります。',
+        '無理に整理しなくて大丈夫です。',
+        'まずは、相手の言い方が刺さったのか、出来事そのものがしんどかったのか、一緒に分けましょう。'
+      ],
+      [
+        'それは気持ちに残りますよね。',
+        '仕事の場での一言は、終わってからじわっと効くことがあります。',
+        '今すぐ前向きにしなくて大丈夫です。',
+        '何が一番つらかったかだけ、先に一緒に置いてみましょう。'
+      ],
+      [
+        'それはしんどかったですね。',
+        'ちゃんとやっている人ほど、仕事の違和感が心に残りやすいです。',
+        '急いで正解を出さなくて大丈夫です。',
+        'まずは言い方が嫌だったのか、扱われ方が苦しかったのか、分けてみましょう。'
+      ]
     ];
-    const extra = deep
-      ? ['必要なら、現実の誰かに伝える言葉も、ここで一緒に短く整えます。']
-      : ['ここでは、そのまま話して大丈夫です。'];
+    const base = variants[Math.abs(String(topic + phase).length) % variants.length];
+    const extra = deep ? ['必要なら、現実の誰かに伝える言葉もここで短く整えられます。'] : [];
     return [...base, ...extra].join('\n');
   }
 
   if (topic === 'loneliness') {
-    return [
-      '寂しいって言えるの、大事です。',
-      '無理に明るくしなくて大丈夫ですよ。',
-      '今日は解決より、少し安心できる時間が先かもしれません。',
-      'ここでは、そのまま話して大丈夫です。',
-      'ひとりで抱えすぎなくて大丈夫です。必要なら、あとで体調や食事の話につなげてもつなげなくても構いません。',
-    ].join('\n');
+    const variants = [
+      [
+        '寂しいって言えたの、かなり大事です。',
+        '無理に明るくしなくて大丈夫です。',
+        '今日は解決より、少し安心できる時間を先に作りましょう。',
+        'ここでは、そのまま話して大丈夫です。'
+      ],
+      [
+        'その寂しさ、ちゃんとここに置いて大丈夫です。',
+        '無理に気持ちを上げなくて大丈夫です。',
+        'まずは安心できる時間を少し確保する方が先かもしれません。',
+        '必要なら、言葉を短く整えるのも一緒にやります。'
+      ],
+      [
+        '寂しいと言えたこと自体が、もう大事な一歩です。',
+        '今は解決より、落ち着ける時間を先に取りましょう。',
+        '急いで前向きにしなくて大丈夫です。',
+        'ここでは、そのままの温度で話して大丈夫です。'
+      ]
+    ];
+    return variants[Math.abs(String(topic + phase).length) % variants.length].join('\n');
   }
 
   if (topic === 'low_motivation') {
@@ -108,11 +135,62 @@ function buildReplyForTopic(topic, phase) {
   return null;
 }
 
+function getRecentAssistantReplies(recentMessages = []) {
+  return (Array.isArray(recentMessages) ? recentMessages : [])
+    .filter((m) => m?.role === 'assistant')
+    .map((m) => normalizeText(m?.content || ''))
+    .filter(Boolean)
+    .slice(-5);
+}
+
+function dedupeLifeCompanionPhrases(text, topic, recentMessages = []) {
+  const recent = getRecentAssistantReplies(recentMessages);
+  const replacements = [
+    {
+      phrase: '〜と感じていたんですね',
+      re: /「[^」]{2,}」と感じていたんですね。?/g,
+      to: 'その言葉の重さ、ちゃんと受け取っています。',
+      style: 'no_direct_quote'
+    },
+    {
+      phrase: 'ここでは、そのまま話して大丈夫です',
+      re: /ここでは、そのまま話して大丈夫です。?/g,
+      to: 'この場では、整っていない言葉のままでも大丈夫です。',
+      style: 'safe_space_variant'
+    },
+    {
+      phrase: 'ひとりで抱えすぎなくて大丈夫です',
+      re: /ひとりで抱えすぎなくて大丈夫です。?/g,
+      to: '抱え込む前に、少しずつ分けていきましょう。',
+      style: 'burden_release_variant'
+    },
+    {
+      phrase: '無理に明るくしなくて大丈夫です',
+      re: /無理に明るくしなくて大丈夫です。?/g,
+      to: '気持ちを無理に上向きにしなくて大丈夫です。',
+      style: 'mood_permission_variant'
+    }
+  ];
+  let out = String(text || '');
+  for (const row of replacements) {
+    const overused = recent.some((r) => r.includes(row.phrase) || row.re.test(r));
+    if (overused && row.re.test(out)) {
+      out = out.replace(row.re, row.to);
+      console.info('[life_companion_phrase_dedup]', {
+        avoided_phrase: row.phrase,
+        replacement_style: row.style,
+        topic
+      });
+    }
+  }
+  return out.trim();
+}
+
 /**
  * 健康・記録以外の生活トピックに、ルールベースでまず応答する。
  * @returns {{ replyText: string, topic: string, includes_reflection: boolean, includes_next_step: boolean } | null}
  */
-function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemory = {}, userState = {} } = {}) {
+function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemory = {}, userState = {}, recentMessages = [] } = {}) {
   const safe = normalizeText(text);
   if (!safe || safe.length < 4) return null;
   if (isHealthAnchoredText(safe)) return null;
@@ -126,7 +204,8 @@ function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemor
   });
 
   const phase = migrateLegacyPhase(longMemory, userState || {});
-  const replyText = buildReplyForTopic(topic, relationshipPhase || phase);
+  const replyTextRaw = buildReplyForTopic(topic, relationshipPhase || phase);
+  const replyText = dedupeLifeCompanionPhrases(replyTextRaw, topic, recentMessages);
   if (!replyText) return null;
 
   const includesReflection = /一緒に|受け止め|大丈夫|無理に/.test(replyText);
