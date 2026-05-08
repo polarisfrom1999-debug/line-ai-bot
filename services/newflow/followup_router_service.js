@@ -68,6 +68,24 @@ function looksLikeExplicitLabFollowupText(text) {
   return /(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れた|他の日付/.test(safe);
 }
 
+function looksLikeMealPortionCorrectionText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  return /半分|1\/4|１\/４|ごはん半分|ご飯半分|少しだけ|ちょっとだけ|完食|食べてない|0kcal|ゼロ|麺だけ/.test(safe);
+}
+
+function looksLikeMealCalorieConfirmationTextRouter(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の合計|今日ここまで|積算/.test(safe)) return false;
+  const hasKcalMention = /(カロリー|kcal|キロカロリー)/i.test(safe);
+  const hasNumber = /(\d{2,4})\s*k?kcal?|(カロリー|kcal)\s*[：:はが]?\s*(\d{2,4})/i.test(safe);
+  const hasQuestion = /かな\??|ですか\??|だろ|でしょう|合って|あって|正しい|どう思|どう\?|どう？|いくつ|くらい\?|くらい？|\?|？/.test(safe);
+  if (hasKcalMention && hasNumber && hasQuestion) return true;
+  if (hasNumber && hasQuestion && /(合って|あって|正しい)/.test(safe)) return true;
+  return false;
+}
+
 /**
  * Phase A skeleton:
  * - active context は必ず active_context_store_service 経由で1件取得
@@ -90,6 +108,16 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
     active?.domain
     && (/_image_session$/.test(activeType) || activeType === 'lab_image_session_failed')
   );
+  if (hasActiveImageSession && /^meal_/.test(normalizeText(active.type || active.domain || ''))) {
+    if (looksLikeMealCalorieConfirmationTextRouter(safeText) || looksLikeMealPortionCorrectionText(safeText)) {
+      console.info('[contextual_intent_guardrail_applied]', {
+        userId: input?.userId || '',
+        router: 'newflow_followup',
+        action: 'release_to_legacy_orchestrator_meal_followup'
+      });
+      return null;
+    }
+  }
   if (hasActiveImageSession) {
     if (looksLikeExerciseRecordText(safeText) || looksLikeExplicitLabFollowupText(safeText)) return null;
     const isGeneral = looksLikeGeneralConversation(safeText);

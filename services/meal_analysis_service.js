@@ -109,6 +109,7 @@ function detectCalorieSourceFromRaw(raw = {}) {
     || ''
   ).toLowerCase();
   const notes = normalizeText(raw?.notes || raw?.comment || '').toLowerCase();
+  const confRaw = normalizeText(raw?.calorie_confidence || raw?.calorieConfidence || '').toLowerCase();
   if (/nutrition_label|栄養成分|栄養表示/.test(sourceText) || /栄養成分|栄養表示/.test(notes)) {
     return { calorie_source: 'nutrition_label', calorie_confidence: 'high' };
   }
@@ -121,7 +122,43 @@ function detectCalorieSourceFromRaw(raw = {}) {
   if (/fallback|heuristic|仮推定/.test(sourceText) || /仮推定/.test(notes)) {
     return { calorie_source: 'fallback_estimate', calorie_confidence: 'low' };
   }
+  if (/^high|高$|高い/.test(confRaw)) {
+    return { calorie_source: 'gemini_estimate', calorie_confidence: 'high' };
+  }
+  if (/^low|低$|低い/.test(confRaw)) {
+    return { calorie_source: 'gemini_estimate', calorie_confidence: 'low' };
+  }
   return { calorie_source: 'gemini_estimate', calorie_confidence: 'medium' };
+}
+
+/**
+ * 写真のみの gemini_estimate かつ medium のとき、過大になりやすいので下限寄りに寄せる。
+ */
+function applyGeminiMediumLowerBound(nutrition, calorieSource, calorieConfidence, logPayload = {}) {
+  const k = Number(nutrition?.kcal || 0);
+  if (!(calorieSource === 'gemini_estimate' && calorieConfidence === 'medium') || !(k > 0)) {
+    return { nutrition, applied: false };
+  }
+  const ratioRaw = Number(process.env.MEAL_GEMINI_MEDIUM_LOWER_BOUND_RATIO || 0.87);
+  const ratio = Number.isFinite(ratioRaw) && ratioRaw > 0 && ratioRaw < 1 ? ratioRaw : 0.87;
+  const finalK = Math.max(1, Math.round(k * ratio));
+  const r = finalK / k;
+  console.info('[meal_calorie_lower_bound_applied]', {
+    ...logPayload,
+    original_gemini_calories: k,
+    final_calories: finalK,
+    ratio,
+    calorie_confidence: calorieConfidence
+  });
+  return {
+    applied: true,
+    nutrition: {
+      kcal: finalK,
+      protein: round1(nutrition.protein * r),
+      fat: round1(nutrition.fat * r),
+      carbs: round1(nutrition.carbs * r),
+    }
+  };
 }
 
 async function fetchRecentMeals(userId, limit = 30) {
@@ -423,12 +460,21 @@ async function analyzeMealImage(imagePayload, userId = null, rawText = '') {
       });
     }
 
-    mealData.estimatedNutrition = rawNutrition;
-    mealData.estimated_nutrition = rawNutrition;
+    const mealLabel = String((mealData.items || [])[0] || '');
+    const bound = applyGeminiMediumLowerBound(
+      rawNutrition,
+      sourceInfo.calorie_source,
+      sourceInfo.calorie_confidence,
+      { user_id: String(userId || ''), meal_label: mealLabel }
+    );
+    const adoptedNutrition = bound.applied ? bound.nutrition : rawNutrition;
+
+    mealData.estimatedNutrition = adoptedNutrition;
+    mealData.estimated_nutrition = adoptedNutrition;
     mealData.calorie_source = sourceInfo.calorie_source;
     mealData.calorie_confidence = sourceInfo.calorie_confidence;
     mealData.original_gemini_calories = rawNutrition.kcal;
-    mealData.final_calories = rawNutrition.kcal;
+    mealData.final_calories = adoptedNutrition.kcal;
     mealData.correction_reason = sourceInfo.calorie_source === 'fallback_estimate'
       ? 'gemini_value_missing_or_low'
       : 'gemini_priority_preserved';

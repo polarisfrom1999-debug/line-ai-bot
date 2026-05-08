@@ -76,6 +76,26 @@ function pickNonRecentPhrase(candidates = [], recentReplies = []) {
   return { phrase: first, avoided: false, replaced: false };
 }
 
+function selectReplyDepth(intent, params = {}) {
+  const safeText = normalizeText(params.userText || '');
+  if (/(しんどい|つらい|限界|無理|苦しい)/.test(safeText)) return 'deep';
+  if (intent === 'normal_chat' && safeText.length > 40) return 'medium';
+  if (intent === 'meal' || intent === 'lab') return 'standard';
+  if (intent === 'exercise' || intent === 'video') return 'standard';
+  return 'light';
+}
+
+function runEmotionalQualityCheck(replyText, intent) {
+  const safe = normalizeText(replyText || '');
+  const dismissive = /(気にすんな|大したことない|そんなの無視)/.test(safe);
+  const acknowledges = /(大丈夫|無理しない|一緒に|受け止め|いたわ|寄り添)/.test(safe);
+  return {
+    emotional_quality_ok: !dismissive && (acknowledges || intent === 'video' || intent === 'meal'),
+    acknowledges_feeling: acknowledges,
+    avoids_dismissive_phrase: !dismissive
+  };
+}
+
 function dedupeSourceNotes(text = '', intent = '') {
   const safeIntent = normalizeText(intent);
   const original = String(text || '');
@@ -109,6 +129,18 @@ function dedupeSourceNotes(text = '', intent = '') {
 async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
   if (!rawReply || shouldSkip(params.intentType)) {
+    const intentSkipped = inferIntentTag(params.intentType);
+    console.info('[companion_reply_depth_selected]', {
+      user_id: params.userId,
+      intent: intentSkipped,
+      reply_depth: 'skipped'
+    });
+    console.info('[companion_reply_emotional_quality_check]', {
+      user_id: params.userId,
+      intent: intentSkipped,
+      emotional_quality_ok: null,
+      skipped: true
+    });
     return { text: rawReply, meta: { skipped: true } };
   }
 
@@ -216,6 +248,21 @@ async function enhanceReply(params = {}) {
     reply_style: supportStyle,
     included_next_step: Boolean(nextStep),
     avoided_template_phrase: core !== rawReply
+  });
+
+  const replyDepth = selectReplyDepth(intent, params);
+  console.info('[companion_reply_depth_selected]', {
+    user_id: params.userId,
+    intent,
+    reply_depth: replyDepth
+  });
+  const emotionalQ = runEmotionalQualityCheck(text, intent);
+  console.info('[companion_reply_emotional_quality_check]', {
+    user_id: params.userId,
+    intent,
+    emotional_quality_ok: emotionalQ.emotional_quality_ok,
+    acknowledges_feeling: emotionalQ.acknowledges_feeling,
+    avoids_dismissive_phrase: emotionalQ.avoids_dismissive_phrase
   });
 
   return { text, meta: { intent, supportStyle } };

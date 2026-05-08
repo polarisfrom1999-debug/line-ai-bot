@@ -671,9 +671,63 @@ function detectIntent(input, _shortMemory = {}) {
   return 'normal';
 }
 
+function hasMealFollowupContextSync(shortMemory = {}) {
+  const actType = normalizeText(shortMemory?.activeContext?.type || '');
+  return Boolean(
+    shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
+    || shortMemory?.followUpContext?.imageType === 'meal'
+    || shortMemory?.followUpContext?.lastRecordType === 'meal'
+    || shortMemory?.lastImageType === 'meal'
+    || /^meal_/.test(actType)
+  );
+}
+
+function hasMealFollowupContextFromShortAndActive(shortMemory = {}, activeCtx = null) {
+  if (hasMealFollowupContextSync(shortMemory)) return true;
+  const t = normalizeText(activeCtx?.type || '');
+  return /^meal_/.test(t);
+}
+
+function looksLikeMealCalorieConfirmationText(text, shortMemory = {}, activeCtx = null) {
+  const safe = normalizeText(text);
+  if (!safe || !hasMealFollowupContextFromShortAndActive(shortMemory, activeCtx)) return false;
+  if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計|1日のカロリー|一日のカロリー|本日の合計|今日の合計|今日ここまで|積算/.test(safe)) {
+    return false;
+  }
+  const hasKcalMention = /(カロリー|kcal|キロカロリー)/i.test(safe);
+  const hasNumber = /(\d{2,4})\s*k?kcal?|(カロリー|kcal)\s*[：:はが]?\s*(\d{2,4})/i.test(safe);
+  const hasQuestion = /かな\??|ですか\??|だろ|でしょう|合って|あって|正しい|どう思|どう\?|どう？|いくつ|くらい\?|くらい？|\?|？/.test(safe);
+  if (hasKcalMention && hasNumber && hasQuestion) return true;
+  if (hasNumber && hasQuestion && /(合って|あって|正しい)/.test(safe)) return true;
+  return false;
+}
+
+function extractUserSuggestedKcalFromText(text) {
+  const safe = normalizeText(text);
+  const m1 = safe.match(/(\d{2,4})\s*k?kcal?/i);
+  if (m1) return Number(m1[1]);
+  const m2 = safe.match(/カロリー\s*[：:はが]?\s*(\d{2,4})/i);
+  if (m2) return Number(m2[1]);
+  return null;
+}
+
+function buildMealCalorieConfirmationReply(kcal) {
+  const k = Number(kcal || 0);
+  const kPart = Number.isFinite(k) && k > 0 ? `おっしゃっている目安（だいたい ${Math.round(k)}kcal）` : 'その目安';
+  return [
+    `了解です。${kPart}は、店名やメニュー表があると精度が上がりやすい手がかりです。`,
+    'こちらではいったんその前提で受け止めます。量が違ったら「ご飯半分」などでいつでも言い直せます。'
+  ].join('\n');
+}
+
 function detectPriorityRouteForText(text, shortMemory = {}) {
   const safe = normalizeText(text);
   if (!safe) return { route: '', reason: '' };
+  if (/半分|1\/4|１\/４|麺だけ0kcal|食べてない|完食|ごはん半分|ご飯半分|少しだけ|ちょっとだけ/.test(safe)) {
+    if (hasMealFollowupContextSync(shortMemory)) {
+      return { route: 'meal_correction', reason: 'explicit_meal_correction_with_context' };
+    }
+  }
   if (exerciseRecordService.tryParseExerciseRecord(safe, { weightKg: 60 })) {
     return { route: 'exercise_record', reason: 'explicit_exercise_record' };
   }
@@ -682,14 +736,6 @@ function detectPriorityRouteForText(text, shortMemory = {}) {
   }
   if (/今日の食事の総カロリー|今日の総カロリー|1日の総カロリー|今日の食事の合計|今日の食事の総計|1日のカロリー|一日のカロリー|本日の合計|今日の合計|今日の食事は\?|今日どれくらい/.test(safe)) {
     return { route: 'today_meal_totals', reason: 'explicit_today_totals' };
-  }
-  if (/半分|1\/4|１\/４|麺だけ0kcal|食べてない|完食/.test(safe)) {
-    const hasMealContext = Boolean(
-      shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
-      || shortMemory?.followUpContext?.imageType === 'meal'
-      || shortMemory?.followUpContext?.lastRecordType === 'meal'
-    );
-    if (hasMealContext) return { route: 'meal_correction', reason: 'explicit_meal_correction_with_context' };
   }
   if (/^(こんにちは|こんばんは|おはよう|やあ|はじめまして)$/u.test(safe)) {
     return { route: 'normal_chat', reason: 'greeting_text' };
@@ -2576,13 +2622,18 @@ async function maybeHandleMealText(input) {
 
 async function maybeHandleMealFollowUp(input, shortMemory) {
   const text = normalizeText(input?.rawText || '');
-  const pending = shortMemory?.pendingRecordCandidate;
-
-  if (!pending || pending?.recordType !== 'meal_record') return null;
+  const fromPending = shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
+    ? shortMemory?.pendingRecordCandidate?.extracted
+    : null;
+  const fromFollowUp = shortMemory?.followUpContext?.imageType === 'meal'
+    ? shortMemory?.followUpContext?.extractedMeal
+    : null;
+  const meal = fromPending || fromFollowUp;
+  if (!meal || typeof meal !== 'object') return null;
   if (!/半分|少し|全部|完食/.test(text)) return null;
 
-  const meal = pending?.extracted || {};
-  const base = meal?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 };
+  const mealBody = meal;
+  const base = mealBody?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 };
 
   let ratio = 1;
   if (/半分/.test(text)) ratio = 0.5;
@@ -2597,7 +2648,7 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   };
 
   const adjusted = {
-    ...meal,
+    ...mealBody,
     amountNote: text,
     estimatedNutrition: adjustedNutrition
   };
@@ -2617,12 +2668,16 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     carbs: round1(dbTotals.carbs + adjustedNutrition.carbs)
   };
 
-  await contextMemoryService.saveShortMemory(input.userId, {
+  const memPatch = {
     pendingRecordCandidate: {
       recordType: 'meal_record',
       extracted: adjusted
     }
-  });
+  };
+  if (shortMemory?.followUpContext?.imageType === 'meal') {
+    memPatch.followUpContext = { ...shortMemory.followUpContext, extractedMeal: adjusted };
+  }
+  await contextMemoryService.saveShortMemory(input.userId, memPatch);
 
   return {
     replyText: [
@@ -3137,6 +3192,31 @@ async function orchestrateConversation(input) {
           await appendTurn(input.userId, input.rawText || '', ngOut);
           return { ok: true, replyMessages: [{ type: 'text', text: ngOut }], internal: { intentType: 'pending_confirmation_reject', responseMode: 'answer' } };
         }
+      }
+    }
+
+    if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
+      const activeEarly = await activeContextService.getActiveContext(input.userId, shortMemory);
+      if (looksLikeMealCalorieConfirmationText(text, shortMemory, activeEarly)) {
+        console.info('[contextual_intent_guardrail_applied]', {
+          user_id: input.userId,
+          guardrail: 'meal_calorie_confirmation_before_compassionate',
+          text: text.slice(0, 120)
+        });
+        const kcal = extractUserSuggestedKcalFromText(text);
+        console.info('[meal_followup_calorie_confirmation]', {
+          user_id: input.userId,
+          suggested_kcal: kcal,
+          text: text.slice(0, 120)
+        });
+        const reply = buildMealCalorieConfirmationReply(kcal);
+        const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'meal_calorie_confirmation');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: out }],
+          internal: { intentType: 'meal_calorie_confirmation', responseMode: 'answer' }
+        };
       }
     }
 
