@@ -4,7 +4,9 @@ const userPatternInsightService = require('./user_pattern_insight_service');
 const microChangeDetectorService = require('./micro_change_detector_service');
 const motivationPhraseService = require('./motivation_phrase_service');
 const threeStepsAheadService = require('./three_steps_ahead_service');
-const { PHASES, selectToneMode } = require('./relationship_phase_service');
+const { PHASES } = require('./relationship_phase_service');
+const { selectConversationTone } = require('./conversation_tone_selector_service');
+const emotionalQualityCheckService = require('./emotional_quality_check_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -45,18 +47,53 @@ function resolveRelationshipPhase(params) {
   return normalizeText(params.relationshipPhase || params.longMemory?.relationshipPhase || PHASES.P1) || PHASES.P1;
 }
 
+/**
+ * @returns {{ depth: 'short'|'normal'|'deep', reason: string }}
+ */
+function selectReplyDepth(intent, params = {}, relationshipPhase = '') {
+  const safeText = normalizeText(params.userText || '');
+  const deepMarkers = /不安|迷い|弱音|寂し|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
+  if (deepMarkers.test(safeText)) {
+    return { depth: 'deep', reason: 'vulnerability_distress_or_seeking' };
+  }
+  if (/(相談|ちょっと|聞いて)/.test(safeText) && safeText.length > 8) {
+    return { depth: 'deep', reason: 'help_seeking' };
+  }
+  if (safeText.length <= 8 && /^(はい|うん|OK|ok|お[kK]|了解)$/i.test(safeText)) {
+    return { depth: 'short', reason: 'light_ack' };
+  }
+  if ((intent === 'meal' || intent === 'exercise') && safeText.length <= 14) {
+    return { depth: 'short', reason: 'brief_health_note' };
+  }
+  if (intent === 'normal_chat' && safeText.length < 22) {
+    return { depth: 'short', reason: 'brief_chat' };
+  }
+  if (relationshipPhase === PHASES.P3 || relationshipPhase === PHASES.P4) {
+    if (intent === 'normal_chat' && safeText.length > 36) {
+      return { depth: 'deep', reason: 'longer_chat_higher_trust_phase' };
+    }
+  }
+  return { depth: 'normal', reason: 'default' };
+}
+
 function maybePhaseMealClosing(relationshipPhase, userText, core) {
   const ut = normalizeText(userText || '');
   const c = normalizeText(core || '');
   const lines = [];
   if (relationshipPhase === PHASES.P1 && !/控えめ|概算|推定/.test(c)) {
     lines.push('写真からの概算なので、今日は少し控えめ側で見ておきますね。');
+    if (!/直せます|直せる|言い直/.test(c)) {
+      lines.push('違っていれば、あとで自然に直せます。');
+    }
   }
   if (relationshipPhase === PHASES.P2 && /なか卯|すき家|吉野家|松屋|チェーン|店で|お店/.test(ut)) {
-    lines.push('店名やメニューまで教えてくれると、記録がかなり現実に寄ります。ありがとうございます。');
+    lines.push('そうやって教えてくれると、写真だけよりかなり実際に近づけられます。今の記録は大きくズレていなさそうなので、このままで良さそうです。');
   }
-  if (relationshipPhase === PHASES.P3 && /半分|訂正|修正|補正|教えてくれ|伝えてくれ/.test(ut)) {
-    lines.push('細かく直してくれるのは、あとから見返したときにとても効きます。');
+  if (relationshipPhase === PHASES.P3 && /半分|訂正|修正|補正|補足|あとから|実際は|教えてくれ|伝えてくれ/.test(ut)) {
+    lines.push('最近、あとから少し補足してくれることが増えているように見えます。完璧な一発より、実感に近づけていく方が続きます。ここから。はその形で大丈夫です。');
+  }
+  if (relationshipPhase === PHASES.P4 && /腰|痛み|しんど|疲れ/.test(ut)) {
+    lines.push('今日は食事の形は見えていますが、体の声も一緒に置いておきます。ここで頑張りを足すより、明日も動ける体を残す方が大事そうなら、「整える日」にしておきましょう。');
   }
   return lines;
 }
@@ -105,26 +142,6 @@ function pickNonRecentPhrase(candidates = [], recentReplies = []) {
   return { phrase: first, avoided: false, replaced: false };
 }
 
-function selectReplyDepth(intent, params = {}) {
-  const safeText = normalizeText(params.userText || '');
-  if (/(しんどい|つらい|限界|無理|苦しい)/.test(safeText)) return 'deep';
-  if (intent === 'normal_chat' && safeText.length > 40) return 'medium';
-  if (intent === 'meal' || intent === 'lab') return 'standard';
-  if (intent === 'exercise' || intent === 'video') return 'standard';
-  return 'light';
-}
-
-function runEmotionalQualityCheck(replyText, intent) {
-  const safe = normalizeText(replyText || '');
-  const dismissive = /(気にすんな|大したことない|そんなの無視)/.test(safe);
-  const acknowledges = /(大丈夫|無理しない|一緒に|受け止め|いたわ|寄り添)/.test(safe);
-  return {
-    emotional_quality_ok: !dismissive && (acknowledges || intent === 'video' || intent === 'meal'),
-    acknowledges_feeling: acknowledges,
-    avoids_dismissive_phrase: !dismissive
-  };
-}
-
 function dedupeSourceNotes(text = '', intent = '') {
   const safeIntent = normalizeText(intent);
   const original = String(text || '');
@@ -157,40 +174,53 @@ function dedupeSourceNotes(text = '', intent = '') {
 
 async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
+  const relationshipPhase = resolveRelationshipPhase(params);
+
   if (!rawReply || shouldSkip(params.intentType)) {
     const intentSkipped = inferIntentTag(params.intentType);
-    const phaseSkipped = resolveRelationshipPhase(params);
+    const depthMeta = selectReplyDepth(intentSkipped, params, relationshipPhase);
     console.info('[conversation_tone_selected]', {
       user_id: params.userId,
-      relationship_phase: phaseSkipped,
+      relationship_phase: relationshipPhase,
       tone_mode: 'skipped',
-      reply_depth: 'skipped',
+      reply_depth: depthMeta.depth,
       reason: 'companion_layer_skipped'
     });
     console.info('[companion_reply_depth_selected]', {
       user_id: params.userId,
       intent: intentSkipped,
-      reply_depth: 'skipped'
+      relationship_phase: relationshipPhase,
+      reply_depth: depthMeta.depth,
+      reason: depthMeta.reason
     });
     console.info('[companion_reply_emotional_quality_check]', {
       user_id: params.userId,
       intent: intentSkipped,
-      emotional_quality_ok: null,
+      relationship_phase: relationshipPhase,
+      has_specific_reaction: null,
+      has_user_word_echo: null,
+      has_warmth: null,
+      has_next_step: null,
+      has_template_only_phrase: null,
+      has_trust_building_phrase: null,
+      rewrite_applied: null,
       skipped: true
     });
     return { text: rawReply, meta: { skipped: true } };
   }
 
   const intent = inferIntentTag(params.intentType);
-  const relationshipPhase = resolveRelationshipPhase(params);
-  const replyDepth = selectReplyDepth(intent, params);
-  const tonePick = selectToneMode(relationshipPhase, intent);
+  const depthMeta = selectReplyDepth(intent, params, relationshipPhase);
+  const tonePick = selectConversationTone(relationshipPhase, intent, depthMeta);
   console.info('[conversation_tone_selected]', {
     user_id: params.userId,
     relationship_phase: relationshipPhase,
     tone_mode: tonePick.tone_mode,
-    reply_depth: replyDepth,
-    reason: tonePick.reason
+    reply_depth: depthMeta.depth,
+    reason: tonePick.reason,
+    safe_reliance: tonePick.safe_reliance,
+    deep_trust: tonePick.deep_trust,
+    emotional_safety: tonePick.emotional_safety,
   });
 
   const pattern = userPatternInsightService.buildPatternInsights({
@@ -223,13 +253,20 @@ async function enhanceReply(params = {}) {
     has_today_summary: Boolean(params.todayNutritionSummary || params.todayEnergyBalance),
     has_recent_patterns: pattern.hasRecentPatterns,
     has_micro_change: micro.hasMicroChange,
-    support_style: supportStyle
+    support_style: supportStyle,
+    reply_depth: depthMeta.depth
   });
 
   const core = avoidBareTemplate(rawReply);
   const lines = [core];
   const recentAssistantReplies = getRecentAssistantReplies(params.recentMessages);
   let dedupMeta = { avoided: false, replaced: false };
+
+  const recentUserCorrectionHints = (Array.isArray(params.recentMessages) ? params.recentMessages : [])
+    .filter((m) => m?.role === 'user')
+    .slice(-6)
+    .some((m) => /半分|訂正|修正|補正|実際は|あとから/.test(normalizeText(m?.content || '')));
+
   if (pattern.stable_routine_detected) {
     const routineLine = buildRoutineLine(pattern);
     if (routineLine) lines.push(`\n${routineLine}`);
@@ -245,6 +282,11 @@ async function enhanceReply(params = {}) {
   if (pattern.routine_disruption_detected && pattern.user_may_feel_anxious_about_change) {
     lines.push('\nいつもの流れが崩れると落ち着かないこともありますよね。今日は代わりの形で十分です。');
   }
+
+  if (relationshipPhase === PHASES.P3 && intent === 'meal' && recentUserCorrectionHints && !normalizeText(params.userText || '').match(/半分|訂正|補正/)) {
+    lines.push('\n最近、写真のあとに「実際はこうだった」と教えてくれることが増えているように見えます。記録が推定だけでなく、あなたの実感に近づいてきています。');
+  }
+
   if (intent === 'lab') {
     const labPhrase = pickNonRecentPhrase([
       '読み取り値は参考にしつつ、原本と照らして確認していけば十分です。',
@@ -265,40 +307,44 @@ async function enhanceReply(params = {}) {
       [PHASES.P1]: [
         'まずはここに送れただけで十分です。',
         '気になることを、そのまま一文で送ってくれれば大丈夫です。',
-        '言いにくいことでも、短くでいいので送ってみてください。こちらで受け止めます。'
+        '言いにくいことでも、ざっくりで大丈夫です。今わかる範囲で十分です。',
+        'あとで直せます。責めるための会話ではありません。'
       ],
       [PHASES.P2]: [
         '健康の話に無理に戻さなくて大丈夫です。',
         '今の言葉を、そのまま大事にします。',
-        '雑談も、ちゃんと置いておきます。'
+        '雑談も、ちゃんと置いておきます。',
+        'ここでは、そのまま話して大丈夫です。'
       ],
       [PHASES.P3]: [
         '少しずつ、言葉の温度まで見えてきています。',
         '迷いのままでも、ここに置いておけます。',
-        '責めずに、いまの感触だけ一緒に見ていきましょう。'
+        '責めずに、いまの感触だけ一緒に見ていきましょう。',
+        '言葉のクセや間、そっと横で見ています。'
       ],
       [PHASES.P4]: [
         '前にも似た流れがあったかもしれません。急がず、今日は一歩だけで十分です。',
         'あなたが自分で選べるように、横で支えます。',
-        '深くは寄り添いますが、生活の主導はあなたの側にあります。'
+        '深くは寄り添いますが、生活の主導はあなたの側にあります。',
+        '必要なら、現実の誰かに伝える言葉も一緒に短く整えます。'
       ]
     };
     const bank = banks[relationshipPhase] || banks[PHASES.P1];
     const chatPhrase = pickNonRecentPhrase(bank, recentAssistantReplies);
-    if (chatPhrase.phrase) lines.push(`\n${chatPhrase.phrase}`);
+    if (depthMeta.depth !== 'short' && chatPhrase.phrase) lines.push(`\n${chatPhrase.phrase}`);
     dedupMeta = { avoided: chatPhrase.avoided, replaced: chatPhrase.replaced };
   } else {
     if (intent === 'meal') {
       const mealExtras = maybePhaseMealClosing(relationshipPhase, params.userText, core);
       for (const ex of mealExtras) {
-        if (ex && !lines.some((ln) => ln.includes(ex.slice(0, 12)))) lines.push(`\n${ex}`);
+        if (ex && !lines.some((ln) => ln.includes(ex.slice(0, 10)))) lines.push(`\n${ex}`);
       }
       dedupMeta = { avoided: false, replaced: false };
     } else {
       const motivationPick = pickNonRecentPhrase([motivation], recentAssistantReplies);
-      if (motivationPick.phrase) lines.push(`\n${motivationPick.phrase}`);
+      if (motivationPick.phrase && depthMeta.depth !== 'short') lines.push(`\n${motivationPick.phrase}`);
       const nextStepPick = pickNonRecentPhrase([nextStep], recentAssistantReplies);
-      if (nextStepPick.phrase) lines.push(`\n${nextStepPick.phrase}`);
+      if (nextStepPick.phrase && depthMeta.depth !== 'short') lines.push(`\n${nextStepPick.phrase}`);
       if (intent === 'exercise') {
         const exLine = phaseExerciseEncouragement(relationshipPhase);
         if (exLine) {
@@ -312,7 +358,8 @@ async function enhanceReply(params = {}) {
       };
     }
   }
-  const text = dedupeSourceNotes(lines.join('\n').trim(), intent);
+
+  let text = dedupeSourceNotes(lines.join('\n').trim(), intent);
 
   console.info('[companion_reply_phrase_dedup]', {
     avoided_recent_phrase: Boolean(dedupMeta.avoided),
@@ -331,21 +378,22 @@ async function enhanceReply(params = {}) {
   console.info('[companion_reply_depth_selected]', {
     user_id: params.userId,
     intent,
-    reply_depth: replyDepth
-  });
-  const emotionalQ = runEmotionalQualityCheck(text, intent);
-  console.info('[companion_reply_emotional_quality_check]', {
-    user_id: params.userId,
-    intent,
-    emotional_quality_ok: emotionalQ.emotional_quality_ok,
-    acknowledges_feeling: emotionalQ.acknowledges_feeling,
-    avoids_dismissive_phrase: emotionalQ.avoids_dismissive_phrase
+    relationship_phase: relationshipPhase,
+    reply_depth: depthMeta.depth,
+    reason: depthMeta.reason
   });
 
-  return { text, meta: { intent, supportStyle } };
+  const eq = emotionalQualityCheckService.applyEmotionalQualityPass({
+    text,
+    userText: params.userText || '',
+    intent,
+    relationshipPhase,
+    userId: params.userId
+  });
+
+  return { text: eq.text, meta: { intent, supportStyle, reply_depth: depthMeta.depth } };
 }
 
 module.exports = {
   enhanceReply,
 };
-

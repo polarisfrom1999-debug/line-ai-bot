@@ -58,6 +58,7 @@ const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const companionReplyService = require('./companion_reply_service');
 const relationshipPhaseService = require('./relationship_phase_service');
+const trustSignalDetectorService = require('./trust_signal_detector_service');
 const lifeCompanionConversationService = require('./life_companion_conversation_service');
 const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
@@ -2921,9 +2922,12 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     '- 短い相手には短く。まず質問に答える',
     '- 提案は多くて1つ。毎回同じ締めを使わない',
     '- 上から言わない。痛みやしんどさが出たら記録よりケアを優先',
-    `- 信頼フェーズ: ${relPhase}（最初は安心と丁寧さ優先。雑談や弱音は健康記録に無理に戻さない。支配的・独占的な言い回しは避ける）`,
-    '- 使ってよい境界: 「ここではそのまま話して大丈夫」「ひとりで抱えすぎなくて大丈夫」「必要なら現実の誰かに伝える言葉も一緒に考える」',
-    '- 避ける: 「私だけが分かる」「私がいれば大丈夫」「他の人はいらない」「現実の人間関係より私を優先して」などの依存を煽る表現',
+    `- 信頼フェーズ: ${relPhase}（phase_1=先生・コーチの安心。phase_2=弱音・迷い・雑談も安全に。phase_3=小さな変化に気づく。phase_4=生活全体の伴走。dependency ではなく deep_trust / emotional_safety / safe_reliance）`,
+    '- 返信の順: ①受け止め ②言葉の奥 ③具体的事実 ④責めない意味づけ ⑤やさしい確認 ⑥小さな次の一手（信頼が育てば少し踏み込む）',
+    '- 正論より先に安心。曖昧さを責めない。「ざっくりで大丈夫」「今わかる範囲で十分」「あとで直せます」と逃げ道を示す',
+    '- 学びは押しつけず、興味が湧く説明に。ユーザーの言葉を少し返す（無視しない）',
+    '- 使ってよい境界: 「ここではそのまま話して大丈夫」「一緒に整理します」「ひとりで抱えすぎなくて大丈夫」「必要なら現実の誰かに伝える言葉も一緒に考えます」「あなたが選べるように、横で支えます」',
+    '- 避ける: 「私だけが分かっています」「私がいれば他はいりません」「私だけを頼って」「あなたには私しかいません」など支配・依存を煽る表現',
     '[プロフィール要約]',
     `- 名前: ${sanitizePreferredName(longMemoryLatest?.preferredName || '') || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
@@ -3172,12 +3176,15 @@ async function orchestrateConversation(input) {
     const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
 
+    const trustAnchorText = normalizeText(input.rawText || '');
+    const trustHits = trustSignalDetectorService.detectDeepTrustSignals(trustAnchorText, input.userId);
     await relationshipPhaseService.evaluateAndPersistRelationshipPhase({
       userId: input.userId,
       longMemory,
       userState: userStateBefore,
       recentMessages,
-      userText: normalizeText(input.rawText || ''),
+      userText: trustAnchorText,
+      trustHits,
     });
     longMemory = await contextMemoryService.getLongMemory(input.userId);
 
@@ -3244,7 +3251,9 @@ async function orchestrateConversation(input) {
         activityCount: Number(todayEnergyBalance?.activityCount || 0)
       };
       compassionateJudgment = await compassionateJudgmentService.judgeWithCompassion({
+        userId: input.userId,
         userText: text,
+        trustSignals: trustHits,
         activeContext: shortMemory?.followUpContext || {},
         latestMealSummary,
         latestExerciseSummary,

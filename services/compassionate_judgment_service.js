@@ -2,13 +2,26 @@
 
 const contextualIntentInterpreterService = require('./contextual_intent_interpreter_service');
 const userStateInferenceService = require('./user_state_inference_service');
+const trustSignalDetectorService = require('./trust_signal_detector_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
 }
 
 async function judgeWithCompassion(payload = {}) {
-  const interpreted = await contextualIntentInterpreterService.interpretContextualIntent(payload);
+  let trustHits = Array.isArray(payload.trustSignals) ? payload.trustSignals : null;
+  if (!trustHits) {
+    trustHits = trustSignalDetectorService.detectDeepTrustSignals(
+      normalizeText(payload.userText),
+      normalizeText(payload.userId || '')
+    );
+  }
+  const trustSignalsSummary = trustSignalDetectorService.summarizeForInterpreter(trustHits);
+
+  const interpreted = await contextualIntentInterpreterService.interpretContextualIntent({
+    ...payload,
+    trustSignalsSummary,
+  });
   const deeper = userStateInferenceService.inferUserStateSignals(payload);
   const confidence = Number(interpreted.confidence || 0.5);
   const isNormalChat = interpreted.surface_intent === 'normal_chat';
@@ -22,6 +35,9 @@ async function judgeWithCompassion(payload = {}) {
     || deeper.possible_confusion
     || (interpreted.surface_intent === 'meal_correction' && confidence < 0.9);
   if (isNormalChat) needsConfirmation = false;
+  if (trustSignalsSummary?.emotional_safety_cue && /meal_correction|meal_record_text/.test(interpreted.surface_intent) && confidence >= 0.78) {
+    needsConfirmation = false;
+  }
 
   let confirmationQuestion = null;
   if (needsConfirmation) {

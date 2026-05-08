@@ -1,15 +1,22 @@
 'use strict';
 
 const contextMemoryService = require('./context_memory_service');
+const trustSignalDetectorService = require('./trust_signal_detector_service');
 
 const PHASES = {
   P1: 'phase_1_professional_trust',
-  P2: 'phase_2_friendly_openness',
-  P3: 'phase_3_close_companion',
-  P4: 'phase_4_life_partner',
+  P2: 'phase_2_safe_openness',
+  P3: 'phase_3_emotional_trust',
+  P4: 'phase_4_life_companion',
 };
 
 const ORDER = [PHASES.P1, PHASES.P2, PHASES.P3, PHASES.P4];
+
+const LEGACY_PHASE_MAP = {
+  phase_2_friendly_openness: PHASES.P2,
+  phase_3_close_companion: PHASES.P3,
+  phase_4_life_partner: PHASES.P4,
+};
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -38,8 +45,16 @@ function daysBetweenYmd(a, b) {
   return Math.max(0, Math.round((db - da) / (24 * 60 * 60 * 1000)));
 }
 
+function normalizeStoredRelationshipPhase(longMemory = {}) {
+  const raw = normalizeText(longMemory?.relationshipPhase);
+  if (LEGACY_PHASE_MAP[raw]) return LEGACY_PHASE_MAP[raw];
+  if (ORDER.includes(raw)) return raw;
+  return '';
+}
+
 function migrateLegacyPhase(longMemory = {}, userState = {}) {
-  if (normalizeText(longMemory?.relationshipPhase)) return longMemory.relationshipPhase;
+  const stored = normalizeStoredRelationshipPhase(longMemory);
+  if (stored) return stored;
   const st = normalizeText(userState?.relationshipStage || '');
   if (st === 'best_friend') return PHASES.P3;
   if (st === 'friend') return PHASES.P2;
@@ -69,7 +84,13 @@ function isObligatoryShort(text) {
     || (safe.length <= 6 && !/[。！？]/.test(safe));
 }
 
-function buildTrustSignals({ recentMessages = [], longMemory = {}, userState = {}, userText = '' } = {}) {
+function buildTrustSignals({
+  recentMessages = [],
+  longMemory = {},
+  userState = {},
+  userText = '',
+  trustHits = [],
+} = {}) {
   const windowMsgs = (Array.isArray(recentMessages) ? recentMessages : []).filter((m) => m?.role === 'user');
   const lastUser = windowMsgs.slice(-14).map((m) => normalizeText(m?.content || '')).filter(Boolean);
 
@@ -108,6 +129,9 @@ function buildTrustSignals({ recentMessages = [], longMemory = {}, userState = {
 
   const totalTurns = Number(userState?.totalTurns || 0);
 
+  const deepTrustCounts = trustSignalDetectorService.countSignalsByType(trustHits);
+  const deepTrustTotal = Array.isArray(trustHits) ? trustHits.length : 0;
+
   return {
     active_day_span: activeDaySpan,
     total_turns: totalTurns,
@@ -118,6 +142,8 @@ function buildTrustSignals({ recentMessages = [], longMemory = {}, userState = {
     health_record_diversity_score: healthRecordDiversityScore,
     obligatory_short_ratio: Math.round(obligatoryShortRatio * 100) / 100,
     window_user_messages: lastUser.length,
+    deep_trust_signal_counts: deepTrustCounts,
+    deep_trust_signal_total: deepTrustTotal,
   };
 }
 
@@ -130,7 +156,12 @@ function targetPhaseFromSignals(signals) {
   score += Number(signals.correction_or_consult_signals || 0) * 3.5;
   score += Number(signals.health_record_diversity_score || 0) * 4;
   score += Math.min(12, Number(signals.total_turns || 0) * 0.12);
+  score += Math.min(20, Number(signals.deep_trust_signal_total || 0) * 4.5);
   score -= Number(signals.obligatory_short_ratio || 0) * 28;
+
+  const counts = signals.deep_trust_signal_counts || {};
+  if (counts.gratitude) score += Math.min(8, counts.gratitude * 3);
+  if (counts.vulnerability || counts.emotional_disclosure) score += 4;
 
   if (score < 18) return PHASES.P1;
   if (score < 36) return PHASES.P2;
@@ -161,13 +192,13 @@ function clampPhaseAdvance(previous, suggested, signals, meta = {}) {
 }
 
 function buildEvalReason(previous, next, signals) {
-  if (previous === next) return 'threshold_not_met_or_cooled';
+  if (previous === next) return 'threshold_not_met_or_hold_policy';
   if (phaseRank(next) > phaseRank(previous)) return 'trust_signals_support_phase_advance';
   return 'trust_signals_suggest_step_back_or_hold';
 }
 
 /**
- * フェーズ評価（利用回数だけで一気に上げない。シグナルと最低ターン間隔で抑制）。
+ * フェーズ評価（利用回数だけで一気に上げない。deep_trust シグナルと最低ターン間隔で抑制）。
  */
 async function evaluateAndPersistRelationshipPhase({
   userId,
@@ -175,9 +206,16 @@ async function evaluateAndPersistRelationshipPhase({
   userState = {},
   recentMessages = [],
   userText = '',
+  trustHits = [],
 } = {}) {
   const previous = migrateLegacyPhase(longMemory, userState);
-  const signals = buildTrustSignals({ recentMessages, longMemory, userState, userText });
+  const signals = buildTrustSignals({
+    recentMessages,
+    longMemory,
+    userState,
+    userText,
+    trustHits,
+  });
   const suggested = targetPhaseFromSignals(signals);
   const meta = (longMemory?.relationshipPhaseMeta && typeof longMemory.relationshipPhaseMeta === 'object')
     ? longMemory.relationshipPhaseMeta
@@ -190,16 +228,23 @@ async function evaluateAndPersistRelationshipPhase({
 
   const reason = buildEvalReason(previous, next, signals);
 
-  if (next !== previous) {
-    const patchMeta = {
-      ...meta,
-      turnsAtLastPhaseChange: Number(userState?.totalTurns || signals.total_turns || 0),
-      lastPhaseChangeYmd: toTokyoYmd(),
-    };
+  const rawPhaseInDb = normalizeText(longMemory?.relationshipPhase || '');
+  const needsLegacyRename = Boolean(LEGACY_PHASE_MAP[rawPhaseInDb]);
+
+  if (needsLegacyRename && next === previous) {
     await contextMemoryService.mergeLongMemory(userId, {
       relationshipPhase: next,
       relationshipPhaseUpdatedAt: new Date().toISOString(),
-      relationshipPhaseMeta: patchMeta,
+    });
+  } else if (next !== previous) {
+    await contextMemoryService.mergeLongMemory(userId, {
+      relationshipPhase: next,
+      relationshipPhaseUpdatedAt: new Date().toISOString(),
+      relationshipPhaseMeta: {
+        ...meta,
+        turnsAtLastPhaseChange: Number(userState?.totalTurns || signals.total_turns || 0),
+        lastPhaseChangeYmd: toTokyoYmd(),
+      },
     });
   }
 
@@ -214,27 +259,11 @@ async function evaluateAndPersistRelationshipPhase({
   return { phase: next, previousPhase: previous, signals, reason };
 }
 
-function selectToneMode(relationshipPhase, intentTag) {
-  const p = normalizeText(relationshipPhase) || PHASES.P1;
-  const intent = normalizeText(intentTag);
-  if (p === PHASES.P1) return { tone_mode: 'professional_calm', reason: 'phase_1_default' };
-  if (p === PHASES.P2) return { tone_mode: 'friendly_open', reason: 'phase_2_default' };
-  if (p === PHASES.P3) {
-    if (intent === 'meal' || intent === 'exercise') {
-      return { tone_mode: 'close_companion_routine', reason: 'phase_3_health_routine' };
-    }
-    return { tone_mode: 'close_companion', reason: 'phase_3_default' };
-  }
-  if (intent === 'normal_chat') {
-    return { tone_mode: 'life_partner_reflective', reason: 'phase_4_conversation' };
-  }
-  return { tone_mode: 'life_partner_guided', reason: 'phase_4_default' };
-}
-
 module.exports = {
   PHASES,
+  ORDER,
   evaluateAndPersistRelationshipPhase,
   buildTrustSignals,
   migrateLegacyPhase,
-  selectToneMode,
+  normalizeStoredRelationshipPhase,
 };

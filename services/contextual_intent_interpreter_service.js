@@ -81,7 +81,8 @@ async function interpretContextualIntent(payload = {}) {
     previousCorrections: payload.previousCorrections || [],
     userProfile: payload.userProfile || {},
     timeOfDay: payload.timeOfDay || '',
-    energyLevel: payload.energyLevel || ''
+    energyLevel: payload.energyLevel || '',
+    trustSignalsSummary: payload.trustSignalsSummary || null
   });
   const ai = await callOpenAIForInterpretation(prompt);
   const merged = ai && typeof ai === 'object' ? ai : fallback;
