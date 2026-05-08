@@ -1,0 +1,141 @@
+'use strict';
+
+const { PHASES, migrateLegacyPhase } = require('./relationship_phase_service');
+
+function normalizeText(v) {
+  return String(v || '').trim();
+}
+
+function isHealthAnchoredText(text) {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  return /カロリー|kcal|食事|ごはん|ご飯|朝食|昼食|夕食|運動|歩数|体重|体脂肪|検査|血糖|血圧|痛い|腰痛|睡眠|HbA1c|タンパク|糖質/.test(safe);
+}
+
+function inferLifeTopic(text) {
+  const safe = normalizeText(text);
+  if (!safe) return null;
+  if (/仕事|職場|上司|残業|クライアント|プロジェクト/.test(safe)) return 'work_stress';
+  if (/家族|親|子ども|子供|夫|妻|パートナー/.test(safe)) return 'family';
+  if (/恋愛|彼氏|彼女|好きな人|告白|別れ/.test(safe)) return 'romance';
+  if (/寂しい|孤独|ひとり|一人が/.test(safe)) return 'loneliness';
+  if (/やる気.*ない|やる気が出ない|無気力/.test(safe)) return 'low_motivation';
+  if (/人間関係|友達|友人|同僚|嫌いな人/.test(safe)) return 'relationships';
+  if (/嬉し|楽しかった|よかった|ハッピー/.test(safe)) return 'joy';
+  if (/迷い|どうしよう|わからない|悩ん/.test(safe)) return 'uncertainty';
+  if (safe.length >= 8 && !isHealthAnchoredText(safe)) return 'small_talk';
+  return null;
+}
+
+function buildReplyForTopic(topic, phase) {
+  const p = normalizeText(phase) || PHASES.P1;
+  const deep = p === PHASES.P3 || p === PHASES.P4;
+
+  if (topic === 'work_stress') {
+    const base = [
+      'それは少し刺さりますね。',
+      'ちゃんと向き合っている人ほど、そういう一言が残ることがあります。',
+      '今すぐ前向きにしなくて大丈夫です。',
+      'まずは、相手の言葉が嫌だったのか、分かってもらえなかった感じが嫌だったのか、一緒に分けましょう。',
+    ];
+    const extra = deep
+      ? ['必要なら、現実の誰かに伝える言葉も、ここで一緒に短く整えます。']
+      : ['ここでは、そのまま話して大丈夫です。'];
+    return [...base, ...extra].join('\n');
+  }
+
+  if (topic === 'loneliness') {
+    return [
+      '寂しいって言えるの、大事です。',
+      '無理に明るくしなくて大丈夫ですよ。',
+      '今日は解決より、少し安心できる時間を作る方が先かもしれません。',
+      'ここでは、そのまま話して大丈夫です。',
+      'ひとりで抱えすぎなくて大丈夫です。必要なら、あとで体調や食事の話につなげてもつなげなくても構いません。',
+    ].join('\n');
+  }
+
+  if (topic === 'low_motivation') {
+    return [
+      'やる気が出ない日も、体と心のどちらかが先にいっぱいになっていることがあります。',
+      '責めなくて大丈夫です。',
+      'いまは「何も増やさない」だけでも十分です。',
+      'あなたが自分で選べるように、横で支えます。',
+    ].join('\n');
+  }
+
+  if (topic === 'family' || topic === 'romance' || topic === 'relationships') {
+    return [
+      '人とのことは、健康の数字より先に心が動きます。',
+      'ここでは、健康記録に無理に戻さず、いまの気持ちを受け止めます。',
+      'うまく言えない部分でも、短い言葉で大丈夫です。',
+    ].join('\n');
+  }
+
+  if (topic === 'joy') {
+    return [
+      'それ、ちゃんと嬉しかったんですね。',
+      'よかったことを一緒に置いておくだけでも、今日の土台になります。',
+      '無理に次の行動に繋げなくて大丈夫です。',
+    ].join('\n');
+  }
+
+  if (topic === 'uncertainty') {
+    return [
+      '迷いのままでも、ここに置いておけます。',
+      '正解を急がなくて大丈夫です。',
+      'いま分かっていることから、一つだけ一緒に整理しましょう。',
+    ].join('\n');
+  }
+
+  if (topic === 'small_talk') {
+    return [
+      '雑談も、ちゃんと受け止めます。',
+      '健康の話に引き戻さなくて大丈夫です。',
+      '続きがあれば、そのまま送ってください。',
+    ].join('\n');
+  }
+
+  return null;
+}
+
+/**
+ * 健康・記録以外の生活トピックに、ルールベースでまず応答する。
+ * @returns {{ replyText: string, topic: string, includes_reflection: boolean, includes_next_step: boolean } | null}
+ */
+function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemory = {}, userState = {} } = {}) {
+  const safe = normalizeText(text);
+  if (!safe || safe.length < 4) return null;
+  if (isHealthAnchoredText(safe)) return null;
+
+  const topic = inferLifeTopic(safe);
+  if (!topic) return null;
+
+  const phase = migrateLegacyPhase(longMemory, userState || {});
+  const replyText = buildReplyForTopic(topic, relationshipPhase || phase);
+  if (!replyText) return null;
+
+  const includesReflection = /一緒に|受け止め|大丈夫|無理に/.test(replyText);
+  const includesNextStep = /まずは|整理|分けましょう/.test(replyText);
+
+  console.info('[life_companion_reply_generated]', {
+    user_id: userId || '',
+    topic,
+    tone_mode: 'life_companion_rule',
+    relationship_phase: relationshipPhase || phase,
+    includes_reflection: includesReflection,
+    includes_next_step: includesNextStep,
+  });
+
+  return {
+    replyText,
+    topic,
+    includes_reflection: includesReflection,
+    includes_next_step: includesNextStep,
+  };
+}
+
+module.exports = {
+  inferLifeTopic,
+  tryLifeCompanionReply,
+  isHealthAnchoredText,
+};

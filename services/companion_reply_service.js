@@ -4,6 +4,7 @@ const userPatternInsightService = require('./user_pattern_insight_service');
 const microChangeDetectorService = require('./micro_change_detector_service');
 const motivationPhraseService = require('./motivation_phrase_service');
 const threeStepsAheadService = require('./three_steps_ahead_service');
+const { PHASES, selectToneMode } = require('./relationship_phase_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -38,6 +39,34 @@ function avoidBareTemplate(text) {
 function shouldSkip(intentType) {
   const safe = normalizeText(intentType);
   return /^constitution_|^onboarding|^style_feedback|^newflow_image_hard_stop|^compassionate_confirmation|^pending_confirmation/.test(safe);
+}
+
+function resolveRelationshipPhase(params) {
+  return normalizeText(params.relationshipPhase || params.longMemory?.relationshipPhase || PHASES.P1) || PHASES.P1;
+}
+
+function maybePhaseMealClosing(relationshipPhase, userText, core) {
+  const ut = normalizeText(userText || '');
+  const c = normalizeText(core || '');
+  const lines = [];
+  if (relationshipPhase === PHASES.P1 && !/控えめ|概算|推定/.test(c)) {
+    lines.push('写真からの概算なので、今日は少し控えめ側で見ておきますね。');
+  }
+  if (relationshipPhase === PHASES.P2 && /なか卯|すき家|吉野家|松屋|チェーン|店で|お店/.test(ut)) {
+    lines.push('店名やメニューまで教えてくれると、記録がかなり現実に寄ります。ありがとうございます。');
+  }
+  if (relationshipPhase === PHASES.P3 && /半分|訂正|修正|補正|教えてくれ|伝えてくれ/.test(ut)) {
+    lines.push('細かく直してくれるのは、あとから見返したときにとても効きます。');
+  }
+  return lines;
+}
+
+function phaseExerciseEncouragement(relationshipPhase) {
+  if (relationshipPhase === PHASES.P1) return 'まずはここに送れただけで十分です。';
+  if (relationshipPhase === PHASES.P2) return '無理のない範囲で動けている形が、そのまま見えています。';
+  if (relationshipPhase === PHASES.P3) return '続け方のリズムが、少しずつ顔を出してきています。';
+  if (relationshipPhase === PHASES.P4) return '今日は自分で選べた動きが中心ですね。ここは無理に増やさなくて大丈夫そうです。';
+  return '';
 }
 
 function buildRoutineLine(pattern = {}) {
@@ -130,6 +159,14 @@ async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
   if (!rawReply || shouldSkip(params.intentType)) {
     const intentSkipped = inferIntentTag(params.intentType);
+    const phaseSkipped = resolveRelationshipPhase(params);
+    console.info('[conversation_tone_selected]', {
+      user_id: params.userId,
+      relationship_phase: phaseSkipped,
+      tone_mode: 'skipped',
+      reply_depth: 'skipped',
+      reason: 'companion_layer_skipped'
+    });
     console.info('[companion_reply_depth_selected]', {
       user_id: params.userId,
       intent: intentSkipped,
@@ -145,6 +182,17 @@ async function enhanceReply(params = {}) {
   }
 
   const intent = inferIntentTag(params.intentType);
+  const relationshipPhase = resolveRelationshipPhase(params);
+  const replyDepth = selectReplyDepth(intent, params);
+  const tonePick = selectToneMode(relationshipPhase, intent);
+  console.info('[conversation_tone_selected]', {
+    user_id: params.userId,
+    relationship_phase: relationshipPhase,
+    tone_mode: tonePick.tone_mode,
+    reply_depth: replyDepth,
+    reason: tonePick.reason
+  });
+
   const pattern = userPatternInsightService.buildPatternInsights({
     userId: params.userId,
     userText: params.userText || '',
@@ -213,21 +261,51 @@ async function enhanceReply(params = {}) {
     lines.push(videoPhrase.phrase || core);
     dedupMeta = { avoided: videoPhrase.avoided, replaced: videoPhrase.replaced };
   } else if (intent === 'normal_chat') {
-    const chatPhrase = pickNonRecentPhrase([
-      '気になることを、そのまま一文で送ってくれれば大丈夫です。',
-      '言いにくいことでも、短くでいいので送ってみてください。こちらで受け止めます。'
-    ], recentAssistantReplies);
+    const banks = {
+      [PHASES.P1]: [
+        'まずはここに送れただけで十分です。',
+        '気になることを、そのまま一文で送ってくれれば大丈夫です。',
+        '言いにくいことでも、短くでいいので送ってみてください。こちらで受け止めます。'
+      ],
+      [PHASES.P2]: [
+        '健康の話に無理に戻さなくて大丈夫です。',
+        '今の言葉を、そのまま大事にします。',
+        '雑談も、ちゃんと置いておきます。'
+      ],
+      [PHASES.P3]: [
+        '少しずつ、言葉の温度まで見えてきています。',
+        '迷いのままでも、ここに置いておけます。',
+        '責めずに、いまの感触だけ一緒に見ていきましょう。'
+      ],
+      [PHASES.P4]: [
+        '前にも似た流れがあったかもしれません。急がず、今日は一歩だけで十分です。',
+        'あなたが自分で選べるように、横で支えます。',
+        '深くは寄り添いますが、生活の主導はあなたの側にあります。'
+      ]
+    };
+    const bank = banks[relationshipPhase] || banks[PHASES.P1];
+    const chatPhrase = pickNonRecentPhrase(bank, recentAssistantReplies);
     if (chatPhrase.phrase) lines.push(`\n${chatPhrase.phrase}`);
     dedupMeta = { avoided: chatPhrase.avoided, replaced: chatPhrase.replaced };
   } else {
     if (intent === 'meal') {
-      // Meal reply layout is formatter-first; avoid appending generic lines here.
+      const mealExtras = maybePhaseMealClosing(relationshipPhase, params.userText, core);
+      for (const ex of mealExtras) {
+        if (ex && !lines.some((ln) => ln.includes(ex.slice(0, 12)))) lines.push(`\n${ex}`);
+      }
       dedupMeta = { avoided: false, replaced: false };
     } else {
       const motivationPick = pickNonRecentPhrase([motivation], recentAssistantReplies);
       if (motivationPick.phrase) lines.push(`\n${motivationPick.phrase}`);
       const nextStepPick = pickNonRecentPhrase([nextStep], recentAssistantReplies);
       if (nextStepPick.phrase) lines.push(`\n${nextStepPick.phrase}`);
+      if (intent === 'exercise') {
+        const exLine = phaseExerciseEncouragement(relationshipPhase);
+        if (exLine) {
+          const exPick = pickNonRecentPhrase([exLine], recentAssistantReplies);
+          if (exPick.phrase) lines.push(`\n${exPick.phrase}`);
+        }
+      }
       dedupMeta = {
         avoided: motivationPick.avoided || nextStepPick.avoided,
         replaced: motivationPick.replaced || nextStepPick.replaced
@@ -250,7 +328,6 @@ async function enhanceReply(params = {}) {
     avoided_template_phrase: core !== rawReply
   });
 
-  const replyDepth = selectReplyDepth(intent, params);
   console.info('[companion_reply_depth_selected]', {
     user_id: params.userId,
     intent,

@@ -71,7 +71,11 @@ const DEFAULT_LONG_MEMORY = {
   },
   trialStartedAt: null,
   selectedPlan: null,
-  onboardingCompleted: false
+  onboardingCompleted: false,
+  /** @see services/relationship_phase_service.js */
+  relationshipPhase: 'phase_1_professional_trust',
+  relationshipPhaseUpdatedAt: null,
+  relationshipPhaseMeta: null
 };
 
 const DEFAULT_USER_STATE = {
@@ -1007,6 +1011,11 @@ async function mergeLongMemory(userId, patch) {
     if (safePatch.selectedPlan != null) next.selectedPlan = safePatch.selectedPlan;
     if (safePatch.onboardingCompleted != null) next.onboardingCompleted = Boolean(safePatch.onboardingCompleted);
     if (safePatch.stagnationTendency != null) next.stagnationTendency = safePatch.stagnationTendency;
+    if (safePatch.relationshipPhase != null) next.relationshipPhase = safePatch.relationshipPhase;
+    if (safePatch.relationshipPhaseUpdatedAt != null) next.relationshipPhaseUpdatedAt = safePatch.relationshipPhaseUpdatedAt;
+    if (safePatch.relationshipPhaseMeta != null && typeof safePatch.relationshipPhaseMeta === 'object') {
+      next.relationshipPhaseMeta = { ...(next.relationshipPhaseMeta || {}), ...safePatch.relationshipPhaseMeta };
+    }
 
     if (Array.isArray(safePatch.eatingPattern)) {
       for (const item of safePatch.eatingPattern) uniquePush(next.eatingPattern, item);

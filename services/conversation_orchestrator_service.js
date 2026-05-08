@@ -57,6 +57,8 @@ const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const companionReplyService = require('./companion_reply_service');
+const relationshipPhaseService = require('./relationship_phase_service');
+const lifeCompanionConversationService = require('./life_companion_conversation_service');
 const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
@@ -2911,6 +2913,7 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
   const styleMemory = longMemoryLatest?.conversationStyleMemory || {};
   const likedExamples = Array.isArray(styleMemory?.likedExamples) ? styleMemory.likedExamples.slice(-3) : [];
   const dislikedExamples = Array.isArray(styleMemory?.dislikedExamples) ? styleMemory.dislikedExamples.slice(-3) : [];
+  const relPhase = normalizeText(longMemoryLatest?.relationshipPhase || 'phase_1_professional_trust');
   const systemHint = [
     '[会話の姿勢]',
     '- まず自然な短文の会話として返す（カロリー確定・記録処理の口調にしない）',
@@ -2918,6 +2921,9 @@ async function buildNormalReply(input, recentMessages, recentSummary, longMemory
     '- 短い相手には短く。まず質問に答える',
     '- 提案は多くて1つ。毎回同じ締めを使わない',
     '- 上から言わない。痛みやしんどさが出たら記録よりケアを優先',
+    `- 信頼フェーズ: ${relPhase}（最初は安心と丁寧さ優先。雑談や弱音は健康記録に無理に戻さない。支配的・独占的な言い回しは避ける）`,
+    '- 使ってよい境界: 「ここではそのまま話して大丈夫」「ひとりで抱えすぎなくて大丈夫」「必要なら現実の誰かに伝える言葉も一緒に考える」',
+    '- 避ける: 「私だけが分かる」「私がいれば大丈夫」「他の人はいらない」「現実の人間関係より私を優先して」などの依存を煽る表現',
     '[プロフィール要約]',
     `- 名前: ${sanitizePreferredName(longMemoryLatest?.preferredName || '') || '未設定'}`,
     `- 年齢: ${longMemoryLatest?.age || '未設定'}`,
@@ -3161,10 +3167,19 @@ async function maybeHandleConstitutionSurvey(input, shortMemory, longMemory, mer
 async function orchestrateConversation(input) {
   try {
     const shortMemory = await contextMemoryService.getShortMemory(input.userId);
-    const longMemory = await contextMemoryService.getLongMemory(input.userId);
+    let longMemory = await contextMemoryService.getLongMemory(input.userId);
     const userStateBefore = await contextMemoryService.getUserState(input.userId);
     const recentSummary = await contextMemoryService.buildRecentSummary(input.userId, 3);
     const recentMessages = await contextMemoryService.getRecentMessages(input.userId, 20);
+
+    await relationshipPhaseService.evaluateAndPersistRelationshipPhase({
+      userId: input.userId,
+      longMemory,
+      userState: userStateBefore,
+      recentMessages,
+      userText: normalizeText(input.rawText || ''),
+    });
+    longMemory = await contextMemoryService.getLongMemory(input.userId);
 
     let text = normalizeText(input.rawText || '');
     let resumedFromPendingConfirmation = false;
@@ -4152,7 +4167,24 @@ async function orchestrateConversation(input) {
 
     // 意図が曖昧なときは分類処理へ無理に入れず、自然会話を優先する
     if (shouldAnswerWithChatFirst(text)) {
-      const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
+      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
+        userId: input.userId,
+        text,
+        relationshipPhase: longMemory?.relationshipPhase,
+        longMemory,
+        userState: userStateBefore,
+      });
+      if (lifeEarly?.replyText) {
+        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
+        await appendTurn(input.userId, input.rawText || '', lifeOut);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: lifeOut }],
+          internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
+        };
+      }
+      const replyDraft = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
+      const replyText = await withSurfaceReply(input, replyDraft, { recentMessages, longMemory }, 'normal');
       await appendTurn(input.userId, input.rawText || '', replyText);
       return {
         ok: true,
@@ -4320,8 +4352,25 @@ async function orchestrateConversation(input) {
 
     await maybeStoreSimpleRecords(input.userId, text);
 
-    const longMemoryLatest = await contextMemoryService.getLongMemory(input.userId);
-    const replyText = await buildNormalReply(input, recentMessages, recentSummary, longMemoryLatest, shortMemory);
+    longMemory = await contextMemoryService.getLongMemory(input.userId);
+    const lifeLate = lifeCompanionConversationService.tryLifeCompanionReply({
+      userId: input.userId,
+      text,
+      relationshipPhase: longMemory?.relationshipPhase,
+      longMemory,
+      userState: userStateBefore,
+    });
+    if (lifeLate?.replyText) {
+      const lifeOut = await withSurfaceReply(input, lifeLate.replyText, { recentMessages, longMemory }, 'life_companion');
+      await appendTurn(input.userId, input.rawText || '', lifeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: lifeOut }],
+        internal: { intentType: 'life_companion', responseMode: 'empathy_plus_one_hint' }
+      };
+    }
+    const replyDraft = await buildNormalReply(input, recentMessages, recentSummary, longMemory, shortMemory);
+    const replyText = await withSurfaceReply(input, replyDraft, { recentMessages, longMemory }, 'normal');
 
     await appendTurn(input.userId, input.rawText || '', replyText);
 
