@@ -29,10 +29,10 @@ function inferIntentTag(intentType = '') {
 
 function avoidBareTemplate(text) {
   return String(text || '')
-    .replace(/^運動を記録しました。?$/m, '内容を受け取りました。')
-    .replace(/^食事として受け取りました。?$/m, '食事内容、しっかり見ています。')
+    .replace(/^運動を記録しました。?$/m, '今日の動き、ちゃんと見えています。')
+    .replace(/^食事として受け取りました。?$/m, '今日の食卓の形、ちゃんと見えています。')
     .replace(/^確認しました。?$/m, '意図は受け取れています。')
-    .replace(/^保存しました。?$/m, '内容を反映しました。');
+    .replace(/^保存しました。?$/m, 'こちら側では受け取れています。');
 }
 
 function shouldSkip(intentType) {
@@ -48,7 +48,7 @@ function buildRoutineLine(pattern = {}) {
     return '食べる時間帯のリズムが整ってきています。体調維持にはこの安定が効いてきます。';
   }
   if (pattern?.stable_favorite_food) {
-    return '好みに合う定番が定着しているのは良い流れです。無理に崩さなくて大丈夫です。';
+    return '好みに合う定番が定着しているのは、続ける上での大きな支えです。無理に崩さなくて大丈夫です。';
   }
   return '';
 }
@@ -82,18 +82,21 @@ function dedupeSourceNotes(text = '', intent = '') {
   let deduped = original;
   let removed = false;
   if (safeIntent === 'meal') {
-    const sourcePhrase = '写真からの推定として記録しました。';
-    const matches = deduped.match(new RegExp(sourcePhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || [];
-    if (matches.length > 1) {
-      let firstKept = false;
-      deduped = deduped.replace(/写真からの推定として記録しました。/g, () => {
-        if (!firstKept) {
-          firstKept = true;
-          return '写真からの推定として記録しました。';
-        }
-        removed = true;
-        return '';
-      }).replace(/\n{3,}/g, '\n\n').trim();
+    const phrases = ['カロリーは写真からの推定です。', '写真からの推定として記録しました。'];
+    for (const sourcePhrase of phrases) {
+      const re = new RegExp(sourcePhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+      const matches = deduped.match(re) || [];
+      if (matches.length > 1) {
+        let firstKept = false;
+        deduped = deduped.replace(re, () => {
+          if (!firstKept) {
+            firstKept = true;
+            return sourcePhrase;
+          }
+          removed = true;
+          return '';
+        }).replace(/\n{3,}/g, '\n\n').trim();
+      }
     }
   }
   console.info('[companion_reply_source_note_deduped]', {
@@ -171,16 +174,16 @@ async function enhanceReply(params = {}) {
     dedupMeta = { avoided: labPhrase.avoided, replaced: labPhrase.replaced };
   } else if (intent === 'video') {
     const videoPhrase = pickNonRecentPhrase([
-      '動画、ちゃんと残しました。あとで「この動画を解析」と送ってくれたら、フォームの流れを一緒に見ていけるようにします。',
-      '保存はできています。次は「この動画を解析」で、動きのどこを見直すか整理できます。'
+      '動画、ちゃんと残しています。あとで「この動画を解析」と送ってくれたら、フォームの流れを一緒に見ていけます。',
+      'こちらでは動画を受け取れています。次は「この動画を解析」から、動きのどこを見直すか整理できます。'
     ], recentAssistantReplies);
     lines.length = 0;
     lines.push(videoPhrase.phrase || core);
     dedupMeta = { avoided: videoPhrase.avoided, replaced: videoPhrase.replaced };
   } else if (intent === 'normal_chat') {
     const chatPhrase = pickNonRecentPhrase([
-      '確認したいことがあれば、そのまま送ってください。',
-      '気になることを短く送ってくれれば、そこから一緒に整理します。'
+      '気になることを、そのまま一文で送ってくれれば大丈夫です。',
+      '言いにくいことでも、短くでいいので送ってみてください。こちらで受け止めます。'
     ], recentAssistantReplies);
     if (chatPhrase.phrase) lines.push(`\n${chatPhrase.phrase}`);
     dedupMeta = { avoided: chatPhrase.avoided, replaced: chatPhrase.replaced };

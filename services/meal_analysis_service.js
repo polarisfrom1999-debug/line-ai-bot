@@ -432,11 +432,8 @@ async function analyzeMealImage(imagePayload, userId = null, rawText = '') {
     mealData.correction_reason = sourceInfo.calorie_source === 'fallback_estimate'
       ? 'gemini_value_missing_or_low'
       : 'gemini_priority_preserved';
-    mealData.comment = sourceInfo.calorie_source === 'fallback_estimate'
-      ? (mealData.comment || '写真からの概算なので、違っていればあとで直せます。')
-      : (/nutrition_label|menu_declared|confirmed_product/.test(sourceInfo.calorie_source)
-        ? '表示されている数値を優先して記録しました。'
-        : '写真からの推定として記録しました。');
+    // ひとこと・ソース説明は meal_reply_formatter に任せる（作業Bot調の一文を避ける）
+    mealData.comment = '';
     console.info('[meal_calorie_source_selected]', {
       user_id: String(userId || ''),
       meal_label: String((mealData.items || [])[0] || ''),

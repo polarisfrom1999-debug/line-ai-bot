@@ -21,7 +21,7 @@ function buildStoragePath(lineUserId, messageId, now = new Date()) {
 }
 
 function successText() {
-  return '動画を保存しました。あとで「この動画を解析」と送ると、フォーム分析できるようにしていきます。';
+  return '動画、ちゃんと残せています。あとで「この動画を解析」と送ってくれたら、フォームの流れを一緒に見ていけます。';
 }
 
 function failureText() {

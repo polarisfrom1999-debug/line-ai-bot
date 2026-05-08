@@ -203,15 +203,19 @@ function buildExerciseLineReply(record, todayBurnTotal) {
   const effort = formatEffortLine(record);
   const once = record?.estimatedCalories != null ? round1(record.estimatedCalories) : null;
   const total = round1(todayBurnTotal || 0);
+  const kind = String(record?.exerciseType || '');
+  const closing = /push_up|sit_up|squat|plank|core/.test(kind)
+    ? '短時間でも積み上がっています。今日はもう「やれた日」で十分です。'
+    : '外に出て動けたこと自体が、かなり大きいです。';
   const lines = [
-    '🏃‍♂️ 運動を記録しました',
+    '🏃‍♂️ 今日の動き、ちゃんと見えています',
     `内容：${effort}`,
     once != null ? `🔥 消費カロリー：約${once} kcal` : '🔥 消費カロリー：不明',
     '',
     '📈 本日の運動消費',
     `🔥 合計：約${total} kcal`,
     '',
-    'いい運動です。無理なく続けましょう。',
+    closing,
   ];
   return lines.join('\n');
 }
