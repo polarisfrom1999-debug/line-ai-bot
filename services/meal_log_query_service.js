@@ -72,8 +72,21 @@ function normalizeDbRow(row) {
     confidence: row?.confidence != null ? Number(row.confidence) : null,
     rawModelJson: raw,
     sourceLineMessageId: normalizeText(raw.sourceLineMessageId || raw.lineMessageId || ''),
-    dedupeKey: normalizeText(raw.dedupeKey || '')
+    dedupeKey: normalizeText(raw.dedupeKey || ''),
+    correctionType: normalizeText(raw.correction_type || raw.correctionType || raw.calorie_source || ''),
+    parentMealId: normalizeText(raw.parent_meal_id || raw.parentMealId || ''),
+    targetMealId: normalizeText(raw.target_meal_id || raw.targetMealId || '')
   };
+}
+
+function isCorrectionLikeMealLog(log = {}) {
+  const label = normalizeText(log.mealLabel || '');
+  const corr = normalizeText(log.correctionType || '').toLowerCase();
+  if (/^食事量補正[:：]/.test(label)) return true;
+  if (Number(log.kcal || 0) < 0) return true;
+  if (/manual_correction_delta|correction_delta|meal_correction|adjustment/.test(corr)) return true;
+  if (normalizeText(log.parentMealId || log.targetMealId)) return true;
+  return false;
 }
 
 /**
@@ -123,7 +136,53 @@ async function getLatestMealLog(lineUserId, daysBack = 3) {
   }
   const logs = await getMealLogsByDateRange(lineUserId, from, today);
   const deduped = deduplicateMealLogs(logs);
-  return deduped.length ? deduped[0] : null;
+  const baseOnly = deduped.filter((m) => !isCorrectionLikeMealLog(m));
+  return baseOnly.length ? baseOnly[0] : (deduped.length ? deduped[0] : null);
+}
+
+async function getLatestBaseMealLogWithTrace(lineUserId, daysBack = 5) {
+  const user = await resolveUser(lineUserId);
+  if (!user || !supabase) return {
+    meal: null,
+    trace: { candidate_count: 0, excluded_correction_count: 0, selected_meal_id: '', selected_meal_label: '', selection_reason: 'missing_user_or_supabase', skipped_latest_correction: false }
+  };
+  const today = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+  let from = today;
+  for (let i = 0; i < Math.max(0, Number(daysBack || 0)); i += 1) {
+    const m = String(from).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) break;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+09:00`);
+    dt.setDate(dt.getDate() - 1);
+    from = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  }
+  const logs = deduplicateMealLogs(await getMealLogsByDateRange(lineUserId, from, today));
+  const candidateCount = logs.length;
+  const base = logs.filter((m) => !isCorrectionLikeMealLog(m));
+  const excludedCorrectionCount = Math.max(0, candidateCount - base.length);
+  const selected = base[0] || null;
+  const latest = logs[0] || null;
+  const skippedLatestCorrection = Boolean(latest && isCorrectionLikeMealLog(latest) && selected && latest.id !== selected.id);
+  return {
+    meal: selected,
+    trace: {
+      candidate_count: candidateCount,
+      excluded_correction_count: excludedCorrectionCount,
+      selected_meal_id: String(selected?.id || ''),
+      selected_meal_label: normalizeText(selected?.mealLabel || ''),
+      selection_reason: selected ? 'latest_base_meal' : 'no_base_meal_found',
+      skipped_latest_correction: skippedLatestCorrection
+    }
+  };
 }
 
 function dedupeFingerprint(log) {
@@ -299,6 +358,7 @@ function formatMealLogDetails(logs, options = {}) {
 module.exports = {
   getMealLogsByDateRange,
   getLatestMealLog,
+  getLatestBaseMealLogWithTrace,
   deduplicateMealLogs,
   dedupeFingerprint,
   sumMealLogs,

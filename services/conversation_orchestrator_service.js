@@ -2632,11 +2632,26 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   let mealLabel = '';
   let meal = fromPending || fromFollowUp;
   if (!meal || typeof meal !== 'object') {
-    const latest = await mealLogQueryService.getLatestMealLog(input.userId, 5);
+    const latestBase = await mealLogQueryService.getLatestBaseMealLogWithTrace(input.userId, 7);
+    const latest = latestBase?.meal || null;
+    const trace = latestBase?.trace || {};
+    console.info('[meal_correction_target_candidates]', {
+      candidate_count: Number(trace.candidate_count || 0),
+      excluded_correction_count: Number(trace.excluded_correction_count || 0),
+      selected_meal_id: String(trace.selected_meal_id || ''),
+      selected_meal_label: String(trace.selected_meal_label || ''),
+      selection_reason: String(trace.selection_reason || '')
+    });
     if (latest) {
       source = 'latest_meal';
       sourceMealId = String(latest.id || '');
       mealLabel = normalizeText(latest.mealLabel || '');
+      console.info('[meal_correction_base_meal_selected]', {
+        user_id: input.userId,
+        base_meal_id: sourceMealId,
+        base_meal_label: mealLabel,
+        skipped_latest_correction: Boolean(trace.skipped_latest_correction)
+      });
       meal = {
         items: Array.isArray(latest.foodItems) && latest.foodItems.length ? latest.foodItems : [latest.mealLabel || '食事'],
         estimatedNutrition: {
@@ -2781,7 +2796,9 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
       protein: Number(deltaNutrition.protein || 0),
       fat: Number(deltaNutrition.fat || 0),
       carbs: Number(deltaNutrition.carbs || 0),
-      amountNote: text
+      amountNote: text,
+      target_meal_id: sourceMealId || '',
+      parent_meal_id: sourceMealId || ''
     }
   };
 }
