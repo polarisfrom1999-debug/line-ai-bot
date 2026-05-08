@@ -1,6 +1,7 @@
 'use strict';
 
 const { PHASES, migrateLegacyPhase } = require('./relationship_phase_service');
+const { selectConversationTone } = require('./conversation_tone_selector_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -15,10 +16,11 @@ function isHealthAnchoredText(text) {
 function inferLifeTopic(text) {
   const safe = normalizeText(text);
   if (!safe) return null;
+  if (/聞いて|相談|つらい|しんどい|疲れた|嫌だった|嫌な事|嫌なこと/.test(safe)) return 'emotional_disclosure';
   if (/仕事|職場|上司|残業|クライアント|プロジェクト/.test(safe)) return 'work_stress';
   if (/家族|親|子ども|子供|夫|妻|パートナー/.test(safe)) return 'family';
   if (/恋愛|彼氏|彼女|好きな人|告白|別れ/.test(safe)) return 'romance';
-  if (/寂しい|孤独|ひとり|一人が/.test(safe)) return 'loneliness';
+  if (/寂しい|さみしい|孤独|ひとり|一人が/.test(safe)) return 'loneliness';
   if (/やる気.*ない|やる気が出ない|無気力/.test(safe)) return 'low_motivation';
   if (/人間関係|友達|友人|同僚|嫌いな人/.test(safe)) return 'relationships';
   if (/嬉し|楽しかった|よかった|ハッピー/.test(safe)) return 'joy';
@@ -95,6 +97,14 @@ function buildReplyForTopic(topic, phase) {
     ].join('\n');
   }
 
+  if (topic === 'emotional_disclosure') {
+    return [
+      'それ、ちゃんとしんどかったですね。',
+      '無理に整った言葉にしなくて大丈夫です。',
+      'ここでは、そのまま話して大丈夫です。まずは何が一番引っかかっているかだけ、一緒に置いてみましょう。',
+    ].join('\n');
+  }
+
   return null;
 }
 
@@ -109,18 +119,26 @@ function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemor
 
   const topic = inferLifeTopic(safe);
   if (!topic) return null;
+  console.info('[life_companion_intent_detected]', {
+    text: safe.slice(0, 120),
+    topic,
+    reason: 'topic_keyword_match'
+  });
 
   const phase = migrateLegacyPhase(longMemory, userState || {});
   const replyText = buildReplyForTopic(topic, relationshipPhase || phase);
   if (!replyText) return null;
 
   const includesReflection = /一緒に|受け止め|大丈夫|無理に/.test(replyText);
-  const includesNextStep = /まずは|整理|分けましょう/.test(replyText);
+  const includesNextStep = /まずは|整理|分けましょう|置いてみましょう/.test(replyText);
+  const depth = /寂しい|さみしい|しんど|つらい|疲れた|聞いて|相談/.test(safe) ? 'deep' : 'normal';
+  const tone = selectConversationTone(relationshipPhase || phase, 'normal_chat', { depth });
 
   console.info('[life_companion_reply_generated]', {
     user_id: userId || '',
     topic,
-    tone_mode: 'life_companion_rule',
+    tone_mode: tone.tone_mode,
+    reply_depth: depth,
     relationship_phase: relationshipPhase || phase,
     includes_reflection: includesReflection,
     includes_next_step: includesNextStep,

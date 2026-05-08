@@ -114,7 +114,7 @@ function applyEmotionalQualityPass(params = {}) {
     rewrite_applied = true;
   }
 
-  const flags = {
+  let flags = {
     has_specific_reaction: hasSpecificReaction(text),
     has_user_word_echo: replyHasUserEcho(text, userText),
     has_warmth: hasWarmth(text),
@@ -123,6 +123,35 @@ function applyEmotionalQualityPass(params = {}) {
     has_trust_building_phrase: hasTrustBuildingPhrase(text),
     rewrite_applied,
   };
+  flags.emotional_quality_ok = Boolean(
+    flags.has_specific_reaction
+    && flags.has_warmth
+    && !flags.has_template_only_phrase
+    && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
+  );
+
+  if (!flags.emotional_quality_ok) {
+    const echo = extractEchoSnippet(userText);
+    const lead = echo ? `「${echo}」と感じているんですね。` : 'そのまま話してくれてありがとうございます。';
+    const close = 'ひとりで抱えすぎなくて大丈夫です。今わかる範囲だけで、一緒に整理していきましょう。';
+    text = `${lead}\n${text}\n${close}`.replace(/\n{3,}/g, '\n\n').trim();
+    rewrite_applied = true;
+    flags = {
+      has_specific_reaction: hasSpecificReaction(text),
+      has_user_word_echo: replyHasUserEcho(text, userText),
+      has_warmth: hasWarmth(text),
+      has_next_step: hasNextStep(text),
+      has_template_only_phrase: isTemplateOnlyPhrase(text),
+      has_trust_building_phrase: hasTrustBuildingPhrase(text),
+      rewrite_applied,
+    };
+    flags.emotional_quality_ok = Boolean(
+      flags.has_specific_reaction
+      && flags.has_warmth
+      && !flags.has_template_only_phrase
+      && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
+    );
+  }
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,

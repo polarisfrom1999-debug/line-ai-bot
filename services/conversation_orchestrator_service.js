@@ -2625,23 +2625,60 @@ async function maybeHandleMealText(input) {
 
 async function maybeHandleMealFollowUp(input, shortMemory) {
   const text = normalizeText(input?.rawText || '');
-  const fromPending = shortMemory?.pendingRecordCandidate?.recordType === 'meal_record'
-    ? shortMemory?.pendingRecordCandidate?.extracted
-    : null;
-  const fromFollowUp = shortMemory?.followUpContext?.imageType === 'meal'
-    ? shortMemory?.followUpContext?.extractedMeal
-    : null;
-  const meal = fromPending || fromFollowUp;
+  const fromPending = shortMemory?.pendingRecordCandidate?.recordType === 'meal_record' ? shortMemory?.pendingRecordCandidate?.extracted : null;
+  const fromFollowUp = shortMemory?.followUpContext?.imageType === 'meal' ? shortMemory?.followUpContext?.extractedMeal : null;
+  let source = fromPending || fromFollowUp ? 'active_context' : '';
+  let sourceMealId = '';
+  let mealLabel = '';
+  let meal = fromPending || fromFollowUp;
+  if (!meal || typeof meal !== 'object') {
+    const latest = await mealLogQueryService.getLatestMealLog(input.userId, 5);
+    if (latest) {
+      source = 'latest_meal';
+      sourceMealId = String(latest.id || '');
+      mealLabel = normalizeText(latest.mealLabel || '');
+      meal = {
+        items: Array.isArray(latest.foodItems) && latest.foodItems.length ? latest.foodItems : [latest.mealLabel || '食事'],
+        estimatedNutrition: {
+          kcal: Number(latest.kcal || 0),
+          protein: Number(latest.protein || 0),
+          fat: Number(latest.fat || 0),
+          carbs: Number(latest.carbs || 0),
+        },
+        mealLabel: latest.mealLabel || '',
+      };
+    }
+  }
   if (!meal || typeof meal !== 'object') return null;
-  if (!/半分|少し|全部|完食/.test(text)) return null;
+  if (!/半分|少し|少なめ|全部|完食|食べてない|残した/.test(text)) return null;
 
   const mealBody = meal;
   const base = mealBody?.estimatedNutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 };
 
   let ratio = 1;
   if (/半分/.test(text)) ratio = 0.5;
-  else if (/少し/.test(text)) ratio = 0.7;
+  else if (/少し|少なめ|残した/.test(text)) ratio = 0.7;
+  else if (/食べてない/.test(text)) ratio = 0;
   else if (/全部|完食/.test(text)) ratio = 1;
+  const targetFood = (() => {
+    if (/ご飯|ごはん|米/.test(text)) return 'ご飯';
+    if (/麺/.test(text)) return '麺';
+    if (/パン/.test(text)) return 'パン';
+    if (/サラダ/.test(text)) return 'サラダ';
+    if (/卵/.test(text)) return '卵';
+    if (/肉/.test(text)) return '肉';
+    if (/魚/.test(text)) return '魚';
+    if (/おかず/.test(text)) return 'おかず';
+    return '食事全体';
+  })();
+  console.info('[meal_correction_target_resolved]', {
+    user_id: input.userId,
+    meal_id: sourceMealId,
+    meal_label: mealLabel || normalizeText((mealBody?.items || [])[0] || mealBody?.mealLabel || ''),
+    target_food: targetFood,
+    fraction: ratio,
+    source: source || 'active_context'
+  });
 
   const adjustedNutrition = {
     kcal: round1(base.kcal * ratio),
@@ -3218,6 +3255,22 @@ async function orchestrateConversation(input) {
     }
 
     if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
+      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
+        userId: input.userId,
+        text,
+        relationshipPhase: longMemory?.relationshipPhase,
+        longMemory,
+        userState: userStateBefore,
+      });
+      if (lifeEarly?.replyText) {
+        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
+        await appendTurn(input.userId, input.rawText || '', lifeOut);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: lifeOut }],
+          internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
+        };
+      }
       const activeEarly = await activeContextService.getActiveContext(input.userId, shortMemory);
       if (looksLikeMealCalorieConfirmationText(text, shortMemory, activeEarly)) {
         console.info('[contextual_intent_guardrail_applied]', {

@@ -11,6 +11,25 @@ async function downloadMessageContentBuffer(messageId) {
   return lineMediaService.getMessageContentBuffer(id);
 }
 
+async function downloadMessageContentBufferWithMeta(messageId) {
+  const id = String(messageId || '').trim();
+  if (!id) {
+    return { ok: false, status: null, contentType: '', contentLength: null, buffer: null };
+  }
+  if (typeof lineMediaService.getMessageContentBufferDetailed === 'function') {
+    return lineMediaService.getMessageContentBufferDetailed(id);
+  }
+  const buffer = await lineMediaService.getMessageContentBuffer(id);
+  return {
+    ok: Boolean(buffer && buffer.length),
+    status: null,
+    contentType: '',
+    contentLength: null,
+    buffer: buffer || null
+  };
+}
+
 module.exports = {
   downloadMessageContentBuffer,
+  downloadMessageContentBufferWithMeta,
 };

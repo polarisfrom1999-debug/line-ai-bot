@@ -52,7 +52,7 @@ function resolveRelationshipPhase(params) {
  */
 function selectReplyDepth(intent, params = {}, relationshipPhase = '') {
   const safeText = normalizeText(params.userText || '');
-  const deepMarkers = /不安|迷い|弱音|寂し|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
+  const deepMarkers = /不安|迷い|弱音|寂し|さみしい|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
   if (deepMarkers.test(safeText)) {
     return { depth: 'deep', reason: 'vulnerability_distress_or_seeking' };
   }

@@ -99,6 +99,33 @@ async function getMealLogsByDateRange(lineUserId, fromYmd, toYmdInclusive) {
   return rows.map(normalizeDbRow);
 }
 
+async function getLatestMealLog(lineUserId, daysBack = 3) {
+  const user = await resolveUser(lineUserId);
+  if (!user || !supabase) return null;
+  const today = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+  let from = today;
+  for (let i = 0; i < Math.max(0, Number(daysBack || 0)); i += 1) {
+    const m = String(from).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) break;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+09:00`);
+    dt.setDate(dt.getDate() - 1);
+    from = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  }
+  const logs = await getMealLogsByDateRange(lineUserId, from, today);
+  const deduped = deduplicateMealLogs(logs);
+  return deduped.length ? deduped[0] : null;
+}
+
 function dedupeFingerprint(log) {
   if (log.sourceLineMessageId) return `msg:${log.sourceLineMessageId}`;
   if (log.dedupeKey) return `key:${log.dedupeKey}`;
@@ -271,6 +298,7 @@ function formatMealLogDetails(logs, options = {}) {
 
 module.exports = {
   getMealLogsByDateRange,
+  getLatestMealLog,
   deduplicateMealLogs,
   dedupeFingerprint,
   sumMealLogs,

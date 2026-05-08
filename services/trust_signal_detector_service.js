@@ -38,20 +38,24 @@ function detectDeepTrustSignals(userText, userId = '', options = {}) {
   if (/ありがと|感謝|助かる/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.GRATITUDE, 0.88, safe);
   }
-  if (/ちょっと相談|相談(したい|です)|聞いて|聞いてほしい|どう思う|これでいい\??|どうかな/.test(safe)) {
+  if (/ちょっと相談|相談(したい|です)|聞いて|聞いてほしい|どう思う|これでいい\??|どうかな|助言|アドバイス/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.HELP_SEEKING, 0.82, safe);
   }
-  if (/実は|本当は|言いにくい(けど|が)|内緒で|恥ずかしい(けど|が)/.test(safe)) {
+  if (/実は|本当は|言いにくい(けど|が)|内緒で|恥ずかしい(けど|が)|嫌な事|嫌なこと|嫌だった/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.VULNERABILITY, 0.85, safe);
   }
-  if (/できなかった|ダメだった|食べすぎ|やりすぎ|失敗|だめだった|不安|自信がない/.test(safe)) {
+  if (/できなかった|ダメだった|食べすぎ|やりすぎ|失敗|だめだった|不安|自信がない|これでいい\??/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.SELF_DOUBT, 0.8, safe);
   }
   if (/半分|訂正|修正|補正|違った|実際は|本当はこう|言い直|直して/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.CORRECTION_WILLINGNESS, 0.78, safe);
   }
-  if (/寂しい|疲れた|しんどい|つらい|泣き|落ち込|苦しい|怖い|モヤモヤ/.test(safe)) {
+  if (/寂しい|さみしい|疲れた|しんどい|つらい|泣き|落ち込|苦しい|怖い|モヤモヤ|仕事で嫌な事|仕事で嫌なこと|嫌だった/.test(safe)) {
     pushHit(hits, SIGNAL_TYPES.EMOTIONAL_DISCLOSURE, 0.84, safe);
+  }
+  if (/仕事.*嫌|嫌な事があった|嫌なことがあった/.test(safe)) {
+    pushHit(hits, SIGNAL_TYPES.VULNERABILITY, 0.79, safe);
+    pushHit(hits, SIGNAL_TYPES.HELP_SEEKING, 0.66, safe);
   }
   if (/なんで|どうして|教えて|知りたい|理由|仕組み|気になる/.test(safe) && safe.length > 6) {
     pushHit(hits, SIGNAL_TYPES.LEARNING_READINESS, 0.72, safe);

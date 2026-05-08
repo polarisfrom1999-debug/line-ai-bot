@@ -64,10 +64,31 @@ async function saveVideoFromLineMessage({
     const storagePath = buildStoragePath(uid, mid);
     console.info('[athlete_video_save_start]', { lineUserId: uid, messageId: mid, storageBucket: bucket, storagePath });
 
-    const buffer = await lineContentDownloadService.downloadMessageContentBuffer(mid);
+    let download = await lineContentDownloadService.downloadMessageContentBufferWithMeta(mid);
+    let buffer = download?.buffer || null;
+    console.info('[athlete_video_download_debug]', {
+      messageId: mid,
+      status: download?.status ?? null,
+      contentType: download?.contentType || '',
+      contentLength: download?.contentLength ?? null,
+      bufferSize: Number(buffer?.length || 0)
+    });
     if (!buffer || !buffer.length) {
-      throw new Error('empty_video_buffer');
+      console.info('[athlete_video_download_retry]', {
+        messageId: mid,
+        reason: 'empty_video_buffer_first_attempt'
+      });
+      download = await lineContentDownloadService.downloadMessageContentBufferWithMeta(mid);
+      buffer = download?.buffer || null;
+      console.info('[athlete_video_download_debug]', {
+        messageId: mid,
+        status: download?.status ?? null,
+        contentType: download?.contentType || '',
+        contentLength: download?.contentLength ?? null,
+        bufferSize: Number(buffer?.length || 0)
+      });
     }
+    if (!buffer || !buffer.length) throw new Error('empty_video_buffer');
 
     const sniffed = lineMediaService.detectMimeTypeFromBytes(buffer);
     const contentType = /^video\//.test(sniffed) ? sniffed : 'video/mp4';

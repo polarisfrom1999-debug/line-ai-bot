@@ -35,9 +35,17 @@ function streamToBuffer(stream) {
   });
 }
 
-function fetchContentViaHttps(messageId) {
+function fetchContentViaHttpsDetailed(messageId) {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (!messageId || !token) return Promise.resolve(null);
+  if (!messageId || !token) {
+    return Promise.resolve({
+      ok: false,
+      status: null,
+      contentType: '',
+      contentLength: null,
+      buffer: null
+    });
+  }
 
   return new Promise((resolve) => {
     const req = https.request({
@@ -52,23 +60,51 @@ function fetchContentViaHttps(messageId) {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          return resolve(Buffer.concat(chunks));
+        const buffer = Buffer.concat(chunks);
+        const status = Number(res.statusCode || 0) || null;
+        const contentType = String(res.headers?.['content-type'] || '');
+        const contentLengthRaw = Number(res.headers?.['content-length']);
+        const contentLength = Number.isFinite(contentLengthRaw) ? contentLengthRaw : null;
+        if (status && status >= 200 && status < 300) {
+          return resolve({
+            ok: true,
+            status,
+            contentType,
+            contentLength,
+            buffer
+          });
         }
-        console.error('[line_media_service] https fallback status:', res.statusCode);
-        return resolve(null);
+        console.error('[line_media_service] https fallback status:', status);
+        return resolve({
+          ok: false,
+          status,
+          contentType,
+          contentLength,
+          buffer: null
+        });
       });
     });
 
     req.on('error', (error) => {
       console.error('[line_media_service] https fallback error:', error?.message || error);
-      resolve(null);
+      resolve({
+        ok: false,
+        status: null,
+        contentType: '',
+        contentLength: null,
+        buffer: null
+      });
     });
     req.on('timeout', () => {
       req.destroy(new Error('timeout'));
     });
     req.end();
   });
+}
+
+async function fetchContentViaHttps(messageId) {
+  const detailed = await fetchContentViaHttpsDetailed(messageId);
+  return detailed?.buffer || null;
 }
 
 async function getMessageContentBuffer(messageId) {
@@ -97,6 +133,25 @@ async function getMessageContentBuffer(messageId) {
   }
 
   return fetchContentViaHttps(messageId);
+}
+
+async function getMessageContentBufferDetailed(messageId) {
+  const id = String(messageId || '').trim();
+  if (!id) {
+    return {
+      ok: false,
+      source: 'none',
+      status: null,
+      contentType: '',
+      contentLength: null,
+      buffer: null
+    };
+  }
+  const httpsResult = await fetchContentViaHttpsDetailed(id);
+  return {
+    ...httpsResult,
+    source: 'https'
+  };
 }
 
 function detectMimeTypeFromBytes(buffer) {
@@ -171,5 +226,6 @@ module.exports = {
   getImagePayload,
   getMediaPayload,
   getMessageContentBuffer,
+  getMessageContentBufferDetailed,
   detectMimeTypeFromBytes
 };

@@ -10,6 +10,11 @@ function normalizeText(v) {
 function buildFallbackInterpretation(input = {}) {
   const text = normalizeText(input.userText);
   const lower = text.toLowerCase();
+  const hasFoodWord = /(ご飯|ごはん|米|麺|パン|おかず|サラダ|卵|肉|魚)/.test(text);
+  const hasFractionWord = /(半分|少なめ|残した|食べた|食べてない|完食)/.test(text);
+  if (hasFoodWord && hasFractionWord) {
+    return { surface_intent: 'meal_correction', confidence: 0.9, entities: { reason: 'food_fraction_expression' } };
+  }
   if (/(ジョギング|ランニング|ウォーキング|腕立て|スクワット|腹筋|背筋|プランク|筋トレ|体幹|回|km|分).*(した|やった|やりました)|\d+\s*(回|分|km)/.test(text)) {
     return { surface_intent: 'exercise_record', confidence: 0.9, entities: {} };
   }
@@ -91,6 +96,18 @@ async function interpretContextualIntent(payload = {}) {
     confidence: Number(merged.confidence ?? fallback.confidence ?? 0.5) || 0.5,
     entities: merged.entities && typeof merged.entities === 'object' ? merged.entities : {},
   };
+  const hasFoodWord = /(ご飯|ごはん|米|麺|パン|おかず|サラダ|卵|肉|魚)/.test(normalizeText(payload.userText));
+  const hasFractionWord = /(半分|少なめ|残した|食べた|食べてない|完食)/.test(normalizeText(payload.userText));
+  if (result.surface_intent === 'exercise_record' && hasFoodWord && hasFractionWord) {
+    console.info('[contextual_intent_guardrail_applied]', {
+      original_intent: 'exercise_record',
+      corrected_intent: 'meal_correction',
+      reason: 'food_fraction_expression'
+    });
+    result.surface_intent = 'meal_correction';
+    result.confidence = Math.max(0.86, Number(result.confidence || 0));
+    result.entities = { ...(result.entities || {}), reason: 'food_fraction_expression' };
+  }
   console.info('[contextual_intent_interpreter_result]', {
     text: normalizeText(payload?.userText || '').slice(0, 120),
     surface_intent: result.surface_intent,
