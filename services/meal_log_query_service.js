@@ -75,7 +75,9 @@ function normalizeDbRow(row) {
     dedupeKey: normalizeText(raw.dedupeKey || ''),
     correctionType: normalizeText(raw.correction_type || raw.correctionType || raw.calorie_source || ''),
     parentMealId: normalizeText(raw.parent_meal_id || raw.parentMealId || ''),
-    targetMealId: normalizeText(raw.target_meal_id || raw.targetMealId || '')
+    targetMealId: normalizeText(raw.target_meal_id || raw.targetMealId || ''),
+    targetFood: normalizeText(raw.target_food || raw.targetFood || ''),
+    fraction: Number(raw.fraction ?? raw.ratio ?? 0)
   };
 }
 
@@ -183,6 +185,43 @@ async function getLatestBaseMealLogWithTrace(lineUserId, daysBack = 5) {
       skipped_latest_correction: skippedLatestCorrection
     }
   };
+}
+
+async function findRecentMealCorrectionDuplicate(lineUserId, { targetMealId = '', targetFood = '', fraction = 0, daysBack = 7 } = {}) {
+  const safeMealId = normalizeText(targetMealId);
+  if (!safeMealId) return null;
+  const today = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+  let from = today;
+  for (let i = 0; i < Math.max(0, Number(daysBack || 0)); i += 1) {
+    const m = String(from).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) break;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+09:00`);
+    dt.setDate(dt.getDate() - 1);
+    from = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  }
+  const logs = deduplicateMealLogs(await getMealLogsByDateRange(lineUserId, from, today));
+  const safeTargetFood = normalizeText(targetFood);
+  const safeFraction = Number(fraction || 0);
+  const hit = logs.find((m) => {
+    if (!isCorrectionLikeMealLog(m)) return false;
+    if (normalizeText(m.targetMealId) !== safeMealId) return false;
+    if (safeTargetFood && normalizeText(m.targetFood) && normalizeText(m.targetFood) !== safeTargetFood) return false;
+    if (safeFraction > 0 && Number.isFinite(m.fraction) && m.fraction > 0) {
+      return Math.abs(Number(m.fraction) - safeFraction) < 0.001;
+    }
+    return true;
+  });
+  return hit || null;
 }
 
 function dedupeFingerprint(log) {
@@ -359,6 +398,7 @@ module.exports = {
   getMealLogsByDateRange,
   getLatestMealLog,
   getLatestBaseMealLogWithTrace,
+  findRecentMealCorrectionDuplicate,
   deduplicateMealLogs,
   dedupeFingerprint,
   sumMealLogs,

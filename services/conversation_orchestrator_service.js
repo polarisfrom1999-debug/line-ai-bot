@@ -2628,9 +2628,18 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
   const fromPending = shortMemory?.pendingRecordCandidate?.recordType === 'meal_record' ? shortMemory?.pendingRecordCandidate?.extracted : null;
   const fromFollowUp = shortMemory?.followUpContext?.imageType === 'meal' ? shortMemory?.followUpContext?.extractedMeal : null;
   let source = fromPending || fromFollowUp ? 'active_context' : '';
-  let sourceMealId = '';
+  let sourceMealId = normalizeText(fromPending?.meal_id || fromPending?.id || fromFollowUp?.meal_id || fromFollowUp?.id || '');
   let mealLabel = '';
   let meal = fromPending || fromFollowUp;
+  if (source === 'active_context' && !sourceMealId) {
+    console.info('[meal_correction_active_context_invalid]', {
+      user_id: input.userId,
+      reason: 'empty_meal_id',
+      fallback: 'latest_base_meal'
+    });
+    meal = null;
+    source = '';
+  }
   if (!meal || typeof meal !== 'object') {
     const latestBase = await mealLogQueryService.getLatestBaseMealLogWithTrace(input.userId, 7);
     const latest = latestBase?.meal || null;
@@ -2686,6 +2695,32 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
     if (/おかず/.test(text)) return 'おかず';
     return '食事全体';
   })();
+  const duplicate = await mealLogQueryService.findRecentMealCorrectionDuplicate(input.userId, {
+    targetMealId: sourceMealId,
+    targetFood,
+    fraction: ratio,
+    daysBack: 7
+  });
+  if (duplicate && !input?.allowDuplicateMealCorrection) {
+    console.info('[meal_correction_duplicate_detected]', {
+      user_id: input.userId,
+      target_meal_id: sourceMealId,
+      target_food: targetFood,
+      fraction: ratio,
+      existing_correction_id: String(duplicate.id || ''),
+      action: 'ask_confirmation'
+    });
+    return {
+      requiresConfirmation: true,
+      confirmationPayload: {
+        type: 'meal_correction_duplicate_confirm',
+        target_meal_id: sourceMealId,
+        target_food: targetFood,
+        fraction: ratio
+      },
+      replyText: `${targetFood}半分としてはすでに見直しています。さらに少なめに直しますか？`
+    };
+  }
   console.info('[meal_correction_target_resolved]', {
     user_id: input.userId,
     meal_id: sourceMealId,
@@ -2798,7 +2833,10 @@ async function maybeHandleMealFollowUp(input, shortMemory) {
       carbs: Number(deltaNutrition.carbs || 0),
       amountNote: text,
       target_meal_id: sourceMealId || '',
-      parent_meal_id: sourceMealId || ''
+      parent_meal_id: sourceMealId || '',
+      target_food: targetFood,
+      fraction: ratio,
+      correction_type: 'manual_correction_delta'
     }
   };
 }
@@ -3476,6 +3514,12 @@ async function orchestrateConversation(input) {
       priority.reason = 'pending_confirmation_applied_action';
       console.info('[contextual_intent_applied]', { intent: 'meal_correction', user_id: input.userId });
     }
+    if (resumedFromPendingConfirmation && pendingAppliedAction?.type === 'meal_correction_duplicate_confirm') {
+      priority.route = 'meal_correction';
+      priority.reason = 'pending_confirmation_duplicate_meal_correction_confirm';
+      input.allowDuplicateMealCorrection = true;
+      console.info('[contextual_intent_applied]', { intent: 'meal_correction', user_id: input.userId, duplicate_confirmed: true });
+    }
     const activeContextType = normalizeText(
       shortMemory?.followUpContext?.imageType
       || shortMemory?.followUpContext?.source
@@ -3528,6 +3572,15 @@ async function orchestrateConversation(input) {
     if (input?.messageType === 'text' && priority.route === 'meal_correction') {
       logPriority(priority.route, priority.reason);
       const mealFollow = await maybeHandleMealFollowUp(input, shortMemory);
+      if (mealFollow?.requiresConfirmation && mealFollow?.confirmationPayload) {
+        await pendingConfirmationService.savePendingConfirmation(input.userId, {
+          userText: text,
+          proposed_action_json: mealFollow.confirmationPayload
+        });
+        const out = await withSurfaceReply(input, mealFollow.replyText, { recentMessages, longMemory }, 'meal_correction_confirmation');
+        await appendTurn(input.userId, input.rawText || '', out);
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'meal_correction_confirmation', responseMode: 'answer' } };
+      }
       if (mealFollow?.replyText) {
         await contextMemoryService.addDailyRecord(
           input.userId,
