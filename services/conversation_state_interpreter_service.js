@@ -1,6 +1,7 @@
 'use strict';
 
 const topicShiftDetectorService = require('./topic_shift_detector_service');
+const EMOTIONAL_SUPPORT_RE = /(心が重い|気持ちが重い|寂しい|さみしい|つらい|しんどい|不安|嫌だった|疲れた|泣きたい|もう無理|落ち込む|落ち込んだ)/;
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -13,7 +14,7 @@ function yesToken(text = '') {
 function detectPrimaryMode(text = '') {
   const safe = normalizeText(text);
   if (!safe) return 'casual_chat';
-  if (/(心が重い|気持ちが重い|寂しい|さみしい|つらい|しんどい|不安|嫌だった|疲れた|泣きたい|もう無理|落ち込/.test(safe)) return 'emotional_support';
+  if (EMOTIONAL_SUPPORT_RE.test(safe)) return 'emotional_support';
   if (/(仕事で嫌|仕事.*嫌な|家族|恋愛|人間関係|相談|聞いて|実は|本当は|どう思う)/.test(safe)) return 'life_companion';
   if (/(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れ/.test(safe)) return 'lab_followup';
   if (/(ご飯|ごはん|米|麺|パン|おかず|サラダ|卵|肉|魚).*(半分|少なめ|残した|食べてない|完食)|半分食べました/.test(safe)) return 'meal_correction';

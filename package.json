@@ -4,7 +4,8 @@
   "description": "Kokokara LINE AI bot",
   "main": "index.js",
   "scripts": {
-    "build": "node scripts/lab_result_items_fixture_test.js",
+    "syntax:check": "node -c index.js && node -c services/conversation_state_interpreter_service.js && node -c services/topic_shift_detector_service.js",
+    "build": "npm run syntax:check && node scripts/lab_result_items_fixture_test.js",
     "start": "node index.js",
     "flags:stage-entry": "node scripts/stage_entry_flag_report.js",
     "smoke:stage-entry": "node scripts/stage_entry_smoke_inputs.js",

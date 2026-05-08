@@ -3,12 +3,13 @@
 function normalizeText(v) {
   return String(v || '').trim();
 }
+const EMOTIONAL_SHIFT_RE = /(心が重い|気持ちが重い|寂しい|さみしい|つらい|しんどい|不安|嫌だった|疲れた|泣きたい|もう無理|落ち込む|落ち込んだ)/;
 
 function detectModeFromText(text = '') {
   const safe = normalizeText(text);
   if (!safe) return 'casual_shift';
   if (/^(はい|うん|そう|OK|ok|お願いします|それで)$/i.test(safe)) return 'pending_answer';
-  if (/(心が重い|気持ちが重い|寂しい|さみしい|つらい|しんどい|不安|嫌だった|疲れた|泣きたい|もう無理|落ち込/.test(safe)) return 'emotional_shift';
+  if (EMOTIONAL_SHIFT_RE.test(safe)) return 'emotional_shift';
   if (/(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$/.test(safe)) return 'lab_shift';
   if (/(ご飯|ごはん|米|麺|パン|おかず|サラダ|卵|肉|魚).*(半分|少なめ|残した|食べてない|完食)|半分食べました/.test(safe)) return 'meal_correction_continuation';
   if (/(腰|膝|だるい|眠い|頭痛|痛い|重い)/.test(safe)) return 'body_condition_shift';
