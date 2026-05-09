@@ -2,6 +2,7 @@
 
 const { PHASES, migrateLegacyPhase } = require('./relationship_phase_service');
 const { selectConversationTone } = require('./conversation_tone_selector_service');
+const { isExclusiveHealthOrFeedbackText } = require('./conversation_state_interpreter_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -10,7 +11,7 @@ function normalizeText(v) {
 function isHealthAnchoredText(text) {
   const safe = normalizeText(text);
   if (!safe) return false;
-  return /カロリー|kcal|食事|ごはん|ご飯|朝食|昼食|夕食|運動|歩数|体重|体脂肪|検査|血糖|血圧|痛い|腰痛|睡眠|HbA1c|タンパク|糖質/.test(safe);
+  return /カロリー|kcal|食事|ごはん|ご飯|朝食|昼食|夕食|運動|歩数|体重|体脂肪|検査|血糖|血圧|痛い|腰痛|睡眠|HbA1c|タンパク|糖質|白湯|おはぎ|味付き卵|味噌汁|サラダ|ストレッチ|伸びた/.test(safe);
 }
 
 function inferLifeTopic(text) {
@@ -196,6 +197,7 @@ function dedupeLifeCompanionPhrases(text, topic, recentMessages = []) {
 function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemory = {}, userState = {}, recentMessages = [] } = {}) {
   const safe = normalizeText(text);
   if (!safe || safe.length < 4) return null;
+  if (isExclusiveHealthOrFeedbackText(safe)) return null;
   if (isHealthAnchoredText(safe)) return null;
 
   const topic = inferLifeTopic(safe);

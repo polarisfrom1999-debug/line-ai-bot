@@ -86,6 +86,34 @@ function softenStandaloneTemplateLines(text) {
 /**
  * @param {{ text: string, userText?: string, intent?: string, relationshipPhase?: string, userId?: string }} params
  */
+const GENERIC_TEMPLATE_STRIP = [
+  'ここまでの流れを一本で見ています',
+  '急がず、今日はこの一歩で十分です',
+  '雑談も、ちゃんと受け止めます',
+  '健康の話に引き戻さなくて大丈夫です',
+  '続きがあれば、そのまま送ってください',
+  'まずはここに送れただけで十分です',
+];
+
+function removeGenericTemplatePhrases(text = '') {
+  let out = String(text || '');
+  let changed = false;
+  for (const phrase of GENERIC_TEMPLATE_STRIP) {
+    if (out.includes(phrase)) {
+      console.info('[generic_template_phrase_removed]', { phrase, reason: 'hard_block_list' });
+      out = out.split(phrase).join('').replace(/\n{3,}/g, '\n\n').trim();
+      changed = true;
+    }
+  }
+  const echoWeightRe = /「[^」]{1,48}」の重さ、ちゃんと受け取っています。\n?/g;
+  if (echoWeightRe.test(out)) {
+    console.info('[generic_template_phrase_removed]', { phrase: 'echo_weight_lead', reason: 'hard_block_pattern' });
+    out = out.replace(echoWeightRe, '').trim();
+    changed = true;
+  }
+  return { text: out.trim(), removed: changed };
+}
+
 function maybeStripRoutineGreeting(text, params = {}) {
   const token = '今日も1日よろしくお願いします';
   if (!String(text || '').includes(token)) return String(text || '');
@@ -115,6 +143,7 @@ function applyEmotionalQualityPass(params = {}) {
   const intent = normalizeText(params.intent || '');
   const conversationMode = normalizeText(params.conversationMode || intent || '');
   const userId = normalizeText(params.userId || '');
+  const skipTemplateRemediation = /emotional_support|life_companion|correction_feedback|exercise_feedback/.test(conversationMode);
 
   const rwGlobal = applyTemplateRewrites(text);
   text = rwGlobal.text;
@@ -123,7 +152,14 @@ function applyEmotionalQualityPass(params = {}) {
 
   let rewrite_applied = rwGlobal.rewrite_applied || softLines.rewrite_applied;
 
-  if (!replyHasUserEcho(text, userText) && userText && extractEchoSnippet(userText) && (intent === 'normal_chat' || intent === 'meal')) {
+  const skipEchoLead = /emotional_support|life_companion|correction_feedback|exercise_feedback/.test(conversationMode);
+  if (
+    !skipEchoLead
+    && !replyHasUserEcho(text, userText)
+    && userText
+    && extractEchoSnippet(userText)
+    && (intent === 'normal_chat' || intent === 'meal')
+  ) {
     const snip = extractEchoSnippet(userText);
     if (snip && !text.includes(snip.slice(0, Math.min(8, snip.length)))) {
       const echo = `「${snip}」の重さ、ちゃんと受け取っています。\n`;
@@ -132,7 +168,7 @@ function applyEmotionalQualityPass(params = {}) {
     }
   }
 
-  if (isTemplateOnlyPhrase(text) && text.length < 80) {
+  if (!skipTemplateRemediation && isTemplateOnlyPhrase(text) && text.length < 80) {
     text = `${text}\n責めるための記録ではなく、流れを見るための記録として受け止めています。`.trim();
     rewrite_applied = true;
   }
@@ -165,7 +201,7 @@ function applyEmotionalQualityPass(params = {}) {
     flags.emotional_quality_ok = false;
   }
 
-  if (!flags.emotional_quality_ok) {
+  if (!flags.emotional_quality_ok && !skipTemplateRemediation) {
     const echo = extractEchoSnippet(userText);
     const lead = echo ? `「${echo}」のこと、ここで一緒に見ていきます。` : 'そのまま話してくれてありがとうございます。';
     const close = 'ひとりで抱えすぎなくて大丈夫です。今わかる範囲だけで、一緒に整理していきましょう。';
@@ -212,6 +248,10 @@ function applyEmotionalQualityPass(params = {}) {
     conversationMode,
     relationshipPhase: params.relationshipPhase
   });
+
+  const stripped = removeGenericTemplatePhrases(text);
+  text = stripped.text;
+  if (stripped.removed) rewrite_applied = true;
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,

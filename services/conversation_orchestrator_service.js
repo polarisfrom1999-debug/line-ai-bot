@@ -1427,7 +1427,7 @@ function looksLikeMealText(text) {
   if (/使い方|送り方|メニュー|コマンド/.test(safe)) return false;
   if (/^(朝|昼|夜|夕)(ごはん|ご飯|食)(です|でした)?$/.test(safe)) return false;
   if (/^(ごはん|ご飯)(です|でした)?$/.test(safe)) return false;
-  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|飲んだ|ラーメン|カレー|寿司|卵|味噌汁|サラダ|ごはん|ご飯|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当/.test(safe);
+  return /朝ごはん|昼ごはん|夜ごはん|朝食|昼食|夕食|食べた|食べちゃ|飲んだ|ラーメン|カレー|寿司|卵|味付き卵|味噌汁|サラダ|ごはん|ご飯|パン|ヨーグルト|バナナ|パスタ|おにぎり|弁当|白湯|おはぎ|玄米/.test(safe);
 }
 
 function isMealAnnouncementText(text) {
@@ -2153,7 +2153,12 @@ async function appendTurn(userId, userText, replyText) {
   });
 }
 
-async function withSurfaceReply(input, draftText, ctx, intentType) {
+function shouldSkipHealthAggregationForIntent(intentType = '') {
+  const t = normalizeText(intentType || '');
+  return /^(emotional_support|life_companion|correction_feedback|exercise_feedback)$/.test(t);
+}
+
+async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
   const polished = await conversationSurfaceService.polishDraftToSurface({
     userMessage: input?.rawText || '',
     draftReply: draftText,
@@ -2178,8 +2183,13 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
       || shortMemory?.pendingRecordCandidate?.recordType
       || ''
     );
-    const todayNutritionSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
-    const todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    const skipHealth = Boolean(options.skipHealthAggregation) || shouldSkipHealthAggregationForIntent(intentType);
+    let todayNutritionSummary = null;
+    let todayEnergyBalance = null;
+    if (!skipHealth) {
+      todayNutritionSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+      todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
+    }
     const enhanced = await companionReplyService.enhanceReply({
       userId: input.userId,
       userText: input?.rawText || '',
@@ -2189,8 +2199,8 @@ async function withSurfaceReply(input, draftText, ctx, intentType) {
       activeContextType,
       recentMessages: ctx?.recentMessages || [],
       longMemory: ctx?.longMemory || {},
-      todayNutritionSummary,
-      todayEnergyBalance,
+      todayNutritionSummary: todayNutritionSummary || {},
+      todayEnergyBalance: todayEnergyBalance || {},
       hour
     });
     return normalizeText(enhanced?.text || base) || base;
@@ -2890,6 +2900,13 @@ async function maybeHandleSimpleWeightRecord(input, text) {
   return { replyText, record };
 }
 
+function buildExerciseBodyFeedbackReply() {
+  return [
+    'ストレッチのあとに「伸びた感じ」まで拾えているのは、とても良い流れです。',
+    'その感覚を覚えておけると、次も続けやすいです。無理に量は増やさなくて大丈夫です。',
+  ].join('\n');
+}
+
 async function maybeHandleSimpleExerciseRecord(input, text, longMemoryLatest) {
   if (looksLikeCoachingOrConsultationText(text) || shouldAnswerWithChatFirst(text)) return null;
   if (containsQuestionTone(text)) return null;
@@ -3383,6 +3400,36 @@ async function orchestrateConversation(input) {
       })
       : null;
     let forcedConversationRoute = '';
+
+    if (conversationState?.primary_conversation_mode === 'assistant_error_feedback') {
+      console.info('[assistant_error_feedback_detected]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: 'correction_feedback',
+        conversation_mode: 'assistant_error_feedback'
+      });
+      console.info('[conversation_state_early_return]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: 'correction_feedback',
+        conversation_mode: 'assistant_error_feedback',
+        reason: 'assistant_error_immediate_reply'
+      });
+      const errReply = [
+        'すみません、今の返しはズレていました。',
+        '直前の内容を見直します。どこを直したいか、そのまま教えてください。'
+      ].join('\n');
+      const errOut = await withSurfaceReply(input, errReply, { recentMessages, longMemory }, 'correction_feedback', {
+        skipHealthAggregation: true
+      });
+      await appendTurn(input.userId, input.rawText || '', errOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: errOut }],
+        internal: { intentType: 'correction_feedback', responseMode: 'conversation_first' }
+      };
+    }
+
     if (conversationState?.primary_conversation_mode === 'emotional_support') {
       console.info('[emotional_support_routed]', {
         user_id: input.userId,
@@ -3409,7 +3456,9 @@ async function orchestrateConversation(input) {
         conversation_mode: 'emotional_support',
         reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_emotional_fallback'
       });
-      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'emotional_support');
+      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'emotional_support', {
+        skipHealthAggregation: true
+      });
       await appendTurn(input.userId, input.rawText || '', lifeOut);
       return {
         ok: true,
@@ -3435,18 +3484,26 @@ async function orchestrateConversation(input) {
         conversation_mode: 'life_companion',
         reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_life_fallback'
       });
-      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'life_companion');
+      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'life_companion', {
+        skipHealthAggregation: true
+      });
       await appendTurn(input.userId, input.rawText || '', lifeOut);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: lifeOut }],
         internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
       };
-    } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record'].includes(conversationState.route)) {
+    } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record', 'meal_record', 'exercise_or_body_feedback'].includes(conversationState.route)) {
       forcedConversationRoute = conversationState.route;
     }
 
-    if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
+    if (
+      input?.messageType === 'text'
+      && text
+      && !resumedFromPendingConfirmation
+      && conversationState?.primary_conversation_mode === 'casual_chat'
+      && !conversationStateInterpreterService.isExclusiveHealthOrFeedbackText(text)
+    ) {
       const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
         userId: input.userId,
         text,
@@ -3456,7 +3513,9 @@ async function orchestrateConversation(input) {
         recentMessages,
       });
       if (lifeEarly?.replyText) {
-        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
+        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion', {
+          skipHealthAggregation: true
+        });
         await appendTurn(input.userId, input.rawText || '', lifeOut);
         return {
           ok: true,
@@ -3488,8 +3547,10 @@ async function orchestrateConversation(input) {
       }
     }
 
+    const skipCompassionateLayer = Boolean(conversationState?.should_route_to_feature);
+
     let compassionateJudgment = null;
-    if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation) {
+    if (input?.messageType === 'text' && text && !resumedFromPendingConfirmation && !skipCompassionateLayer) {
       const latestMealSummary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
       const todayEnergyBalance = await dailyEnergyBalanceService.fetchTodayEnergyBalance(input.userId);
       const latestExerciseSummary = {
@@ -3641,6 +3702,48 @@ async function orchestrateConversation(input) {
         active_context_type: activeContextType
       });
     };
+
+    if (input?.messageType === 'text' && priority.route === 'meal_record') {
+      logPriority(priority.route, priority.reason);
+      const mealTextHandled = await maybeHandleMealText(input);
+      const surfaceIntent = conversationState?.primary_conversation_mode === 'reward_food' ? 'meal_note' : 'meal_record_text';
+      if (mealTextHandled?.replyText) {
+        const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent);
+        await appendTurn(input.userId, input.rawText || '', out);
+        return {
+          ok: true,
+          replyMessages: [{ type: 'text', text: out }],
+          internal: { intentType: surfaceIntent, responseMode: 'record' }
+        };
+      }
+      const fallbackMeal = [
+        '食事の内容が見えています。',
+        '品目や量をもう少しだけ書いてくれると、記録の形が安定しやすいです。',
+        'そのまま続きを送ってください。'
+      ].join('\n');
+      const fbOut = await withSurfaceReply(input, fallbackMeal, { recentMessages, longMemory }, surfaceIntent);
+      await appendTurn(input.userId, input.rawText || '', fbOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: fbOut }],
+        internal: { intentType: surfaceIntent, responseMode: 'answer' }
+      };
+    }
+
+    if (input?.messageType === 'text' && priority.route === 'exercise_or_body_feedback') {
+      logPriority(priority.route, priority.reason);
+      const simpleEx = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
+      const bodyReply = simpleEx?.replyText || buildExerciseBodyFeedbackReply();
+      const exOut = await withSurfaceReply(input, bodyReply, { recentMessages, longMemory }, 'exercise_feedback', {
+        skipHealthAggregation: true
+      });
+      await appendTurn(input.userId, input.rawText || '', exOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: exOut }],
+        internal: { intentType: 'exercise_feedback', responseMode: simpleEx?.record ? 'record' : 'answer' }
+      };
+    }
 
     if (input?.messageType === 'text' && priority.route === 'exercise_record') {
       logPriority(priority.route, priority.reason);

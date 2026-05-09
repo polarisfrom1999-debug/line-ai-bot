@@ -28,10 +28,11 @@ function detectSupportStyle(text, intent) {
 function inferIntentTag(intentType = '') {
   const safe = normalizeText(intentType);
   if (/athlete_video|video/.test(safe)) return 'video';
-  if (/meal|today_meal/.test(safe)) return 'meal';
-  if (/exercise/.test(safe)) return 'exercise';
+  if (/meal_record_text|meal_note|meal|today_meal/.test(safe)) return 'meal';
+  if (/exercise_feedback|exercise/.test(safe)) return 'exercise';
   if (/body_condition|pain/.test(safe)) return 'body_condition';
   if (/lab/.test(safe)) return 'lab';
+  if (/correction_feedback/.test(safe)) return 'normal_chat';
   return 'normal_chat';
 }
 
@@ -342,7 +343,7 @@ async function enhanceReply(params = {}) {
 
   let integratedCore = core;
   const conversationModeNorm = normalizeText(params.conversationMode || params.intentType || '');
-  const skipContextualObservation = /emotional_support|life_companion/.test(conversationModeNorm);
+  const skipContextualObservation = /emotional_support|life_companion|correction_feedback/.test(conversationModeNorm);
 
   if (!skipContextualObservation) {
     try {
@@ -373,6 +374,13 @@ async function enhanceReply(params = {}) {
           userId: params.userId
         });
         integratedCore = fused.text;
+      } else {
+        console.info('[contextual_observation_integrated]', {
+          user_id: params.userId,
+          observation_type: normalizeText(sel.observation_type || 'none'),
+          integrated_into_reply: false,
+          skipped_reason: normalizeText(sel.reason || 'no_specific_observation')
+        });
       }
     } catch (_e) {
       console.info('[contextual_observation_integrated]', {

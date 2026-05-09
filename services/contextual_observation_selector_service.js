@@ -23,9 +23,9 @@ function selectContextualObservation(params = {}) {
   const intent = normalizeText(params.intentTag || 'normal_chat');
   const phase = normalizeText(params.relationshipPhase || PHASES.P1);
 
-  let observation_type = 'today_flow';
+  let observation_type = 'none';
   let observation_text = '';
-  let reason = 'default_soft_anchor';
+  let reason = 'no_specific_observation';
 
   const distress = /(心が重|つらい|しんどい|限界|泣き|落ち込|苦しい|怖い|モヤモヤ|不安です|心配)/.test(userText);
   const weightWorry = /(kg|キロ|体重).*(早く|大丈夫|不安|心配|いいの)/.test(userText) || /(減りすぎ|早く減)/.test(userText);
@@ -81,21 +81,19 @@ function selectContextualObservation(params = {}) {
     observation_type = 'body_care';
     observation_text = `体の声（${normalizeText(tc.body_note).slice(0, 56)}）も横に置いておきます。無理に上乗せしなくて大丈夫です。`;
     reason = 'body_note_side_by_side';
-  } else {
+  } else if (tc.latest_meal && intent === 'meal') {
     observation_type = 'today_continuity';
-    if (tc.latest_meal && intent === 'meal') {
-      observation_text = `${normalizeText(tc.latest_meal).slice(0, 40)}、今日の食卓の形としてちゃんと見えています。`;
-      reason = 'meal_shape_visible';
-    } else if (tc.exercise_today && intent === 'exercise') {
-      observation_text = `今日の動き（${normalizeText(tc.exercise_today).slice(0, 56)}）、記録として受け取れています。`;
-      reason = 'exercise_today_ack';
-    }
+    observation_text = `${normalizeText(tc.latest_meal).slice(0, 40)}、今日の食卓の形としてちゃんと見えています。`;
+    reason = 'meal_shape_visible';
+  } else if (tc.exercise_today && intent === 'exercise') {
+    observation_type = 'today_continuity';
+    observation_text = `今日の動き（${normalizeText(tc.exercise_today).slice(0, 56)}）、記録として受け取れています。`;
+    reason = 'exercise_today_ack';
   }
 
   if (!observation_text) {
-    observation_type = 'gentle_default';
-    observation_text = 'ここまでの流れを一本で見ています。急がず、今日はこの一歩で十分です。';
-    reason = 'fallback_observation';
+    observation_type = 'none';
+    reason = 'no_specific_observation';
   }
 
   console.info('[contextual_observation_selected]', {
