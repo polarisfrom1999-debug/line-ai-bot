@@ -16,6 +16,9 @@ function isHealthAnchoredText(text) {
 function inferLifeTopic(text) {
   const safe = normalizeText(text);
   if (!safe) return null;
+  if (/(心が重い|気持ちが重い|モヤモヤ|空っぽ|泣きたい|落ち込|もう無理|不安で|不安です|怖くて|怖いです)/.test(safe)) {
+    return 'emotional_disclosure';
+  }
   if (/聞いて|相談|つらい|しんどい|疲れた|嫌だった|嫌な事|嫌なこと/.test(safe)) return 'emotional_disclosure';
   if (/仕事|職場|上司|残業|クライアント|プロジェクト/.test(safe)) return 'work_stress';
   if (/家族|親|子ども|子供|夫|妻|パートナー/.test(safe)) return 'family';
@@ -126,9 +129,9 @@ function buildReplyForTopic(topic, phase) {
 
   if (topic === 'emotional_disclosure') {
     return [
-      'それ、ちゃんとしんどかったですね。',
-      '無理に整った言葉にしなくて大丈夫です。',
-      'ここでは、そのまま話して大丈夫です。まずは何が一番引っかかっているかだけ、一緒に置いてみましょう。',
+      'いまの重さ、ちゃんと受け取っています。',
+      '食事や数値の話に、急いで戻さなくて大丈夫です。',
+      '無理に整った言葉にしなくて大丈夫です。まずは呼吸を少しだけゆっくりにする、くらいからで十分です。',
     ].join('\n');
   }
 
@@ -231,8 +234,31 @@ function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemor
   };
 }
 
+function buildGuaranteedEmotionalSupportReply(text = '') {
+  const safe = normalizeText(text);
+  const inner = safe.replace(/^[「『]/, '').replace(/[」』]$/, '');
+  const lead = inner && inner.length <= 48
+    ? `「${inner}」と送ってくれてありがとうございます。その重さ、ここで一緒に置いておきましょう。`
+    : '送ってくれた言葉の重さ、ここで一緒に置いておきましょう。';
+  return [
+    lead,
+    '食事や検査の話に、急いで戻さなくて大丈夫です。',
+    'いまは気持ちのほうを先に受け止めます。無理に前向きにならなくて大丈夫です。',
+  ].join('\n');
+}
+
+function buildGuaranteedLifeCompanionReply() {
+  return [
+    'いまの話題は、健康の数字より先に心が動いているように見えます。',
+    'ここでは、記録に無理に戻さず、そのままの温度で受け止めます。',
+    '続きがあれば、短い一文でも大丈夫です。',
+  ].join('\n');
+}
+
 module.exports = {
   inferLifeTopic,
   tryLifeCompanionReply,
   isHealthAnchoredText,
+  buildGuaranteedEmotionalSupportReply,
+  buildGuaranteedLifeCompanionReply,
 };

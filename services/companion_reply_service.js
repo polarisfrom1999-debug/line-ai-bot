@@ -57,7 +57,7 @@ function resolveRelationshipPhase(params) {
  */
 function selectReplyDepth(intent, params = {}, relationshipPhase = '') {
   const safeText = normalizeText(params.userText || '');
-  const deepMarkers = /不安|迷い|弱音|寂し|さみしい|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
+  const deepMarkers = /不安|迷い|弱音|寂し|さみしい|心が重い|気持ちが重い|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
   if (deepMarkers.test(safeText)) {
     return { depth: 'deep', reason: 'vulnerability_distress_or_seeking' };
   }
@@ -130,6 +130,74 @@ function getRecentAssistantReplies(recentMessages = []) {
     .map((m) => normalizeText(m?.content || ''))
     .filter(Boolean)
     .slice(-5);
+}
+
+function fuseContextualObservation({
+  observationText = '',
+  observationType = '',
+  core = '',
+  intent = 'normal_chat',
+  userId = ''
+} = {}) {
+  const obs = normalizeText(observationText);
+  const c = normalizeText(core);
+  const log = (integrated, reason) => {
+    console.info('[contextual_observation_integrated]', {
+      user_id: normalizeText(userId) || '(anon)',
+      observation_type: normalizeText(observationType) || '',
+      integrated_into_reply: integrated,
+      skipped_reason: reason
+    });
+  };
+  if (!obs) {
+    log(false, 'no_observation');
+    return { text: c, integrated: false };
+  }
+  if (intent === 'video') {
+    log(false, 'video_intent_reserved');
+    return { text: c, integrated: false };
+  }
+  const prefixLen = Math.min(24, obs.length);
+  if (prefixLen >= 6 && c.includes(obs.slice(0, prefixLen))) {
+    log(false, 'already_in_core');
+    return { text: c, integrated: false };
+  }
+
+  let obsTrim = obs.replace(/\s+/g, ' ').replace(/。+$/, '');
+  const dupPhrase = /(ちゃんと見えています|流れが見えています|形になっています)/;
+  if (dupPhrase.test(obsTrim) && dupPhrase.test(c)) {
+    obsTrim = obsTrim.replace(dupPhrase, '').replace(/[、。]\s*$/u, '').trim();
+  }
+  if (!obsTrim) {
+    log(false, 'observation_empty_after_dedup');
+    return { text: c, integrated: false };
+  }
+
+  const bridgeMap = {
+    past_effort_link: 'なので、',
+    yesterday_carryover: 'なので、',
+    stable_rhythm: '',
+    meal_balance: '',
+    learning_success: '',
+    emotional_context: '',
+    body_awareness: '',
+    correction_trust: '',
+    trust_signal: '',
+    life_environment: '',
+    body_care: '',
+    today_flow: '',
+    today_continuity: '',
+    gentle_default: ''
+  };
+  const br = bridgeMap[observationType] || '';
+  const parts = c.split('\n');
+  const firstLine = parts[0] || '';
+  const rest = parts.slice(1).join('\n');
+  const mergedFirst = br ? `${obsTrim}。${br}${firstLine}` : `${obsTrim}。${firstLine}`;
+  const fused = rest ? `${mergedFirst}\n${rest}` : mergedFirst;
+  const cleaned = fused.replace(/。\s*。/g, '。').trim();
+  log(true, 'fused_lead_sentence');
+  return { text: cleaned, integrated: true };
 }
 
 function pickNonRecentPhrase(candidates = [], recentReplies = []) {
@@ -265,35 +333,65 @@ async function enhanceReply(params = {}) {
   const core = avoidBareTemplate(rawReply);
   const recentAssistantReplies = getRecentAssistantReplies(params.recentMessages);
 
-  let observationPrefix = '';
   let userState = { totalTurns: 0 };
   try {
     userState = await contextMemoryService.getUserState(params.userId);
   } catch (_e) {
     userState = { totalTurns: 0 };
   }
-  try {
-    await conversationStyleProfileService.applyLightStyleUpdate(params.userId, params.userText);
-    const { today_context } = await userDailyContextBuilderService.buildUserDailyContext(params.userId);
-    const sel = contextualObservationSelectorService.selectContextualObservation({
-      userId: params.userId,
-      userText: params.userText,
-      todayContext: today_context,
-      intentTag: intent,
-      relationshipPhase
-    });
-    const oc = normalizeText(sel.observation_text || '');
-    const cr = normalizeText(core);
-    if (oc && (cr.length < 10 || !cr.includes(oc.slice(0, Math.min(24, oc.length))))) {
-      observationPrefix = oc;
+
+  let integratedCore = core;
+  const conversationModeNorm = normalizeText(params.conversationMode || params.intentType || '');
+  const skipContextualObservation = /emotional_support|life_companion/.test(conversationModeNorm);
+
+  if (!skipContextualObservation) {
+    try {
+      await conversationStyleProfileService.applyLightStyleUpdate(params.userId, params.userText);
+      const { today_context } = await userDailyContextBuilderService.buildUserDailyContext(params.userId);
+      const sel = contextualObservationSelectorService.selectContextualObservation({
+        userId: params.userId,
+        userText: params.userText,
+        todayContext: today_context,
+        intentTag: intent,
+        relationshipPhase
+      });
+      const oc = normalizeText(sel.observation_text || '');
+      const cr = normalizeText(core);
+      if (oc && cr.length >= 10 && cr.includes(oc.slice(0, Math.min(24, oc.length)))) {
+        console.info('[contextual_observation_integrated]', {
+          user_id: params.userId,
+          observation_type: normalizeText(sel.observation_type || ''),
+          integrated_into_reply: false,
+          skipped_reason: 'observation_overlaps_core'
+        });
+      } else if (oc) {
+        const fused = fuseContextualObservation({
+          observationText: oc,
+          observationType: sel.observation_type || '',
+          core: cr,
+          intent,
+          userId: params.userId
+        });
+        integratedCore = fused.text;
+      }
+    } catch (_e) {
+      console.info('[contextual_observation_integrated]', {
+        user_id: params.userId,
+        observation_type: '',
+        integrated_into_reply: false,
+        skipped_reason: 'builder_or_selector_error'
+      });
     }
-  } catch (_e) {
-    observationPrefix = '';
+  } else {
+    console.info('[contextual_observation_integrated]', {
+      user_id: params.userId,
+      observation_type: '',
+      integrated_into_reply: false,
+      skipped_reason: 'conversation_first_emotional_or_life'
+    });
   }
 
-  const lines = [];
-  if (observationPrefix) lines.push(observationPrefix);
-  lines.push(core);
+  const lines = [integratedCore];
   let dedupMeta = { avoided: false, replaced: false };
 
   const recentUserCorrectionHints = (Array.isArray(params.recentMessages) ? params.recentMessages : [])
@@ -334,7 +432,7 @@ async function enhanceReply(params = {}) {
       'こちらでは動画を受け取れています。次は「この動画を解析」から、動きのどこを見直すか整理できます。'
     ], recentAssistantReplies);
     lines.length = 0;
-    lines.push(videoPhrase.phrase || core);
+    lines.push(videoPhrase.phrase || integratedCore);
     dedupMeta = { avoided: videoPhrase.avoided, replaced: videoPhrase.replaced };
   } else if (intent === 'normal_chat') {
     const banks = {
@@ -369,7 +467,7 @@ async function enhanceReply(params = {}) {
     dedupMeta = { avoided: chatPhrase.avoided, replaced: chatPhrase.replaced };
   } else {
     if (intent === 'meal') {
-      const mealExtras = maybePhaseMealClosing(relationshipPhase, params.userText, core);
+      const mealExtras = maybePhaseMealClosing(relationshipPhase, params.userText, integratedCore);
       for (const ex of mealExtras) {
         if (ex && !lines.some((ln) => ln.includes(ex.slice(0, 10)))) lines.push(`\n${ex}`);
       }

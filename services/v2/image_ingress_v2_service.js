@@ -60,10 +60,18 @@ async function applyPersistenceRetryState(userId, intentType, replyText, persist
   };
 }
 
-async function handleImageIngressV2({ input, textHint = '' } = {}) {
+async function handleImageIngressV2({ input, textHint = '', imageContext = null } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
-  console.info('[phasee-old] old_image_ingress_reached', { userId: input?.userId || '', messageType: input?.messageType || '' });
-  phaseeReachabilityService.recordReachability('old_image_ingress_reached', ['services/v2/image_ingress_v2_service.js'], { userId: input?.userId || '' }).catch(() => null);
+  const ict = imageContext && typeof imageContext === 'object' ? normalizeText(imageContext.image_context_type || '') : '';
+  console.info('[phasee-old] old_image_ingress_reached', {
+    userId: input?.userId || '',
+    messageType: input?.messageType || '',
+    image_context_type: ict || undefined
+  });
+  phaseeReachabilityService.recordReachability('old_image_ingress_reached', ['services/v2/image_ingress_v2_service.js'], {
+    userId: input?.userId || '',
+    image_context_type: ict || undefined
+  }).catch(() => null);
 
   let ingested = null;
   if (input?.webImagePayload?.buffer) {

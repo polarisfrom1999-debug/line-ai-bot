@@ -61,6 +61,7 @@ const conversationStateInterpreterService = require('./conversation_state_interp
 const relationshipPhaseService = require('./relationship_phase_service');
 const trustSignalDetectorService = require('./trust_signal_detector_service');
 const lifeCompanionConversationService = require('./life_companion_conversation_service');
+const imageContextClassifierService = require('./image_context_classifier_service');
 const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
@@ -3398,22 +3399,23 @@ async function orchestrateConversation(input) {
         userState: userStateBefore,
         recentMessages,
       });
-      if (lifeEarly?.replyText) {
-        console.info('[feature_route_selected_after_conversation_state]', {
-          user_id: input.userId,
-          text: text.slice(0, 120),
-          route: 'life_companion',
-          reason: 'conversation_state_emotional_support'
-        });
-        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'emotional_support');
-        await appendTurn(input.userId, input.rawText || '', lifeOut);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: lifeOut }],
-          internal: { intentType: 'emotional_support', responseMode: 'conversation_first' }
-        };
-      }
-      forcedConversationRoute = 'normal_chat';
+      const replyBody = lifeEarly?.replyText
+        ? lifeEarly.replyText
+        : lifeCompanionConversationService.buildGuaranteedEmotionalSupportReply(text);
+      console.info('[conversation_state_early_return]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: 'emotional_support',
+        conversation_mode: 'emotional_support',
+        reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_emotional_fallback'
+      });
+      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'emotional_support');
+      await appendTurn(input.userId, input.rawText || '', lifeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: lifeOut }],
+        internal: { intentType: 'emotional_support', responseMode: 'conversation_first' }
+      };
     } else if (conversationState?.primary_conversation_mode === 'life_companion') {
       const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
         userId: input.userId,
@@ -3423,21 +3425,23 @@ async function orchestrateConversation(input) {
         userState: userStateBefore,
         recentMessages,
       });
-      if (lifeEarly?.replyText) {
-        console.info('[feature_route_selected_after_conversation_state]', {
-          user_id: input.userId,
-          text: text.slice(0, 120),
-          route: 'life_companion',
-          reason: 'conversation_state_life_companion'
-        });
-        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
-        await appendTurn(input.userId, input.rawText || '', lifeOut);
-        return {
-          ok: true,
-          replyMessages: [{ type: 'text', text: lifeOut }],
-          internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
-        };
-      }
+      const replyBody = lifeEarly?.replyText
+        ? lifeEarly.replyText
+        : lifeCompanionConversationService.buildGuaranteedLifeCompanionReply();
+      console.info('[conversation_state_early_return]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: 'life_companion',
+        conversation_mode: 'life_companion',
+        reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_life_fallback'
+      });
+      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'life_companion');
+      await appendTurn(input.userId, input.rawText || '', lifeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: lifeOut }],
+        internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
+      };
     } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record'].includes(conversationState.route)) {
       forcedConversationRoute = conversationState.route;
     }
@@ -3925,15 +3929,10 @@ async function orchestrateConversation(input) {
     }
 
     if (input?.messageType === 'image') {
-      try {
-        const imageContextClassifierService = require('./image_context_classifier_service');
-        imageContextClassifierService.classifyImageContext({ userCaption: text });
-      } catch (_e) {
-        /* optional */
-      }
+      const imageContextPayload = imageContextClassifierService.classifyImageContext({ userCaption: text });
       const imageIngestOn = resolveNewFlowToggle('ENABLE_NEW_FLOW_IMAGE_INGEST', featureFlags.ENABLE_NEW_FLOW_IMAGE_INGEST, archOn);
       if (imageIngestOn) {
-        const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text }).catch((error) => ({
+        const newFlowImage = await newFlowImageIngestService.handleImageIngest({ input, textHint: text, imageContext: imageContextPayload }).catch((error) => ({
           handled: true,
           intentType: 'newflow_image_error',
           replyText: '画像の処理で一時的な問題がありました。もう一度同じ画像を送ってください。',
@@ -3958,7 +3957,7 @@ async function orchestrateConversation(input) {
           internal: { intentType: 'newflow_image_hard_stop', responseMode: 'answer' }
         };
       }
-      const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text });
+      const ingressV2 = await imageIngressV2Service.handleImageIngressV2({ input, textHint: text, imageContext: imageContextPayload });
       if (ingressV2?.handled) {
         const tag = normalizeText(ingressV2.intentType || 'image_v2');
         const persistence = ingressV2?.persistence && typeof ingressV2.persistence === 'object'

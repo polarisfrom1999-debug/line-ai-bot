@@ -218,12 +218,18 @@ async function resolveImagePayload(input) {
   return ingested.payload;
 }
 
-async function handleImageIngest({ input, textHint = '' } = {}) {
+async function handleImageIngest({ input, textHint = '', imageContext = null } = {}) {
   if (input?.messageType !== 'image') return { handled: false, reason: 'not_image' };
-  console.info('[phasee-new] new_image_ingress_reached', { userId: input?.userId || '', textHint: normalizeText(textHint).slice(0, 40) });
+  const ict = imageContext && typeof imageContext === 'object' ? normalizeText(imageContext.image_context_type || '') : '';
+  console.info('[phasee-new] new_image_ingress_reached', {
+    userId: input?.userId || '',
+    textHint: normalizeText(textHint).slice(0, 40),
+    image_context_type: ict || undefined
+  });
   phaseeReachabilityService.recordReachability('new_image_ingress_reached', ['services/newflow/image_ingest_orchestrator_service.js'], {
     userId: input?.userId || '',
-    textHint: normalizeText(textHint).slice(0, 40)
+    textHint: normalizeText(textHint).slice(0, 40),
+    image_context_type: ict || undefined
   }).catch(() => null);
   const imagePayload = await resolveImagePayload(input);
   if (!imagePayload) {
