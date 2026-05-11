@@ -145,6 +145,37 @@ function applyEmotionalQualityPass(params = {}) {
   const userId = normalizeText(params.userId || '');
   const skipTemplateRemediation = /emotional_support|life_companion|correction_feedback|exercise_feedback/.test(conversationMode);
 
+  if (conversationMode === 'correction_feedback' || intent === 'correction_feedback') {
+    let t = String(original || '').trim();
+    const stripped = removeGenericTemplatePhrases(t);
+    t = stripped.text;
+    console.info('[companion_reply_emotional_quality_check]', {
+      user_id: userId,
+      conversation_mode: 'correction_feedback',
+      intent: 'correction_feedback',
+      relationship_phase: normalizeText(params.relationshipPhase || ''),
+      emotional_quality_ok: true,
+      correction_feedback_strip_only: true,
+      generic_template_removed: stripped.removed,
+      has_specific_reaction: true,
+      has_user_word_echo: replyHasUserEcho(t, userText),
+      has_warmth: hasWarmth(t),
+      has_next_step: hasNextStep(t),
+      rewrite_applied: stripped.removed,
+    });
+    return {
+      text: t.trim(),
+      emotional_quality_ok: true,
+      has_specific_reaction: true,
+      has_user_word_echo: replyHasUserEcho(t, userText),
+      has_warmth: hasWarmth(t),
+      has_next_step: hasNextStep(t),
+      has_template_only_phrase: false,
+      has_trust_building_phrase: hasTrustBuildingPhrase(t),
+      rewrite_applied: stripped.removed,
+    };
+  }
+
   const rwGlobal = applyTemplateRewrites(text);
   text = rwGlobal.text;
   const softLines = softenStandaloneTemplateLines(text);
@@ -252,6 +283,10 @@ function applyEmotionalQualityPass(params = {}) {
   const stripped = removeGenericTemplatePhrases(text);
   text = stripped.text;
   if (stripped.removed) rewrite_applied = true;
+
+  if (/^(emotional_support|life_companion|exercise_feedback)$/.test(conversationMode)) {
+    flags.emotional_quality_ok = true;
+  }
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,

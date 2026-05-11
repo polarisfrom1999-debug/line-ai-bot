@@ -57,6 +57,7 @@ const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const companionReplyService = require('./companion_reply_service');
+const emotionalQualityCheckService = require('./emotional_quality_check_service');
 const conversationStateInterpreterService = require('./conversation_state_interpreter_service');
 const relationshipPhaseService = require('./relationship_phase_service');
 const trustSignalDetectorService = require('./trust_signal_detector_service');
@@ -2159,6 +2160,35 @@ function shouldSkipHealthAggregationForIntent(intentType = '') {
 }
 
 async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
+  const itNorm = normalizeText(intentType || '');
+  if (itNorm === 'correction_feedback') {
+    let base = normalizeText(draftText) || String(draftText || '');
+    const guarded = responseGuardService.guardReplyText(base);
+    if (runtimeFlag('ENABLE_NEW_FLOW_RESPONSE_GUARD', featureFlags.ENABLE_NEW_FLOW_RESPONSE_GUARD)) {
+      base = normalizeText(guarded?.text || base) || base;
+    }
+    const hour = Number(getJapanNow().hour || 0);
+    let totalTurns = 0;
+    try {
+      const st = await contextMemoryService.getUserState(input.userId);
+      totalTurns = Number(st?.totalTurns || 0);
+    } catch (_e) {
+      totalTurns = 0;
+    }
+    const eq = emotionalQualityCheckService.applyEmotionalQualityPass({
+      text: base,
+      userText: input?.rawText || '',
+      intent: 'correction_feedback',
+      conversationMode: 'correction_feedback',
+      replyDepth: 'normal',
+      relationshipPhase: normalizeText(ctx?.longMemory?.relationshipPhase || ''),
+      userId: input.userId,
+      hour,
+      totalTurns
+    });
+    return normalizeText(eq.text) || base;
+  }
+
   const polished = await conversationSurfaceService.polishDraftToSurface({
     userMessage: input?.rawText || '',
     draftReply: draftText,

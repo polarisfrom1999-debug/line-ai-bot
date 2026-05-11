@@ -215,8 +215,12 @@ function tryLifeCompanionReply({ userId = '', text, relationshipPhase, longMemor
 
   const includesReflection = /一緒に|受け止め|大丈夫|無理に/.test(replyText);
   const includesNextStep = /まずは|整理|分けましょう|置いてみましょう/.test(replyText);
-  const depth = /寂しい|さみしい|しんど|つらい|疲れた|聞いて|相談/.test(safe) ? 'deep' : 'normal';
-  const tone = selectConversationTone(relationshipPhase || phase, 'normal_chat', { depth });
+  const depth = (
+    topic === 'emotional_disclosure'
+    || /寂しい|さみしい|しんど|つらい|疲れた|聞いて|相談|心が重|気持ちが重/.test(safe)
+  ) ? 'deep' : 'normal';
+  const toneIntent = topic === 'emotional_disclosure' ? 'emotional_support' : 'life_companion';
+  const tone = selectConversationTone(relationshipPhase || phase, toneIntent, { depth });
 
   console.info('[life_companion_reply_generated]', {
     user_id: userId || '',

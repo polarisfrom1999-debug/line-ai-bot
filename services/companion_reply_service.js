@@ -21,18 +21,21 @@ function detectSupportStyle(text, intent) {
   const safe = normalizeText(text);
   if (/(痛い|重い|しびれ|違和感)/.test(safe)) return 'caution';
   if (/meal_correction|meal/.test(intent) && /(たぶん|くらい|曖昧|わからない)/.test(safe)) return 'reassure';
-  if (/exercise/.test(intent)) return 'encourage';
+  if (intent === 'exercise_feedback' || intent === 'exercise') return 'encourage';
   return 'normal';
 }
 
 function inferIntentTag(intentType = '') {
   const safe = normalizeText(intentType);
   if (/athlete_video|video/.test(safe)) return 'video';
+  if (/emotional_support/.test(safe)) return 'emotional_support';
+  if (/life_companion/.test(safe)) return 'life_companion';
+  if (/correction_feedback/.test(safe)) return 'correction_feedback';
   if (/meal_record_text|meal_note|meal|today_meal/.test(safe)) return 'meal';
-  if (/exercise_feedback|exercise/.test(safe)) return 'exercise';
+  if (/exercise_feedback/.test(safe)) return 'exercise_feedback';
+  if (/exercise/.test(safe)) return 'exercise';
   if (/body_condition|pain/.test(safe)) return 'body_condition';
   if (/lab/.test(safe)) return 'lab';
-  if (/correction_feedback/.test(safe)) return 'normal_chat';
   return 'normal_chat';
 }
 
@@ -57,6 +60,10 @@ function resolveRelationshipPhase(params) {
  * @returns {{ depth: 'short'|'normal'|'deep', reason: string }}
  */
 function selectReplyDepth(intent, params = {}, relationshipPhase = '') {
+  const cm = normalizeText(params.conversationMode || params.intentType || '');
+  if (cm === 'emotional_support' || intent === 'emotional_support') {
+    return { depth: 'deep', reason: 'emotional_support_locked_deep' };
+  }
   const safeText = normalizeText(params.userText || '');
   const deepMarkers = /不安|迷い|弱音|寂し|さみしい|心が重い|気持ちが重い|痛み|失敗|できなかった|食べすぎ|ダメだった|だめだった|疲れ|しんどい|限界|相談|どう思う|実は|本当は|言いにくい|つらい|苦しい|泣き|落ち込/;
   if (deepMarkers.test(safeText)) {
@@ -78,6 +85,12 @@ function selectReplyDepth(intent, params = {}, relationshipPhase = '') {
     if (intent === 'normal_chat' && safeText.length > 36) {
       return { depth: 'deep', reason: 'longer_chat_higher_trust_phase' };
     }
+  }
+  if (intent === 'correction_feedback') {
+    return { depth: 'normal', reason: 'correction_feedback_minimal' };
+  }
+  if (intent === 'exercise_feedback') {
+    return { depth: 'normal', reason: 'exercise_feedback_body' };
   }
   return { depth: 'normal', reason: 'default' };
 }
@@ -249,6 +262,31 @@ function dedupeSourceNotes(text = '', intent = '') {
 async function enhanceReply(params = {}) {
   const rawReply = normalizeText(params.rawReply || '');
   const relationshipPhase = resolveRelationshipPhase(params);
+
+  if (normalizeText(params.intentType) === 'correction_feedback') {
+    const eq = emotionalQualityCheckService.applyEmotionalQualityPass({
+      text: rawReply,
+      userText: params.userText || '',
+      intent: 'correction_feedback',
+      conversationMode: 'correction_feedback',
+      replyDepth: 'normal',
+      relationshipPhase,
+      userId: params.userId,
+      hour: Number(params.hour || 0),
+      totalTurns: Number((await contextMemoryService.getUserState(params.userId).catch(() => ({})))?.totalTurns || 0)
+    });
+    console.info('[companion_reply_context]', {
+      user_id: params.userId,
+      intent: 'correction_feedback',
+      active_context_type: normalizeText(params.activeContextType || ''),
+      has_today_summary: false,
+      has_recent_patterns: false,
+      has_micro_change: false,
+      support_style: 'normal',
+      reply_depth: 'normal'
+    });
+    return { text: eq.text, meta: { intent: 'correction_feedback', supportStyle: 'normal', reply_depth: 'normal', bypass: 'correction_feedback' } };
+  }
 
   if (!rawReply || shouldSkip(params.intentType)) {
     const intentSkipped = inferIntentTag(params.intentType);
@@ -442,6 +480,8 @@ async function enhanceReply(params = {}) {
     lines.length = 0;
     lines.push(videoPhrase.phrase || integratedCore);
     dedupMeta = { avoided: videoPhrase.avoided, replaced: videoPhrase.replaced };
+  } else if (intent === 'emotional_support' || intent === 'life_companion') {
+    dedupMeta = { avoided: false, replaced: false };
   } else if (intent === 'normal_chat') {
     const banks = {
       [PHASES.P1]: [
@@ -504,7 +544,9 @@ async function enhanceReply(params = {}) {
   const styleProf = params.longMemory?.conversationStyleProfile || {};
   const userSoftTone = /[\u{1F300}-\u{1FAFF}]/u.test(params.userText || '') || /(〜|ですぅ|わーい|🙌|っ+[\s。]|ちゃん)/.test(params.userText || '');
   if (
-    userSoftTone
+    intent !== 'emotional_support'
+    && intent !== 'life_companion'
+    && userSoftTone
     && (relationshipPhase === PHASES.P3 || relationshipPhase === PHASES.P4)
     && (styleProf.emojiLover || styleProf.casualLover || /[\u{1F300}-\u{1FAFF}]/u.test(params.userText || ''))
     && Math.random() < 0.3
