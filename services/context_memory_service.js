@@ -1146,8 +1146,36 @@ async function buildRecentSummary(userId, _days = 3) {
   return parts.join(' ') || '';
 }
 
+function isDuplicateMealInTodayMemory(lineUserId, record) {
+  if (record?.type !== 'meal') return false;
+  const sid = normalizeString(record.sourceLineMessageId || '');
+  const dk = normalizeString(record.dedupeKey || '');
+  if (!sid && !dk) return false;
+  ensureSnapshotLoaded();
+  const key = `${lineUserId}:${getTodayKey()}`;
+  const current = dailyRecordStore.get(key) || buildDailyRecordBucket();
+  for (const m of current.meals || []) {
+    const raw = m && typeof m === 'object' ? m : {};
+    const existingSid = normalizeString(raw.sourceLineMessageId || '');
+    const existingDk = normalizeString(raw.dedupeKey || '');
+    if (sid && existingSid === sid) return true;
+    if (dk && existingDk === dk) return true;
+  }
+  return false;
+}
+
 async function isDuplicateMealInsert(lineUserId, record) {
   if (record?.type !== 'meal') return false;
+  if (isDuplicateMealInTodayMemory(lineUserId, record)) {
+    const sid = normalizeString(record.sourceLineMessageId || '');
+    const dk = normalizeString(record.dedupeKey || '');
+    console.info('[meal] duplicate_detected', {
+      reason: 'memory_dedupe_key_or_message_id',
+      sourceLineMessageId: sid || null,
+      dedupeKey: dk || null
+    });
+    return true;
+  }
   const user = await resolvePersistentUser(lineUserId);
   if (!user || !supabase) return false;
   const sid = normalizeString(record.sourceLineMessageId || '');
