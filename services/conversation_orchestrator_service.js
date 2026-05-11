@@ -66,6 +66,7 @@ const imageContextClassifierService = require('./image_context_classifier_servic
 const mealReplyFormatterService = require('./meal_reply_formatter_service');
 const dailyNutritionSummaryService = require('./daily_nutrition_summary_service');
 const dailyEnergyBalanceService = require('./daily_energy_balance_service');
+const mealTextManualRecordService = require('./meal_text_manual_record_service');
 const exerciseRecordService = require('./exercise_record_service');
 const compassionateJudgmentService = require('./compassionate_judgment_service');
 const pendingConfirmationService = require('./pending_confirmation_service');
@@ -2609,9 +2610,71 @@ async function maybeHandleMealImage(input, imagePayload) {
   }
 }
 
-async function maybeHandleMealText(input) {
+async function maybeHandleMealText(input, conversationState = null) {
   const text = normalizeText(input?.rawText || '');
   if (mealAnalysisService.isMealMetaOrCorrectionText(text)) return null;
+
+  const primary = normalizeText(conversationState?.primary_conversation_mode || '');
+  const useManual = primary === 'meal_text_record' || primary === 'reward_food';
+
+  if (useManual) {
+    console.info('[meal_text_record_detected]', {
+      user_id: input.userId,
+      text: text.slice(0, 160),
+      primary_conversation_mode: primary
+    });
+    const manual = mealTextManualRecordService.parseAndBuildManualMealRecord(text, {
+      recordKind: primary === 'reward_food' ? 'reward_food' : 'meal_text_record'
+    });
+    if (!manual?.parsedMeal) return null;
+
+    console.info('[meal_text_record_parsed]', {
+      user_id: input.userId,
+      items: manual.parsedMeal.items,
+      kcal: manual.parsedMeal.estimatedNutrition?.kcal,
+      protein: manual.parsedMeal.estimatedNutrition?.protein,
+      record_kind: manual.recordKind,
+      calorie_source: manual.parsedMeal.calorie_source
+    });
+
+    const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+    const dbTotals = {
+      kcal: Number(summary.kcal || 0),
+      protein: Number(summary.protein || 0),
+      fat: Number(summary.fat || 0),
+      carbs: Number(summary.carbs || 0),
+      count: Number(summary.meal_count || 0),
+    };
+    const mk = Number(manual.parsedMeal?.estimatedNutrition?.kcal || 0);
+    const todayAfter = round1(dbTotals.kcal + mk);
+
+    const replyText = mealTextManualRecordService.buildShortManualReply({
+      parsedMeal: manual.parsedMeal,
+      breakdownLines: manual.breakdownLines,
+      recordKind: manual.recordKind,
+      userText: text,
+      todayTotalKcal: todayAfter
+    });
+
+    await contextMemoryService.saveShortMemory(input.userId, {
+      pendingRecordCandidate: {
+        recordType: 'meal_record',
+        extracted: manual.parsedMeal
+      }
+    });
+    await activeContextService.setActiveContext(input.userId, {
+      type: 'meal_followup_session',
+      payload: { parsedMeal: manual.parsedMeal }
+    });
+
+    return {
+      replyText,
+      parsedMeal: manual.parsedMeal,
+      recordKind: manual.recordKind,
+      fromManualText: true
+    };
+  }
+
   if (!looksLikeMealText(text)) return null;
 
   const parsedMeal = mealAnalysisService.parseMealText(text);
@@ -3735,9 +3798,33 @@ async function orchestrateConversation(input) {
 
     if (input?.messageType === 'text' && priority.route === 'meal_record') {
       logPriority(priority.route, priority.reason);
-      const mealTextHandled = await maybeHandleMealText(input);
+      const mealTextHandled = await maybeHandleMealText(input, conversationState);
       const surfaceIntent = conversationState?.primary_conversation_mode === 'reward_food' ? 'meal_note' : 'meal_record_text';
       if (mealTextHandled?.replyText) {
+        const recBefore = await contextMemoryService.getTodayRecords(input.userId);
+        const mealCountBefore = (recBefore.meals || []).length;
+        await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal, input));
+        const recAfter = await contextMemoryService.getTodayRecords(input.userId);
+        const mealCountAfter = (recAfter.meals || []).length;
+        const persisted = mealCountAfter > mealCountBefore;
+        console.info('[meal_text_record_saved]', {
+          user_id: input.userId,
+          persisted,
+          record_kind: mealTextHandled.recordKind || surfaceIntent,
+          items: mealTextHandled.parsedMeal?.items,
+          kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
+          calorie_source: mealTextHandled.parsedMeal?.calorie_source || 'text_manual_estimate'
+        });
+        const totalsAfter = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+        console.info('[meal_text_record_daily_total_updated]', {
+          user_id: input.userId,
+          persisted,
+          meal_count: Number(totalsAfter.meal_count || 0),
+          kcal: Number(totalsAfter.kcal || 0),
+          protein: Number(totalsAfter.protein || 0),
+          fat: Number(totalsAfter.fat || 0),
+          carbs: Number(totalsAfter.carbs || 0)
+        });
         const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent);
         await appendTurn(input.userId, input.rawText || '', out);
         return {

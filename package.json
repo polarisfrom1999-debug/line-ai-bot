@@ -4,7 +4,7 @@
   "description": "Kokokara LINE AI bot",
   "main": "index.js",
   "scripts": {
-    "syntax:check": "node -c index.js && node -c services/conversation_state_interpreter_service.js && node -c services/topic_shift_detector_service.js && node -c services/user_daily_context_builder_service.js && node -c services/contextual_observation_selector_service.js && node -c services/human_phrase_variation_service.js && node -c services/conversation_style_profile_service.js && node -c services/image_context_classifier_service.js && node -c services/emotional_quality_check_service.js && node -c services/companion_reply_service.js",
+    "syntax:check": "node -c index.js && node -c services/conversation_state_interpreter_service.js && node -c services/topic_shift_detector_service.js && node -c services/user_daily_context_builder_service.js && node -c services/contextual_observation_selector_service.js && node -c services/human_phrase_variation_service.js && node -c services/conversation_style_profile_service.js && node -c services/image_context_classifier_service.js && node -c services/emotional_quality_check_service.js && node -c services/companion_reply_service.js && node -c services/meal_text_manual_record_service.js && node -c services/conversation_orchestrator_service.js",
     "build": "npm run syntax:check && npm run smoke:conversation_state && node scripts/lab_result_items_fixture_test.js",
     "start": "node index.js",
     "flags:stage-entry": "node scripts/stage_entry_flag_report.js",
