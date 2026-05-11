@@ -1561,6 +1561,8 @@ function buildMealReply(parsedMeal, options = {}) {
 
 function buildMealRecordPayload(text, parsedMeal, input = {}) {
   const items = Array.isArray(parsedMeal?.items) ? parsedMeal.items.filter(Boolean) : [];
+  const recordKind = normalizeText(parsedMeal?.recordKind || 'meal_text_record');
+  const textFingerprint = normalizeText(parsedMeal?.text_fingerprint || '');
   return {
     type: 'meal',
     date: formatTokyoYmd(),
@@ -1583,7 +1585,9 @@ function buildMealRecordPayload(text, parsedMeal, input = {}) {
     final_calories: Number(parsedMeal?.final_calories || parsedMeal?.estimatedNutrition?.kcal || 0),
     correction_reason: normalizeText(parsedMeal?.correction_reason || ''),
     sourceLineMessageId: normalizeText(input?.messageId || ''),
-    dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : '')
+    dedupeKey: normalizeText(input?.messageId ? `msg:${input.messageId}` : ''),
+    record_kind: recordKind,
+    text_fingerprint: textFingerprint
   };
 }
 
@@ -2610,6 +2614,38 @@ async function maybeHandleMealImage(input, imagePayload) {
   }
 }
 
+function getMealTextDuplicateWindowHours() {
+  const raw = Number(process.env.MEAL_TEXT_DUPLICATE_WINDOW_HOURS || 4);
+  if (!Number.isFinite(raw) || raw <= 0) return 4;
+  return Math.max(2, Math.min(6, Math.round(raw)));
+}
+
+async function findRecentMealTextDuplicate(userId, fingerprint, recordKind) {
+  const fp = normalizeText(fingerprint);
+  if (!fp) return null;
+  const todayYmd = contextMemoryService.getTokyoTodayYmd();
+  const logs = await mealLogQueryService.getMealLogsByDateRange(userId, todayYmd, todayYmd);
+  const windowMs = getMealTextDuplicateWindowHours() * 60 * 60 * 1000;
+  const now = Date.now();
+  const kind = normalizeText(recordKind || '');
+  for (const log of logs) {
+    const raw = log?.rawModelJson && typeof log.rawModelJson === 'object' ? log.rawModelJson : {};
+    const existingFingerprint = normalizeText(raw.text_fingerprint || raw.textFingerprint || '');
+    const existingKind = normalizeText(raw.record_kind || raw.recordKind || '');
+    const t = new Date(log?.eatenAt || '').getTime();
+    const inWindow = Number.isFinite(t) ? Math.abs(now - t) <= windowMs : false;
+    if (!inWindow) continue;
+    if (existingFingerprint && existingFingerprint === fp && (!kind || !existingKind || existingKind === kind)) {
+      return {
+        id: log?.id || '',
+        label: normalizeText(log?.mealLabel || ''),
+        time: normalizeText(log?.eatenAt || '')
+      };
+    }
+  }
+  return null;
+}
+
 async function maybeHandleMealText(input, conversationState = null) {
   const text = normalizeText(input?.rawText || '');
   if (mealAnalysisService.isMealMetaOrCorrectionText(text)) return null;
@@ -2627,6 +2663,12 @@ async function maybeHandleMealText(input, conversationState = null) {
       recordKind: primary === 'reward_food' ? 'reward_food' : 'meal_text_record'
     });
     if (!manual?.parsedMeal) return null;
+    const fingerprint = mealTextManualRecordService.buildMealTextFingerprint({
+      text,
+      parsedMeal: manual.parsedMeal,
+      recordKind: manual.recordKind
+    });
+    manual.parsedMeal.text_fingerprint = fingerprint;
 
     console.info('[meal_text_record_parsed]', {
       user_id: input.userId,
@@ -2634,7 +2676,8 @@ async function maybeHandleMealText(input, conversationState = null) {
       kcal: manual.parsedMeal.estimatedNutrition?.kcal,
       protein: manual.parsedMeal.estimatedNutrition?.protein,
       record_kind: manual.recordKind,
-      calorie_source: manual.parsedMeal.calorie_source
+      calorie_source: manual.parsedMeal.calorie_source,
+      fingerprint
     });
 
     const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
@@ -3781,6 +3824,16 @@ async function orchestrateConversation(input) {
       input.allowDuplicateMealCorrection = true;
       console.info('[contextual_intent_applied]', { intent: 'meal_correction', user_id: input.userId, duplicate_confirmed: true });
     }
+    if (resumedFromPendingConfirmation && pendingAppliedAction?.type === 'meal_text_duplicate_confirm') {
+      priority.route = 'meal_record';
+      priority.reason = 'pending_confirmation_duplicate_meal_text_confirm';
+      input.allowDuplicateMealTextRecord = true;
+      console.info('[meal_text_duplicate_confirmed]', {
+        user_id: input.userId,
+        fingerprint: normalizeText(pendingAppliedAction?.fingerprint || ''),
+        allowDuplicateMealTextRecord: true
+      });
+    }
     const activeContextType = normalizeText(
       shortMemory?.followUpContext?.imageType
       || shortMemory?.followUpContext?.source
@@ -3798,24 +3851,98 @@ async function orchestrateConversation(input) {
 
     if (input?.messageType === 'text' && priority.route === 'meal_record') {
       logPriority(priority.route, priority.reason);
-      const mealTextHandled = await maybeHandleMealText(input, conversationState);
+      const mealTextHandled = await maybeHandleMealText({ ...input, rawText: text }, conversationState);
       const surfaceIntent = conversationState?.primary_conversation_mode === 'reward_food' ? 'meal_note' : 'meal_record_text';
       if (mealTextHandled?.replyText) {
-        const recBefore = await contextMemoryService.getTodayRecords(input.userId);
-        const mealCountBefore = (recBefore.meals || []).length;
-        await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal, input));
-        const recAfter = await contextMemoryService.getTodayRecords(input.userId);
-        const mealCountAfter = (recAfter.meals || []).length;
-        const persisted = mealCountAfter > mealCountBefore;
+        const parsedItems = Array.isArray(mealTextHandled.parsedMeal?.items) ? mealTextHandled.parsedMeal.items.filter(Boolean) : [];
+        if (!parsedItems.length) {
+          console.info('[meal_text_record_saved]', {
+            user_id: input.userId,
+            persisted: false,
+            reason: 'parsed_items_empty',
+            record_kind: mealTextHandled.recordKind || surfaceIntent,
+            items: mealTextHandled.parsedMeal?.items,
+            kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
+            calorie_source: mealTextHandled.parsedMeal?.calorie_source || 'text_manual_estimate'
+          });
+          const fbOut = await withSurfaceReply(input, '食事の内容をもう少し具体的に書いてもらえると、正しく記録できます。', { recentMessages, longMemory }, surfaceIntent);
+          await appendTurn(input.userId, input.rawText || '', fbOut);
+          return { ok: true, replyMessages: [{ type: 'text', text: fbOut }], internal: { intentType: surfaceIntent, responseMode: 'answer' } };
+        }
+
+        const payload = buildMealRecordPayload(text, mealTextHandled.parsedMeal, input);
+        if (input.allowDuplicateMealTextRecord) {
+          payload.allowDuplicateMealTextRecord = true;
+        }
+        const fingerprint = normalizeText(payload.text_fingerprint || mealTextHandled.parsedMeal?.text_fingerprint || '');
+        if (fingerprint && !input.allowDuplicateMealTextRecord) {
+          const dup = await findRecentMealTextDuplicate(input.userId, fingerprint, mealTextHandled.recordKind || surfaceIntent);
+          if (dup) {
+            console.info('[meal_text_duplicate_detected]', {
+              user_id: input.userId,
+              fingerprint,
+              existing_record_id: dup.id || '',
+              existing_record_label: dup.label || '',
+              existing_record_time: dup.time || '',
+              action: 'ask_confirmation'
+            });
+            await pendingConfirmationService.savePendingConfirmation(input.userId, {
+              userText: text,
+              proposed_action_json: {
+                type: 'meal_text_duplicate_confirm',
+                fingerprint,
+                record_kind: mealTextHandled.recordKind || surfaceIntent
+              }
+            });
+            console.info('[meal_text_duplicate_pending_created]', {
+              user_id: input.userId,
+              fingerprint,
+              proposed_action_type: 'meal_text_duplicate_confirm'
+            });
+            console.info('[meal_text_record_saved]', {
+              user_id: input.userId,
+              persisted: false,
+              reason: 'duplicate_pending',
+              record_kind: mealTextHandled.recordKind || surfaceIntent,
+              items: mealTextHandled.parsedMeal?.items,
+              kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
+              calorie_source: mealTextHandled.parsedMeal?.calorie_source || 'text_manual_estimate'
+            });
+            const dupReply = '同じ内容が今日すでに入っています。もう一度追加しますか？';
+            const dupOut = await withSurfaceReply(input, dupReply, { recentMessages, longMemory }, 'pending_confirmation');
+            await appendTurn(input.userId, input.rawText || '', dupOut);
+            return {
+              ok: true,
+              replyMessages: [{ type: 'text', text: dupOut }],
+              internal: { intentType: 'pending_confirmation', responseMode: 'answer' }
+            };
+          }
+        }
+
+        const totalsBefore = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+        let addResult = null;
+        let addFailed = false;
+        try {
+          addResult = await contextMemoryService.addDailyRecord(input.userId, payload);
+        } catch (e) {
+          addFailed = true;
+          console.error('[meal_text_record_addDailyRecord_failed]', {
+            user_id: input.userId,
+            message: e?.message || String(e || '')
+          });
+        }
+        const totalsAfter = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
+        const persisted = Number(totalsAfter.meal_count || 0) > Number(totalsBefore.meal_count || 0);
+        const saveReason = addFailed ? 'addDailyRecord_failed' : (persisted ? 'saved' : 'duplicate_skipped');
         console.info('[meal_text_record_saved]', {
           user_id: input.userId,
           persisted,
+          reason: saveReason,
           record_kind: mealTextHandled.recordKind || surfaceIntent,
           items: mealTextHandled.parsedMeal?.items,
           kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
           calorie_source: mealTextHandled.parsedMeal?.calorie_source || 'text_manual_estimate'
         });
-        const totalsAfter = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
         console.info('[meal_text_record_daily_total_updated]', {
           user_id: input.userId,
           persisted,
@@ -3823,7 +3950,8 @@ async function orchestrateConversation(input) {
           kcal: Number(totalsAfter.kcal || 0),
           protein: Number(totalsAfter.protein || 0),
           fat: Number(totalsAfter.fat || 0),
-          carbs: Number(totalsAfter.carbs || 0)
+          carbs: Number(totalsAfter.carbs || 0),
+          addDailyRecord_result_present: Boolean(addResult)
         });
         const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent);
         await appendTurn(input.userId, input.rawText || '', out);

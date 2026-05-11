@@ -1166,6 +1166,7 @@ function isDuplicateMealInTodayMemory(lineUserId, record) {
 
 async function isDuplicateMealInsert(lineUserId, record) {
   if (record?.type !== 'meal') return false;
+  if (record?.allowDuplicateMealTextRecord) return false;
   if (isDuplicateMealInTodayMemory(lineUserId, record)) {
     const sid = normalizeString(record.sourceLineMessageId || '');
     const dk = normalizeString(record.dedupeKey || '');

@@ -222,6 +222,29 @@ function clampNutrition(n) {
   };
 }
 
+function normalizeForFingerprint(text) {
+  return normalizeText(text)
+    .toLowerCase()
+    .replace(/[、,，]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildMealTextFingerprint({ text = '', parsedMeal = {}, recordKind = 'meal_text_record' } = {}) {
+  const normalizedText = normalizeForFingerprint(text);
+  const items = Array.isArray(parsedMeal?.items)
+    ? parsedMeal.items.map((v) => normalizeForFingerprint(v)).filter(Boolean)
+    : [];
+  const kcal = Number(parsedMeal?.estimatedNutrition?.kcal || 0);
+  const recordKindSafe = normalizeText(recordKind || parsedMeal?.recordKind || 'meal_text_record');
+  return [
+    `text:${normalizedText}`,
+    `items:${items.join('|')}`,
+    `kcal:${Math.round(kcal)}`,
+    `kind:${recordKindSafe}`
+  ].join('||');
+}
+
 /**
  * @param {{ parsedMeal: object, breakdownLines: string[], recordKind: string, userText: string, todayTotalKcal?: number }} p
  */
@@ -260,5 +283,6 @@ module.exports = {
   TEXT_MANUAL_SOURCE,
   parseAndBuildManualMealRecord,
   buildShortManualReply,
+  buildMealTextFingerprint,
   parseLineItem,
 };

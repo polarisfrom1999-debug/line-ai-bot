@@ -248,6 +248,8 @@ async function runScenario(def) {
 
 function allScenarios() {
   const dupMsgId = `m-dup-${Date.now()}`;
+  const dupMsgIdA = `m-dup-a-${Date.now()}`;
+  const dupMsgIdB = `m-dup-b-${Date.now()}`;
   return [
     {
       id: 'heart_heavy',
@@ -309,7 +311,7 @@ function allScenarios() {
       steps: [
         {
           text: '白湯300ml、味付き卵一個',
-          messageId: dupMsgId,
+          messageId: dupMsgIdA,
           expect: {
             intentType: 'meal_record_text',
             persisted: true,
@@ -320,11 +322,23 @@ function allScenarios() {
         },
         {
           text: '白湯300ml、味付き卵一個',
+          messageId: dupMsgIdB,
+          expect: {
+            intentType: 'pending_confirmation',
+            persisted: false,
+            dailyTotalBucketKcal: 70,
+            forbidden: false,
+            notIntentTypes: ['lab_followup', 'casual_chat'],
+            replyMustContain: '同じ内容が今日すでに入っています'
+          }
+        },
+        {
+          text: 'はい',
           messageId: dupMsgId,
           expect: {
             intentType: 'meal_record_text',
-            persisted: false,
-            dailyTotalBucketKcal: 70,
+            persisted: true,
+            dailyTotalBucketKcal: 140,
             forbidden: false,
             notIntentTypes: ['lab_followup', 'casual_chat']
           }
