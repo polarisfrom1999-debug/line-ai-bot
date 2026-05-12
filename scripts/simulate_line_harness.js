@@ -14,26 +14,7 @@ const { orchestrateConversation } = require('../services/conversation_orchestrat
 const contextMemoryService = require('../services/context_memory_service');
 const dailyNutritionSummaryService = require('../services/daily_nutrition_summary_service');
 const { runObservationLayerTests } = require('./simulate_line_observation_layer');
-
-/** @see services/emotional_quality_check_service.js */
-const GENERIC_TEMPLATE_STRIP = [
-  'ここまでの流れを一本で見ています',
-  '急がず、今日はこの一歩で十分です',
-  '雑談も、ちゃんと受け止めます',
-  '健康の話に引き戻さなくて大丈夫です',
-  '続きがあれば、そのまま送ってください',
-  'まずはここに送れただけで十分です'
-];
-
-const BANNED_SHORT_PHRASES = [
-  '記録しました',
-  '確認しました',
-  '保存しました',
-  'いい流れです',
-  '無理なく続けましょう',
-  '頑張りましょう',
-  '次の一歩は小さくて十分です'
-];
+const { evaluateReplyQuality, forbiddenPhraseHits } = require('./lib/simulate_line_reply_quality');
 
 function parseOnlyArg() {
   const raw = process.argv.find((a) => a.startsWith('--only='));
@@ -59,19 +40,6 @@ function pullText(result) {
 
 function sumBucketMealKcal(records) {
   return (records?.meals || []).reduce((acc, m) => acc + Number(m?.kcal || m?.estimatedNutrition?.kcal || 0), 0);
-}
-
-function forbiddenPhraseHits(text) {
-  const t = String(text || '');
-  const hits = [];
-  for (const s of GENERIC_TEMPLATE_STRIP) {
-    if (t.includes(s)) hits.push(s);
-  }
-  for (const s of BANNED_SHORT_PHRASES) {
-    if (t.includes(s)) hits.push(s);
-  }
-  if (/「[^」]{1,48}」の重さ、ちゃんと受け取っています/.test(t)) hits.push('echo_weight_lead_template');
-  return hits;
 }
 
 function interpret(text, userId = 'U_interp') {
@@ -199,6 +167,18 @@ async function runScenario(def) {
       errors.push(`step${i} forbidden phrase(s): ${hits.join(' | ')}`);
     }
 
+    const qViol = evaluateReplyQuality({
+      userText: st.qualityUserText != null ? st.qualityUserText : st.text,
+      reply: out.reply,
+      intentType: out.intentType,
+      interpretMode: interp.primary_conversation_mode,
+      replyDepth: interp.reply_depth,
+      allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase)
+    });
+    if (qViol.length) {
+      errors.push(`step${i} reply_quality: ${qViol.join('; ')}`);
+    }
+
     if (Array.isArray(exp.notIntentTypes) && exp.notIntentTypes.includes(out.intentType)) {
       errors.push(`step${i} misroute: intent ${out.intentType} is forbidden`);
     }
@@ -299,6 +279,7 @@ function allScenarios() {
         persisted: true,
         dailyTotalBucketKcal: 70,
         forbidden: false,
+        allowStableRoutinePhrase: false,
         notIntentTypes: ['lab_followup', 'emotional_support', 'correction_feedback', 'casual_chat'],
         nonEmptyReply: true,
         reportRoute: 'meal_record'
@@ -334,12 +315,14 @@ function allScenarios() {
         },
         {
           text: 'はい',
+          qualityUserText: '白湯300ml、味付き卵一個',
           messageId: dupMsgId,
           expect: {
             intentType: 'meal_record_text',
             persisted: true,
             dailyTotalBucketKcal: 140,
             forbidden: false,
+            allowStableRoutinePhrase: true,
             notIntentTypes: ['lab_followup', 'casual_chat']
           }
         }

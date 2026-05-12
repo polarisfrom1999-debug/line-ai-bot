@@ -245,13 +245,54 @@ function buildMealTextFingerprint({ text = '', parsedMeal = {}, recordKind = 'me
   ].join('||');
 }
 
+function isBreakfastRoutineContext(parsedMeal = {}, userText = '') {
+  const itemsStr = Array.isArray(parsedMeal?.items) ? parsedMeal.items.join(' ') : '';
+  const blob = `${itemsStr} ${normalizeText(userText)}`;
+  return /白湯/.test(blob) && /(味付き卵|味付卵|ゆで卵|卵)/.test(blob);
+}
+
 /**
- * @param {{ parsedMeal: object, breakdownLines: string[], recordKind: string, userText: string, todayTotalKcal?: number }} p
+ * 同一 fingerprint の手入力朝食が、直近ユーザー発話に何回あるか（今回の送信直前まで）。
+ * @param {{ recentMessages?: { role?: string, content?: string }[], fingerprint?: string, recordKind?: string, currentUserText?: string }} p
+ */
+function countStableRoutineEvidence(p = {}) {
+  const fingerprint = normalizeText(p.fingerprint || '');
+  const recordKind = normalizeText(p.recordKind || 'meal_text_record');
+  if (!fingerprint || recordKind === 'reward_food') return 0;
+
+  const recent = Array.isArray(p.recentMessages) ? p.recentMessages : [];
+  let n = 0;
+  for (const m of recent) {
+    if (normalizeText(m?.role) !== 'user') continue;
+    const content = normalizeText(m?.content);
+    if (!content) continue;
+    const manual = parseAndBuildManualMealRecord(content, { recordKind: 'meal_text_record' });
+    if (!manual?.parsedMeal) continue;
+    const fp = buildMealTextFingerprint({
+      text: content,
+      parsedMeal: manual.parsedMeal,
+      recordKind: manual.recordKind
+    });
+    if (fp === fingerprint) n += 1;
+  }
+  return n;
+}
+
+/**
+ * @param {{ parsedMeal: object, breakdownLines: string[], recordKind: string, userText: string, todayTotalKcal?: number, stable_routine_evidence_count?: number }} p
  */
 function buildShortManualReply(p = {}) {
-  const { parsedMeal, breakdownLines, recordKind, userText, todayTotalKcal } = p;
+  const {
+    parsedMeal,
+    breakdownLines,
+    recordKind,
+    userText,
+    todayTotalKcal,
+    stable_routine_evidence_count: stableEvidenceRaw
+  } = p;
   const items = (parsedMeal?.items || []).join('、');
   const lines = [];
+  const stableEvidence = Number(stableEvidenceRaw || 0);
 
   if (recordKind === 'reward_food') {
     lines.push(`${items}、届いています。`);
@@ -260,7 +301,11 @@ function buildShortManualReply(p = {}) {
     const ut = normalizeText(userText);
     if (/白湯|味付き卵|ゆで卵|卵/.test(ut)) {
       lines.push(`${items}ですね。`);
-      lines.push('朝の形として安定しています。卵でたんぱく質も入っているので、今日のスタートとして十分です。');
+      if (isBreakfastRoutineContext(parsedMeal, userText) && stableEvidence >= 2) {
+        lines.push('朝の形として安定してきていますね。卵でたんぱく質も入っているので、今日のスタートとして十分です。');
+      } else {
+        lines.push('朝の形として整えやすい組み合わせですね。卵でたんぱく質も入っているので、今日のスタートとして十分です。');
+      }
     } else if (/ご飯半分|半分/.test(ut) && /ご飯|ごはん/.test(ut)) {
       lines.push(`${items}ですね。`);
       lines.push('量を調整しながら整えようとしているのが見えます。このくらいの抜き方で十分です。');
@@ -284,5 +329,7 @@ module.exports = {
   parseAndBuildManualMealRecord,
   buildShortManualReply,
   buildMealTextFingerprint,
+  countStableRoutineEvidence,
+  isBreakfastRoutineContext,
   parseLineItem,
 };

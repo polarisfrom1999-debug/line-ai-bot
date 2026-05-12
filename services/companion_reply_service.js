@@ -381,6 +381,11 @@ async function enhanceReply(params = {}) {
 
   let integratedCore = core;
   const conversationModeNorm = normalizeText(params.conversationMode || params.intentType || '');
+  const stableRoutineEvidenceCountParam = Number(params.stableRoutineEvidenceCount);
+  const suppressMealTextStableRoutine =
+    intent === 'meal'
+    && conversationModeNorm === 'meal_record_text'
+    && (!Number.isFinite(stableRoutineEvidenceCountParam) || stableRoutineEvidenceCountParam < 2);
   const skipContextualObservation = /emotional_support|life_companion|correction_feedback/.test(conversationModeNorm);
 
   if (!skipContextualObservation) {
@@ -394,6 +399,8 @@ async function enhanceReply(params = {}) {
         intentTag: intent,
         relationshipPhase
       });
+      const obsTypeNorm = normalizeText(sel.observation_type || '');
+      const skipStableRhythmObs = suppressMealTextStableRoutine && obsTypeNorm === 'stable_rhythm';
       const oc = normalizeText(sel.observation_text || '');
       const cr = normalizeText(core);
       if (oc && cr.length >= 10 && cr.includes(oc.slice(0, Math.min(24, oc.length)))) {
@@ -402,6 +409,13 @@ async function enhanceReply(params = {}) {
           observation_type: normalizeText(sel.observation_type || ''),
           integrated_into_reply: false,
           skipped_reason: 'observation_overlaps_core'
+        });
+      } else if (oc && skipStableRhythmObs) {
+        console.info('[contextual_observation_integrated]', {
+          user_id: params.userId,
+          observation_type: obsTypeNorm,
+          integrated_into_reply: false,
+          skipped_reason: 'meal_text_stable_rhythm_insufficient_evidence'
         });
       } else if (oc) {
         const fused = fuseContextualObservation({
@@ -445,7 +459,7 @@ async function enhanceReply(params = {}) {
     .slice(-6)
     .some((m) => /半分|訂正|修正|補正|実際は|あとから/.test(normalizeText(m?.content || '')));
 
-  if (pattern.stable_routine_detected) {
+  if (pattern.stable_routine_detected && !suppressMealTextStableRoutine) {
     const routineLine = buildRoutineLine(pattern);
     if (routineLine) lines.push(`\n${routineLine}`);
     console.info('[stable_routine_reply_generated]', {

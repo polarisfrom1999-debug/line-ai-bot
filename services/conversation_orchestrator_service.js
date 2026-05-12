@@ -22,6 +22,7 @@ const sportsConsultationService = require('./sports_consultation_service');
 const motionAnalysisService = require('./motion_analysis_service');
 const profileService = require('./profile_service');
 const featureFlags = require('../config/feature_flags');
+const { resolveMealTextDuplicateWindowHours } = require('../config/meal_text_env');
 const { detectCaptureTypeFromImageAnalysis } = require('./capture_router_service');
 const { getConversationState, setConversationState } = require('./conversation_state_service');
 const { shouldCompressGuidance, compressGuidanceText } = require('./reply_fatigue_service');
@@ -2236,7 +2237,8 @@ async function withSurfaceReply(input, draftText, ctx, intentType, options = {})
       longMemory: ctx?.longMemory || {},
       todayNutritionSummary: todayNutritionSummary || {},
       todayEnergyBalance: todayEnergyBalance || {},
-      hour
+      hour,
+      stableRoutineEvidenceCount: options.stableRoutineEvidenceCount
     });
     return normalizeText(enhanced?.text || base) || base;
   } catch (_e) {
@@ -2614,18 +2616,12 @@ async function maybeHandleMealImage(input, imagePayload) {
   }
 }
 
-function getMealTextDuplicateWindowHours() {
-  const raw = Number(process.env.MEAL_TEXT_DUPLICATE_WINDOW_HOURS || 4);
-  if (!Number.isFinite(raw) || raw <= 0) return 4;
-  return Math.max(2, Math.min(6, Math.round(raw)));
-}
-
 async function findRecentMealTextDuplicate(userId, fingerprint, recordKind) {
   const fp = normalizeText(fingerprint);
   if (!fp) return null;
   const todayYmd = contextMemoryService.getTokyoTodayYmd();
   const logs = await mealLogQueryService.getMealLogsByDateRange(userId, todayYmd, todayYmd);
-  const windowMs = getMealTextDuplicateWindowHours() * 60 * 60 * 1000;
+  const windowMs = resolveMealTextDuplicateWindowHours() * 60 * 60 * 1000;
   const now = Date.now();
   const kind = normalizeText(recordKind || '');
   for (const log of logs) {
@@ -2670,6 +2666,14 @@ async function maybeHandleMealText(input, conversationState = null) {
     });
     manual.parsedMeal.text_fingerprint = fingerprint;
 
+    const recentForStable = await contextMemoryService.getRecentMessages(input.userId, 80);
+    const stableRoutineEvidenceCount = mealTextManualRecordService.countStableRoutineEvidence({
+      recentMessages: recentForStable,
+      fingerprint,
+      recordKind: manual.recordKind,
+      currentUserText: text
+    });
+
     console.info('[meal_text_record_parsed]', {
       user_id: input.userId,
       items: manual.parsedMeal.items,
@@ -2677,7 +2681,8 @@ async function maybeHandleMealText(input, conversationState = null) {
       protein: manual.parsedMeal.estimatedNutrition?.protein,
       record_kind: manual.recordKind,
       calorie_source: manual.parsedMeal.calorie_source,
-      fingerprint
+      fingerprint,
+      stable_routine_evidence_count: stableRoutineEvidenceCount
     });
 
     const summary = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId);
@@ -2696,7 +2701,8 @@ async function maybeHandleMealText(input, conversationState = null) {
       breakdownLines: manual.breakdownLines,
       recordKind: manual.recordKind,
       userText: text,
-      todayTotalKcal: todayAfter
+      todayTotalKcal: todayAfter,
+      stable_routine_evidence_count: stableRoutineEvidenceCount
     });
 
     await contextMemoryService.saveShortMemory(input.userId, {
@@ -2714,7 +2720,8 @@ async function maybeHandleMealText(input, conversationState = null) {
       replyText,
       parsedMeal: manual.parsedMeal,
       recordKind: manual.recordKind,
-      fromManualText: true
+      fromManualText: true,
+      stableRoutineEvidenceCount: stableRoutineEvidenceCount
     };
   }
 
@@ -3953,7 +3960,9 @@ async function orchestrateConversation(input) {
           carbs: Number(totalsAfter.carbs || 0),
           addDailyRecord_result_present: Boolean(addResult)
         });
-        const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent);
+        const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent, {
+          stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount
+        });
         await appendTurn(input.userId, input.rawText || '', out);
         return {
           ok: true,
@@ -4975,7 +4984,9 @@ async function orchestrateConversation(input) {
     const mealTextHandled = await maybeHandleMealText(input);
     if (mealTextHandled) {
       await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
-      const mealTxtOut = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, 'meal_text');
+      const mealTxtOut = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, 'meal_text', {
+        stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount
+      });
       await appendTurn(input.userId, input.rawText || '', mealTxtOut);
       return { ok: true, replyMessages: [{ type: 'text', text: mealTxtOut }], internal: { intentType: 'meal_text', responseMode: 'record' } };
     }
