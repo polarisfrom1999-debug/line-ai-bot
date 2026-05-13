@@ -1,3 +1,4 @@
 .env
 node_modules
 data/athlete_support/
+.kokokara_context_snapshot.json
