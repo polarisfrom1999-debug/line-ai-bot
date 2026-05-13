@@ -2176,12 +2176,14 @@ const NATURAL_REPLY_MODES = new Set([
   'life_companion',
   'lab_followup',
   'lab_date_inventory',
+  'lab_comparison',
 ]);
 
 function inferNaturalConversationMode(intentType) {
   const it = normalizeText(intentType || '');
   if (it === 'meal_note') return 'reward_food';
   if (it === 'lab_date_inventory') return 'lab_date_inventory';
+  if (it === 'lab_comparison') return 'lab_comparison';
   return it;
 }
 
@@ -2198,7 +2200,9 @@ async function resolveLabFollowUpFeatureResults(userId, text, shortMemory) {
 
 function resolveLabFollowUpIntentType(conversationState, labFeature) {
   if (conversationState?.primary_conversation_mode === 'lab_date_inventory') return 'lab_date_inventory';
+  if (conversationState?.primary_conversation_mode === 'lab_comparison') return 'lab_comparison';
   if (labFeature?.queryType === 'lab_date_inventory') return 'lab_date_inventory';
+  if (labFeature?.queryType === 'comparison') return 'lab_comparison';
   return 'lab_followup';
 }
 
@@ -4091,7 +4095,7 @@ async function orchestrateConversation(input) {
       const legacyReply = await labQueryService.answerLabQuery(input.userId, text, shortMemory)
         || await maybeAnswerLabFollowUp(input.userId, text, shortMemory);
       const labIntent = resolveLabFollowUpIntentType(conversationState, labFeature);
-      if (labFeature?.found || labFeature?.queryType === 'no_panel' || labFeature?.queryType === 'lab_date_inventory' || legacyReply) {
+      if (labFeature?.found || labFeature?.queryType === 'no_panel' || labFeature?.queryType === 'lab_date_inventory' || labFeature?.queryType === 'comparison' || legacyReply) {
         const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, labIntent, {
           useNaturalGenerator: true,
           featureResults: labFeature?.queryType ? labFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
@@ -4698,7 +4702,7 @@ async function orchestrateConversation(input) {
     const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory)
       || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
     const labFollowIntent = resolveLabFollowUpIntentType(conversationState, labFollowFeature);
-    if (labFollowFeature?.found || labFollowFeature?.queryType === 'no_panel' || labFollowFeature?.queryType === 'lab_date_inventory' || labFollowUpReply) {
+    if (labFollowFeature?.found || labFollowFeature?.queryType === 'no_panel' || labFollowFeature?.queryType === 'lab_date_inventory' || labFollowFeature?.queryType === 'comparison' || labFollowUpReply) {
       const labFollowOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, labFollowIntent, {
         useNaturalGenerator: true,
         featureResults: labFollowFeature?.queryType ? labFollowFeature : { found: false, queryType: 'no_panel', formattedLines: [] },

@@ -107,8 +107,20 @@ function aliasMatchesLoose(loose, alias) {
   const al = normalizeLoose(String(alias || ''));
   if (!al || !loose) return false;
   if (loose === al) return true;
+  if (loose.length <= 1 || al.length <= 1) return false;
   if (loose.length <= 2 || al.length <= 2) return false;
   return loose.includes(al) || al.includes(loose);
+}
+
+function fuzzyMasterKeyMatch(loose, nkLoose) {
+  if (!loose || !nkLoose) return false;
+  if (loose === nkLoose) return true;
+  if (loose.length <= 1 || nkLoose.length <= 1) return false;
+  if (loose.startsWith(nkLoose) || nkLoose.startsWith(loose)) {
+    if (loose !== nkLoose) return false;
+  }
+  if (loose.length < 3 || nkLoose.length < 3) return false;
+  return loose.includes(nkLoose) || nkLoose.includes(loose);
 }
 
 async function normalizeLabItemName(rawName, masterRows) {
@@ -133,7 +145,7 @@ async function normalizeLabItemName(rawName, masterRows) {
         resolvedBy: 'master_alias'
       };
     }
-    if (loose.length >= 3 && nkLoose.length >= 3 && (loose.includes(nkLoose) || nkLoose.includes(loose))) {
+    if (loose.length >= 3 && nkLoose.length >= 3 && fuzzyMasterKeyMatch(loose, nkLoose)) {
       return {
         normalized_key: nk,
         display_name: normalizeText(row.display_name_ja) || nk,

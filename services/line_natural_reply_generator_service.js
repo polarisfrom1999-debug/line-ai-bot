@@ -105,6 +105,14 @@ function modeSystemInstructions(conversationMode, replyDepth) {
       '「TGの傾向は？」のように項目ごとに見られる旨を短く添えてよい。',
     ].join('\n');
   }
+  if (cm === 'lab_comparison') {
+    return [
+      '会話モード: lab_comparison（検査の前後比較）',
+      '数値行は書かない（システムが後から付ける）。',
+      '1〜2文で、比較の前置きだけ。診断・治療判断はしない。',
+      '患者名・医療機関・印刷日の長い説明はしない。',
+    ].join('\n');
+  }
   return [
     `会話モード: ${cm || 'normal'}`,
     `reply_depth: ${replyDepth || 'normal'}`,
@@ -197,6 +205,10 @@ function fallbackProse(ctx) {
     return '保存されている検査日は、いまのところ以下が確認できます。必要なら「TGの傾向は？」のように項目ごとに見られます。';
   }
 
+  if (cm === 'lab_comparison' || fr.queryType === 'comparison') {
+    return '前回分と直近分を、保存されている範囲で並べます。医学的な解釈はせず、数値の並びだけお伝えします。';
+  }
+
   if (!ut) return 'うん、届いています。続きがあればそのまま送ってください。';
   return `なるほど、「${ut.slice(0, 40)}」ですね。いまの感じを、そのまま聞かせてください。`;
 }
@@ -276,6 +288,12 @@ function isAcceptableProse(ctx, prose) {
       && !/20\d{2}-\d{2}-\d{2}/.test(text)
       && !/(患者名|医療機関|印刷日)/.test(text);
   }
+  if (cm === 'lab_comparison') {
+    return text.length >= 10
+      && /(比較|前回|直近|並べ)/.test(text)
+      && !/^\s*(TG|HbA1c)[：:]\s*\d/i.test(text)
+      && !/(患者名|医療機関|印刷日)/.test(text);
+  }
   return true;
 }
 
@@ -337,6 +355,10 @@ function buildLabDatesInventoryBlock(featureResults = {}) {
 function shouldAttachLabBlock(conversationMode, featureResults) {
   const cm = normalizeText(conversationMode);
   if (cm === 'lab_date_inventory') {
+    const lines = Array.isArray(featureResults?.formattedLines) ? featureResults.formattedLines : [];
+    return lines.length > 0;
+  }
+  if (cm === 'lab_comparison' || featureResults?.queryType === 'comparison') {
     const lines = Array.isArray(featureResults?.formattedLines) ? featureResults.formattedLines : [];
     return lines.length > 0;
   }

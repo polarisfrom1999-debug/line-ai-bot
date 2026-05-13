@@ -42,13 +42,18 @@ function sumBucketMealKcal(records) {
   return (records?.meals || []).reduce((acc, m) => acc + Number(m?.kcal || m?.estimatedNutrition?.kcal || 0), 0);
 }
 
-function interpret(text, userId = 'U_interp') {
+function interpret(text, userId = 'U_interp', shortMemory = null) {
   return conversationStateInterpreterService.interpretConversationState({
     userId,
     text,
-    shortMemory: {},
+    shortMemory: shortMemory || {},
     hasPendingConfirmation: false
   });
+}
+
+async function interpretWithMemory(text, userId) {
+  const shortMemory = await contextMemoryService.getShortMemory(userId).catch(() => ({}));
+  return interpret(text, userId, shortMemory || {});
 }
 
 async function snapshot(userId) {
@@ -84,6 +89,14 @@ async function runLabNormalizerSelfTests() {
   }
   if (k.normalized_key !== 'potassium') {
     throw new Error(`[simulate:line] lab normalizer: K want potassium got ${k.normalized_key}`);
+  }
+  const cpk = await resolveLabItemForPersistence('CPK', {}, emptyMaster);
+  if (cpk.normalized_key !== 'cpk') {
+    throw new Error(`[simulate:line] lab normalizer: CPK want cpk got ${cpk.normalized_key}`);
+  }
+  const mch = await resolveLabItemForPersistence('MCH', {}, emptyMaster);
+  if (mch.normalized_key !== 'mch') {
+    throw new Error(`[simulate:line] lab normalizer: MCH want mch got ${mch.normalized_key}`);
   }
   const mchc = await resolveLabItemForPersistence('MCHC', {}, emptyMaster);
   if (mchc.normalized_key === 'mch') {
@@ -150,7 +163,7 @@ async function runScenario(def) {
 
   for (let i = 0; i < steps.length; i += 1) {
     const st = steps[i];
-    const interp = interpret(st.text, userId);
+    const interp = await interpretWithMemory(st.text, userId);
     const out = await runTurn(userId, st.text, st.messageId);
 
     const exp = st.expect || {};
@@ -444,11 +457,13 @@ function allScenarios() {
     {
       id: 'lab_other_exam_dates',
       group: 'conversation',
-      title: '他の検査日は？',
+      title: '他の検査日は？（lab_image_session）',
       text: '他の検査日は？',
       preSeed: async (userId) => {
         await contextMemoryService.saveShortMemory(userId, {
+          activeContext: { type: 'lab_image_session', domain: 'lab_image_session' },
           followUpContext: {
+            imageType: 'lab_image_session',
             labPanel: {
               examDates: ['2016-01-21', '2016-02-25', '2016-05-10', '2025-03-22'],
               latestExamDate: '2025-03-22',
@@ -466,6 +481,44 @@ function allScenarios() {
         forbidden: false,
         notIntentTypes: ['casual_chat', 'meal_record_text', 'emotional_support'],
         replyMustContain: '2016-01-21',
+        nonEmptyReply: true
+      }
+    },
+    {
+      id: 'lab_compare_previous',
+      group: 'conversation',
+      title: '前回と比べて（lab_image_session）',
+      text: '前回と比べて',
+      preSeed: async (userId) => {
+        await contextMemoryService.saveShortMemory(userId, {
+          activeContext: { type: 'lab_image_session', domain: 'lab_image_session' },
+          followUpContext: {
+            imageType: 'lab_image_session',
+            labPanel: {
+              examDates: ['2025-01-10', '2025-03-22'],
+              latestExamDate: '2025-03-22',
+              items: [{
+                itemName: '中性脂肪',
+                value: '61',
+                unit: 'mg/dL',
+                history: [
+                  { date: '2025-01-10', value: '72', unit: 'mg/dL' },
+                  { date: '2025-03-22', value: '61', unit: 'mg/dL' }
+                ]
+              }]
+            }
+          }
+        });
+      },
+      expectInterpret: {
+        primary_conversation_mode: 'lab_comparison',
+        route: 'lab_followup'
+      },
+      expect: {
+        intentType: 'lab_comparison',
+        forbidden: false,
+        notIntentTypes: ['casual_chat', 'meal_record_text', 'emotional_support'],
+        replyMustContain: '2025-01-10',
         nonEmptyReply: true
       }
     },

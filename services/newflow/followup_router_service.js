@@ -182,6 +182,9 @@ async function resolveFollowup({ input, text, imageFollowupOnly = true } = {}) {
         canonicalLabReached,
         currentSessionId,
         answerSourceSessionId
+      }).then((resolved) => {
+        if (resolved?.delegateNaturalLabFollowup) return null;
+        return resolved;
       });
     }
     if (/^meal_/.test(normalizeText(active.type || active.domain || ''))) {

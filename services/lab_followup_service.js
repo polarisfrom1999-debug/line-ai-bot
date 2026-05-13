@@ -78,8 +78,51 @@ function normalizeTarget(text) {
 }
 
 function isLabDateInventoryQuestion(text = '') {
-  const safe = normalizeText(text);
-  return /他の検査日|他の日付|他の日は|別の日付|保存されている検査日|日付一覧|何日の検査|何日分|検査日.*(一覧|ある|いくつ|何|教えて)|保存.*(検査日|日付)/i.test(safe);
+  const labContextContinuationService = require('./lab_context_continuation_service');
+  return labContextContinuationService.isLabDateInventoryUtterance(text);
+}
+
+function isLabComparisonQuestion(text = '') {
+  const labContextContinuationService = require('./lab_context_continuation_service');
+  return labContextContinuationService.isLabComparisonUtterance(text);
+}
+
+function buildComparisonFeatureResults(panel) {
+  const dates = collectAvailableDates(panel).sort();
+  if (dates.length < 2) {
+    return {
+      found: false,
+      queryType: 'comparison',
+      formattedLines: [],
+      dateCount: dates.length,
+    };
+  }
+  const previousDate = dates[dates.length - 2];
+  const latestDate = dates[dates.length - 1];
+  const lines = [];
+  for (const item of panel?.items || []) {
+    const name = item?.itemName || '項目';
+    const hist = Array.isArray(item?.history) ? item.history : [];
+    const prev = hist.find((row) => normalizeDateToken(row?.date || '') === previousDate);
+    const latest = hist.find((row) => normalizeDateToken(row?.date || '') === latestDate);
+    if (prev && latest) {
+      lines.push(`${previousDate}: ${formatLabValueLine(name, prev.value, prev.unit)}`);
+      lines.push(`${latestDate}: ${formatLabValueLine(name, latest.value, latest.unit)}`);
+    }
+  }
+  if (!lines.length) {
+    const tg = (panel?.items || []).find((it) => /中性脂肪|TG/i.test(String(it?.itemName || '')));
+    if (tg?.value) {
+      lines.push(`${latestDate}: ${formatLabValueLine(tg.itemName || '中性脂肪', tg.value, tg.unit)}`);
+    }
+  }
+  return {
+    found: lines.length > 0,
+    queryType: 'comparison',
+    formattedLines: lines.slice(0, 8),
+    compareDates: [previousDate, latestDate],
+    dateCount: dates.length,
+  };
 }
 
 function buildDateInventoryFeatureResults(panel) {
@@ -946,6 +989,10 @@ function buildFollowUpFeatureResults(panel, text, selectedDate = '') {
     return buildDateInventoryFeatureResults(panel);
   }
 
+  if (isLabComparisonQuestion(safe)) {
+    return buildComparisonFeatureResults(panel);
+  }
+
   if (shouldHandleTrendQuestion(safe)) {
     const target = normalizeTarget(safe) || '検査';
     const rows = collectTrendRows(panel, target);
@@ -1074,5 +1121,7 @@ module.exports = {
   buildFollowUpFeatureResults,
   formatLabValueLine,
   isLabDateInventoryQuestion,
+  isLabComparisonQuestion,
+  buildComparisonFeatureResults,
   buildDateInventoryFeatureResults,
 };

@@ -1,6 +1,7 @@
 'use strict';
 
 const topicShiftDetectorService = require('./topic_shift_detector_service');
+const labContextContinuationService = require('./lab_context_continuation_service');
 
 const ERROR_FEEDBACK_RE =
   /(間違えて|間違い|違います|ちがう|そうじゃない|今の違う|それ違う|読み違い|変です|おかしい)/;
@@ -41,8 +42,7 @@ function isExclusiveHealthOrFeedbackText(text = '') {
 }
 
 function isLabDateInventoryText(text = '') {
-  const safe = normalizeText(text);
-  return /他の検査日|他の日付|他の日は|別の日付|保存されている検査日|日付一覧|何日の検査|何日分|検査日.*(一覧|ある|いくつ|何|教えて)|保存.*(検査日|日付)/i.test(safe);
+  return labContextContinuationService.isLabDateInventoryUtterance(text);
 }
 
 function detectPrimaryMode(text = '') {
@@ -53,9 +53,13 @@ function detectPrimaryMode(text = '') {
 
   if (isLabDateInventoryText(safe)) return 'lab_date_inventory';
 
+  if (labContextContinuationService.isLabComparisonUtterance(safe)) return 'lab_comparison';
+
   if (/(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れ/.test(safe)) {
     return 'lab_followup';
   }
+
+  if (labContextContinuationService.isLabTrendUtterance(safe)) return 'lab_followup';
 
   if (/(ご飯|ごはん|米|麺|パン|おかず|サラダ|卵|肉|魚).*(半分|少なめ|残した|食べてない|完食)|半分食べました/.test(safe)) {
     return 'meal_correction';
@@ -92,7 +96,7 @@ function mapModeToRoute(mode) {
   if (mode === 'meal_text_record' || mode === 'reward_food') return 'meal_record';
   if (mode === 'exercise_feedback') return 'exercise_or_body_feedback';
   if (mode === 'meal_correction') return 'meal_correction';
-  if (mode === 'lab_followup' || mode === 'lab_date_inventory') return 'lab_followup';
+  if (mode === 'lab_followup' || mode === 'lab_date_inventory' || mode === 'lab_comparison') return 'lab_followup';
   if (mode === 'body_condition_note') return 'body_condition_note';
   if (mode === 'exercise_record') return 'exercise_record';
   if (mode === 'pending_answer') return 'pending_answer';
@@ -106,6 +110,7 @@ function surfaceIntentForMode(mode) {
   if (mode === 'exercise_feedback') return 'exercise_feedback';
   if (mode === 'assistant_error_feedback') return 'assistant_error_feedback';
   if (mode === 'lab_date_inventory') return 'lab_date_inventory';
+  if (mode === 'lab_comparison') return 'lab_comparison';
   return mode;
 }
 
@@ -115,7 +120,7 @@ function replyDepthForMode(mode, text) {
     return /(寂しい|さみしい|しんどい|つらい|心が重い|不安|もう無理)/.test(normalizeText(text)) ? 'deep' : 'normal';
   }
   if (mode === 'casual_chat') return 'short';
-  if (mode === 'meal_correction' || mode === 'exercise_record' || mode === 'lab_followup' || mode === 'lab_date_inventory') return 'normal';
+  if (mode === 'meal_correction' || mode === 'exercise_record' || mode === 'lab_followup' || mode === 'lab_date_inventory' || mode === 'lab_comparison') return 'normal';
   if (mode === 'exercise_feedback' || mode === 'meal_text_record' || mode === 'reward_food') return 'normal';
   if (mode === 'assistant_error_feedback') return 'normal';
   return 'normal';
@@ -141,22 +146,33 @@ function interpretConversationState({
   hasPendingConfirmation = false
 } = {}) {
   const safe = normalizeText(text);
-  const activeContextType = normalizeText(shortMemory?.activeContext?.type || shortMemory?.followUpContext?.imageType || '');
+  const activeContextType = labContextContinuationService.resolveActiveContextType(shortMemory);
   const pendingAnswer = hasPendingConfirmation && yesToken(safe);
 
   let mode;
+  let labContinuation = null;
   if (ERROR_FEEDBACK_RE.test(safe)) {
     mode = 'assistant_error_feedback';
   } else if (pendingAnswer) {
     mode = 'pending_answer';
   } else {
-    mode = detectPrimaryMode(safe);
+    labContinuation = labContextContinuationService.resolveLabContextContinuation({
+      text: safe,
+      activeContextType,
+      shortMemory,
+    });
+    if (labContinuation) {
+      mode = labContinuation.primary_mode;
+    } else {
+      mode = detectPrimaryMode(safe);
+    }
   }
 
   const shift = topicShiftDetectorService.detectTopicShift({
     text: safe,
     activeContextType,
-    hasPending: hasPendingConfirmation
+    hasPending: hasPendingConfirmation,
+    labContinuation,
   });
   const shouldContinue = pendingAnswer ? false : Boolean(shift?.should_continue_previous_context);
   const route = mapModeToRoute(mode);
@@ -170,6 +186,7 @@ function interpretConversationState({
       'meal_correction',
       'lab_followup',
       'lab_date_inventory',
+      'lab_comparison',
       'exercise_record',
       'body_condition_note',
       'meal_text_record',
@@ -181,7 +198,7 @@ function interpretConversationState({
     reply_depth: replyDepthForMode(mode, safe),
     tone_mode: toneForMode(mode),
     risk_level: riskForMode(mode, safe),
-    reason: shift?.reason || 'conversation_state_semantic'
+    reason: labContinuation?.reason || shift?.reason || 'conversation_state_semantic'
   };
   console.info('[conversation_state_interpreted]', {
     user_id: userId,

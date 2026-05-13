@@ -11,11 +11,11 @@ function assert(name, cond, detail) {
   }
 }
 
-function run(text, pending = false) {
+function run(text, shortMemory = {}, pending = false) {
   return conversationStateInterpreterService.interpretConversationState({
     userId: 'U_smoke',
     text,
-    shortMemory: {},
+    shortMemory,
     hasPendingConfirmation: pending
   });
 }
@@ -36,8 +36,18 @@ const err = run('間違えてますよ');
 assert('assistant_error', err.primary_conversation_mode === 'assistant_error_feedback', err);
 assert('error_route', err.route === 'correction_feedback', err);
 
-const labDates = run('他の検査日は？');
+const labDates = run('他の検査日は？', {
+  activeContext: { type: 'lab_image_session' },
+  followUpContext: { imageType: 'lab_image_session' },
+});
 assert('lab_date_inventory', labDates.primary_conversation_mode === 'lab_date_inventory', labDates);
 assert('lab_date_route', labDates.route === 'lab_followup', labDates);
+
+const labCompare = run('前回と比べて', {
+  activeContext: { type: 'lab_image_session' },
+  followUpContext: { imageType: 'lab_image_session' },
+});
+assert('lab_comparison', labCompare.primary_conversation_mode === 'lab_comparison', labCompare);
+assert('lab_compare_route', labCompare.route === 'lab_followup', labCompare);
 
 console.info('[routing_smoke] done');

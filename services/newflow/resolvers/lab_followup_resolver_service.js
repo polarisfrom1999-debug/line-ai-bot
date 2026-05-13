@@ -448,63 +448,27 @@ async function resolveLabFollowup(text, panel, meta = {}) {
   }
 
   if (
-    /他の日付|他の日は|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)/i.test(
+    /他の日付|他の日は|別の?日付|他の日に|他の検査日|何日分(\s*(ある|です|か|？|\?)|ある|です|か)|日付.*(いくつ|何件)|読めて(い)?る(\?|？|か).*(日付|検査日|保存)|保存.*(何件|いくつ|日付|データ|ある)|何件分(の)?(保存|検査|画像)|検査日.*(何種|何個|いくつ)|検査日(は|の)?[？?]?$|日付一覧|保存されている検査日|前回は[？?]?$|いつの検査/i.test(
       safeText
     )
   ) {
-    const arr = await loadHistory();
-    const panelDates = currentObservedDates;
-    const panelDateLine = panelDates.length
-      ? `この画像内で読み取れた日付候補は ${panelDates.join(' / ')} です。`
-      : '';
-    let dbDateLine = '';
-    const sidForDates = answerSourceSessionId || currentSessionId;
-    if (sidForDates) {
-      const distinct = await labResultItemsReader.getDistinctObservedDates({
-        lineUserId: lineUid,
-        userId: lineUid,
-        labSessionId: sidForDates
-      }).catch(() => []);
-      if (distinct.length) {
-        const bits = distinct.map((d) => {
-          if (d.observed_date) return String(d.observed_date).slice(0, 10);
-          if (d.observed_date_text) return `${d.observed_date_text}(${d.observed_date_status || 'unknown'})`;
-          return `(${d.observed_date_status || 'unknown'})`;
-        });
-        dbDateLine = `正本DBに保存された検査日の候補は ${bits.join(' / ')} です。`;
-      }
-      labResultItemsReader.logResultItemsSource({
-        question: safeText.slice(0, 400),
-        detected_item_label: 'other_dates',
-        canonical_normalized_key: null,
-        selected_lab_session_id: sidForDates,
-        answer_source_session_id: answerSourceSessionId || sidForDates,
-        used_source: dbDateLine ? 'lab_result_items' : 'panel_only',
-        result_count: distinct.length,
-        fallback_reason: dbDateLine ? null : 'no_lab_result_items_dates'
-      });
-    }
-    const savedCountLine = `保存済みセッション件数は ${(arr || []).length} 件です。`;
-    const body = [panelDateLine, dbDateLine, savedCountLine].filter(Boolean).join(' ');
     record('lab_saved_dates_inventory', {
-      history_sessions_count: (arr || []).length,
-      comparison_available: (arr || []).length >= 2,
+      history_sessions_count: 0,
+      comparison_available: false,
       comparison_mode: 'saved_dates',
       current_session_id: currentSessionId,
       answer_source_session_id: answerSourceSessionId || currentSessionId,
       current_session_observed_dates: currentObservedDates,
-      returned_dates_list: panelDates
+      returned_dates_list: currentObservedDates,
+      delegate_natural_lab_followup: true,
     });
-    const replyOtherDates = `${pre} ${body}${tail ? ` ${tail}` : ''}`.trim();
-    console.info('[phasee-new] lab_followup_other_dates_reply', {
+    console.info('[phasee-new] lab_followup_delegate_natural', {
       renderGitCommit: labIngestTrace.getRenderGitCommitForLogs(),
       userId: normalizeText(userId),
       question_id: 'lab_saved_dates_inventory',
-      current_session_observed_dates: currentObservedDates,
-      returned_dates_list: panelDates,
-      replyText: replyOtherDates
+      query_type: 'lab_date_inventory',
     });
-    return { intentType: 'newflow_lab_followup', replyText: replyOtherDates };
+    return { intentType: 'newflow_lab_followup', delegateNaturalLabFollowup: true, queryType: 'lab_date_inventory' };
   }
 
   if (/(バランスは\?|バランスどう|バランス|脂質系|肝機能系|糖代謝系|腎機能系)/.test(safeText)) {
