@@ -36,4 +36,8 @@ const err = run('間違えてますよ');
 assert('assistant_error', err.primary_conversation_mode === 'assistant_error_feedback', err);
 assert('error_route', err.route === 'correction_feedback', err);
 
+const labDates = run('他の検査日は？');
+assert('lab_date_inventory', labDates.primary_conversation_mode === 'lab_date_inventory', labDates);
+assert('lab_date_route', labDates.route === 'lab_followup', labDates);
+
 console.info('[routing_smoke] done');

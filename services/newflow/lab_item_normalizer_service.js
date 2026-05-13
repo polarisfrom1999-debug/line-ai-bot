@@ -23,6 +23,15 @@ const FALLBACK_LOOSE_TO_KEY = {
   cpk: 'cpk',
   ck: 'cpk',
   クレアチンリンキン酵素: 'cpk',
+  k: 'potassium',
+  カリウム: 'potassium',
+  potassium: 'potassium',
+  mchc: 'mchc',
+  mch: 'mch',
+  総ビリルビン: 'total_bilirubin',
+  bilirubin: 'total_bilirubin',
+  total_bilirubin: 'total_bilirubin',
+  ビリルビン: 'total_bilirubin',
   ast: 'ast_got',
   got: 'ast_got',
   alt: 'alt_gpt',
@@ -94,6 +103,14 @@ function masterRowByKey(masterRows, nk) {
 /**
  * @returns {Promise<{ normalized_key: string, display_name: string, from_master: boolean, resolvedBy: string }>}
  */
+function aliasMatchesLoose(loose, alias) {
+  const al = normalizeLoose(String(alias || ''));
+  if (!al || !loose) return false;
+  if (loose === al) return true;
+  if (loose.length <= 2 || al.length <= 2) return false;
+  return loose.includes(al) || al.includes(loose);
+}
+
 async function normalizeLabItemName(rawName, masterRows) {
   const raw = normalizeText(rawName);
   if (!raw) {
@@ -101,10 +118,22 @@ async function normalizeLabItemName(rawName, masterRows) {
   }
   const loose = normalizeLoose(raw);
   const rows = Array.isArray(masterRows) ? masterRows : await labItemMasterRepository.getAllActiveMasterRows();
-  for (const row of rows) {
+  const sortedRows = [...rows].sort(
+    (a, b) => normalizeText(b.normalized_key).length - normalizeText(a.normalized_key).length
+  );
+  for (const row of sortedRows) {
     const nk = normalizeText(row.normalized_key);
     if (!nk) continue;
-    if (normalizeLoose(nk) === loose || loose.includes(normalizeLoose(nk))) {
+    const nkLoose = normalizeLoose(nk);
+    if (nkLoose === loose) {
+      return {
+        normalized_key: nk,
+        display_name: normalizeText(row.display_name_ja) || nk,
+        from_master: true,
+        resolvedBy: 'master_alias'
+      };
+    }
+    if (loose.length >= 3 && nkLoose.length >= 3 && (loose.includes(nkLoose) || nkLoose.includes(loose))) {
       return {
         normalized_key: nk,
         display_name: normalizeText(row.display_name_ja) || nk,
@@ -114,8 +143,7 @@ async function normalizeLabItemName(rawName, masterRows) {
     }
     const aliases = Array.isArray(row.aliases_json) ? row.aliases_json : [];
     for (const a of aliases) {
-      const al = normalizeLoose(String(a || ''));
-      if (al && (loose === al || loose.includes(al) || al.includes(loose))) {
+      if (aliasMatchesLoose(loose, a)) {
         return {
           normalized_key: nk,
           display_name: normalizeText(row.display_name_ja) || nk,

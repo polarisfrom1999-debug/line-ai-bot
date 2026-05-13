@@ -75,6 +75,29 @@ function selfTestForbiddenDetector() {
   }
 }
 
+async function runLabNormalizerSelfTests() {
+  const { resolveLabItemForPersistence } = require('../services/newflow/lab_item_normalizer_service');
+  const emptyMaster = [];
+  const k = await resolveLabItemForPersistence('K', {}, emptyMaster);
+  if (k.normalized_key === 'cpk') {
+    throw new Error('[simulate:line] lab normalizer: K must not map to cpk');
+  }
+  if (k.normalized_key !== 'potassium') {
+    throw new Error(`[simulate:line] lab normalizer: K want potassium got ${k.normalized_key}`);
+  }
+  const mchc = await resolveLabItemForPersistence('MCHC', {}, emptyMaster);
+  if (mchc.normalized_key === 'mch') {
+    throw new Error('[simulate:line] lab normalizer: MCHC must not map to mch');
+  }
+  if (mchc.normalized_key !== 'mchc') {
+    throw new Error(`[simulate:line] lab normalizer: MCHC want mchc got ${mchc.normalized_key}`);
+  }
+  const bili = await resolveLabItemForPersistence('総ビリルビン', {}, emptyMaster);
+  if (!/^total_bilirubin$/.test(bili.normalized_key)) {
+    throw new Error(`[simulate:line] lab normalizer: 総ビリルビン want total_bilirubin got ${bili.normalized_key}`);
+  }
+}
+
 async function runTurn(userId, text, messageId) {
   const before = await snapshot(userId);
   const result = await orchestrateConversation({
@@ -419,6 +442,34 @@ function allScenarios() {
       }
     },
     {
+      id: 'lab_other_exam_dates',
+      group: 'conversation',
+      title: '他の検査日は？',
+      text: '他の検査日は？',
+      preSeed: async (userId) => {
+        await contextMemoryService.saveShortMemory(userId, {
+          followUpContext: {
+            labPanel: {
+              examDates: ['2016-01-21', '2016-02-25', '2016-05-10', '2025-03-22'],
+              latestExamDate: '2025-03-22',
+              items: [{ itemName: '中性脂肪', value: '61', unit: 'mg/dL' }]
+            }
+          }
+        });
+      },
+      expectInterpret: {
+        primary_conversation_mode: 'lab_date_inventory',
+        route: 'lab_followup'
+      },
+      expect: {
+        intentType: 'lab_date_inventory',
+        forbidden: false,
+        notIntentTypes: ['casual_chat', 'meal_record_text', 'emotional_support'],
+        replyMustContain: '2016-01-21',
+        nonEmptyReply: true
+      }
+    },
+    {
       id: 'meal_half_rice',
       group: 'conversation',
       title: 'ご飯半分食べました',
@@ -461,6 +512,7 @@ async function main() {
   const runQuality = only.has('quality');
 
   selfTestForbiddenDetector();
+  await runLabNormalizerSelfTests();
 
   const scenarios = allScenarios().filter((sc) => {
     if (only.has('all')) return true;

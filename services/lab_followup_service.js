@@ -69,8 +69,27 @@ function normalizeTarget(text) {
   if (safe.includes('血糖') || safe.includes('GLUCOSE')) return '血糖';
   if (safe.includes('尿酸')) return '尿酸';
   if (safe.includes('尿素窒素') || safe.includes('BUN')) return '尿素窒素';
+  if (safe.includes('MCHC')) return 'MCHC';
+  if (safe === 'MCH' || /(^|[^A-Z])MCH([^A-Z]|$)/.test(safe)) return 'MCH';
+  if (safe === 'K' || /カリウム/.test(safe)) return 'カリウム';
+  if (safe.includes('CPK') || safe === 'CK') return 'CPK';
   if (safe.includes('WBC') || safe.includes('白血球')) return 'WBC';
   return '';
+}
+
+function isLabDateInventoryQuestion(text = '') {
+  const safe = normalizeText(text);
+  return /他の検査日|他の日付|他の日は|別の日付|保存されている検査日|日付一覧|何日の検査|何日分|検査日.*(一覧|ある|いくつ|何|教えて)|保存.*(検査日|日付)/i.test(safe);
+}
+
+function buildDateInventoryFeatureResults(panel) {
+  const dates = collectAvailableDates(panel).sort();
+  return {
+    found: dates.length > 0,
+    queryType: 'lab_date_inventory',
+    formattedLines: dates,
+    dateCount: dates.length,
+  };
 }
 
 function extractRequestedDate(text) {
@@ -923,6 +942,10 @@ function buildFollowUpFeatureResults(panel, text, selectedDate = '') {
     return { found: false, queryType: 'no_panel', formattedLines: [] };
   }
 
+  if (isLabDateInventoryQuestion(safe)) {
+    return buildDateInventoryFeatureResults(panel);
+  }
+
   if (shouldHandleTrendQuestion(safe)) {
     const target = normalizeTarget(safe) || '検査';
     const rows = collectTrendRows(panel, target);
@@ -1050,4 +1073,6 @@ module.exports = {
   buildBalanceReply,
   buildFollowUpFeatureResults,
   formatLabValueLine,
+  isLabDateInventoryQuestion,
+  buildDateInventoryFeatureResults,
 };

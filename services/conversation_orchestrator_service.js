@@ -2175,11 +2175,13 @@ const NATURAL_REPLY_MODES = new Set([
   'exercise_feedback',
   'life_companion',
   'lab_followup',
+  'lab_date_inventory',
 ]);
 
 function inferNaturalConversationMode(intentType) {
   const it = normalizeText(intentType || '');
   if (it === 'meal_note') return 'reward_food';
+  if (it === 'lab_date_inventory') return 'lab_date_inventory';
   return it;
 }
 
@@ -2192,6 +2194,12 @@ async function resolveLabFollowUpFeatureResults(userId, text, shortMemory) {
   );
   const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
   return labFollowupService.buildFollowUpFeatureResults(panel, text, selectedDate);
+}
+
+function resolveLabFollowUpIntentType(conversationState, labFeature) {
+  if (conversationState?.primary_conversation_mode === 'lab_date_inventory') return 'lab_date_inventory';
+  if (labFeature?.queryType === 'lab_date_inventory') return 'lab_date_inventory';
+  return 'lab_followup';
 }
 
 async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
@@ -4082,13 +4090,14 @@ async function orchestrateConversation(input) {
       const labFeature = await resolveLabFollowUpFeatureResults(input.userId, text, shortMemory);
       const legacyReply = await labQueryService.answerLabQuery(input.userId, text, shortMemory)
         || await maybeAnswerLabFollowUp(input.userId, text, shortMemory);
-      if (labFeature?.found || labFeature?.queryType === 'no_panel' || legacyReply) {
-        const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'lab_followup', {
+      const labIntent = resolveLabFollowUpIntentType(conversationState, labFeature);
+      if (labFeature?.found || labFeature?.queryType === 'no_panel' || labFeature?.queryType === 'lab_date_inventory' || legacyReply) {
+        const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, labIntent, {
           useNaturalGenerator: true,
           featureResults: labFeature?.queryType ? labFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
         });
         await appendTurn(input.userId, input.rawText || '', out);
-        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
+        return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: labIntent, responseMode: 'answer' } };
       }
     }
     if (input?.messageType === 'text' && priority.route === 'today_meal_totals') {
@@ -4688,13 +4697,14 @@ async function orchestrateConversation(input) {
     const labFollowFeature = await resolveLabFollowUpFeatureResults(input.userId, text, refreshedShortMemory);
     const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory)
       || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
-    if (labFollowFeature?.found || labFollowFeature?.queryType === 'no_panel' || labFollowUpReply) {
-      const labFollowOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'lab_followup', {
+    const labFollowIntent = resolveLabFollowUpIntentType(conversationState, labFollowFeature);
+    if (labFollowFeature?.found || labFollowFeature?.queryType === 'no_panel' || labFollowFeature?.queryType === 'lab_date_inventory' || labFollowUpReply) {
+      const labFollowOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, labFollowIntent, {
         useNaturalGenerator: true,
         featureResults: labFollowFeature?.queryType ? labFollowFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
       });
       await appendTurn(input.userId, input.rawText || '', labFollowOut);
-      return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
+      return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: labFollowIntent, responseMode: 'answer' } };
     }
 
     if (/^この動画を解析/.test(normalizeText(text))) {

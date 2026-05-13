@@ -122,6 +122,15 @@ function evaluateReplyQuality({
     return violations;
   }
 
+  if (intentType === 'lab_date_inventory') {
+    if (!/(検査日|日付|保存|確認)/.test(String(reply || ''))) {
+      violations.push('lab_date_inventory_no_anchor');
+    }
+    if (/(患者名|医療機関|印刷日)/.test(reply)) violations.push('lab_date_inventory_meta_bloat');
+    if (/手入力の目安|今日の合計/.test(reply)) violations.push('lab_meal_bleed');
+    return violations;
+  }
+
   if (intentType === 'life_companion') {
     if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌)/.test(String(reply || ''))) {
       violations.push('life_companion_shallow');

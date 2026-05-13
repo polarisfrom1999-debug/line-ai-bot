@@ -40,11 +40,18 @@ function isExclusiveHealthOrFeedbackText(text = '') {
   return false;
 }
 
+function isLabDateInventoryText(text = '') {
+  const safe = normalizeText(text);
+  return /他の検査日|他の日付|他の日は|別の日付|保存されている検査日|日付一覧|何日の検査|何日分|検査日.*(一覧|ある|いくつ|何|教えて)|保存.*(検査日|日付)/i.test(safe);
+}
+
 function detectPrimaryMode(text = '') {
   const safe = normalizeText(text);
   if (!safe) return 'casual_chat';
 
   if (EMOTIONAL_SUPPORT_RE.test(safe)) return 'emotional_support';
+
+  if (isLabDateInventoryText(safe)) return 'lab_date_inventory';
 
   if (/(TG|中性脂肪|HbA1c|hba1c|LDH|AST|ALT|血糖|クレアチニン).*(は|？|\?)?$|何読み取れ/.test(safe)) {
     return 'lab_followup';
@@ -85,7 +92,7 @@ function mapModeToRoute(mode) {
   if (mode === 'meal_text_record' || mode === 'reward_food') return 'meal_record';
   if (mode === 'exercise_feedback') return 'exercise_or_body_feedback';
   if (mode === 'meal_correction') return 'meal_correction';
-  if (mode === 'lab_followup') return 'lab_followup';
+  if (mode === 'lab_followup' || mode === 'lab_date_inventory') return 'lab_followup';
   if (mode === 'body_condition_note') return 'body_condition_note';
   if (mode === 'exercise_record') return 'exercise_record';
   if (mode === 'pending_answer') return 'pending_answer';
@@ -98,6 +105,7 @@ function surfaceIntentForMode(mode) {
   if (mode === 'reward_food') return 'meal_note';
   if (mode === 'exercise_feedback') return 'exercise_feedback';
   if (mode === 'assistant_error_feedback') return 'assistant_error_feedback';
+  if (mode === 'lab_date_inventory') return 'lab_date_inventory';
   return mode;
 }
 
@@ -107,7 +115,7 @@ function replyDepthForMode(mode, text) {
     return /(寂しい|さみしい|しんどい|つらい|心が重い|不安|もう無理)/.test(normalizeText(text)) ? 'deep' : 'normal';
   }
   if (mode === 'casual_chat') return 'short';
-  if (mode === 'meal_correction' || mode === 'exercise_record' || mode === 'lab_followup') return 'normal';
+  if (mode === 'meal_correction' || mode === 'exercise_record' || mode === 'lab_followup' || mode === 'lab_date_inventory') return 'normal';
   if (mode === 'exercise_feedback' || mode === 'meal_text_record' || mode === 'reward_food') return 'normal';
   if (mode === 'assistant_error_feedback') return 'normal';
   return 'normal';
@@ -161,6 +169,7 @@ function interpretConversationState({
     should_route_to_feature: [
       'meal_correction',
       'lab_followup',
+      'lab_date_inventory',
       'exercise_record',
       'body_condition_note',
       'meal_text_record',
@@ -205,4 +214,5 @@ module.exports = {
   FOOD_AMOUNT_RE,
   BODY_FEEDBACK_RE,
   isExclusiveHealthOrFeedbackText,
+  isLabDateInventoryText,
 };

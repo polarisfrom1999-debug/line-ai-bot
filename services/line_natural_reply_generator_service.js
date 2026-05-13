@@ -93,7 +93,16 @@ function modeSystemInstructions(conversationMode, replyDepth) {
       '会話モード: lab_followup（検査フォロー）',
       '検査値の数字行は書かない（システムが後から付ける）。',
       '1〜3文で、聞かれた項目への自然な前置きだけ。',
+      '患者名・医療機関・印刷日の長い説明はしない。',
       '診断・治療判断はしない。主治医優先を短く添えてよい。',
+    ].join('\n');
+  }
+  if (cm === 'lab_date_inventory') {
+    return [
+      '会話モード: lab_date_inventory（保存検査日の一覧）',
+      '日付リストは書かない（システムが後から付ける）。',
+      '1〜2文で前置きだけ。患者名・医療機関・印刷日は出さない。',
+      '「TGの傾向は？」のように項目ごとに見られる旨を短く添えてよい。',
     ].join('\n');
   }
   return [
@@ -184,6 +193,10 @@ function fallbackProse(ctx) {
     return `${item || 'その項目'}は、いまのデータからはまだ特定しきれていません。もう一度項目名を送ってもらえると助かります。`;
   }
 
+  if (cm === 'lab_date_inventory' || fr.queryType === 'lab_date_inventory') {
+    return '保存されている検査日は、いまのところ以下が確認できます。必要なら「TGの傾向は？」のように項目ごとに見られます。';
+  }
+
   if (!ut) return 'うん、届いています。続きがあればそのまま送ってください。';
   return `なるほど、「${ut.slice(0, 40)}」ですね。いまの感じを、そのまま聞かせてください。`;
 }
@@ -257,6 +270,12 @@ function isAcceptableProse(ctx, prose) {
       && !/^\s*(TG|HbA1c)[：:]\s*\d/i.test(text)
       && !/(記録しました|いい流れです|ここまでの流れ)/.test(text);
   }
+  if (cm === 'lab_date_inventory') {
+    return text.length >= 10
+      && /(検査日|日付|保存|確認)/.test(text)
+      && !/20\d{2}-\d{2}-\d{2}/.test(text)
+      && !/(患者名|医療機関|印刷日)/.test(text);
+  }
   return true;
 }
 
@@ -308,8 +327,19 @@ async function generateProse(ctx) {
   return { prose: fallbackProse(ctx), source: 'rule_fallback' };
 }
 
+function buildLabDatesInventoryBlock(featureResults = {}) {
+  const lines = Array.isArray(featureResults.formattedLines)
+    ? featureResults.formattedLines.map((x) => normalizeText(x)).filter(Boolean)
+    : [];
+  return lines.join('\n');
+}
+
 function shouldAttachLabBlock(conversationMode, featureResults) {
   const cm = normalizeText(conversationMode);
+  if (cm === 'lab_date_inventory') {
+    const lines = Array.isArray(featureResults?.formattedLines) ? featureResults.formattedLines : [];
+    return lines.length > 0;
+  }
   if (cm !== 'lab_followup') return false;
   const lines = Array.isArray(featureResults?.formattedLines) ? featureResults.formattedLines : [];
   return lines.length > 0;
@@ -335,7 +365,9 @@ async function generateNaturalLineReply(params = {}) {
     const numeric = buildManualNutritionBlock(ctx.featureResults);
     if (numeric) text = `${prose}\n\n${numeric}`.trim();
   } else if (shouldAttachLabBlock(ctx.conversationMode, ctx.featureResults)) {
-    const labBlock = buildLabValuesBlock(ctx.featureResults);
+    const labBlock = ctx.conversationMode === 'lab_date_inventory'
+      ? buildLabDatesInventoryBlock(ctx.featureResults)
+      : buildLabValuesBlock(ctx.featureResults);
     if (labBlock) text = `${prose}\n\n${labBlock}`.trim();
   }
 

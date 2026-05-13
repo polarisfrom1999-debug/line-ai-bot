@@ -310,7 +310,7 @@ function normalizeKey(key, label) {
   if (safeLabel === 'cpk') return 'cpk';
   if (safeLabel === 'ldh') return 'ldh';
   if (safeLabel.includes('総蛋白')) return 'total_protein';
-  if (safeLabel.includes('ビリルビン')) return 'bilirubin';
+  if (safeLabel.includes('ビリルビン')) return 'total_bilirubin';
   if (safeLabel === 'ca') return 'calcium';
   return '';
 }
