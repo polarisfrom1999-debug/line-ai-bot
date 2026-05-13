@@ -25,6 +25,17 @@ function buildManualNutritionBlock(featureResults = {}) {
   return lines.join('\n');
 }
 
+function buildLabValuesBlock(featureResults = {}) {
+  const lines = Array.isArray(featureResults.formattedLines)
+    ? featureResults.formattedLines.map((x) => normalizeText(x)).filter(Boolean)
+    : [];
+  if (!lines.length) return '';
+  if (featureResults.needsReadConfirmation) {
+    lines.push('読み取り確認が必要な扱いです');
+  }
+  return lines.join('\n');
+}
+
 function modeSystemInstructions(conversationMode, replyDepth) {
   const cm = normalizeText(conversationMode);
   if (cm === 'emotional_support') {
@@ -58,6 +69,31 @@ function modeSystemInstructions(conversationMode, replyDepth) {
       '責めない。ご褒美テンプレの繰り返しはしない。',
       '数値行は書かない。',
       '2〜3文で自然に。',
+    ].join('\n');
+  }
+  if (cm === 'exercise_feedback') {
+    return [
+      '会話モード: exercise_feedback（運動・身体感覚への反応）',
+      'ユーザーが感じた身体の変化に直接反応する。2〜3文。',
+      'ストレッチ・腕・伸び・感じなどの語を自然に使う。',
+      '記録しました・いい流れです・無理に量を増やさ等の定型は禁止。',
+      'カロリー計算の表示は書かない。',
+    ].join('\n');
+  }
+  if (cm === 'life_companion') {
+    return [
+      '会話モード: life_companion（生活・相談の自然な会話）',
+      '2〜4文。まずユーザーの話に乗る。',
+      '食事記録・検査値・カロリー表示には触れない（別機能）。',
+      '伴走テンプレ・毎回同じ締めは禁止。',
+    ].join('\n');
+  }
+  if (cm === 'lab_followup') {
+    return [
+      '会話モード: lab_followup（検査フォロー）',
+      '検査値の数字行は書かない（システムが後から付ける）。',
+      '1〜3文で、聞かれた項目への自然な前置きだけ。',
+      '診断・治療判断はしない。主治医優先を短く添えてよい。',
     ].join('\n');
   }
   return [
@@ -118,6 +154,36 @@ function fallbackProse(ctx) {
     return lines.join('\n');
   }
 
+  if (cm === 'exercise_feedback' || /ストレッチ|腕が伸び|伸びた感じ/.test(ut)) {
+    return [
+      'ストレッチ後に腕の伸びを感じられたんですね。',
+      'その感覚に気づけているのは、身体へのケアとしてとても良い流れです。',
+      '次も同じペースで十分です。',
+    ].join('\n');
+  }
+
+  if (cm === 'life_companion' || /聞いて|相談|仕事|家族|人間関係/.test(ut)) {
+    return [
+      'それはしんどかったですね。',
+      'いまの話、ちゃんと聞いています。',
+      'もう少しだけ、どんな場面だったか教えてもらえますか？',
+    ].join('\n');
+  }
+
+  if (cm === 'lab_followup') {
+    const item = normalizeText(fr.itemName || '検査項目');
+    if (fr.found && fr.queryType === 'single_item') {
+      return `${item}のことですね。保存されているデータから、いま確認できる値をお伝えします。`;
+    }
+    if (fr.found && fr.queryType === 'trend') {
+      return `${item}の推移ですね。直近で保存されている値を並べます。`;
+    }
+    if (fr.queryType === 'no_panel') {
+      return 'この会話にはまだ検査データがつながっていないみたいです。検査の画像を送ってもらえると、項目ごとに見られます。';
+    }
+    return `${item || 'その項目'}は、いまのデータからはまだ特定しきれていません。もう一度項目名を送ってもらえると助かります。`;
+  }
+
   if (!ut) return 'うん、届いています。続きがあればそのまま送ってください。';
   return `なるほど、「${ut.slice(0, 40)}」ですね。いまの感じを、そのまま聞かせてください。`;
 }
@@ -172,6 +238,25 @@ function isAcceptableProse(ctx, prose) {
     return !/(反省|禁物|だめだ|やりすぎ)/.test(text)
       && (hasFoodEcho(ut, text) || /責め|大丈夫|軽め/.test(text));
   }
+  if (cm === 'exercise_feedback') {
+    const rawUt = String(ctx.userText || '');
+    const hasStrongBodyCue = /ストレッチ|腕|身体|伸び|肩|背中|可動|筋|動き/.test(text);
+    const notGenericFallback = !/^なるほど。今の感じは受け取れた/.test(text);
+    if (/ストレッチ|腕/.test(rawUt)) {
+      return /(ストレッチ|腕|伸び)/.test(text) && !/(記録しました|いい流れです|無理なく続け)/.test(text);
+    }
+    return hasStrongBodyCue && notGenericFallback;
+  }
+  if (cm === 'life_companion') {
+    return text.length >= 12
+      && !/(手入力の目安|今日の合計|kcal|TG：|検査値)/i.test(text)
+      && !/(記録しました|いい流れです)/.test(text);
+  }
+  if (cm === 'lab_followup') {
+    return text.length >= 8
+      && !/^\s*(TG|HbA1c)[：:]\s*\d/i.test(text)
+      && !/(記録しました|いい流れです|ここまでの流れ)/.test(text);
+  }
   return true;
 }
 
@@ -186,6 +271,9 @@ async function generateProse(ctx) {
     items: ctx.featureResults?.items,
     recordKind: ctx.featureResults?.recordKind,
     stableRoutineEvidenceCount: ctx.userContext?.stableRoutineEvidenceCount,
+    labFound: ctx.featureResults?.found,
+    labItem: ctx.featureResults?.itemName,
+    labQueryType: ctx.featureResults?.queryType,
   });
 
   const hiddenContext = [
@@ -220,6 +308,13 @@ async function generateProse(ctx) {
   return { prose: fallbackProse(ctx), source: 'rule_fallback' };
 }
 
+function shouldAttachLabBlock(conversationMode, featureResults) {
+  const cm = normalizeText(conversationMode);
+  if (cm !== 'lab_followup') return false;
+  const lines = Array.isArray(featureResults?.formattedLines) ? featureResults.formattedLines : [];
+  return lines.length > 0;
+}
+
 function shouldAttachNutritionBlock(conversationMode, featureResults) {
   const cm = normalizeText(conversationMode);
   if (!featureResults?.saved) return false;
@@ -239,6 +334,9 @@ async function generateNaturalLineReply(params = {}) {
   if (shouldAttachNutritionBlock(ctx.conversationMode, ctx.featureResults)) {
     const numeric = buildManualNutritionBlock(ctx.featureResults);
     if (numeric) text = `${prose}\n\n${numeric}`.trim();
+  } else if (shouldAttachLabBlock(ctx.conversationMode, ctx.featureResults)) {
+    const labBlock = buildLabValuesBlock(ctx.featureResults);
+    if (labBlock) text = `${prose}\n\n${labBlock}`.trim();
   }
 
   console.info('[line_natural_reply_generated]', {
@@ -246,6 +344,7 @@ async function generateNaturalLineReply(params = {}) {
     conversation_mode: ctx.conversationMode,
     source,
     has_numeric_block: shouldAttachNutritionBlock(ctx.conversationMode, ctx.featureResults),
+    has_lab_block: shouldAttachLabBlock(ctx.conversationMode, ctx.featureResults),
     text_preview: text.slice(0, 160),
   });
 
@@ -258,5 +357,6 @@ async function generateNaturalLineReply(params = {}) {
 module.exports = {
   generateNaturalLineReply,
   buildManualNutritionBlock,
+  buildLabValuesBlock,
   fallbackProse,
 };

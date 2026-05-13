@@ -2172,12 +2172,26 @@ const NATURAL_REPLY_MODES = new Set([
   'meal_record_text',
   'meal_note',
   'meal_text',
+  'exercise_feedback',
+  'life_companion',
+  'lab_followup',
 ]);
 
 function inferNaturalConversationMode(intentType) {
   const it = normalizeText(intentType || '');
   if (it === 'meal_note') return 'reward_food';
   return it;
+}
+
+async function resolveLabFollowUpFeatureResults(userId, text, shortMemory) {
+  const panel = enrichLabPanelFromAliases(
+    shortMemory?.followUpContext?.labPanel
+    || await contextMemoryService.getLatestLabPanel(userId)
+    || await labDocumentStoreService.getLatestPanelForUser(userId)
+    || null
+  );
+  const selectedDate = shortMemory?.followUpContext?.selectedLabExamDate || panel?.latestExamDate || panel?.examDate || '';
+  return labFollowupService.buildFollowUpFeatureResults(panel, text, selectedDate);
 }
 
 async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
@@ -3657,26 +3671,16 @@ async function orchestrateConversation(input) {
         internal: { intentType: 'emotional_support', responseMode: 'conversation_first' }
       };
     } else if (conversationState?.primary_conversation_mode === 'life_companion') {
-      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
-        userId: input.userId,
-        text,
-        relationshipPhase: longMemory?.relationshipPhase,
-        longMemory,
-        userState: userStateBefore,
-        recentMessages,
-      });
-      const replyBody = lifeEarly?.replyText
-        ? lifeEarly.replyText
-        : lifeCompanionConversationService.buildGuaranteedLifeCompanionReply();
       console.info('[conversation_state_early_return]', {
         user_id: input.userId,
         text: text.slice(0, 120),
         route: 'life_companion',
         conversation_mode: 'life_companion',
-        reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_life_fallback'
+        reason: 'line_natural_reply_generator',
       });
-      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'life_companion', {
-        skipHealthAggregation: true
+      const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
       });
       await appendTurn(input.userId, input.rawText || '', lifeOut);
       return {
@@ -3704,8 +3708,9 @@ async function orchestrateConversation(input) {
         recentMessages,
       });
       if (lifeEarly?.replyText) {
-        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion', {
-          skipHealthAggregation: true
+        const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+          skipHealthAggregation: true,
+          useNaturalGenerator: true,
         });
         await appendTurn(input.userId, input.rawText || '', lifeOut);
         return {
@@ -4047,9 +4052,13 @@ async function orchestrateConversation(input) {
     if (input?.messageType === 'text' && priority.route === 'exercise_or_body_feedback') {
       logPriority(priority.route, priority.reason);
       const simpleEx = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
-      const bodyReply = simpleEx?.replyText || buildExerciseBodyFeedbackReply();
-      const exOut = await withSurfaceReply(input, bodyReply, { recentMessages, longMemory }, 'exercise_feedback', {
-        skipHealthAggregation: true
+      const exOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'exercise_feedback', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: {
+          recorded: Boolean(simpleEx?.record),
+          exerciseLabel: normalizeText(simpleEx?.record?.name || simpleEx?.record?.summary || ''),
+        },
       });
       await appendTurn(input.userId, input.rawText || '', exOut);
       return {
@@ -4070,9 +4079,14 @@ async function orchestrateConversation(input) {
     }
     if (input?.messageType === 'text' && priority.route === 'lab_followup') {
       logPriority(priority.route, priority.reason);
-      const labReply = await labQueryService.answerLabQuery(input.userId, text, shortMemory) || await maybeAnswerLabFollowUp(input.userId, text, shortMemory);
-      if (labReply) {
-        const out = await withSurfaceReply(input, labReply, { recentMessages, longMemory }, 'lab_followup');
+      const labFeature = await resolveLabFollowUpFeatureResults(input.userId, text, shortMemory);
+      const legacyReply = await labQueryService.answerLabQuery(input.userId, text, shortMemory)
+        || await maybeAnswerLabFollowUp(input.userId, text, shortMemory);
+      if (labFeature?.found || labFeature?.queryType === 'no_panel' || legacyReply) {
+        const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'lab_followup', {
+          useNaturalGenerator: true,
+          featureResults: labFeature?.queryType ? labFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
+        });
         await appendTurn(input.userId, input.rawText || '', out);
         return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
       }
@@ -4671,9 +4685,14 @@ async function orchestrateConversation(input) {
       return { ok: true, replyMessages: [{ type: 'text', text: labDateOut }], internal: { intentType: 'lab_date_select', responseMode: 'answer' } };
     }
 
-    const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory) || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
-    if (labFollowUpReply) {
-      const labFollowOut = await withSurfaceReply(input, labFollowUpReply, { recentMessages, longMemory }, 'lab_followup');
+    const labFollowFeature = await resolveLabFollowUpFeatureResults(input.userId, text, refreshedShortMemory);
+    const labFollowUpReply = await labQueryService.answerLabQuery(input.userId, text, refreshedShortMemory)
+      || await maybeAnswerLabFollowUp(input.userId, text, refreshedShortMemory);
+    if (labFollowFeature?.found || labFollowFeature?.queryType === 'no_panel' || labFollowUpReply) {
+      const labFollowOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'lab_followup', {
+        useNaturalGenerator: true,
+        featureResults: labFollowFeature?.queryType ? labFollowFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
+      });
       await appendTurn(input.userId, input.rawText || '', labFollowOut);
       return { ok: true, replyMessages: [{ type: 'text', text: labFollowOut }], internal: { intentType: 'lab_followup', responseMode: 'answer' } };
     }
@@ -4874,7 +4893,9 @@ async function orchestrateConversation(input) {
         recentMessages,
       });
       if (lifeEarly?.replyText) {
-        const lifeOut = await withSurfaceReply(input, lifeEarly.replyText, { recentMessages, longMemory }, 'life_companion');
+        const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+          useNaturalGenerator: true,
+        });
         await appendTurn(input.userId, input.rawText || '', lifeOut);
         return {
           ok: true,
@@ -5074,7 +5095,9 @@ async function orchestrateConversation(input) {
       recentMessages,
     });
     if (lifeLate?.replyText) {
-      const lifeOut = await withSurfaceReply(input, lifeLate.replyText, { recentMessages, longMemory }, 'life_companion');
+      const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+        useNaturalGenerator: true,
+      });
       await appendTurn(input.userId, input.rawText || '', lifeOut);
       return {
         ok: true,

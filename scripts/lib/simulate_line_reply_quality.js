@@ -115,7 +115,18 @@ function evaluateReplyQuality({
   }
 
   if (intentType === 'lab_followup') {
-    if (!/(TG|中性脂肪|検査|データ|画像)/i.test(String(reply || ''))) violations.push('lab_followup_no_anchor');
+    if (!/(TG|中性脂肪|検査|データ|画像|読み取り)/i.test(String(reply || ''))) {
+      violations.push('lab_followup_no_anchor');
+    }
+    if (/手入力の目安|今日の合計/.test(reply)) violations.push('lab_meal_bleed');
+    return violations;
+  }
+
+  if (intentType === 'life_companion') {
+    if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌)/.test(String(reply || ''))) {
+      violations.push('life_companion_shallow');
+    }
+    if (/(手入力の目安|今日の合計|kcal)/i.test(reply)) violations.push('life_companion_health_bleed');
     return violations;
   }
 
@@ -146,6 +157,7 @@ function evaluateReplyQuality({
     if (/ストレッチ|腕/.test(userText) && !/(ストレッチ|腕|伸び|肩|背中|身体|可動|筋)/.test(reply)) {
       violations.push('exercise_feedback_no_body_cue');
     }
+    if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('exercise_feedback_generic_escape');
     return violations;
   }
 
@@ -172,6 +184,8 @@ function evaluateReplyQuality({
   }
 
   if (!hasDirectEcho(userText, reply)) violations.push('no_direct_echo');
+
+  return violations;
 }
 
 module.exports = {

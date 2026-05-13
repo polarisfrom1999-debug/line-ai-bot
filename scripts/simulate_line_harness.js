@@ -114,6 +114,9 @@ function printBlock(title, obj) {
 async function runScenario(def) {
   const userId = `U_simline_${def.id}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   const errors = [];
+  if (typeof def.preSeed === 'function') {
+    await def.preSeed(userId);
+  }
   const steps = Array.isArray(def.steps) ? def.steps : [{ text: def.text, messageId: def.messageId, expect: def.expect }];
 
   const agg = {
@@ -365,7 +368,24 @@ function allScenarios() {
       expect: {
         intentType: 'exercise_feedback',
         forbidden: false,
-        notIntentTypes: ['lab_followup', 'meal_record_text', 'correction_feedback', 'emotional_support'],
+        notIntentTypes: ['lab_followup', 'meal_record_text', 'correction_feedback', 'emotional_support', 'casual_chat', 'life_companion'],
+        replyMustContain: '腕',
+        nonEmptyReply: true
+      }
+    },
+    {
+      id: 'life_work_stress',
+      group: 'conversation',
+      title: '仕事で嫌なことがあって聞いてほしい',
+      text: '仕事で嫌なことがあって、ちょっと聞いてほしい',
+      expectInterpret: {
+        primary_conversation_mode: 'life_companion',
+        route: 'life_companion'
+      },
+      expect: {
+        intentType: 'life_companion',
+        forbidden: false,
+        notIntentTypes: ['lab_followup', 'meal_record_text', 'meal_note', 'correction_feedback', 'casual_chat'],
         nonEmptyReply: true
       }
     },
@@ -374,6 +394,18 @@ function allScenarios() {
       group: 'conversation',
       title: 'TGは？',
       text: 'TGは？',
+      preSeed: async (userId) => {
+        await contextMemoryService.saveShortMemory(userId, {
+          followUpContext: {
+            labPanel: {
+              latestExamDate: '2026-04-01',
+              examDate: '2026-04-01',
+              items: [{ itemName: '中性脂肪', value: '61', unit: 'mg/dL', flag: '' }],
+              rawText: 'TG 61 mg/dL'
+            }
+          }
+        });
+      },
       expectInterpret: {
         primary_conversation_mode: 'lab_followup',
         route: 'lab_followup'
@@ -381,7 +413,8 @@ function allScenarios() {
       expect: {
         intentType: 'lab_followup',
         forbidden: false,
-        notIntentTypes: ['meal_record_text', 'meal_note', 'emotional_support', 'correction_feedback'],
+        notIntentTypes: ['meal_record_text', 'meal_note', 'emotional_support', 'correction_feedback', 'casual_chat'],
+        replyMustContain: 'TG：61',
         nonEmptyReply: true
       }
     },

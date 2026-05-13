@@ -905,6 +905,94 @@ function buildSavedLabSessionsDatesReply(historyRows) {
   return `保存済みの検査関連データは合計 ${total} 件です。日付の目安は次のとおりです。\n${lines.join('\n')}${ambNote}\n${summary}`.trim();
 }
 
+function formatLabValueLine(itemName, value, unit) {
+  const name = normalizeText(itemName || '項目');
+  const val = normalizeText(String(value ?? ''));
+  if (!val) return '';
+  const u = normalizeText(unit || '');
+  const short = /中性脂肪|トリグリ/.test(name) ? 'TG' : name;
+  return `${short}：${val}${u ? ` ${u}` : ''}`;
+}
+
+/**
+ * 自然返信生成用 — 検査値は formattedLines のみ定型。説明文は generator 側。
+ */
+function buildFollowUpFeatureResults(panel, text, selectedDate = '') {
+  const safe = normalizeText(text);
+  if (!panel) {
+    return { found: false, queryType: 'no_panel', formattedLines: [] };
+  }
+
+  if (shouldHandleTrendQuestion(safe)) {
+    const target = normalizeTarget(safe) || '検査';
+    const rows = collectTrendRows(panel, target);
+    const formattedLines = rows.slice(-3).map((r) => formatLabValueLine(r.itemName, r.value, r.unit)).filter(Boolean);
+    return {
+      found: rows.length > 0,
+      queryType: 'trend',
+      itemName: target,
+      formattedLines,
+      trendCount: rows.length,
+    };
+  }
+
+  const targetName = normalizeTarget(safe);
+  if (!targetName) {
+    return { found: false, queryType: 'unresolved_target', formattedLines: [] };
+  }
+
+  const row = findValueForDate(panel, targetName, selectedDate);
+  if (row) {
+    const line = formatLabValueLine(row.itemName, row.value, row.unit);
+    return {
+      found: true,
+      queryType: 'single_item',
+      itemName: row.itemName || targetName,
+      value: row.value,
+      unit: row.unit || '',
+      examDate: row.date || '',
+      flag: normalizeFlag(row.flag) || '',
+      formattedLines: line ? [line] : [],
+    };
+  }
+
+  const item = findItem(panel, targetName);
+  const loose = normalizeText(item?.value || item?.currentValue || '');
+  if (item && loose) {
+    const line = formatLabValueLine(item.itemName || targetName, loose, item.unit);
+    return {
+      found: true,
+      queryType: 'loose_item',
+      itemName: item.itemName || targetName,
+      value: loose,
+      unit: item.unit || '',
+      formattedLines: line ? [line] : [],
+      needsReadConfirmation: true,
+    };
+  }
+
+  const fromRaw = extractMetricFromRawText(panel?.rawText || '', targetName);
+  if (fromRaw?.value) {
+    const line = formatLabValueLine(fromRaw.itemName || targetName, fromRaw.value, fromRaw.unit);
+    return {
+      found: true,
+      queryType: 'raw_text_fallback',
+      itemName: fromRaw.itemName || targetName,
+      value: fromRaw.value,
+      unit: fromRaw.unit || '',
+      formattedLines: line ? [line] : [],
+      needsReadConfirmation: true,
+    };
+  }
+
+  return {
+    found: false,
+    queryType: 'item_not_found',
+    itemName: targetName,
+    formattedLines: [],
+  };
+}
+
 function buildTgProgressReply(compare) {
   if (!compare) {
     return '中性脂肪（TG）行が、比較用の保存行としてまだ作れていません。';
@@ -959,5 +1047,7 @@ module.exports = {
   buildSavedLabSessionsDatesReply,
   buildAbnormalSummaryReply,
   buildHighLowReply,
-  buildBalanceReply
+  buildBalanceReply,
+  buildFollowUpFeatureResults,
+  formatLabValueLine,
 };

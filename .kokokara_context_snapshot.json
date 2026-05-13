@@ -10244,6 +10244,1728 @@
         "completedSteps": [],
         "answers": {}
       }
+    },
+    "U_simline_heart_heavy_1778655797753_f5d435": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655799622_fmp1eq",
+        "text": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "sourceUserText": "心が重いです",
+        "at": "2026-05-13T07:03:19.622Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_assistant_error_1778655800148_092009": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655800768_tn1g9i",
+        "text": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "sourceUserText": "間違えてますよ",
+        "at": "2026-05-13T07:03:20.768Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_hot_water_egg_1778655800969_e239f2": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655802255_yhbef7",
+        "text": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "sourceUserText": "白湯300ml、味付き卵一個",
+        "at": "2026-05-13T07:03:22.255Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:21.552Z",
+        "expiresAt": "2026-05-13T09:03:21.552Z"
+      }
+    },
+    "U_simline_meal_dup_same_line_message_1778655802436_c7758d": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655804499_f07qzb",
+        "text": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:03:24.499Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:24.063Z",
+        "expiresAt": "2026-05-13T09:03:24.063Z"
+      },
+      "pendingConfirmation": null
+    },
+    "U_simline_reward_ohagi_1778655804606_df4347": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "estimated_nutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "reward_food",
+          "manualRows": [
+            {
+              "label": "おはぎ2個",
+              "kcal": 300,
+              "kcalHigh": 400,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            }
+          ],
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655805394_2sutyd",
+        "text": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "sourceUserText": "おはぎ二個食べちゃいました",
+        "at": "2026-05-13T07:03:25.394Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "おはぎ2個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "estimated_nutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 300,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "reward_food",
+            "manualRows": [
+              {
+                "label": "おはぎ2個",
+                "kcal": 300,
+                "kcalHigh": 400,
+                "protein": 8,
+                "fat": 6,
+                "carbs": 64
+              }
+            ],
+            "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:24.853Z",
+        "expiresAt": "2026-05-13T09:03:24.853Z"
+      }
+    },
+    "U_simline_stretch_arm_1778655805516_9f0046": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655805729_und3a8",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "sourceUserText": "ストレッチしたら腕が伸びた感じがしました",
+        "at": "2026-05-13T07:03:25.729Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_life_work_stress_1778655805835_c80b8b": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655806090_l3sbph",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "sourceUserText": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "at": "2026-05-13T07:03:26.090Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_lab_tg_question_1778655806194_e497dd": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655806482_gtxr4b",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "sourceUserText": "TGは？",
+        "at": "2026-05-13T07:03:26.482Z"
+      },
+      "followUpContext": {
+        "labPanel": {
+          "latestExamDate": "2026-04-01",
+          "examDate": "2026-04-01",
+          "items": [
+            {
+              "itemName": "中性脂肪",
+              "value": "61",
+              "unit": "mg/dL",
+              "flag": ""
+            }
+          ],
+          "rawText": "TG 61 mg/dL"
+        }
+      },
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_half_rice_1778655806619_8c6c6a": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655807020_gfp8f1",
+        "text": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "sourceUserText": "ご飯半分食べました",
+        "at": "2026-05-13T07:03:27.020Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_yes_without_pending_1778655807138_0a0e83": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655807461_hrtpng",
+        "text": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:03:27.461Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_heart_heavy_1778655831799_989c36": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655832314_274oqu",
+        "text": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "sourceUserText": "心が重いです",
+        "at": "2026-05-13T07:03:52.315Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_assistant_error_1778655832431_900d8e": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655832616_x869rs",
+        "text": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "sourceUserText": "間違えてますよ",
+        "at": "2026-05-13T07:03:52.616Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_hot_water_egg_1778655832729_54577e": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655833529_47z5a0",
+        "text": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "sourceUserText": "白湯300ml、味付き卵一個",
+        "at": "2026-05-13T07:03:53.529Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:53.005Z",
+        "expiresAt": "2026-05-13T09:03:53.005Z"
+      }
+    },
+    "U_simline_meal_dup_same_line_message_1778655833668_511298": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655835673_f8rk6d",
+        "text": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:03:55.673Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:55.248Z",
+        "expiresAt": "2026-05-13T09:03:55.248Z"
+      },
+      "pendingConfirmation": null
+    },
+    "U_simline_reward_ohagi_1778655835800_2d444f": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "estimated_nutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "reward_food",
+          "manualRows": [
+            {
+              "label": "おはぎ2個",
+              "kcal": 300,
+              "kcalHigh": 400,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            }
+          ],
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655836541_boda2u",
+        "text": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "sourceUserText": "おはぎ二個食べちゃいました",
+        "at": "2026-05-13T07:03:56.541Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "おはぎ2個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "estimated_nutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 300,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "reward_food",
+            "manualRows": [
+              {
+                "label": "おはぎ2個",
+                "kcal": 300,
+                "kcalHigh": 400,
+                "protein": 8,
+                "fat": 6,
+                "carbs": 64
+              }
+            ],
+            "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+          }
+        },
+        "createdAt": "2026-05-13T07:03:56.035Z",
+        "expiresAt": "2026-05-13T09:03:56.035Z"
+      }
+    },
+    "U_simline_stretch_arm_1778655836643_0b8fae": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655836840_qcviry",
+        "text": "ストレッチ後に腕の伸びを感じられたんですね。\nその感覚に気づけているのは、身体へのケアとしてとても良い流れです。\n次も同じペースで十分です。",
+        "sourceUserText": "ストレッチしたら腕が伸びた感じがしました",
+        "at": "2026-05-13T07:03:56.840Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_life_work_stress_1778655836944_a917e2": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655837201_4hktsl",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "sourceUserText": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "at": "2026-05-13T07:03:57.201Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_lab_tg_question_1778655837325_f51f04": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655837580_otcn3v",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "sourceUserText": "TGは？",
+        "at": "2026-05-13T07:03:57.580Z"
+      },
+      "followUpContext": {
+        "labPanel": {
+          "latestExamDate": "2026-04-01",
+          "examDate": "2026-04-01",
+          "items": [
+            {
+              "itemName": "中性脂肪",
+              "value": "61",
+              "unit": "mg/dL",
+              "flag": ""
+            }
+          ],
+          "rawText": "TG 61 mg/dL"
+        }
+      },
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_half_rice_1778655837728_40e85c": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655838162_jt46h8",
+        "text": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "sourceUserText": "ご飯半分食べました",
+        "at": "2026-05-13T07:03:58.162Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_yes_without_pending_1778655838260_23840f": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655838589_zizrlu",
+        "text": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:03:58.590Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_heart_heavy_1778655842211_8377ab": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655842745_nwd19e",
+        "text": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "sourceUserText": "心が重いです",
+        "at": "2026-05-13T07:04:02.745Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_assistant_error_1778655842868_25d2f2": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655843067_5szumh",
+        "text": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "sourceUserText": "間違えてますよ",
+        "at": "2026-05-13T07:04:03.067Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_hot_water_egg_1778655843181_eeb787": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655844072_pcse50",
+        "text": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "sourceUserText": "白湯300ml、味付き卵一個",
+        "at": "2026-05-13T07:04:04.072Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:04:03.487Z",
+        "expiresAt": "2026-05-13T09:04:03.487Z"
+      }
+    },
+    "U_simline_meal_dup_same_line_message_1778655844177_53a298": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "estimated_nutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "meal_text_record",
+          "manualRows": [
+            {
+              "label": "白湯300ml",
+              "kcal": 0,
+              "kcalHigh": 0,
+              "protein": 0,
+              "fat": 0,
+              "carbs": 0
+            },
+            {
+              "label": "味付き卵1個",
+              "kcal": 70,
+              "kcalHigh": 90,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            }
+          ],
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655846498_2lftg3",
+        "text": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:04:06.498Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "白湯300ml",
+              "味付き卵1個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "estimated_nutrition": {
+              "kcal": 70,
+              "protein": 6,
+              "fat": 5,
+              "carbs": 0.5
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 70,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "meal_text_record",
+            "manualRows": [
+              {
+                "label": "白湯300ml",
+                "kcal": 0,
+                "kcalHigh": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0
+              },
+              {
+                "label": "味付き卵1個",
+                "kcal": 70,
+                "kcalHigh": 90,
+                "protein": 6,
+                "fat": 5,
+                "carbs": 0.5
+              }
+            ],
+            "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record"
+          }
+        },
+        "createdAt": "2026-05-13T07:04:06.050Z",
+        "expiresAt": "2026-05-13T09:04:06.050Z"
+      },
+      "pendingConfirmation": null
+    },
+    "U_simline_reward_ohagi_1778655846595_e3af6e": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": {
+        "recordType": "meal_record",
+        "extracted": {
+          "isMealImage": false,
+          "confidence": 0.82,
+          "items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "estimated_nutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "comment": "",
+          "mealType": "unknown",
+          "amountRatio": 1,
+          "amountNote": "",
+          "recordReady": true,
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 0,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "recordKind": "reward_food",
+          "manualRows": [
+            {
+              "label": "おはぎ2個",
+              "kcal": 300,
+              "kcalHigh": 400,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            }
+          ],
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+        }
+      },
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655847351_rpk6sy",
+        "text": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "sourceUserText": "おはぎ二個食べちゃいました",
+        "at": "2026-05-13T07:04:07.351Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      },
+      "activeContext": {
+        "type": "meal_followup_session",
+        "payload": {
+          "parsedMeal": {
+            "isMealImage": false,
+            "confidence": 0.82,
+            "items": [
+              "おはぎ2個"
+            ],
+            "estimatedNutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "estimated_nutrition": {
+              "kcal": 300,
+              "protein": 8,
+              "fat": 6,
+              "carbs": 64
+            },
+            "comment": "",
+            "mealType": "unknown",
+            "amountRatio": 1,
+            "amountNote": "",
+            "recordReady": true,
+            "calorie_source": "text_manual_estimate",
+            "calorie_confidence": "low",
+            "original_gemini_calories": 0,
+            "final_calories": 300,
+            "correction_reason": "text_manual_line_parse",
+            "recordKind": "reward_food",
+            "manualRows": [
+              {
+                "label": "おはぎ2個",
+                "kcal": 300,
+                "kcalHigh": 400,
+                "protein": 8,
+                "fat": 6,
+                "carbs": 64
+              }
+            ],
+            "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food"
+          }
+        },
+        "createdAt": "2026-05-13T07:04:06.835Z",
+        "expiresAt": "2026-05-13T09:04:06.835Z"
+      }
+    },
+    "U_simline_stretch_arm_1778655847457_adeac7": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655847654_e9aaam",
+        "text": "ストレッチ後に腕の伸びを感じられたんですね。\nその感覚に気づけているのは、身体へのケアとしてとても良い流れです。\n次も同じペースで十分です。",
+        "sourceUserText": "ストレッチしたら腕が伸びた感じがしました",
+        "at": "2026-05-13T07:04:07.654Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_life_work_stress_1778655847757_126b07": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655848023_72pak5",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "sourceUserText": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "at": "2026-05-13T07:04:08.023Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_lab_tg_question_1778655848139_cee7bf": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655848407_myddls",
+        "text": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "sourceUserText": "TGは？",
+        "at": "2026-05-13T07:04:08.407Z"
+      },
+      "followUpContext": {
+        "labPanel": {
+          "latestExamDate": "2026-04-01",
+          "examDate": "2026-04-01",
+          "items": [
+            {
+              "itemName": "中性脂肪",
+              "value": "61",
+              "unit": "mg/dL",
+              "flag": ""
+            }
+          ],
+          "rawText": "TG 61 mg/dL"
+        }
+      },
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_meal_half_rice_1778655848559_86b5b5": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655848984_ojmqxs",
+        "text": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "sourceUserText": "ご飯半分食べました",
+        "at": "2026-05-13T07:04:08.984Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
+    },
+    "U_simline_yes_without_pending_1778655849088_35456a": {
+      "lastTopic": null,
+      "lastImageType": null,
+      "pendingRecordCandidate": null,
+      "pendingClarification": null,
+      "lastEmotionTone": "neutral",
+      "lastAdvice": null,
+      "recentSmallTalkTopic": null,
+      "lastAssistantReplySnapshot": {
+        "replyId": "1778655849412_mpujbf",
+        "text": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "sourceUserText": "はい",
+        "at": "2026-05-13T07:04:09.412Z"
+      },
+      "followUpContext": null,
+      "activeHealthTheme": null,
+      "movementVideoSession": null,
+      "onboardingState": {
+        "isActive": false,
+        "mode": null,
+        "currentStep": null,
+        "completedSteps": [],
+        "answers": {}
+      }
     }
   },
   "longMemoryStore": {
@@ -17409,6 +19131,1305 @@
         "updatedAt": null
       },
       "height": ""
+    },
+    "U_simline_heart_heavy_1778655797753_f5d435": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_assistant_error_1778655800148_092009": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_hot_water_egg_1778655800969_e239f2": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_dup_same_line_message_1778655802436_c7758d": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_reward_ohagi_1778655804606_df4347": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_stretch_arm_1778655805516_9f0046": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_life_work_stress_1778655805835_c80b8b": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_2_safe_openness",
+      "relationshipPhaseUpdatedAt": "2026-05-13T07:03:26.035Z",
+      "relationshipPhaseMeta": {
+        "turnsAtLastPhaseChange": 0,
+        "lastPhaseChangeYmd": "2026-05-13"
+      },
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_lab_tg_question_1778655806194_e497dd": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_half_rice_1778655806619_8c6c6a": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_yes_without_pending_1778655807138_0a0e83": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_heart_heavy_1778655831799_989c36": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_assistant_error_1778655832431_900d8e": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_hot_water_egg_1778655832729_54577e": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_dup_same_line_message_1778655833668_511298": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_reward_ohagi_1778655835800_2d444f": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_stretch_arm_1778655836643_0b8fae": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_life_work_stress_1778655836944_a917e2": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_2_safe_openness",
+      "relationshipPhaseUpdatedAt": "2026-05-13T07:03:57.146Z",
+      "relationshipPhaseMeta": {
+        "turnsAtLastPhaseChange": 0,
+        "lastPhaseChangeYmd": "2026-05-13"
+      },
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_lab_tg_question_1778655837325_f51f04": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_half_rice_1778655837728_40e85c": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_yes_without_pending_1778655838260_23840f": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_heart_heavy_1778655842211_8377ab": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_assistant_error_1778655842868_25d2f2": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_hot_water_egg_1778655843181_eeb787": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_dup_same_line_message_1778655844177_53a298": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_reward_ohagi_1778655846595_e3af6e": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_stretch_arm_1778655847457_adeac7": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_life_work_stress_1778655847757_126b07": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_2_safe_openness",
+      "relationshipPhaseUpdatedAt": "2026-05-13T07:04:07.966Z",
+      "relationshipPhaseMeta": {
+        "turnsAtLastPhaseChange": 0,
+        "lastPhaseChangeYmd": "2026-05-13"
+      },
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_lab_tg_question_1778655848139_cee7bf": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_meal_half_rice_1778655848559_86b5b5": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
+    },
+    "U_simline_yes_without_pending_1778655849088_35456a": {
+      "preferredName": "",
+      "goal": "",
+      "eatingPattern": [],
+      "stagnationTendency": null,
+      "bodySignals": [],
+      "exerciseBarrier": [],
+      "supportPreference": [],
+      "lifeContext": [],
+      "age": "",
+      "weight": "",
+      "bodyFat": "",
+      "aiType": "",
+      "voiceStyle": "",
+      "constitutionType": "",
+      "conversationStyleMemory": {
+        "likedExamples": [],
+        "dislikedExamples": [],
+        "updatedAt": null
+      },
+      "trialStartedAt": "",
+      "selectedPlan": "",
+      "onboardingCompleted": false,
+      "relationshipPhase": "phase_1_professional_trust",
+      "relationshipPhaseUpdatedAt": null,
+      "relationshipPhaseMeta": null,
+      "conversationStyleProfile": {
+        "emojiLover": false,
+        "casualLover": false,
+        "formalLover": false,
+        "wantsDetailedNumbers": false,
+        "respondsToPraise": false,
+        "prefersStrictTone": false,
+        "anxietyProne": false,
+        "mealMicroFeedbackSensitive": false,
+        "weightSensitive": false,
+        "happyMorningReplies": false,
+        "happyFamilyShare": false,
+        "confidence": 0,
+        "updatedAt": null
+      },
+      "height": ""
     }
   },
   "userStateStore": {
@@ -21620,6 +24641,498 @@
         "messageId": "1778653876146_q8usmg",
         "createdAt": "2026-05-13T06:31:16.146Z"
       }
+    ],
+    "U_simline_heart_heavy_1778655797753_f5d435": [
+      {
+        "role": "user",
+        "content": "心が重いです",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:19.622Z"
+      },
+      {
+        "role": "assistant",
+        "content": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "messageId": "1778655799622_fmp1eq",
+        "createdAt": "2026-05-13T07:03:19.622Z"
+      }
+    ],
+    "U_simline_assistant_error_1778655800148_092009": [
+      {
+        "role": "user",
+        "content": "間違えてますよ",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:20.768Z"
+      },
+      {
+        "role": "assistant",
+        "content": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "messageId": "1778655800768_tn1g9i",
+        "createdAt": "2026-05-13T07:03:20.768Z"
+      }
+    ],
+    "U_simline_meal_hot_water_egg_1778655800969_e239f2": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:22.255Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655802255_yhbef7",
+        "createdAt": "2026-05-13T07:03:22.255Z"
+      }
+    ],
+    "U_simline_meal_dup_same_line_message_1778655802436_c7758d": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:23.234Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655803234_sxzv45",
+        "createdAt": "2026-05-13T07:03:23.234Z"
+      },
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:23.799Z"
+      },
+      {
+        "role": "assistant",
+        "content": "同じ内容が今日すでに入っています。もう一度追加しますか？",
+        "messageId": "1778655803799_1yfwde",
+        "createdAt": "2026-05-13T07:03:23.799Z"
+      },
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:24.499Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "messageId": "1778655804499_f07qzb",
+        "createdAt": "2026-05-13T07:03:24.499Z"
+      }
+    ],
+    "U_simline_reward_ohagi_1778655804606_df4347": [
+      {
+        "role": "user",
+        "content": "おはぎ二個食べちゃいました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:25.394Z"
+      },
+      {
+        "role": "assistant",
+        "content": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "messageId": "1778655805394_2sutyd",
+        "createdAt": "2026-05-13T07:03:25.394Z"
+      }
+    ],
+    "U_simline_stretch_arm_1778655805516_9f0046": [
+      {
+        "role": "user",
+        "content": "ストレッチしたら腕が伸びた感じがしました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:25.729Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "messageId": "1778655805729_und3a8",
+        "createdAt": "2026-05-13T07:03:25.729Z"
+      }
+    ],
+    "U_simline_life_work_stress_1778655805835_c80b8b": [
+      {
+        "role": "user",
+        "content": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:26.090Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "messageId": "1778655806090_l3sbph",
+        "createdAt": "2026-05-13T07:03:26.090Z"
+      }
+    ],
+    "U_simline_lab_tg_question_1778655806194_e497dd": [
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:26.482Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "messageId": "1778655806482_gtxr4b",
+        "createdAt": "2026-05-13T07:03:26.482Z"
+      }
+    ],
+    "U_simline_meal_half_rice_1778655806619_8c6c6a": [
+      {
+        "role": "user",
+        "content": "ご飯半分食べました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:27.020Z"
+      },
+      {
+        "role": "assistant",
+        "content": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "messageId": "1778655807020_gfp8f1",
+        "createdAt": "2026-05-13T07:03:27.020Z"
+      }
+    ],
+    "U_simline_yes_without_pending_1778655807138_0a0e83": [
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:27.461Z"
+      },
+      {
+        "role": "assistant",
+        "content": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "messageId": "1778655807461_hrtpng",
+        "createdAt": "2026-05-13T07:03:27.461Z"
+      }
+    ],
+    "U_simline_heart_heavy_1778655831799_989c36": [
+      {
+        "role": "user",
+        "content": "心が重いです",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:52.314Z"
+      },
+      {
+        "role": "assistant",
+        "content": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "messageId": "1778655832314_274oqu",
+        "createdAt": "2026-05-13T07:03:52.315Z"
+      }
+    ],
+    "U_simline_assistant_error_1778655832431_900d8e": [
+      {
+        "role": "user",
+        "content": "間違えてますよ",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:52.616Z"
+      },
+      {
+        "role": "assistant",
+        "content": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "messageId": "1778655832616_x869rs",
+        "createdAt": "2026-05-13T07:03:52.616Z"
+      }
+    ],
+    "U_simline_meal_hot_water_egg_1778655832729_54577e": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:53.529Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655833529_47z5a0",
+        "createdAt": "2026-05-13T07:03:53.529Z"
+      }
+    ],
+    "U_simline_meal_dup_same_line_message_1778655833668_511298": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:54.458Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655834458_wox5vb",
+        "createdAt": "2026-05-13T07:03:54.458Z"
+      },
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:54.978Z"
+      },
+      {
+        "role": "assistant",
+        "content": "同じ内容が今日すでに入っています。もう一度追加しますか？",
+        "messageId": "1778655834978_myheij",
+        "createdAt": "2026-05-13T07:03:54.978Z"
+      },
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:55.673Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "messageId": "1778655835673_f8rk6d",
+        "createdAt": "2026-05-13T07:03:55.673Z"
+      }
+    ],
+    "U_simline_reward_ohagi_1778655835800_2d444f": [
+      {
+        "role": "user",
+        "content": "おはぎ二個食べちゃいました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:56.541Z"
+      },
+      {
+        "role": "assistant",
+        "content": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "messageId": "1778655836541_boda2u",
+        "createdAt": "2026-05-13T07:03:56.541Z"
+      }
+    ],
+    "U_simline_stretch_arm_1778655836643_0b8fae": [
+      {
+        "role": "user",
+        "content": "ストレッチしたら腕が伸びた感じがしました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:56.840Z"
+      },
+      {
+        "role": "assistant",
+        "content": "ストレッチ後に腕の伸びを感じられたんですね。\nその感覚に気づけているのは、身体へのケアとしてとても良い流れです。\n次も同じペースで十分です。",
+        "messageId": "1778655836840_qcviry",
+        "createdAt": "2026-05-13T07:03:56.840Z"
+      }
+    ],
+    "U_simline_life_work_stress_1778655836944_a917e2": [
+      {
+        "role": "user",
+        "content": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:57.201Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "messageId": "1778655837201_4hktsl",
+        "createdAt": "2026-05-13T07:03:57.201Z"
+      }
+    ],
+    "U_simline_lab_tg_question_1778655837325_f51f04": [
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:57.580Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "messageId": "1778655837580_otcn3v",
+        "createdAt": "2026-05-13T07:03:57.580Z"
+      }
+    ],
+    "U_simline_meal_half_rice_1778655837728_40e85c": [
+      {
+        "role": "user",
+        "content": "ご飯半分食べました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:58.162Z"
+      },
+      {
+        "role": "assistant",
+        "content": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "messageId": "1778655838162_jt46h8",
+        "createdAt": "2026-05-13T07:03:58.162Z"
+      }
+    ],
+    "U_simline_yes_without_pending_1778655838260_23840f": [
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:03:58.589Z"
+      },
+      {
+        "role": "assistant",
+        "content": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "messageId": "1778655838589_zizrlu",
+        "createdAt": "2026-05-13T07:03:58.590Z"
+      }
+    ],
+    "U_simline_heart_heavy_1778655842211_8377ab": [
+      {
+        "role": "user",
+        "content": "心が重いです",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:02.745Z"
+      },
+      {
+        "role": "assistant",
+        "content": "心が重いんですね。\n今日は無理に整えようとしなくて大丈夫です。\n今いちばん近いのは、疲れ・不安・寂しさ・悔しさのどれですか？",
+        "messageId": "1778655842745_nwd19e",
+        "createdAt": "2026-05-13T07:04:02.745Z"
+      }
+    ],
+    "U_simline_assistant_error_1778655842868_25d2f2": [
+      {
+        "role": "user",
+        "content": "間違えてますよ",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:03.067Z"
+      },
+      {
+        "role": "assistant",
+        "content": "すみません、今の返しはズレていました。\n直前の内容を見直します。どこを直したいか、そのまま教えてください。",
+        "messageId": "1778655843067_5szumh",
+        "createdAt": "2026-05-13T07:04:03.067Z"
+      }
+    ],
+    "U_simline_meal_hot_water_egg_1778655843181_eeb787": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:04.072Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655844072_pcse50",
+        "createdAt": "2026-05-13T07:04:04.072Z"
+      }
+    ],
+    "U_simline_meal_dup_same_line_message_1778655844177_53a298": [
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:05.212Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n軽く始めたい朝には、ちょうど整えやすい形です。\n手入力の目安：約70kcal\n今日の合計：約70kcal",
+        "messageId": "1778655845212_va0ndl",
+        "createdAt": "2026-05-13T07:04:05.212Z"
+      },
+      {
+        "role": "user",
+        "content": "白湯300ml、味付き卵一個",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:05.759Z"
+      },
+      {
+        "role": "assistant",
+        "content": "同じ内容が今日すでに入っています。もう一度追加しますか？",
+        "messageId": "1778655845759_m6o5up",
+        "createdAt": "2026-05-13T07:04:05.759Z"
+      },
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:06.498Z"
+      },
+      {
+        "role": "assistant",
+        "content": "白湯300ml、味付き卵1個ですね。\n朝の形として、だいぶ落ち着いてきている感じですね。\n手入力の目安：約70kcal\n今日の合計：約140kcal",
+        "messageId": "1778655846498_2lftg3",
+        "createdAt": "2026-05-13T07:04:06.498Z"
+      }
+    ],
+    "U_simline_reward_ohagi_1778655846595_e3af6e": [
+      {
+        "role": "user",
+        "content": "おはぎ二個食べちゃいました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:07.351Z"
+      },
+      {
+        "role": "assistant",
+        "content": "おはぎ2個ですね。\nこれは責めなくて大丈夫です。次の食事を少し軽めに戻せれば十分です。\n手入力の目安：約300kcal\n今日の合計：約300kcal",
+        "messageId": "1778655847351_rpk6sy",
+        "createdAt": "2026-05-13T07:04:07.351Z"
+      }
+    ],
+    "U_simline_stretch_arm_1778655847457_adeac7": [
+      {
+        "role": "user",
+        "content": "ストレッチしたら腕が伸びた感じがしました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:07.654Z"
+      },
+      {
+        "role": "assistant",
+        "content": "ストレッチ後に腕の伸びを感じられたんですね。\nその感覚に気づけているのは、身体へのケアとしてとても良い流れです。\n次も同じペースで十分です。",
+        "messageId": "1778655847654_e9aaam",
+        "createdAt": "2026-05-13T07:04:07.654Z"
+      }
+    ],
+    "U_simline_life_work_stress_1778655847757_126b07": [
+      {
+        "role": "user",
+        "content": "仕事で嫌なことがあって、ちょっと聞いてほしい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:08.023Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。",
+        "messageId": "1778655848023_72pak5",
+        "createdAt": "2026-05-13T07:04:08.023Z"
+      }
+    ],
+    "U_simline_lab_tg_question_1778655848139_cee7bf": [
+      {
+        "role": "user",
+        "content": "TGは？",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:08.407Z"
+      },
+      {
+        "role": "assistant",
+        "content": "なるほど。今の感じは受け取れた。急がず、必要なところからでいいよ。\nTG：61 mg/dL",
+        "messageId": "1778655848407_myddls",
+        "createdAt": "2026-05-13T07:04:08.407Z"
+      }
+    ],
+    "U_simline_meal_half_rice_1778655848559_86b5b5": [
+      {
+        "role": "user",
+        "content": "ご飯半分食べました",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:08.984Z"
+      },
+      {
+        "role": "assistant",
+        "content": "直前の食事が見つからないため、どの食事を半分にするか教えてください。",
+        "messageId": "1778655848984_ojmqxs",
+        "createdAt": "2026-05-13T07:04:08.984Z"
+      }
+    ],
+    "U_simline_yes_without_pending_1778655849088_35456a": [
+      {
+        "role": "user",
+        "content": "はい",
+        "messageId": "",
+        "createdAt": "2026-05-13T07:04:09.412Z"
+      },
+      {
+        "role": "assistant",
+        "content": "はい、続きでも別の話でも大丈夫です。今の流れで見たいことがあれば、そのまま送ってください。",
+        "messageId": "1778655849412_mpujbf",
+        "createdAt": "2026-05-13T07:04:09.412Z"
+      }
     ]
   },
   "dailyRecordStore": {
@@ -24672,6 +28185,522 @@
       "exercises": [],
       "weights": [],
       "labs": []
+    },
+    "U_simline_meal_hot_water_egg_1778655800969_e239f2:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-hot-1778655797753",
+          "dedupeKey": "msg:m-hot-1778655797753",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:03:21.847Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_meal_dup_same_line_message_1778655802436_c7758d:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-a-1778655797753",
+          "dedupeKey": "msg:m-dup-a-1778655797753",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:03:22.905Z"
+        },
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-1778655797753",
+          "dedupeKey": "msg:m-dup-1778655797753",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "allowDuplicateMealTextRecord": true,
+          "createdAt": "2026-05-13T07:03:24.171Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_reward_ohagi_1778655804606_df4347:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "おはぎ2個",
+          "summary": "おはぎ二個食べちゃいました",
+          "items": [
+            "おはぎ2個"
+          ],
+          "food_items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "kcal": 300,
+          "protein": 8,
+          "fat": 6,
+          "carbs": 64,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 300,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-ohagi-1778655797753",
+          "dedupeKey": "msg:m-ohagi-1778655797753",
+          "record_kind": "reward_food",
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food",
+          "createdAt": "2026-05-13T07:03:25.071Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_meal_hot_water_egg_1778655832729_54577e:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-hot-1778655831799",
+          "dedupeKey": "msg:m-hot-1778655831799",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:03:53.212Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_meal_dup_same_line_message_1778655833668_511298:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-a-1778655831799",
+          "dedupeKey": "msg:m-dup-a-1778655831799",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:03:54.143Z"
+        },
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-1778655831799",
+          "dedupeKey": "msg:m-dup-1778655831799",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "allowDuplicateMealTextRecord": true,
+          "createdAt": "2026-05-13T07:03:55.351Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_reward_ohagi_1778655835800_2d444f:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "おはぎ2個",
+          "summary": "おはぎ二個食べちゃいました",
+          "items": [
+            "おはぎ2個"
+          ],
+          "food_items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "kcal": 300,
+          "protein": 8,
+          "fat": 6,
+          "carbs": 64,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 300,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-ohagi-1778655831799",
+          "dedupeKey": "msg:m-ohagi-1778655831799",
+          "record_kind": "reward_food",
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food",
+          "createdAt": "2026-05-13T07:03:56.237Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_meal_hot_water_egg_1778655843181_eeb787:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-hot-1778655842210",
+          "dedupeKey": "msg:m-hot-1778655842210",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:04:03.717Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_meal_dup_same_line_message_1778655844177_53a298:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-a-1778655842210",
+          "dedupeKey": "msg:m-dup-a-1778655842210",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "createdAt": "2026-05-13T07:04:04.641Z"
+        },
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "白湯300ml、味付き卵1個",
+          "summary": "白湯300ml、味付き卵一個",
+          "items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "food_items": [
+            "白湯300ml",
+            "味付き卵1個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 70,
+            "protein": 6,
+            "fat": 5,
+            "carbs": 0.5
+          },
+          "kcal": 70,
+          "protein": 6,
+          "fat": 5,
+          "carbs": 0.5,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 70,
+          "final_calories": 70,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-dup-1778655842210",
+          "dedupeKey": "msg:m-dup-1778655842210",
+          "record_kind": "meal_text_record",
+          "text_fingerprint": "text:白湯300ml 味付き卵一個||items:白湯300ml|味付き卵1個||kcal:70||kind:meal_text_record",
+          "allowDuplicateMealTextRecord": true,
+          "createdAt": "2026-05-13T07:04:06.189Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
+    },
+    "U_simline_reward_ohagi_1778655846595_e3af6e:2026-05-13": {
+      "meals": [
+        {
+          "type": "meal",
+          "date": "2026-05-13",
+          "name": "おはぎ2個",
+          "summary": "おはぎ二個食べちゃいました",
+          "items": [
+            "おはぎ2個"
+          ],
+          "food_items": [
+            "おはぎ2個"
+          ],
+          "estimatedNutrition": {
+            "kcal": 300,
+            "protein": 8,
+            "fat": 6,
+            "carbs": 64
+          },
+          "kcal": 300,
+          "protein": 8,
+          "fat": 6,
+          "carbs": 64,
+          "amountRatio": 1,
+          "amountNote": "",
+          "confidence": 0.82,
+          "comment": "",
+          "calorie_source": "text_manual_estimate",
+          "calorie_confidence": "low",
+          "original_gemini_calories": 300,
+          "final_calories": 300,
+          "correction_reason": "text_manual_line_parse",
+          "sourceLineMessageId": "m-ohagi-1778655842210",
+          "dedupeKey": "msg:m-ohagi-1778655842210",
+          "record_kind": "reward_food",
+          "text_fingerprint": "text:おはぎ二個食べちゃいました||items:おはぎ2個||kcal:300||kind:reward_food",
+          "createdAt": "2026-05-13T07:04:07.046Z"
+        }
+      ],
+      "exercises": [],
+      "weights": [],
+      "labs": []
     }
   },
   "weeklySurveyStore": {},
@@ -24742,7 +28771,16 @@
     "U_simline_reward_ohagi_1778653862922_0c0a0d": 1,
     "U_simline_meal_hot_water_egg_1778653870314_a29d89": 1,
     "U_simline_meal_dup_same_line_message_1778653871242_1913b5": 2,
-    "U_simline_reward_ohagi_1778653873487_6263ba": 1
+    "U_simline_reward_ohagi_1778653873487_6263ba": 1,
+    "U_simline_meal_hot_water_egg_1778655800969_e239f2": 1,
+    "U_simline_meal_dup_same_line_message_1778655802436_c7758d": 2,
+    "U_simline_reward_ohagi_1778655804606_df4347": 1,
+    "U_simline_meal_hot_water_egg_1778655832729_54577e": 1,
+    "U_simline_meal_dup_same_line_message_1778655833668_511298": 2,
+    "U_simline_reward_ohagi_1778655835800_2d444f": 1,
+    "U_simline_meal_hot_water_egg_1778655843181_eeb787": 1,
+    "U_simline_meal_dup_same_line_message_1778655844177_53a298": 2,
+    "U_simline_reward_ohagi_1778655846595_e3af6e": 1
   },
   "labHistoryStore": {}
 }
