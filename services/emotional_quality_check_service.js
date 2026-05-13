@@ -4,88 +4,6 @@ function normalizeText(v) {
   return String(v || '').trim();
 }
 
-const TEMPLATE_PHRASES = [
-  { re: /記録しました[。]?/g, to: '受け取りました。流れが見えています。' },
-  { re: /確認しました[。]?/g, to: '意図は受け取れています。' },
-  { re: /保存しました[。]?/g, to: 'こちら側では受け取れています。' },
-  { re: /いい流れです[。]?/g, to: '体調や食事の流れを、無理なく見えている範囲で見ています。' },
-  { re: /無理なく続けましょう[。]?/g, to: '続け方は、いまの生活に合う形で少しずつで大丈夫です。' },
-  { re: /頑張りましょう[。]?/g, to: '無理のない一歩で十分です。' },
-  { re: /次の一歩は小さくて十分です[。]?/g, to: '次に選ぶなら、小さな一つで十分です。' },
-];
-
-function extractEchoSnippet(userText) {
-  const safe = normalizeText(userText).replace(/\n/g, ' ');
-  if (safe.length < 4 || safe.length > 72) return '';
-  if (/^[\s「」]+$/.test(safe)) return '';
-  const strip = safe.replace(/^[「『]/, '').replace(/[」』]$/, '');
-  return strip.slice(0, 48);
-}
-
-function replyHasUserEcho(reply, userText) {
-  const snippet = extractEchoSnippet(userText);
-  if (snippet.length < 4) return false;
-  const r = normalizeText(reply);
-  if (r.includes(snippet)) return true;
-  const short = snippet.slice(0, Math.min(12, snippet.length));
-  return short.length >= 4 && r.includes(short);
-}
-
-function hasSpecificReaction(text) {
-  const safe = normalizeText(text);
-  if (safe.length < 24) return /ですね|でしたね|感じ|ようです|みえ|見え|そうですね/.test(safe);
-  return true;
-}
-
-function hasWarmth(text) {
-  return /大丈夫|一緒に|受け止|寄り添|無理に|責め|ありがと|丁寧|少し|やさしく|安心/.test(normalizeText(text));
-}
-
-function hasNextStep(text) {
-  return /まず|次|一歩|試し|整え|足し|減ら|見ましょう|で十分|で大丈夫/.test(normalizeText(text));
-}
-
-function isTemplateOnlyPhrase(text) {
-  const safe = normalizeText(text).replace(/\s+/g, '');
-  return /^(記録しました|確認しました|保存しました|いい流れです|無理なく続けましょう|頑張りましょう|次の一歩は小さくて十分です)[。]?$/.test(safe);
-}
-
-function hasTrustBuildingPhrase(text) {
-  return /ここでは|そのまま話して|抱えすぎ|現実の誰か|選べるように|横で支え|ざっくりで大丈夫|言いにくい日は|あとで直せ|流れを見るため/.test(normalizeText(text));
-}
-
-function applyTemplateRewrites(text) {
-  let out = String(text || '');
-  let applied = false;
-  for (const { re, to } of TEMPLATE_PHRASES) {
-    const next = out.replace(re, (m) => {
-      if (m) applied = true;
-      return to;
-    });
-    out = next;
-  }
-  return { text: out.trim(), rewrite_applied: applied };
-}
-
-function softenStandaloneTemplateLines(text) {
-  let applied = false;
-  const lines = String(text || '').split('\n');
-  const next = lines.map((line) => {
-    const t = normalizeText(line);
-    if (!t) return line;
-    if (isTemplateOnlyPhrase(t)) {
-      const { text: rw, rewrite_applied: ra } = applyTemplateRewrites(t);
-      if (ra) applied = true;
-      return rw;
-    }
-    return line;
-  });
-  return { text: next.join('\n').trim(), rewrite_applied: applied };
-}
-
-/**
- * @param {{ text: string, userText?: string, intent?: string, relationshipPhase?: string, userId?: string }} params
- */
 const GENERIC_TEMPLATE_STRIP = [
   'ここまでの流れを一本で見ています',
   '急がず、今日はこの一歩で十分です',
@@ -95,208 +13,110 @@ const GENERIC_TEMPLATE_STRIP = [
   'まずはここに送れただけで十分です',
 ];
 
+const BANNED_ADDITION_PHRASES = [
+  'ひとりで抱えすぎなくて大丈夫です',
+  '一緒に整理していきましょう',
+  '今わかる範囲だけで',
+  'そのまま話してくれてありがとうございます',
+  'の重さ、ちゃんと受け取っています',
+];
+
+const TEMPLATE_ONLY_RE = /^(記録しました|確認しました|保存しました|いい流れです|無理なく続けましょう|頑張りましょう|次の一歩は小さくて十分です)[。]?$/;
+
+const INTERNAL_RE = /\b(DB保存済み|内部|trace_id)\b/gi;
+
 function removeGenericTemplatePhrases(text = '') {
   let out = String(text || '');
-  let changed = false;
+  let removed = false;
   for (const phrase of GENERIC_TEMPLATE_STRIP) {
     if (out.includes(phrase)) {
-      console.info('[generic_template_phrase_removed]', { phrase, reason: 'hard_block_list' });
       out = out.split(phrase).join('').replace(/\n{3,}/g, '\n\n').trim();
-      changed = true;
+      removed = true;
     }
   }
   const echoWeightRe = /「[^」]{1,48}」の重さ、ちゃんと受け取っています。\n?/g;
   if (echoWeightRe.test(out)) {
-    console.info('[generic_template_phrase_removed]', { phrase: 'echo_weight_lead', reason: 'hard_block_pattern' });
     out = out.replace(echoWeightRe, '').trim();
-    changed = true;
+    removed = true;
   }
-  return { text: out.trim(), removed: changed };
+  return { text: out.trim(), removed };
 }
 
-function maybeStripRoutineGreeting(text, params = {}) {
-  const token = '今日も1日よろしくお願いします';
-  if (!String(text || '').includes(token)) return String(text || '');
+function stripTemplateOnlyLines(text) {
+  const lines = String(text || '').split('\n');
+  const next = lines.filter((line) => !TEMPLATE_ONLY_RE.test(normalizeText(line)));
+  return next.join('\n').trim();
+}
+
+function stripBannedAdditionPhrases(text, conversationMode) {
   let out = String(text || '');
-  const hour = Number(params.hour ?? 12);
-  const totalTurns = Number(params.totalTurns ?? 99);
-  const intent = normalizeText(params.intent || '');
-  const cm = normalizeText(params.conversationMode || intent || '');
-  const phase = normalizeText(params.relationshipPhase || '');
-  const composite = `${intent}|${cm}`;
-  if (/(meal|lab|exercise|video|image|correction|constitution|symptom|homecare|pending|newflow|v2)/i.test(composite)) {
-    return out.replace(new RegExp(`${token}[。！]?`, 'g'), '').replace(/\n{3,}/g, '\n\n').trim();
+  for (const phrase of BANNED_ADDITION_PHRASES) {
+    if (out.includes(phrase)) {
+      out = out.split(phrase).join('').replace(/\n{3,}/g, '\n\n').trim();
+    }
   }
-  const morning = hour >= 5 && hour <= 11;
-  const fewTurns = totalTurns <= 5;
-  const trusted = phase === 'phase_2_safe_openness' || phase === 'phase_3_emotional_trust' || phase === 'phase_4_life_companion';
-  if (!(morning && fewTurns && trusted)) {
-    return out.replace(new RegExp(`${token}[。！]?`, 'g'), '').replace(/\n{3,}/g, '\n\n').trim();
+  if (conversationMode === 'emotional_support' && /(手入力の目安|今日の合計|kcal|カロリー)/i.test(out)) {
+    out = out.split('\n').filter((ln) => !/(手入力の目安|今日の合計|kcal|カロリー)/i.test(ln)).join('\n').trim();
+  }
+  if (conversationMode === 'life_companion' && /(記録|kcal|カロリー|DB保存済み)/.test(out)) {
+    out = out.split('\n').filter((ln) => !/(記録|kcal|カロリー|DB保存済み)/.test(ln)).join('\n').trim();
   }
   return out;
 }
 
+function capLength(text, conversationMode) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return '';
+  let max = 10;
+  if (conversationMode === 'emotional_support') max = 6;
+  if (conversationMode === 'correction_feedback') max = 5;
+  if (lines.length <= max) return lines.join('\n');
+  return lines.slice(0, max).join('\n');
+}
+
+/**
+ * 文章追加なし — NG削除・内部表現除去・長さ制限のみ。
+ */
 function applyEmotionalQualityPass(params = {}) {
-  const original = String(params.text || '');
-  let text = original;
-  const userText = params.userText || '';
+  const conversationMode = normalizeText(params.conversationMode || params.intent || '');
   const intent = normalizeText(params.intent || '');
-  const conversationMode = normalizeText(params.conversationMode || intent || '');
   const userId = normalizeText(params.userId || '');
-  const skipTemplateRemediation = /emotional_support|life_companion|correction_feedback|exercise_feedback/.test(conversationMode);
-
-  if (conversationMode === 'correction_feedback' || intent === 'correction_feedback') {
-    let t = String(original || '').trim();
-    const stripped = removeGenericTemplatePhrases(t);
-    t = stripped.text;
-    console.info('[companion_reply_emotional_quality_check]', {
-      user_id: userId,
-      conversation_mode: 'correction_feedback',
-      intent: 'correction_feedback',
-      relationship_phase: normalizeText(params.relationshipPhase || ''),
-      emotional_quality_ok: true,
-      correction_feedback_strip_only: true,
-      generic_template_removed: stripped.removed,
-      has_specific_reaction: true,
-      has_user_word_echo: replyHasUserEcho(t, userText),
-      has_warmth: hasWarmth(t),
-      has_next_step: hasNextStep(t),
-      rewrite_applied: stripped.removed,
-    });
-    return {
-      text: t.trim(),
-      emotional_quality_ok: true,
-      has_specific_reaction: true,
-      has_user_word_echo: replyHasUserEcho(t, userText),
-      has_warmth: hasWarmth(t),
-      has_next_step: hasNextStep(t),
-      has_template_only_phrase: false,
-      has_trust_building_phrase: hasTrustBuildingPhrase(t),
-      rewrite_applied: stripped.removed,
-    };
-  }
-
-  const rwGlobal = applyTemplateRewrites(text);
-  text = rwGlobal.text;
-  const softLines = softenStandaloneTemplateLines(text);
-  text = softLines.text;
-
-  let rewrite_applied = rwGlobal.rewrite_applied || softLines.rewrite_applied;
-
-  const skipEchoLead = /emotional_support|life_companion|correction_feedback|exercise_feedback/.test(conversationMode);
-  if (
-    !skipEchoLead
-    && !replyHasUserEcho(text, userText)
-    && userText
-    && extractEchoSnippet(userText)
-    && (intent === 'normal_chat' || intent === 'meal')
-  ) {
-    const snip = extractEchoSnippet(userText);
-    if (snip && !text.includes(snip.slice(0, Math.min(8, snip.length)))) {
-      const echo = `「${snip}」の重さ、ちゃんと受け取っています。\n`;
-      text = `${echo}${text}`.trim();
-      rewrite_applied = true;
-    }
-  }
-
-  if (!skipTemplateRemediation && isTemplateOnlyPhrase(text) && text.length < 80) {
-    text = `${text}\n責めるための記録ではなく、流れを見るための記録として受け止めています。`.trim();
-    rewrite_applied = true;
-  }
-
-  let flags = {
-    has_specific_reaction: hasSpecificReaction(text),
-    has_user_word_echo: replyHasUserEcho(text, userText),
-    has_warmth: hasWarmth(text),
-    has_next_step: hasNextStep(text),
-    has_template_only_phrase: isTemplateOnlyPhrase(text),
-    has_trust_building_phrase: hasTrustBuildingPhrase(text),
-    rewrite_applied,
-  };
-  flags.emotional_quality_ok = Boolean(
-    flags.has_specific_reaction
-    && flags.has_warmth
-    && !flags.has_template_only_phrase
-    && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
-  );
-  if (conversationMode === 'emotional_support' && !/(deep|normal)/.test(normalizeText(params.replyDepth || 'normal'))) {
-    flags.emotional_quality_ok = false;
-  }
-  if (conversationMode === 'life_companion' && /(記録|kcal|カロリー|DB保存済み)/.test(text)) {
-    flags.emotional_quality_ok = false;
-  }
-  if (conversationMode === 'meal_correction' && /(DB保存済み|内部|trace)/.test(text)) {
-    flags.emotional_quality_ok = false;
-  }
-  if (conversationMode === 'casual_chat' && /前の画像の続き/.test(text)) {
-    flags.emotional_quality_ok = false;
-  }
-
-  if (!flags.emotional_quality_ok && !skipTemplateRemediation) {
-    const echo = extractEchoSnippet(userText);
-    const lead = echo ? `「${echo}」のこと、ここで一緒に見ていきます。` : 'そのまま話してくれてありがとうございます。';
-    const close = 'ひとりで抱えすぎなくて大丈夫です。今わかる範囲だけで、一緒に整理していきましょう。';
-    text = `${lead}\n${text}\n${close}`.replace(/\n{3,}/g, '\n\n').trim();
-    rewrite_applied = true;
-    flags = {
-      has_specific_reaction: hasSpecificReaction(text),
-      has_user_word_echo: replyHasUserEcho(text, userText),
-      has_warmth: hasWarmth(text),
-      has_next_step: hasNextStep(text),
-      has_template_only_phrase: isTemplateOnlyPhrase(text),
-      has_trust_building_phrase: hasTrustBuildingPhrase(text),
-      rewrite_applied,
-    };
-    flags.emotional_quality_ok = Boolean(
-      flags.has_specific_reaction
-      && flags.has_warmth
-      && !flags.has_template_only_phrase
-      && (flags.has_user_word_echo || flags.has_trust_building_phrase || flags.has_next_step)
-    );
-  }
-
-  if (intent === 'lab') {
-    const blocked = [
-      'ひとりで抱えすぎなくて大丈夫です',
-      '一緒に整理しましょう',
-      '今わかる範囲だけで大丈夫です'
-    ];
-    for (const phrase of blocked) {
-      if (text.includes(phrase)) {
-        text = text.replaceAll(phrase, '').replace(/\n{3,}/g, '\n\n').trim();
-        console.info('[companion_reply_intent_phrase_blocked]', {
-          intent: 'lab',
-          blocked_phrase: phrase
-        });
-      }
-    }
-  }
-
-  text = maybeStripRoutineGreeting(text, {
-    hour: params.hour,
-    totalTurns: params.totalTurns,
-    intent,
-    conversationMode,
-    relationshipPhase: params.relationshipPhase
-  });
+  let text = String(params.text || '');
 
   const stripped = removeGenericTemplatePhrases(text);
   text = stripped.text;
-  if (stripped.removed) rewrite_applied = true;
+  text = stripTemplateOnlyLines(text);
+  text = stripBannedAdditionPhrases(text, conversationMode);
+  text = String(text || '').replace(INTERNAL_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+  text = capLength(text, conversationMode);
 
-  if (/^(emotional_support|life_companion|exercise_feedback)$/.test(conversationMode)) {
-    flags.emotional_quality_ok = true;
-  }
+  const routeMismatch = (
+    (conversationMode === 'emotional_support' && /(TG|中性脂肪|検査画像)/i.test(text))
+    || (conversationMode === 'correction_feedback' && /(おはぎ|白湯|味付き卵)/.test(text) && !/(すみません|ズレ|訂正)/.test(text))
+  );
 
   console.info('[companion_reply_emotional_quality_check]', {
     user_id: userId,
     conversation_mode: conversationMode,
     intent,
-    relationship_phase: normalizeText(params.relationshipPhase || ''),
-    ...flags,
+    guard_only: true,
+    generic_template_removed: stripped.removed,
+    route_mismatch_detected: routeMismatch,
+    output_preview: text.slice(0, 120),
   });
 
-  return { text: text.trim(), ...flags };
+  return {
+    text: text.trim(),
+    emotional_quality_ok: !routeMismatch,
+    rewrite_applied: stripped.removed,
+    guard_only: true,
+  };
+}
+
+function extractEchoSnippet(userText) {
+  const safe = normalizeText(userText).replace(/\n/g, ' ');
+  if (safe.length < 4 || safe.length > 72) return '';
+  return safe.replace(/^[「『]/, '').replace(/[」』]$/, '').slice(0, 48);
 }
 
 module.exports = {

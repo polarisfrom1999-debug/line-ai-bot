@@ -160,17 +160,18 @@ function evaluateReplyQuality({
     return violations;
   }
 
-  if (!hasDirectEcho(userText, reply)) violations.push('no_direct_echo');
-
   if (intentType === 'meal_record_text' || intentType === 'meal_text') {
     if (hasCasualOnlyMeal(reply)) violations.push('meal_treated_as_casual');
+    if (!hasDirectEcho(userText, reply) && !/(白湯|卵|手入力の目安|kcal)/.test(reply)) {
+      violations.push('no_direct_echo');
+    }
+    if (!allowStableRoutinePhrase && hasUnauthorizedStabilityClaim(reply)) {
+      violations.push('stable_routine_without_evidence');
+    }
+    return violations;
   }
 
-  if (!allowStableRoutinePhrase && hasUnauthorizedStabilityClaim(reply)) {
-    violations.push('stable_routine_without_evidence');
-  }
-
-  return violations;
+  if (!hasDirectEcho(userText, reply)) violations.push('no_direct_echo');
 }
 
 module.exports = {

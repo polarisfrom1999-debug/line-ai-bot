@@ -58,6 +58,7 @@ const responseGuardService = require('./newflow/response_guard_service');
 const conversationSurfaceService = require('./conversation_surface_service');
 const replyIntegrityService = require('./reply_integrity_service');
 const companionReplyService = require('./companion_reply_service');
+const lineNaturalReplyGeneratorService = require('./line_natural_reply_generator_service');
 const emotionalQualityCheckService = require('./emotional_quality_check_service');
 const conversationStateInterpreterService = require('./conversation_state_interpreter_service');
 const relationshipPhaseService = require('./relationship_phase_service');
@@ -2165,8 +2166,67 @@ function shouldSkipHealthAggregationForIntent(intentType = '') {
   return /^(emotional_support|life_companion|correction_feedback|exercise_feedback)$/.test(t);
 }
 
+const NATURAL_REPLY_MODES = new Set([
+  'emotional_support',
+  'correction_feedback',
+  'meal_record_text',
+  'meal_note',
+  'meal_text',
+]);
+
+function inferNaturalConversationMode(intentType) {
+  const it = normalizeText(intentType || '');
+  if (it === 'meal_note') return 'reward_food';
+  return it;
+}
+
 async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
   const itNorm = normalizeText(intentType || '');
+  const useNatural = Boolean(
+    options.featureResults
+    || (options.useNaturalGenerator !== false && NATURAL_REPLY_MODES.has(itNorm))
+  );
+
+  if (useNatural) {
+    const conversationMode = inferNaturalConversationMode(itNorm);
+    const generated = await lineNaturalReplyGeneratorService.generateNaturalLineReply({
+      userId: input.userId,
+      userText: input?.rawText || '',
+      conversationMode,
+      intent: /meal/.test(itNorm) ? 'meal' : itNorm,
+      featureResults: options.featureResults || {},
+      userContext: {
+        relationshipPhase: normalizeText(ctx?.longMemory?.relationshipPhase || ''),
+        stableRoutineEvidenceCount: options.stableRoutineEvidenceCount,
+        recentMessages: ctx?.recentMessages || [],
+        longMemory: ctx?.longMemory || {},
+      },
+      observationHints: options.observationHints || [],
+      replyDepth: options.replyDepth || (itNorm === 'emotional_support' ? 'deep' : 'normal'),
+    });
+    const hour = Number(getJapanNow().hour || 0);
+    let totalTurns = 0;
+    try {
+      const st = await contextMemoryService.getUserState(input.userId);
+      totalTurns = Number(st?.totalTurns || 0);
+    } catch (_e) {
+      totalTurns = 0;
+    }
+    const enhanced = await companionReplyService.enhanceReply({
+      userId: input.userId,
+      userText: input?.rawText || '',
+      rawReply: generated.text,
+      intentType: itNorm,
+      conversationMode: itNorm,
+      recentMessages: ctx?.recentMessages || [],
+      longMemory: ctx?.longMemory || {},
+      hour,
+      totalTurns,
+      replyDepth: options.replyDepth || (itNorm === 'emotional_support' ? 'deep' : 'normal'),
+    });
+    return normalizeText(enhanced?.text || generated.text) || generated.text;
+  }
+
   if (itNorm === 'correction_feedback') {
     let base = normalizeText(draftText) || String(draftText || '');
     const guarded = responseGuardService.guardReplyText(base);
@@ -3558,12 +3618,9 @@ async function orchestrateConversation(input) {
         conversation_mode: 'assistant_error_feedback',
         reason: 'assistant_error_immediate_reply'
       });
-      const errReply = [
-        'すみません、今の返しはズレていました。',
-        '直前の内容を見直します。どこを直したいか、そのまま教えてください。'
-      ].join('\n');
-      const errOut = await withSurfaceReply(input, errReply, { recentMessages, longMemory }, 'correction_feedback', {
-        skipHealthAggregation: true
+      const errOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'correction_feedback', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
       });
       await appendTurn(input.userId, input.rawText || '', errOut);
       return {
@@ -3581,26 +3638,17 @@ async function orchestrateConversation(input) {
         reply_depth: conversationState.reply_depth,
         reason: conversationState.reason
       });
-      const lifeEarly = lifeCompanionConversationService.tryLifeCompanionReply({
-        userId: input.userId,
-        text,
-        relationshipPhase: longMemory?.relationshipPhase,
-        longMemory,
-        userState: userStateBefore,
-        recentMessages,
-      });
-      const replyBody = lifeEarly?.replyText
-        ? lifeEarly.replyText
-        : lifeCompanionConversationService.buildGuaranteedEmotionalSupportReply(text);
       console.info('[conversation_state_early_return]', {
         user_id: input.userId,
         text: text.slice(0, 120),
         route: 'emotional_support',
         conversation_mode: 'emotional_support',
-        reason: lifeEarly?.replyText ? 'life_companion_template' : 'guaranteed_emotional_fallback'
+        reason: 'line_natural_reply_generator',
       });
-      const lifeOut = await withSurfaceReply(input, replyBody, { recentMessages, longMemory }, 'emotional_support', {
-        skipHealthAggregation: true
+      const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'emotional_support', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        replyDepth: conversationState.reply_depth || 'deep',
       });
       await appendTurn(input.userId, input.rawText || '', lifeOut);
       return {
@@ -3960,8 +4008,20 @@ async function orchestrateConversation(input) {
           carbs: Number(totalsAfter.carbs || 0),
           addDailyRecord_result_present: Boolean(addResult)
         });
-        const out = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, surfaceIntent, {
-          stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount
+        const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, surfaceIntent, {
+          stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount,
+          useNaturalGenerator: true,
+          featureResults: {
+            saved: persisted,
+            items: mealTextHandled.parsedMeal?.items,
+            kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
+            protein: mealTextHandled.parsedMeal?.estimatedNutrition?.protein,
+            breakdownLines: mealTextHandled.breakdownLines,
+            dailyTotalKcal: Number(totalsAfter.kcal || 0),
+            recordKind: mealTextHandled.recordKind || surfaceIntent,
+            calorieSource: mealTextHandled.parsedMeal?.calorie_source || 'text_manual_estimate',
+            stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount,
+          },
         });
         await appendTurn(input.userId, input.rawText || '', out);
         return {
@@ -4984,8 +5044,19 @@ async function orchestrateConversation(input) {
     const mealTextHandled = await maybeHandleMealText(input);
     if (mealTextHandled) {
       await contextMemoryService.addDailyRecord(input.userId, buildMealRecordPayload(text, mealTextHandled.parsedMeal));
-      const mealTxtOut = await withSurfaceReply(input, mealTextHandled.replyText, { recentMessages, longMemory }, 'meal_text', {
-        stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount
+      const summaryFallback = await dailyNutritionSummaryService.fetchTodayNutritionSummary(input.userId).catch(() => ({}));
+      const mealTxtOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'meal_text', {
+        stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount,
+        useNaturalGenerator: true,
+        featureResults: {
+          saved: true,
+          items: mealTextHandled.parsedMeal?.items,
+          kcal: mealTextHandled.parsedMeal?.estimatedNutrition?.kcal,
+          breakdownLines: mealTextHandled.breakdownLines,
+          dailyTotalKcal: Number(summaryFallback?.kcal || mealTextHandled.parsedMeal?.estimatedNutrition?.kcal || 0),
+          recordKind: mealTextHandled.recordKind,
+          stableRoutineEvidenceCount: mealTextHandled.stableRoutineEvidenceCount,
+        },
       });
       await appendTurn(input.userId, input.rawText || '', mealTxtOut);
       return { ok: true, replyMessages: [{ type: 'text', text: mealTxtOut }], internal: { intentType: 'meal_text', responseMode: 'record' } };

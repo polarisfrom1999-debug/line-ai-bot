@@ -39,7 +39,7 @@ function runObservationLayerTests() {
     },
     expect: (sel) => [
       { ok: sel.observation_type === 'past_effort_link', label: 'past_effort_link' },
-      { ok: /流れ|背景|やった分/.test(sel.observation_text), label: 'links_flow' }
+      { ok: /体重|歩数|流れ/.test(sel.observation_hint), label: 'hint_links_context' }
     ]
   });
 
@@ -52,8 +52,8 @@ function runObservationLayerTests() {
       relationshipPhase: PHASES.P2
     },
     expect: (sel) => [
-      { ok: sel.observation_type === 'stable_rhythm', label: 'stable_rhythm' },
-      { ok: /安定|リズム|無理に変え/.test(sel.observation_text), label: 'respect_routine' }
+      { ok: sel.observation_type === 'stable_breakfast_candidate', label: 'stable_breakfast_candidate' },
+      { ok: /白湯|卵|朝/.test(sel.observation_hint), label: 'hint_breakfast' }
     ]
   });
 
@@ -67,7 +67,7 @@ function runObservationLayerTests() {
     },
     expect: (sel) => [
       { ok: sel.observation_type === 'meal_balance', label: 'meal_balance' },
-      { ok: /ご褒美|責めず|次/.test(sel.observation_text), label: 'non_judgmental' }
+      { ok: /ご褒美|軽め|次/.test(sel.observation_hint), label: 'hint_non_judgmental' }
     ]
   });
 
@@ -81,7 +81,7 @@ function runObservationLayerTests() {
     },
     expect: (sel) => [
       { ok: sel.observation_type === 'emotional_context', label: 'emotional_context' },
-      { ok: !/カロリー|kcal/.test(sel.observation_text), label: 'no_calorie_pivot' }
+      { ok: !/カロリー|kcal/.test(sel.observation_hint), label: 'no_calorie_pivot' }
     ]
   });
 
@@ -95,7 +95,7 @@ function runObservationLayerTests() {
     },
     expect: (sel) => [
       { ok: sel.observation_type === 'body_awareness', label: 'body_awareness' },
-      { ok: /変化|気づ|ペース/.test(sel.observation_text), label: 'body_positive' }
+      { ok: /身体|変化|気づ/.test(sel.observation_hint), label: 'hint_body' }
     ]
   });
 
