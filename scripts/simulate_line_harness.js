@@ -19,6 +19,8 @@ const {
   evaluateUshigomeScenarioQuality,
   evaluateGlobalUshigomeFails,
 } = require('./lib/simulate_line_ushigome_quality');
+const { evaluateMovementScenarioQuality } = require('./lib/simulate_line_movement_quality');
+const movementGoalCompanionService = require('../services/movement_goal_companion_service');
 const ushigomeConversationStyleService = require('../services/ushigome_conversation_style_service');
 
 function parseOnlyArg() {
@@ -82,6 +84,22 @@ function selfTestForbiddenDetector() {
   const h = forbiddenPhraseHits(probe);
   if (!h.includes('記録しました')) {
     throw new Error('[simulate:line] forbidden detector self-test failed');
+  }
+}
+
+async function runMovementCompanionSelfTest() {
+  if (!movementGoalCompanionService.isMovementGoalCompanionText('腰が固いのでストレッチを教えて')) {
+    throw new Error('[simulate:line] movement companion detect failed');
+  }
+  const hints = movementGoalCompanionService.buildMovementGoalHints({
+    userText: '足がしびれて歩けない',
+    conversationMode: 'movement_goal_companion',
+  });
+  if (!hints.safe_self_care_candidates?.length || !hints.ushigomeStyle) {
+    throw new Error('[simulate:line] movement hints incomplete');
+  }
+  if (!hints.safety_assessment?.needsMedicalFirst) {
+    throw new Error('[simulate:line] movement red flag safety expected');
   }
 }
 
@@ -244,7 +262,7 @@ async function runScenario(def) {
       interpretMode: interp.primary_conversation_mode,
       replyDepth: interp.reply_depth,
       allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase),
-      skipDirectEchoCheck: Boolean(exp.ushigomeScenario),
+      skipDirectEchoCheck: Boolean(exp.ushigomeScenario || exp.movementScenario),
     });
     if (qViol.length) {
       errors.push(`step${i} reply_quality: ${qViol.join('; ')}`);
@@ -264,6 +282,18 @@ async function runScenario(def) {
       const merged = [...new Set([...uViol, ...gViol])];
       if (merged.length) {
         errors.push(`step${i} ushigome_quality: ${merged.join('; ')}`);
+      }
+    }
+
+    if (exp.movementScenario) {
+      const qualityUserText = st.qualityUserText != null ? st.qualityUserText : st.text;
+      const mViol = evaluateMovementScenarioQuality({
+        userText: qualityUserText,
+        reply: out.reply,
+        scenarioId: exp.movementScenario,
+      });
+      if (mViol.length) {
+        errors.push(`step${i} movement_quality: ${mViol.join('; ')}`);
       }
     }
 
@@ -605,6 +635,60 @@ function allScenarios() {
       }
     },
     ...ushigomeScenarios(),
+    ...movementGoalScenarios(),
+  ];
+}
+
+function movementGoalScenarios() {
+  return [
+    {
+      id: 'movement_stretch_hip',
+      group: 'movement',
+      title: '腰が固いのでストレッチを教えて',
+      text: '腰が固いのでストレッチを教えてください',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'stretch_request', forbidden: false, nonEmptyReply: true },
+    },
+    {
+      id: 'movement_mobility_hip',
+      group: 'movement',
+      title: '股関節の可動域を広げたい',
+      text: '股関節の可動域を広げたいです',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'mobility_hip', forbidden: false, nonEmptyReply: true },
+    },
+    {
+      id: 'movement_bodyweight',
+      group: 'movement',
+      title: '家でできる自重トレ',
+      text: '家でできる自重トレを教えてください',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'bodyweight_home', forbidden: false, nonEmptyReply: true },
+    },
+    {
+      id: 'movement_squat_pain_form',
+      group: 'movement',
+      title: '膝が痛いけどスクワットのフォーム',
+      text: '膝が痛いけどスクワットのフォームを知りたいです',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'squat_form_pain', forbidden: false, nonEmptyReply: true },
+    },
+    {
+      id: 'movement_goal',
+      group: 'movement',
+      title: '目標達成のために運動を続けたい',
+      text: '目標を達成するために運動を続けたいです',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'goal_continue', forbidden: false, nonEmptyReply: true },
+    },
+    {
+      id: 'movement_red_flag',
+      group: 'movement',
+      title: '足がしびれて歩けない',
+      text: '足がしびれて歩けません',
+      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
+      expect: { intentType: 'movement_goal_companion', movementScenario: 'red_flag_numbness', forbidden: false, nonEmptyReply: true },
+    },
   ];
 }
 
@@ -639,6 +723,7 @@ async function main() {
   const runUshigome = onlyWants(only, 'ushigome');
 
   selfTestForbiddenDetector();
+  await runMovementCompanionSelfTest();
   await runUshigomeStyleSelfTest();
   await runLabNormalizerSelfTests();
 

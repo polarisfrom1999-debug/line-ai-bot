@@ -1794,15 +1794,17 @@ async function maybeHandleLabSaveAll(input, shortMemory) {
 async function maybeHandleSportsConsultation(input) {
   if (input?.messageType !== 'text') return null;
   const text = normalizeText(input?.rawText || '');
+  const movementGoalCompanionService = require('./movement_goal_companion_service');
   const intent = sportsConsultationService.detectSportsIntent(text);
-  if (!intent) return null;
+  if (!intent && !movementGoalCompanionService.isMovementGoalCompanionText(text)) return null;
 
   return {
-    replyText: sportsConsultationService.buildSportsReply(intent),
+    replyText: '',
     internal: {
-      intentType: `sports_${intent}`,
-      responseMode: 'guided'
-    }
+      intentType: 'movement_goal_companion',
+      sportsSubIntent: intent || 'general_movement',
+      responseMode: 'conversation_first',
+    },
   };
 }
 
@@ -2163,7 +2165,7 @@ async function appendTurn(userId, userText, replyText) {
 
 function shouldSkipHealthAggregationForIntent(intentType = '') {
   const t = normalizeText(intentType || '');
-  return /^(emotional_support|life_companion|correction_feedback|exercise_feedback)$/.test(t);
+  return /^(emotional_support|life_companion|correction_feedback|exercise_feedback|movement_goal_companion)$/.test(t);
 }
 
 const NATURAL_REPLY_MODES = new Set([
@@ -2179,6 +2181,7 @@ const NATURAL_REPLY_MODES = new Set([
   'lab_comparison',
   'exercise_record',
   'body_condition_note',
+  'movement_goal_companion',
 ]);
 
 function inferNaturalConversationMode(intentType) {
@@ -3704,7 +3707,26 @@ async function orchestrateConversation(input) {
         replyMessages: [{ type: 'text', text: lifeOut }],
         internal: { intentType: 'life_companion', responseMode: 'conversation_first' }
       };
-    } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record', 'meal_record', 'exercise_or_body_feedback'].includes(conversationState.route)) {
+    } else if (conversationState?.primary_conversation_mode === 'movement_goal_companion') {
+      console.info('[conversation_state_early_return]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        route: 'movement_goal_companion',
+        conversation_mode: 'movement_goal_companion',
+        reason: 'line_natural_reply_generator',
+      });
+      const mgOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'movement_goal_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: { recordKind: 'movement_goal_companion' },
+      });
+      await appendTurn(input.userId, input.rawText || '', mgOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: mgOut }],
+        internal: { intentType: 'movement_goal_companion', responseMode: 'conversation_first' },
+      };
+    } else if (conversationState?.route && ['lab_followup', 'meal_correction', 'body_condition_note', 'exercise_record', 'meal_record', 'exercise_or_body_feedback', 'movement_goal_companion'].includes(conversationState.route)) {
       forcedConversationRoute = conversationState.route;
     }
 
@@ -4983,12 +5005,16 @@ async function orchestrateConversation(input) {
 
     const sportsHandled = await maybeHandleSportsConsultation(input);
     if (sportsHandled) {
-      const sportsOut = await withSurfaceReply(input, sportsHandled.replyText, { recentMessages, longMemory }, 'sports_consultation');
+      const sportsOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'movement_goal_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: { recordKind: 'movement_goal_companion', sportsSubIntent: sportsHandled.internal?.sportsSubIntent },
+      });
       await appendTurn(input.userId, input.rawText || '', sportsOut);
       return {
         ok: true,
         replyMessages: [{ type: 'text', text: sportsOut }],
-        internal: sportsHandled.internal
+        internal: { ...sportsHandled.internal, intentType: 'movement_goal_companion', responseMode: 'conversation_first' },
       };
     }
 

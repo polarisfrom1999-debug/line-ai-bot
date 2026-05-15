@@ -2,6 +2,7 @@
 
 const topicShiftDetectorService = require('./topic_shift_detector_service');
 const labContextContinuationService = require('./lab_context_continuation_service');
+const movementGoalCompanionService = require('./movement_goal_companion_service');
 
 const ERROR_FEEDBACK_RE =
   /(間違えて|間違い|違います|ちがう|そうじゃない|今の違う|それ違う|読み違い|変です|おかしい)/;
@@ -53,6 +54,10 @@ function detectPrimaryMode(text = '') {
 
   if (BODY_FEEDBACK_RE.test(safe) || /ストレッチ.*(楽|軽|伸び)|痛.*(楽|軽|よくな)/.test(safe)) {
     return 'exercise_feedback';
+  }
+
+  if (movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
+    return 'movement_goal_companion';
   }
 
   if (/食欲がない|食べられません|あまり食べられ|頭痛があって|便が出て|便秘|便通|寝不足|眠れない|眠い|だるい|頭痛/.test(safe)) {
@@ -126,6 +131,7 @@ function mapModeToRoute(mode) {
   if (mode === 'lab_followup' || mode === 'lab_date_inventory' || mode === 'lab_comparison') return 'lab_followup';
   if (mode === 'body_condition_note') return 'body_condition_note';
   if (mode === 'exercise_record') return 'exercise_record';
+  if (mode === 'movement_goal_companion') return 'movement_goal_companion';
   if (mode === 'pending_answer') return 'pending_answer';
   return 'normal_chat';
 }
@@ -138,6 +144,7 @@ function surfaceIntentForMode(mode) {
   if (mode === 'assistant_error_feedback') return 'assistant_error_feedback';
   if (mode === 'lab_date_inventory') return 'lab_date_inventory';
   if (mode === 'lab_comparison') return 'lab_comparison';
+  if (mode === 'movement_goal_companion') return 'movement_goal_companion';
   return mode;
 }
 
@@ -219,6 +226,7 @@ function interpretConversationState({
       'meal_text_record',
       'reward_food',
       'exercise_feedback',
+      'movement_goal_companion',
       'assistant_error_feedback',
       'pending_answer'
     ].includes(mode),

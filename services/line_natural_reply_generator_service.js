@@ -4,6 +4,7 @@ const aiChatService = require('./ai_chat_service');
 const replyContextBuilder = require('./reply_context_builder_service');
 const mealTextManualRecordService = require('./meal_text_manual_record_service');
 const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
+const movementGoalCompanionService = require('./movement_goal_companion_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -128,6 +129,14 @@ function modeSystemInstructions(conversationMode, replyDepth) {
       '医療診断はしない。強い症状は受診を短く示す。',
     ].join('\n');
   }
+  if (cm === 'movement_goal_companion') {
+    return [
+      '会話モード: movement_goal_companion（可動域・ストレッチ・自重・目標）',
+      '診断・治療断定はしない。赤旗・強い痛みは医療相談を先に。',
+      '安全なセルフケア候補と今日の小さな一歩を1つ。2〜4文。',
+      '痛みがある時は回数・強度を増やさない。数値・カロリー行は書かない。',
+    ].join('\n');
+  }
   return [
     `会話モード: ${cm || 'normal'}`,
     `reply_depth: ${replyDepth || 'normal'}`,
@@ -226,6 +235,38 @@ function fallbackProse(ctx) {
       return '体重が増えたと感じているんですね。責める必要はなく、塩分・水分・睡眠・便通などの候補も一緒に見ていきましょう。';
     }
     return 'いまの体調、受け取りました。無理に追い込まず、今日できる小さな一手だけにしましょう。';
+  }
+
+  if (cm === 'movement_goal_companion') {
+    const mg = ctx.movementGoalHints || movementGoalCompanionService.buildMovementGoalHints({
+      userText: ut,
+      conversationMode: cm,
+      userContext: ctx.userContext,
+    });
+    if (mg.safety_assessment?.needsMedicalFirst) {
+      return [
+        'つらい症状が続いているんですね。',
+        'まずは医療機関への相談を優先しましょう。ここから。では病名の断定はせず、安全に休む・負担を減らすことだけ一緒に整理します。',
+        '痛みが増えたら、無理に動かさず教えてください。',
+      ].join('\n');
+    }
+    if (/可動域|股関節/.test(ut)) {
+      return '可動域を広げたい気持ち、受け取りました。痛みがなければ、大きく頑張るより股関節とお尻をやさしくゆるめる流れからで十分です。今日は1〜2種目だけに絞りましょう。';
+    }
+    if (/ストレッチ|伸ば/.test(ut)) {
+      return 'ストレッチを整えたいんですね。反らしすぎず、呼吸を止めない範囲で30秒×1〜2セットが目安です。痛みが増えたらそこで止めて大丈夫です。';
+    }
+    if (/自重|腕立て|腹筋|プランク/.test(ut)) {
+      return '家でできる自重トレ、いいですね。膝つきや壁押しなど負荷を下げた版から、5回だけフォーム優先で十分です。痛みが出たら回数は増やさなくて大丈夫です。';
+    }
+    if (/目標|達成|続け/.test(ut)) {
+      const goal = mg.goal_context ? `「${mg.goal_context}」` : '目標';
+      return `${goal}に向けて続けたい気持ち、受け取りました。今日は5分・肩回しだけでも十分な一歩です。できたら「できた」で送ってもらえれば大丈夫です。`;
+    }
+    if (/痛|しびれ/.test(ut)) {
+      return '痛みや違和感があるんですね。まず痛みの様子を大事にし、回数より中止の目安を決めましょう。やさしいストレッチ1つだけなら、増えたら止めて大丈夫です。';
+    }
+    return '身体を整えたい気持ち、受け取りました。今日はやさしい版を1つだけ。無理に種目や回数を増やさなくて大丈夫です。';
   }
 
   if (cm === 'exercise_record' || fr.recordKind === 'exercise_record') {
@@ -415,12 +456,25 @@ function isAcceptableProse(ctx, prose) {
       && !/^なるほど。今の感じは受け取れた/.test(text)
       && !/(記録しました|いい流れです|ここまでの流れ)/.test(text);
   }
+  if (cm === 'movement_goal_companion') {
+    const ut = String(ctx.userText || '');
+    const mg = ctx.movementGoalHints || {};
+    if (/^(なるほど。今の感じは受け取れた|記録しました|いい流れです)/.test(text)) return false;
+    if (/(診断|治療|処方|必ず治る|病名は)/.test(text)) return false;
+    if (mg.safety_assessment?.needsMedicalFirst && !/(医療|受診|相談|病院)/.test(text)) return false;
+    if (/痛|しびれ/.test(ut) && /(もっと|増や|追い込|頑張って).*(回|運動|スクワット)/.test(text)) return false;
+    const hasCue = /(ストレッチ|可動域|痛|腰|膝|肩|目標|整え|やさし|中止|フォーム|セルフ|自重|医療|相談)/.test(text);
+    return text.length >= 12 && hasCue;
+  }
   return true;
 }
 
 async function generateProse(ctx) {
   const modeBlock = modeSystemInstructions(ctx.conversationMode, ctx.replyPolicy?.replyDepth);
   const ushigomeBlock = ushigomeConversationStyleService.formatHintsForPrompt(ctx.ushigomeStyle);
+  const movementBlock = ctx.movementGoalHints
+    ? movementGoalCompanionService.formatMovementHintsForPrompt(ctx.movementGoalHints)
+    : '';
   const hints = (ctx.observationHints || [])
     .map((h) => (typeof h === 'string' ? h : h?.hint))
     .filter(Boolean)
@@ -437,6 +491,7 @@ async function generateProse(ctx) {
 
   const hiddenContext = [
     '[ここから。自然返信]',
+    movementBlock,
     ushigomeBlock,
     modeBlock,
     hints.length ? `観察ヒント（使うかは文脈判断・そのまま貼らない）: ${hints.join(' / ')}` : null,

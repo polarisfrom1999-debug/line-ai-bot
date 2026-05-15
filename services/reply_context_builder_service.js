@@ -1,6 +1,7 @@
 'use strict';
 
 const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
+const movementGoalCompanionService = require('./movement_goal_companion_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -38,6 +39,20 @@ function buildReplyContext(params = {}) {
       userContext,
     });
 
+  const useMovementHints =
+    conversationMode === 'movement_goal_companion'
+    || movementGoalCompanionService.isMovementGoalCompanionText(userText);
+
+  const movementGoalHints = params.movementGoalHints && typeof params.movementGoalHints === 'object'
+    ? params.movementGoalHints
+    : useMovementHints
+      ? movementGoalCompanionService.buildMovementGoalHints({
+        userText,
+        conversationMode,
+        userContext,
+      })
+      : null;
+
   return {
     userText,
     conversationMode,
@@ -53,6 +68,7 @@ function buildReplyContext(params = {}) {
     observationHints,
     replyPolicy,
     ushigomeStyle,
+    movementGoalHints,
   };
 }
 
