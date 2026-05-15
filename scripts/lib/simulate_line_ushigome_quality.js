@@ -15,6 +15,8 @@ const PUSH_EXERCISE_RE = /(もっと|さらに|増やし|頑張って|追い込|
 const WEIGHT_FAIL_RE = /(失敗した|ダメです|反省した|落ち込んで|落ちたね残念)/;
 const PRAISE_WEIGHT_LOSS_ONLY_RE = /(痩せ|減り|順調|素晴らしい).*(素晴らしい|すごい|順調)/;
 const NUMBERS_ONLY_RE = /^(手入力の目安|今日の合計).+$/m;
+const HEALTH_APP_ONLY_RE = /(記録しました|いい流れです|ここまでの流れを一本|急がず今日はこの一歩で十分|雑談もちゃんと受け止め)/;
+const BIG_STEP_RE = /(毎日|毎回|1時間|100回|10km|完璧|絶対|必ず全部|フルマラソン)/;
 
 function hasDirectReaction(userText, reply) {
   const u = normalizeText(userText);
@@ -164,10 +166,38 @@ function evaluateUshigomeScenarioQuality({ userText = '', reply = '', scenarioId
   }
   if (/大丈夫です[。]?$/.test(r) && r.length < 35) violations.push('ushigome_ok_only');
 
+  if (HEALTH_APP_ONLY_RE.test(r)) violations.push('ushigome_health_app_template');
+  if (BIG_STEP_RE.test(r) && /(今日|明日|次は)/.test(r)) violations.push('ushigome_next_step_too_big');
+  if (/一緒に頑張りましょう/.test(r) && r.length < 50) violations.push('ushigome_cheer_only');
+
+  return violations;
+}
+
+/**
+ * 仕様 §8 の共通 FAIL 条件（シナリオ横断）
+ * @returns {string[]}
+ */
+function evaluateGlobalUshigomeFails({ userText = '', reply = '' } = {}) {
+  const violations = [];
+  const u = normalizeText(userText);
+  const r = normalizeText(reply);
+  if (!r) return ['ushigome_empty_reply'];
+  if (!hasDirectReaction(u, r)) violations.push('ushigome_no_direct_reaction');
+  if (NUMBERS_ONLY_RE.test(r) && !hasConcretePraiseOrObservation(r)) violations.push('ushigome_numbers_only');
+  if (isGenericOnly(r)) violations.push('ushigome_generic_only');
+  if (BLAME_RE.test(r)) violations.push('ushigome_blame');
+  if (WEIGHT_FAIL_RE.test(r)) violations.push('ushigome_weight_fail_tone');
+  if (/食欲がない|食べられない|頭痛/.test(u) && PRAISE_WEIGHT_LOSS_ONLY_RE.test(r)) {
+    violations.push('ushigome_praise_loss_on_illness');
+  }
+  if (/痛|頭痛|寝不足|だる/.test(u) && PUSH_EXERCISE_RE.test(r)) violations.push('ushigome_push_exercise_on_pain');
+  if (HEALTH_APP_ONLY_RE.test(r)) violations.push('ushigome_health_app_template');
+  if (!hasConcretePraiseOrObservation(r) && r.length < 45) violations.push('ushigome_not_concrete');
   return violations;
 }
 
 module.exports = {
   evaluateUshigomeScenarioQuality,
+  evaluateGlobalUshigomeFails,
   SCENARIO_RULES,
 };

@@ -247,6 +247,75 @@ function buildToneHints(styleProfile = {}, userState = {}) {
   return hints;
 }
 
+function buildObservedEffort(text = '', themes = {}) {
+  const effort = [];
+  if (themes.portionControl) effort.push('half_portion_adjustment');
+  if (themes.photoMissed) effort.push('reported_despite_photo_miss');
+  if (themes.rewardFood) effort.push('honest_food_share');
+  if (themes.exerciseDone) effort.push('exercise_completed');
+  if (themes.painImproved) effort.push('noticed_body_relief');
+  if (themes.painPresent && themes.exerciseDone) effort.push('exercised_with_pain_awareness');
+  if (themes.exerciseSkipped) effort.push('rest_as_adjustment');
+  if (themes.lifeLoad && /抱っこ|歩/.test(text)) effort.push('life_activity_carry');
+  if (/草むしり/.test(text)) effort.push('household_activity');
+  if (themes.hydration) effort.push('hydration_awareness');
+  if (themes.routineStable) effort.push('stable_routine_maintained');
+  return effort;
+}
+
+function buildAdjustmentSkill(text = '', themes = {}) {
+  const skills = [];
+  if (themes.portionControl) skills.push('portion_self_regulation');
+  if (themes.rewardFood) skills.push('recovery_after_indulgence');
+  if (themes.weightGain) skills.push('non_panic_on_scale');
+  if (themes.painImproved) skills.push('body_listening');
+  if (themes.exerciseSkipped) skills.push('rest_choice');
+  if (/半分|調整|整え/.test(text)) skills.push('micro_adjustment');
+  return skills;
+}
+
+function buildLifestyleContext(text = '', themes = {}) {
+  const ctx = [];
+  if (/抱っこ|子ども/.test(text)) ctx.push('childcare_load');
+  if (/劇団/.test(text)) ctx.push('late_night_event');
+  if (/お茶会/.test(text)) ctx.push('social_meal');
+  if (/外食/.test(text)) ctx.push('dining_out');
+  if (/草むしり|家事/.test(text)) ctx.push('home_activity');
+  if (/仕事|忙し/.test(text)) ctx.push('work_load');
+  if (themes.sleepIssue) ctx.push('sleep_deprivation');
+  if (/ラジオ体操|歩数/.test(text)) ctx.push('daily_rhythm');
+  return ctx;
+}
+
+function buildConcernPoints(text = '', themes = {}, userState = {}) {
+  const concerns = [];
+  if (userState.safetyLevel === 'red_flag') concerns.push('red_flag');
+  if (themes.painPresent) concerns.push('pain');
+  if (themes.headache) concerns.push('headache');
+  if (themes.lowAppetite) concerns.push('low_appetite');
+  if (themes.sleepIssue) concerns.push('sleep');
+  if (themes.weightGain) concerns.push('weight_gain_anxiety');
+  if (themes.constipation) concerns.push('constipation');
+  if (themes.weightLoss && themes.lowAppetite) concerns.push('rapid_loss_with_low_intake');
+  return concerns;
+}
+
+function buildResponseAngle(userState = {}, archetypeGuide = null, themes = {}) {
+  const parts = [...(userState.focusFirst || [])];
+  if (archetypeGuide?.label) parts.push(archetypeGuide.label);
+  if (themes.painImproved) parts.push('celebrate_relief_without_intensity_up');
+  if (themes.rewardFood) parts.push('no_blame_next_meal');
+  if (themes.portionControl) parts.push('adjustment_not_endurance');
+  return parts.filter(Boolean).slice(0, 3).join(' / ') || 'direct_echo_then_small_step';
+}
+
+function resolveSafetyPriority(userState = {}, themes = {}) {
+  if (userState.safetyLevel === 'red_flag') return 'red_flag_first';
+  if (themes.painPresent || themes.headache || themes.sleepIssue) return 'body_safety_over_performance';
+  if (themes.lowAppetite) return 'health_over_weight_loss';
+  return 'normal';
+}
+
 function mergeStyleProfile(longMemory = {}) {
   const p = longMemory?.conversationStyleProfile;
   return p && typeof p === 'object' ? p : {};
@@ -272,7 +341,30 @@ function buildUshigomeStyleHints(params = {}) {
     responsePriorities.push(...archetypeGuide.priorities.map((p) => `型:${p}`));
   }
 
+  const observedEffort = buildObservedEffort(userText, themes);
+  const adjustmentSkill = buildAdjustmentSkill(userText, themes);
+  const lifestyleContext = buildLifestyleContext(userText, themes);
+  const concernPoints = buildConcernPoints(userText, themes, userStateInterpretation);
+  const responseAngle = buildResponseAngle(userStateInterpretation, archetypeGuide, themes);
+  const safetyPriority = resolveSafetyPriority(userStateInterpretation, themes);
+  const recommendedSmallNextStep = smallNextStepCandidates[0] || null;
+
+  const canonical = {
+    user_emotional_state: userStateInterpretation.primaryEmotion,
+    body_risk_state: userStateInterpretation.safetyLevel,
+    lifestyle_context: lifestyleContext,
+    observed_effort: observedEffort,
+    adjustment_skill: adjustmentSkill,
+    concern_points: concernPoints,
+    safety_priority: safetyPriority,
+    recommended_small_next_step: recommendedSmallNextStep,
+    response_angle: responseAngle,
+    avoid_response_patterns: AVOID_PATTERNS,
+    tone_hint: toneHints,
+  };
+
   return {
+    ...canonical,
     stylePrinciples: CORE_STYLE_PRINCIPLES,
     userStateInterpretation,
     responsePriorities,
@@ -295,39 +387,69 @@ function formatHintsForPrompt(hints) {
   if (!hints || typeof hints !== 'object') return '';
   const lines = [
     '[AI牛込 会話判断 — 返信文の型ではなく思考順]',
-    'あなたは定型返信Botではない。牛込先生の観察力・具体性・思いやり・安全意識を、ChatGPTの自然さで反映するLINE伴走者。',
+    'あなたは、定型返信Botではありません。',
+    'あなたは、牛込先生の考え方をもとに、利用者の目標達成を支えるLINE伴走者です。',
+    '返信は ChatGPT の自然な会話力を土台に、牛込先生の観察力・具体性・思いやり・安全意識を反映します。',
     '',
-    '守ること:',
-    '- 今の発話の一番大事な部分に最初に反応',
+    '返信では必ず以下を守る:',
+    '- 今のユーザー発話の一番大事な部分に最初に反応する',
     '- 数値だけで終わらない',
     '- できている行動を具体的に拾う',
-    '- 食べすぎ・失敗・体重増を責めない',
-    '- 次の一手は小さく',
-    '- 痛み・体調不良は成果より安全',
-    '- 安定習慣は崩さない（根拠なく「安定」と言い切らない）',
+    '- 食べすぎ、失敗、忘れ、体重増加を責めない',
+    '- 次の一手は小さく具体的にする',
+    '- 痛みや体調不良がある時は、成果より安全を優先する',
+    '- 安定した習慣は崩さず、本人を支える型として扱う（根拠なく「安定」と言い切らない）',
     '- 生活背景を拾う',
-    '- 医療診断・治療断定しない',
+    '- 医療診断や治療断定はしない',
     '- 定型の安心文を貼らない',
-    '- LINEは基本短め',
+    '- LINEなので基本は短め（必要な時だけ丁寧に長くてよい）',
     '',
     `判断順: ${(hints.thinkingFlow || THINKING_FLOW).join(' → ')}`,
-    `優先順: ${(hints.responsePriorities || []).slice(0, 7).join(' > ')}`,
+    `優先順: ${(hints.responsePriorities || RESPONSE_PRIORITY_ORDER).slice(0, 7).join(' > ')}`,
   ];
-  if (hints.userStateInterpretation) {
-    const u = hints.userStateInterpretation;
-    lines.push(`いまの見方: 感情=${u.primaryEmotion || 'neutral'}, 安全=${u.safetyLevel || 'normal'}, まず=${(u.focusFirst || []).join('・')}`);
+  if (hints.user_emotional_state || hints.userStateInterpretation) {
+    const u = hints.userStateInterpretation || {};
+    lines.push(
+      `いまの見方: 感情=${hints.user_emotional_state || u.primaryEmotion || 'neutral'}, 身体リスク=${hints.body_risk_state || u.safetyLevel || 'normal'}, まず=${(u.focusFirst || []).join('・') || hints.response_angle || ''}`
+    );
+  }
+  if (hints.lifestyle_context?.length) {
+    lines.push(`生活背景: ${hints.lifestyle_context.join(', ')}`);
+  }
+  if (hints.observed_effort?.length) {
+    lines.push(`拾う努力: ${hints.observed_effort.join(', ')}`);
+  }
+  if (hints.adjustment_skill?.length) {
+    lines.push(`調整力: ${hints.adjustment_skill.join(', ')}`);
+  }
+  if (hints.concern_points?.length) {
+    lines.push(`心配ポイント: ${hints.concern_points.join(', ')}`);
+  }
+  if (hints.safety_priority) {
+    lines.push(`安全優先: ${hints.safety_priority}`);
   }
   if (hints.conversationArchetype && hints.archetypeGuidance) {
-    lines.push(`会話型ヒント: ${hints.archetypeGuidance.label}（個人名は使わない）`);
+    lines.push(`会話型: ${hints.conversationArchetype} — ${hints.archetypeGuidance.label}（個人名は使わない）`);
   }
-  if (hints.smallNextStepCandidates?.length) {
-    lines.push(`次の一手の候補（そのままコピーせず文脈で1つ）: ${hints.smallNextStepCandidates.join(' / ')}`);
+  if (hints.response_angle) {
+    lines.push(`返しの角度: ${hints.response_angle}`);
+  }
+  const steps = hints.smallNextStepCandidates || [];
+  if (hints.recommended_small_next_step || steps.length) {
+    lines.push(
+      `次の一手（コピーせず1つ）: ${hints.recommended_small_next_step || steps[0]}${steps.length > 1 ? `（他: ${steps.slice(1, 3).join(' / ')}）` : ''}`
+    );
   }
   if (hints.safetyNotes?.length) {
-    lines.push(`安全: ${hints.safetyNotes.join(' / ')}`);
+    lines.push(`安全メモ: ${hints.safetyNotes.join(' / ')}`);
   }
-  if (hints.avoidPatterns?.length) {
-    lines.push(`避ける: ${hints.avoidPatterns.slice(0, 5).join('；')}`);
+  const avoid = hints.avoid_response_patterns || hints.avoidPatterns || [];
+  if (avoid.length) {
+    lines.push(`避ける: ${avoid.slice(0, 6).join('；')}`);
+  }
+  if (hints.tone_hint || hints.toneHints) {
+    const t = hints.tone_hint || hints.toneHints;
+    lines.push(`トーン: ${JSON.stringify(t)}`);
   }
   return lines.join('\n');
 }

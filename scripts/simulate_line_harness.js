@@ -15,7 +15,10 @@ const contextMemoryService = require('../services/context_memory_service');
 const dailyNutritionSummaryService = require('../services/daily_nutrition_summary_service');
 const { runObservationLayerTests } = require('./simulate_line_observation_layer');
 const { evaluateReplyQuality, forbiddenPhraseHits } = require('./lib/simulate_line_reply_quality');
-const { evaluateUshigomeScenarioQuality } = require('./lib/simulate_line_ushigome_quality');
+const {
+  evaluateUshigomeScenarioQuality,
+  evaluateGlobalUshigomeFails,
+} = require('./lib/simulate_line_ushigome_quality');
 const ushigomeConversationStyleService = require('../services/ushigome_conversation_style_service');
 
 function parseOnlyArg() {
@@ -89,6 +92,12 @@ async function runUshigomeStyleSelfTest() {
   });
   if (!Array.isArray(hints.stylePrinciples) || hints.stylePrinciples.length < 5) {
     throw new Error('[simulate:line] ushigome style: stylePrinciples missing');
+  }
+  if (!hints.user_emotional_state || !hints.body_risk_state) {
+    throw new Error('[simulate:line] ushigome style: canonical judgment fields missing');
+  }
+  if (!Array.isArray(hints.avoid_response_patterns) || !hints.tone_hint) {
+    throw new Error('[simulate:line] ushigome style: avoid_response_patterns or tone_hint missing');
   }
   if (!hints.userStateInterpretation?.primaryEmotion) {
     throw new Error('[simulate:line] ushigome style: userStateInterpretation missing');
@@ -242,13 +251,19 @@ async function runScenario(def) {
     }
 
     if (exp.ushigomeScenario) {
+      const qualityUserText = st.qualityUserText != null ? st.qualityUserText : st.text;
       const uViol = evaluateUshigomeScenarioQuality({
-        userText: st.qualityUserText != null ? st.qualityUserText : st.text,
+        userText: qualityUserText,
         reply: out.reply,
         scenarioId: exp.ushigomeScenario,
       });
-      if (uViol.length) {
-        errors.push(`step${i} ushigome_quality: ${uViol.join('; ')}`);
+      const gViol = evaluateGlobalUshigomeFails({
+        userText: qualityUserText,
+        reply: out.reply,
+      });
+      const merged = [...new Set([...uViol, ...gViol])];
+      if (merged.length) {
+        errors.push(`step${i} ushigome_quality: ${merged.join('; ')}`);
       }
     }
 
