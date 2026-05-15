@@ -2,10 +2,14 @@
 
 /**
  * Phase G: Movement & Goal Companion — 返信文は作らず判断ヒントのみ。
- * AI牛込 style hints と併用。診断AIにはしない。
+ * condition map / red flag / classifier / selfcare library + AI牛込 style hints。
  */
 
 const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
+const movementConditionMap = require('./movement_condition_map_service');
+const movementRedFlagGuard = require('./movement_red_flag_guard_service');
+const movementSupportClassifier = require('./movement_support_classifier_service');
+const movementSelfcareLibrary = require('./movement_selfcare_library_service');
 const painSupportService = require('./pain_support_service');
 
 const TOPIC = {
@@ -14,18 +18,23 @@ const TOPIC = {
   BODYWEIGHT: 'bodyweight',
   GOAL_SUPPORT: 'goal_support',
   PAIN_CARE: 'pain_care',
-  SPORTS_FORM: 'sports_form',
+  SPORTS_OVERUSE: 'sports_overuse',
+  MOVEMENT_FEEDBACK: 'movement_feedback',
   GENERAL: 'general_movement',
 };
 
 const MOVEMENT_AVOID = [
   '診断名の断定・治療指示',
+  '赤旗にセルフケア・筋トレを提案',
   '痛みがあるのに回数・強度を増やす提案',
-  '赤旗疑いでセルフケアだけで終わる',
+  '回数・強さ・中止条件なしの運動提案',
+  '「病院へ」だけで終わる（安全な一歩を添える）',
   '「大丈夫です」「無理なく」だけで具体がない',
   '数値・カロリー中心の返答',
-  '毎回同じ締め・定型安心文',
 ];
+
+const MOVEMENT_TEXT_RE =
+  /可動域|セルフストレッチ|自重|体幹|ストレッチ|伸ば|ほぐ|筋トレ|メニュー|フォーム|リハビリ|目標|達成|練習していい|シンスプリント|shin|MTSS|脊柱管|狭窄|ぎっくり|五十肩|インピンジ|ヘルニア|坐骨|猫背|側弯|ストレートネック|寝違え|頸肩|肩こり|変形性|アキレス|テニス肘|野球肘|骨粗|捻挫|打撲|骨折|脱臼|転ん|胸が苦|息が苦|排尿|排便|しびれ|歩けない|腰が重|肩が上が|膝が痛|すね|脛|走ると.*痛|ジャンプ.*痛|草むしり.*腰|楽になり|伸びた|動きやす|腰痛と/;
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -34,96 +43,34 @@ function normalizeText(v) {
 function isMovementGoalCompanionText(text = '') {
   const safe = normalizeText(text);
   if (!safe) return false;
-  if (/やった|できた|回しました|分しました|記録しました|楽になり|伸びた感じ|痛みが減/.test(safe)) {
-    return false;
+  if (/記録しました|回しました|分しました/.test(safe) && /やった|できた/.test(safe)) return false;
+  if (/楽になり|伸びた感じ|痛みが減った/.test(safe) && !/教えて|メニュー|どうしたら/.test(safe)) {
+    return movementSupportClassifier.isMovementFeedback(safe);
   }
-  if (/可動域|セルフストレッチ|自重トレ|体幹メニュー|体幹トレ/.test(safe)) return true;
-  if (/ストレッチ.*(教|したい|やり方|メニュー|おすすめ)|伸ばし.*(教|したい|やり方)/.test(safe)) return true;
-  if (/股関節.*可動域|可動域.*広げ/.test(safe)) return true;
-  if (/家で.*(運動|筋トレ|ストレッチ|メニュー)|(?:腰|膝|肩|首|股関節).*(?:ほぐ|伸ば|ストレッチ|整え)/.test(safe)) {
-    return true;
-  }
-  if (/腕立て|腹筋|プランク|自重|スクワット.*(フォーム|やり方)|フォーム.*改善/.test(safe)) return true;
-  if (/目標.*(達成|続|運動|筋トレ)|(?:続け|達成).*(?:目標|夢)/.test(safe)) return true;
-  if (/痛.*(ストレッチ|伸ば|どうしたら)|(?:ストレッチ|伸ば).*(?:痛|つら)/.test(safe)) return true;
-  if (/走り.*(フォーム|改善)|フォーム.*(見て|動画)/.test(safe)) return true;
-  if (/リハビリ|怪我.*(相談|戻)|復帰.*(運動|トレ)/.test(safe)) return true;
-  if (/しびれ|ビリビリ|ピリピリ/.test(safe) && /(足|腰|膝|手|腕|肩|首)/.test(safe)) return true;
-  if (/歩けない|歩けません|体重をかけられない/.test(safe)) return true;
+  if (MOVEMENT_TEXT_RE.test(safe)) return true;
+  if (movementConditionMap.matchConditions(safe).length > 0) return true;
+  if (/家で.*(運動|筋トレ|ストレッチ)|痛.*(ストレッチ|伸ば)/.test(safe)) return true;
   return false;
 }
 
-function detectMovementTopic(text = '') {
+function detectMovementTopic(text = '', classification = {}) {
+  if (classification.conversation_subtype === movementConditionMap.CONV_MODE.MOVEMENT_FEEDBACK) {
+    return TOPIC.MOVEMENT_FEEDBACK;
+  }
+  if (classification.conversation_subtype === movementConditionMap.CONV_MODE.SPORTS_OVERUSE) {
+    return TOPIC.SPORTS_OVERUSE;
+  }
+  if (classification.conversation_subtype === movementConditionMap.CONV_MODE.GOAL_SUPPORT) {
+    return TOPIC.GOAL_SUPPORT;
+  }
   const t = normalizeText(text);
-  if (/目標|達成|続けたい|夢/.test(t)) return TOPIC.GOAL_SUPPORT;
-  if (/可動域|股関節.*広|動きやす/.test(t)) return TOPIC.MOBILITY;
-  if (/自重|腕立て|腹筋|プランク|スクワット/.test(t)) return TOPIC.BODYWEIGHT;
-  if (/フォーム|走り|投球|ジャンプ/.test(t)) return TOPIC.SPORTS_FORM;
-  if (/ストレッチ|伸ば|ほぐ|セルフ/.test(t)) return TOPIC.SELF_STRETCH;
-  if (/痛|しびれ|つら|違和感/.test(t)) return TOPIC.PAIN_CARE;
-  return TOPIC.GENERAL;
-}
-
-function assessMovementSafety(text = '') {
-  let painAnalysis = null;
-  try {
-    painAnalysis = painSupportService.analyzePainText(text);
-  } catch (_e) {
-    painAnalysis = null;
-  }
-  const redFlags = painAnalysis?.red_flags || [];
-  const severity = painAnalysis?.severity || 'mild';
-  const t = normalizeText(text);
-  const needsMedicalFirst =
-    severity === 'urgent'
-    || redFlags.length > 0
-    || /歩けない|歩けません|体重をかけられない|意識が|激しい痛|高熱|しびれが続|力が入らない/.test(t)
-    || (/しびれ|ビリビリ/.test(t) && /歩けない|歩けません/.test(t));
-
-  return {
-    severity,
-    redFlags: redFlags.map((r) => r.label || r.key).filter(Boolean),
-    primaryArea: painAnalysis?.primary_part?.label || painSupportService.detectPainArea(text) || null,
-    needsMedicalFirst,
-    painDetected: Boolean(painAnalysis?.detected || /痛|しびれ/.test(text)),
-  };
-}
-
-function buildSafeSelfCareCandidates(text = '', topic = '', safety = {}, area = '全身') {
-  const candidates = [];
-  const part = area || '全身';
-  if (safety.needsMedicalFirst) {
-    candidates.push('まず医療機関への相談を優先', '今日は強い運動・深いストレッチは控える');
-    return candidates.slice(0, 3);
-  }
-  if (topic === TOPIC.MOBILITY || /可動域/.test(text)) {
-    candidates.push(`${part}を大きく動かさず、やさしい可動域ストレッチ`, '股関節・お尻を一緒にゆるめる（痛みがなければ）', '1〜2種目に絞る');
-  }
-  if (topic === TOPIC.SELF_STRETCH || /ストレッチ|伸ば/.test(text)) {
-    candidates.push(`${part}まわりを反らしすぎず軽く`, '呼吸を止めず30秒×1〜2セット', '痛みが増えたら中止');
-  }
-  if (topic === TOPIC.BODYWEIGHT || /自重|腕立て|腹筋|プランク/.test(text)) {
-    candidates.push('膝つき・壁押しなど負荷を下げた版', '5回だけ・フォーム優先', '痛みが出たら回数より中止');
-  }
-  if (topic === TOPIC.GOAL_SUPPORT) {
-    candidates.push('今日は5分・肩回しだけでも十分', '目標は週単位の小さな一歩に分ける', 'できたら「できた」で報告');
-  }
-  if (topic === TOPIC.PAIN_CARE || safety.painDetected) {
-    candidates.push('痛みが増えない範囲だけ', '冷やす・休む・姿勢を楽にする', 'フォームより中止条件を先に');
-  }
-  if (!candidates.length) {
-    candidates.push('今日は1分・やさしい版だけ', '無理に種目を増やさない');
-  }
-  return [...new Set(candidates)].slice(0, 4);
-}
-
-function buildObservedEffortMovement(text = '', topic = '') {
-  const effort = [];
-  if (/続け|コツコツ|毎日/.test(text)) effort.push('consistency_intent');
-  if (/半分|調整/.test(text)) effort.push('self_regulation');
-  if (/フォーム|姿勢/.test(text)) effort.push('form_awareness');
-  if (topic === TOPIC.GOAL_SUPPORT) effort.push('goal_oriented');
-  return effort;
+  if (/可動域|股関節.*広/.test(t)) return TOPIC.MOBILITY;
+  if (/自重|腕立て|腹筋|プランク|スクワット.*(家|教)/.test(t)) return TOPIC.BODYWEIGHT;
+  if (/ストレッチ|伸ば|ほぐ/.test(t)) return TOPIC.SELF_STRETCH;
+  if (/走る|ジャンプ|すね|シンスプリント|shin/i.test(t)) return TOPIC.SPORTS_OVERUSE;
+  if (/目標|達成|続け/.test(t)) return TOPIC.GOAL_SUPPORT;
+  if (/楽になり|伸び/.test(t)) return TOPIC.MOVEMENT_FEEDBACK;
+  return TOPIC.PAIN_CARE;
 }
 
 /**
@@ -131,49 +78,96 @@ function buildObservedEffortMovement(text = '', topic = '') {
  */
 function buildMovementGoalHints(params = {}) {
   const userText = normalizeText(params.userText || '');
-  const topic = detectMovementTopic(userText);
-  const safety = assessMovementSafety(userText);
-  const area = safety.primaryArea || painSupportService.detectPainArea(userText) || '全身';
-  const safeSelfCareCandidates = buildSafeSelfCareCandidates(userText, topic, safety, area);
+  const longMemory = params.userContext?.longMemory || params.longMemory || {};
+  const classification = movementSupportClassifier.classifyMovementSupport({
+    userText,
+    longMemory,
+  });
+  const topic = detectMovementTopic(userText, classification);
+  const bodyRegion = classification.body_region;
+  const area = painSupportService.detectPainArea(userText) || bodyRegion;
+
   const ushigomeStyle = ushigomeConversationStyleService.buildUshigomeStyleHints({
     userText,
     conversationMode: params.conversationMode || 'movement_goal_companion',
     userContext: params.userContext,
-    longMemory: params.userContext?.longMemory || params.longMemory,
+    longMemory,
   });
 
-  const goalContext = normalizeText(
-    params.userContext?.longMemory?.goal || params.longMemory?.goal || ''
-  );
+  let recommendedMenu = null;
+  let menuCandidates = [];
+  if (!classification.block_self_care) {
+    menuCandidates = movementSelfcareLibrary.pickMenus({
+      bodyRegion,
+      conditionIds: classification.condition_ids,
+      safetyLevel: classification.safety_level,
+      text: userText,
+    });
+    recommendedMenu = menuCandidates[0] || null;
+  }
 
-  const responseAngle = safety.needsMedicalFirst
-    ? 'medical_consultation_first'
-    : topic === TOPIC.GOAL_SUPPORT
-      ? 'small_step_toward_goal'
-      : topic === TOPIC.PAIN_CARE
-        ? 'safety_then_gentle_care'
-        : 'observe_body_then_one_gentle_action';
+  const intensityRule = '痛み0〜10のうち0〜3。気持ちいい〜少し張る。鋭い痛み・しびれ・ズキッは中止';
+  const frequencyRule = classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.SAFE_SELF_CARE
+    ? '慢性こわばりは1日1〜2回、筋トレは週2〜3から'
+    : '痛みが強い日は1日1回・軽い可動域中心';
 
-  const concernPoints = [];
-  if (safety.needsMedicalFirst) concernPoints.push('red_flag_or_severe_pain');
-  if (safety.painDetected) concernPoints.push('pain_present');
-  if (topic === TOPIC.BODYWEIGHT && safety.painDetected) concernPoints.push('load_management');
+  const responseAngle = classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.RED_FLAG
+    ? 'medical_consultation_first_with_empathy'
+    : classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.NEEDS_MEDICAL_CHECK
+      ? 'medical_check_then_rest_only'
+      : classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.MOVEMENT_FEEDBACK
+        ? 'celebrate_change_no_intensity_up'
+        : recommendedMenu
+          ? 'one_menu_with_reps_and_stop'
+          : 'listen_then_small_step';
+
+  const safeSelfCareCandidates = classification.block_self_care
+    ? ['医療機関・専門家への相談を優先', '今日は強いストレッチ・ジャンプ・走る練習は控える']
+    : menuCandidates.map((m) => `${m.purpose}: ${m.reps}`).slice(0, 4);
+
+  if (!safeSelfCareCandidates.length && !classification.block_self_care) {
+    safeSelfCareCandidates.push('今日は1種目・5〜10回だけ', '痛みが増えたら中止');
+  }
 
   return {
     movement_topic: topic,
+    safety_level: classification.safety_level,
+    conversation_subtype: classification.conversation_subtype,
+    body_region: bodyRegion,
     body_area: area,
-    safety_assessment: safety,
+    classification,
+    matched_conditions: classification.matched_conditions,
+    confirm_questions: classification.confirm_questions,
+    caution_notes: classification.caution_notes,
+    recommended_menu: recommendedMenu,
+    menu_candidates: menuCandidates,
+    intensity_rule: intensityRule,
+    frequency_rule: frequencyRule,
     safe_self_care_candidates: safeSelfCareCandidates,
-    goal_context: goalContext || null,
-    observed_effort: buildObservedEffortMovement(userText, topic),
+    goal_context: classification.goal_context || longMemory?.goal || null,
     response_angle: responseAngle,
     avoid_response_patterns: MOVEMENT_AVOID,
-    safety_priority: safety.needsMedicalFirst ? 'medical_first' : safety.painDetected ? 'pain_over_performance' : 'gentle_movement',
-    recommended_small_next_step: safeSelfCareCandidates[0] || null,
+    safety_priority: classification.safety_level,
+    recommended_small_next_step: recommendedMenu
+      ? `${recommendedMenu.instructions}（${recommendedMenu.reps}）`
+      : safeSelfCareCandidates[0] || null,
+    red_flag_message: classification.red_flag_result?.priorityMessage || null,
+    block_self_care: classification.block_self_care,
     ushigomeStyle,
     user_emotional_state: ushigomeStyle.user_emotional_state,
-    body_risk_state: safety.needsMedicalFirst ? 'red_flag' : safety.painDetected ? 'caution' : ushigomeStyle.body_risk_state,
+    body_risk_state: classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.RED_FLAG
+      ? 'red_flag'
+      : classification.safety_level === movementSupportClassifier.SAFETY_LEVEL.NEEDS_MEDICAL_CHECK
+        ? 'caution'
+        : ushigomeStyle.body_risk_state,
     tone_hint: ushigomeStyle.tone_hint,
+    safety_assessment: {
+      needsMedicalFirst: classification.block_self_care,
+      redFlags: (classification.red_flag_result?.flags || []).map((f) => f.label),
+      severity: classification.pain_analysis_summary?.severity,
+      primaryArea: area,
+      painDetected: /痛|しびれ|つら/.test(userText),
+    },
   };
 }
 
@@ -181,29 +175,37 @@ function formatMovementHintsForPrompt(hints) {
   if (!hints || typeof hints !== 'object') return '';
   const ushi = ushigomeConversationStyleService.formatHintsForPrompt(hints.ushigomeStyle || hints);
   const lines = [
-    '[Movement & Goal Companion — 診断ではなく伴走]',
-    '痛み・可動域・セルフストレッチ・自重筋トレ・目標達成を、牛込の見方で自然に返す。',
-    '診断名・治療指示はしない。赤旗・強い痛み・持続しびれは医療相談を先に。',
-    '安全なセルフケア候補から今日できる小さな一歩を1つ。',
+    '[Movement & Goal Companion — 柔道整復・障害者スポーツトレーナー思想／診断AIではない]',
+    '流れ: 今の言葉を受ける → 決めつけず整理 → 赤旗確認 → 安全なセルフケア1つ → 回数・強さ・中止条件 → 余白',
+    '症状名だけでメニューを決めない。痛みの強さ・しびれ・外傷・夜間痛などを見る。',
     '',
-    `テーマ: ${hints.movement_topic || 'general'}`,
-    `部位: ${hints.body_area || '全身'}`,
+    `安全レベル: ${hints.safety_level || ''}`,
+    `会話サブタイプ: ${hints.conversation_subtype || ''}`,
+    `部位: ${hints.body_region || hints.body_area || ''}`,
     `返しの角度: ${hints.response_angle || ''}`,
-    `安全優先: ${hints.safety_priority || 'gentle_movement'}`,
+    `強さ: ${hints.intensity_rule || ''}`,
+    `頻度: ${hints.frequency_rule || ''}`,
   ];
-  if (hints.goal_context) {
-    lines.push(`利用者の目標（参照のみ）: ${hints.goal_context}`);
+  if (hints.matched_conditions?.length) {
+    lines.push(`参照条件（断定しない）: ${hints.matched_conditions.map((c) => c.labels?.[0] || c.id).join('、')}`);
   }
-  if (hints.safety_assessment?.needsMedicalFirst) {
-    lines.push('⚠ 医療相談を先に。セルフケアは補助にとどめる。');
-  } else if (hints.safety_assessment?.redFlags?.length) {
-    lines.push(`注意: ${hints.safety_assessment.redFlags.join('、')}`);
+  if (hints.caution_notes?.length) {
+    lines.push(`注意: ${hints.caution_notes.slice(0, 3).join('；')}`);
   }
-  if (hints.safe_self_care_candidates?.length) {
-    lines.push(`セルフケア候補（1つ選び、コピーしない）: ${hints.safe_self_care_candidates.join(' / ')}`);
+  if (hints.confirm_questions?.length && hints.safety_level !== 'red_flag') {
+    lines.push(`不足時のみ1つ質問: ${hints.confirm_questions.slice(0, 2).join('、')}`);
   }
+  if (hints.block_self_care || hints.safety_level === 'red_flag') {
+    lines.push(hints.red_flag_message || movementRedFlagGuard.evaluateRedFlags('').priorityMessage);
+    lines.push('ストレッチ・筋トレ・走る・ジャンプの提案は禁止。');
+  } else if (hints.recommended_menu) {
+    lines.push(movementSelfcareLibrary.formatMenuForPrompt(hints.recommended_menu));
+  } else if (hints.safe_self_care_candidates?.length) {
+    lines.push(`候補: ${hints.safe_self_care_candidates.join(' / ')}`);
+  }
+  if (hints.goal_context) lines.push(`目標（参照）: ${hints.goal_context}`);
   if (hints.avoid_response_patterns?.length) {
-    lines.push(`避ける: ${hints.avoid_response_patterns.slice(0, 4).join('；')}`);
+    lines.push(`避ける: ${hints.avoid_response_patterns.slice(0, 5).join('；')}`);
   }
   lines.push('');
   lines.push(ushi);
@@ -214,7 +216,6 @@ module.exports = {
   TOPIC,
   isMovementGoalCompanionText,
   detectMovementTopic,
-  assessMovementSafety,
   buildMovementGoalHints,
   formatMovementHintsForPrompt,
 };

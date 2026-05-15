@@ -5,9 +5,28 @@ const replyContextBuilder = require('./reply_context_builder_service');
 const mealTextManualRecordService = require('./meal_text_manual_record_service');
 const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
 const movementGoalCompanionService = require('./movement_goal_companion_service');
+const movementSelfcareLibrary = require('./movement_selfcare_library_service');
+const movementSupportClassifier = require('./movement_support_classifier_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
+}
+
+function buildMovementOpening(userText, mg) {
+  const ut = normalizeText(userText);
+  if (/腰が重|腰.*張|腰がつら/.test(ut)) return '腰が重いんですね。';
+  if (/脊柱管|狭窄/.test(ut)) return '脊柱管狭窄症と言われているんですね。';
+  if (/ぎっくり|動くのが怖/.test(ut)) return 'ぎっくり腰っぽくて動くのが怖いんですね。';
+  if (/肩が上がり|五十肩/.test(ut)) return '肩を上げる時に引っかかる感じですね。';
+  if (/膝.*筋トレ|家で.*筋トレ/.test(ut)) return '膝に不安がある中でも、家でできることを探しているんですね。';
+  if (/ストレートネック|首肩/.test(ut)) return '首肩がつらいんですね。';
+  if (/排尿|排便/.test(ut) && /腰痛|しびれ/.test(ut)) return '腰痛と足のしびれ、排尿の変化があるんですね。';
+  if (/走るとすね|シンスプリント/.test(ut)) return '走るとすねの内側が痛い感じですね。';
+  if (/胸が苦|息が苦/.test(ut)) return '胸が苦しいんですね。';
+  if (/転んで|腫れ/.test(ut)) return '転んで手首が腫れているんですね。';
+  if (/排尿|排便/.test(ut) && /腰|しびれ/.test(ut)) return '腰痛と足のしびれ、排尿の変化があるんですね。';
+  if (mg?.goal_context && /目標|続け|練習/.test(ut)) return '目標に向けて続けたい気持ち、受け取りました。';
+  return 'いまの状態、受け取りました。';
 }
 
 function buildManualNutritionBlock(featureResults = {}) {
@@ -150,7 +169,10 @@ function fallbackProse(ctx) {
   const fr = ctx.featureResults || {};
   const stable = Number(ctx.userContext?.stableRoutineEvidenceCount || fr.stableRoutineEvidenceCount || 0);
 
-  if (cm === 'emotional_support' || /心が重|気持ちが重|つらい|しんど|寂し|不安/.test(ut)) {
+  if (
+    cm !== 'movement_goal_companion'
+    && (cm === 'emotional_support' || /心が重|気持ちが重|つらい|しんど|寂し|不安/.test(ut))
+  ) {
     return [
       '心が重いんですね。',
       '今日は無理に整えようとしなくて大丈夫です。',
@@ -195,7 +217,7 @@ function fallbackProse(ctx) {
     return lines.join('\n');
   }
 
-  if (cm === 'exercise_feedback' || /ストレッチ|腕が伸び|伸びた感じ/.test(ut)) {
+  if (cm === 'exercise_feedback') {
     if (/腕/.test(ut) && /伸び|伸びた/.test(ut)) {
       return [
         'ストレッチ後に腕の伸びを感じられたんですね。',
@@ -243,30 +265,92 @@ function fallbackProse(ctx) {
       conversationMode: cm,
       userContext: ctx.userContext,
     });
-    if (mg.safety_assessment?.needsMedicalFirst) {
+    const sl = mg.safety_level || '';
+    const open = buildMovementOpening(ut, mg);
+
+    if (sl === movementSupportClassifier.SAFETY_LEVEL.RED_FLAG || mg.block_self_care) {
       return [
-        'つらい症状が続いているんですね。',
-        'まずは医療機関への相談を優先しましょう。ここから。では病名の断定はせず、安全に休む・負担を減らすことだけ一緒に整理します。',
-        '痛みが増えたら、無理に動かさず教えてください。',
+        open,
+        mg.red_flag_message || 'いまの状態は、まず医療機関への相談を優先した方が安全です。強い痛みやしびれ、力の入りにくさがある場合は早めに確認してください。',
+        'ここから。では病名の断定はせず、今日は無理に体を動かさないことだけ一緒に整理しましょう。',
       ].join('\n');
     }
-    if (/可動域|股関節/.test(ut)) {
-      return '可動域を広げたい気持ち、受け取りました。痛みがなければ、大きく頑張るより股関節とお尻をやさしくゆるめる流れからで十分です。今日は1〜2種目だけに絞りましょう。';
+    if (sl === movementSupportClassifier.SAFETY_LEVEL.NEEDS_MEDICAL_CHECK) {
+      return [
+        open,
+        'いまの状態は、走る・ジャンプ・強い筋トレより先に専門家の確認が安心です。',
+        '今日は痛みを増やさない休息と、負担を減らすことだけにしましょう。',
+      ].join('\n');
     }
-    if (/ストレッチ|伸ば/.test(ut)) {
-      return 'ストレッチを整えたいんですね。反らしすぎず、呼吸を止めない範囲で30秒×1〜2セットが目安です。痛みが増えたらそこで止めて大丈夫です。';
+    if (sl === movementSupportClassifier.SAFETY_LEVEL.MOVEMENT_FEEDBACK) {
+      return [
+        open,
+        'その変化に気づけているのが良いです。何が楽になったか、角度や呼吸を同じ感覚で再現できる程度で十分です。',
+        '強度は上げず、同じペースで大丈夫です。',
+      ].join('\n');
     }
-    if (/自重|腕立て|腹筋|プランク/.test(ut)) {
-      return '家でできる自重トレ、いいですね。膝つきや壁押しなど負荷を下げた版から、5回だけフォーム優先で十分です。痛みが出たら回数は増やさなくて大丈夫です。';
+    if (mg.recommended_menu) {
+      const menuBlock = movementSelfcareLibrary.formatMenuForReply(mg.recommended_menu);
+      return [open, '今日は強く伸ばすより、次の一手だけで十分です。', menuBlock].join('\n');
     }
-    if (/目標|達成|続け/.test(ut)) {
-      const goal = mg.goal_context ? `「${mg.goal_context}」` : '目標';
-      return `${goal}に向けて続けたい気持ち、受け取りました。今日は5分・肩回しだけでも十分な一歩です。できたら「できた」で送ってもらえれば大丈夫です。`;
+    if (/シンスプリント|すね.*内側|走るとすね/.test(ut)) {
+      return [
+        'すねの内側が走ると痛い感じですね。シンスプリントっぽい時は、まず走る量を増やすより負担を落とす方が先です。',
+        '足首回しを左右10回、ふくらはぎを軽く10秒だけ伸ばしてみましょう。',
+        '一点がズキッと痛い、歩いても痛い、片脚ジャンプで痛い時は無理に動かさず確認が必要です。',
+        'できたら「できた」で大丈夫です。',
+      ].join('\n');
     }
-    if (/痛|しびれ/.test(ut)) {
-      return '痛みや違和感があるんですね。まず痛みの様子を大事にし、回数より中止の目安を決めましょう。やさしいストレッチ1つだけなら、増えたら止めて大丈夫です。';
+    if (/脊柱管|狭窄/.test(ut) && /しびれ|歩/.test(ut)) {
+      return [
+        open,
+        '歩くとしびれる・休むと楽になることも、一緒に見ていきましょう。今日は長く反らすより、椅子で骨盤を前後に10回だけ動かしてみてください。',
+        '痛みやしびれが増えたら中止で大丈夫です。',
+      ].join('\n');
     }
-    return '身体を整えたい気持ち、受け取りました。今日はやさしい版を1つだけ。無理に種目や回数を増やさなくて大丈夫です。';
+    if (/ぎっくり|動くのが怖/.test(ut)) {
+      return [
+        open,
+        '動くのが怖い気持ち、わかります。今日は強いストレッチより、楽な姿勢と短い骨盤運動からで十分です。',
+        '椅子に座って骨盤を前後に10回だけ。痛みが増えたらそこで止めてください。',
+      ].join('\n');
+    }
+    if (/五十肩|肩が上がり|夜痛/.test(ut)) {
+      return [
+        open,
+        '無理に上まで上げるより、肩甲骨を動かす方から始めましょう。肘を軽く曲げて肩をすくめてストンと落とす。10回だけ。',
+        'ズキッとする角度は避けてください。夜に痛みが強い日は回数を減らして大丈夫です。',
+      ].join('\n');
+    }
+    if (/ストレートネック|首肩/.test(ut)) {
+      return [
+        open,
+        '今日は無理に首を反らすより、胸を開く・肩甲骨を動かす方からで十分です。',
+        '首をゆっくり左右に振る。各5〜8回だけ。',
+        'しびれ・痛みが増えたら中止です。できたら「できた」で大丈夫です。',
+      ].join('\n');
+    }
+    if (/腰が固|腰.*固|ストレッチ.*教/.test(ut)) {
+      return [
+        open,
+        '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
+        '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
+        '痛みが強くなる、足にしびれが出る時は中止です。できたら「10回できた」で大丈夫です。',
+      ].join('\n');
+    }
+    if (/腰が重|腰.*張/.test(ut)) {
+      return [
+        open,
+        '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
+        '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
+        '痛みが強くなる、足にしびれが出る時は中止です。',
+      ].join('\n');
+    }
+    return [
+      open,
+      '今日は1つだけ、やさしい版で十分です。痛みが増えたら中止で大丈夫です。',
+      'できたら「できた」で送ってもらえれば大丈夫です。',
+    ].join('\n');
   }
 
   if (cm === 'exercise_record' || fr.recordKind === 'exercise_record') {
@@ -460,10 +544,17 @@ function isAcceptableProse(ctx, prose) {
     const ut = String(ctx.userText || '');
     const mg = ctx.movementGoalHints || {};
     if (/^(なるほど。今の感じは受け取れた|記録しました|いい流れです)/.test(text)) return false;
-    if (/(診断|治療|処方|必ず治る|病名は)/.test(text)) return false;
-    if (mg.safety_assessment?.needsMedicalFirst && !/(医療|受診|相談|病院)/.test(text)) return false;
+    if (/(診断です|診断されます|病名は|必ず治る|治療を開始)/.test(text)) return false;
+    if (mg.block_self_care && /(ストレッチ|スクワット|筋トレ|10回|ジャンプ|走って)/.test(text) && !/(医療|受診|相談|病院|専門)/.test(text)) {
+      return false;
+    }
+    if (mg.safety_assessment?.needsMedicalFirst && !/(医療|受診|相談|病院|専門)/.test(text)) return false;
     if (/痛|しびれ/.test(ut) && /(もっと|増や|追い込|頑張って).*(回|運動|スクワット)/.test(text)) return false;
-    const hasCue = /(ストレッチ|可動域|痛|腰|膝|肩|目標|整え|やさし|中止|フォーム|セルフ|自重|医療|相談)/.test(text);
+    const safeLevel = mg.safety_level === movementSupportClassifier.SAFETY_LEVEL.SAFE_SELF_CARE
+      || mg.safety_level === movementSupportClassifier.SAFETY_LEVEL.NEEDS_CAUTION;
+    if (safeLevel && !/(\d+回|10秒|5回|30秒|中止|止め)/.test(text)) return false;
+    if (safeLevel && /^(痛みが続く場合は病院|病院へ行ってください)[。]?$/.test(text.trim())) return false;
+    const hasCue = /(ストレッチ|可動域|痛|腰|膝|肩|目標|整え|やさし|中止|フォーム|セルフ|自重|医療|相談|すね|骨盤|肩甲骨)/.test(text);
     return text.length >= 12 && hasCue;
   }
   return true;

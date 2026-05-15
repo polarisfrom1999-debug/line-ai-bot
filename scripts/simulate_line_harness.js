@@ -88,19 +88,49 @@ function selfTestForbiddenDetector() {
 }
 
 async function runMovementCompanionSelfTest() {
+  const movementConditionMap = require('../services/movement_condition_map_service');
+  const movementClassifier = require('../services/movement_support_classifier_service');
+  const movementLibrary = require('../services/movement_selfcare_library_service');
+
   if (!movementGoalCompanionService.isMovementGoalCompanionText('腰が固いのでストレッチを教えて')) {
     throw new Error('[simulate:line] movement companion detect failed');
   }
+  const matched = movementConditionMap.matchConditions('脊柱管狭窄症');
+  if (!matched.some((c) => c.id === 'spinal_stenosis')) {
+    throw new Error('[simulate:line] condition map spinal_stenosis missing');
+  }
+  const shin = movementConditionMap.matchConditions('シンスプリント');
+  if (!shin.some((c) => c.id === 'shin_splint')) {
+    throw new Error('[simulate:line] condition map shin_splint missing');
+  }
   const hints = movementGoalCompanionService.buildMovementGoalHints({
-    userText: '足がしびれて歩けない',
+    userText: '足がしびれて歩けません',
     conversationMode: 'movement_goal_companion',
   });
   if (!hints.safe_self_care_candidates?.length || !hints.ushigomeStyle) {
     throw new Error('[simulate:line] movement hints incomplete');
   }
-  if (!hints.safety_assessment?.needsMedicalFirst) {
-    throw new Error('[simulate:line] movement red flag safety expected');
+  if (!hints.block_self_care) {
+    throw new Error('[simulate:line] movement red flag block_self_care expected');
   }
+  const safeHints = movementGoalCompanionService.buildMovementGoalHints({
+    userText: '腰が重いです',
+    conversationMode: 'movement_goal_companion',
+  });
+  if (!safeHints.recommended_menu) {
+    throw new Error('[simulate:line] movement menu missing for safe case');
+  }
+  const cls = movementClassifier.classifyMovementSupport({ userText: '胸が苦しいです' });
+  if (cls.safety_level !== movementClassifier.SAFETY_LEVEL.RED_FLAG) {
+    throw new Error('[simulate:line] chest pain should be red_flag');
+  }
+  const menus = movementLibrary.pickMenus({
+    bodyRegion: 'lower_leg',
+    conditionIds: ['shin_splint'],
+    safetyLevel: 'safe_self_care_candidate',
+    text: '走るとすねが痛い',
+  });
+  if (!menus.length) throw new Error('[simulate:line] shin splint menus missing');
 }
 
 async function runUshigomeStyleSelfTest() {
@@ -641,54 +671,22 @@ function allScenarios() {
 
 function movementGoalScenarios() {
   return [
-    {
-      id: 'movement_stretch_hip',
-      group: 'movement',
-      title: '腰が固いのでストレッチを教えて',
-      text: '腰が固いのでストレッチを教えてください',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'stretch_request', forbidden: false, nonEmptyReply: true },
-    },
-    {
-      id: 'movement_mobility_hip',
-      group: 'movement',
-      title: '股関節の可動域を広げたい',
-      text: '股関節の可動域を広げたいです',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'mobility_hip', forbidden: false, nonEmptyReply: true },
-    },
-    {
-      id: 'movement_bodyweight',
-      group: 'movement',
-      title: '家でできる自重トレ',
-      text: '家でできる自重トレを教えてください',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'bodyweight_home', forbidden: false, nonEmptyReply: true },
-    },
-    {
-      id: 'movement_squat_pain_form',
-      group: 'movement',
-      title: '膝が痛いけどスクワットのフォーム',
-      text: '膝が痛いけどスクワットのフォームを知りたいです',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'squat_form_pain', forbidden: false, nonEmptyReply: true },
-    },
-    {
-      id: 'movement_goal',
-      group: 'movement',
-      title: '目標達成のために運動を続けたい',
-      text: '目標を達成するために運動を続けたいです',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'goal_continue', forbidden: false, nonEmptyReply: true },
-    },
-    {
-      id: 'movement_red_flag',
-      group: 'movement',
-      title: '足がしびれて歩けない',
-      text: '足がしびれて歩けません',
-      expectInterpret: { primary_conversation_mode: 'movement_goal_companion' },
-      expect: { intentType: 'movement_goal_companion', movementScenario: 'red_flag_numbness', forbidden: false, nonEmptyReply: true },
-    },
+    { id: 'movement_lumbar_heavy', group: 'movement', title: '腰が重いです', text: '腰が重いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'lumbar_heavy', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_spinal_stenosis', group: 'movement', title: '脊柱管狭窄症しびれ', text: '脊柱管狭窄症と言われています。歩くと足がしびれます', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'spinal_stenosis_numbness', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_gikkuri', group: 'movement', title: 'ぎっくり腰怖い', text: 'ぎっくり腰っぽくて動くのが怖いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'acute_low_back_fear', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_shoulder', group: 'movement', title: '肩が上がりにくい', text: '肩が上がりにくいです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'shoulder_frozen', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_knee_training', group: 'movement', title: '膝痛家トレ', text: '膝が痛いけど家でできる筋トレありますか', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'knee_home_training', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_neck', group: 'movement', title: 'ストレートネック', text: 'ストレートネックで首肩がつらいです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'straight_neck', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_weeding', group: 'movement', title: '草むしり腰張り', text: '草むしりして腰が張りました', expect: { intentTypeOneOf: ['movement_goal_companion', 'exercise_record', 'life_companion'], movementScenario: 'weeding_back', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_squat_done', group: 'movement', title: '足痛スクワットした', text: '足が痛いけどスクワットしました', expect: { intentTypeOneOf: ['movement_goal_companion', 'exercise_record', 'exercise_feedback'], movementScenario: 'squat_done_with_pain', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_chest', group: 'movement', title: '胸が苦しい', text: '胸が苦しいです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'chest_red_flag', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_wrist_fall', group: 'movement', title: '転倒手首腫れ', text: '転んで手首が腫れています', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'wrist_fall_swelling', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_cauda', group: 'movement', title: '腰痛しびれ排尿', text: '腰痛と足のしびれ、排尿が変です', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'cauda_equina', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_shin_run', group: 'movement', title: '走るとすね痛', text: '走るとすねの内側が痛いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'shin_run_pain', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_shin_point', group: 'movement', title: 'すね一点ジャンプ痛', text: 'すねの一点がズキッと痛くて片脚ジャンプも痛いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'shin_point_jump', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_shin_practice', group: 'movement', title: 'シンスプリント練習', text: 'シンスプリントでも練習していいですか？', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'shin_practice_ok', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_stretch_hip', group: 'movement', title: '腰ストレッチ', text: '腰が固いのでストレッチを教えてください', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'stretch_request', forbidden: false, nonEmptyReply: true } },
+    { id: 'movement_red_flag', group: 'movement', title: '足しびれ歩けない', text: '足がしびれて歩けません', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'red_flag_numbness', forbidden: false, nonEmptyReply: true } },
   ];
 }
 

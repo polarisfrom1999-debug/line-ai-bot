@@ -5,7 +5,15 @@ const labContextContinuationService = require('./lab_context_continuation_servic
 const movementGoalCompanionService = require('./movement_goal_companion_service');
 
 const ERROR_FEEDBACK_RE =
-  /(間違えて|間違い|違います|ちがう|そうじゃない|今の違う|それ違う|読み違い|変です|おかしい)/;
+  /(間違えて|間違い|違います|ちがう|そうじゃない|今の違う|それ違う|読み違い|おかしい)/;
+
+function isAssistantErrorFeedbackText(text = '') {
+  const safe = normalizeText(text);
+  if (!safe) return false;
+  if (ERROR_FEEDBACK_RE.test(safe)) return true;
+  if (/変です/.test(safe) && !/排尿|排便|便が変|便の変/.test(safe)) return true;
+  return false;
+}
 
 const FOOD_TEXT_RE =
   /(白湯|卵|味付き卵|ゆで卵|おはぎ|玄米|ご飯|米|鮭|バナナ|青汁|トースト|チーズ|豚肉|牛肉|サラダ|味噌汁|パン|麺|ヨーグルト)/;
@@ -35,7 +43,7 @@ function yesToken(text = '') {
 function isExclusiveHealthOrFeedbackText(text = '') {
   const safe = normalizeText(text);
   if (!safe) return false;
-  if (ERROR_FEEDBACK_RE.test(safe)) return true;
+  if (isAssistantErrorFeedbackText(safe)) return true;
   if (BODY_FEEDBACK_RE.test(safe)) return true;
   if (FOOD_TEXT_RE.test(safe) && FOOD_AMOUNT_RE.test(safe)) return true;
   if (REWARD_FOOD_HINT_RE.test(safe)) return true;
@@ -50,18 +58,23 @@ function detectPrimaryMode(text = '') {
   const safe = normalizeText(text);
   if (!safe) return 'casual_chat';
 
-  if (EMOTIONAL_SUPPORT_RE.test(safe)) return 'emotional_support';
+  if (EMOTIONAL_SUPPORT_RE.test(safe) && !movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
+    return 'emotional_support';
+  }
 
   if (BODY_FEEDBACK_RE.test(safe) || /ストレッチ.*(楽|軽|伸び)|痛.*(楽|軽|よくな)/.test(safe)) {
     return 'exercise_feedback';
   }
 
-  if (movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
-    return 'movement_goal_companion';
+  if (/食欲がない|食べられません|あまり食べられ|頭痛があって|頭痛.*食欲|便が出て|便秘|便通|寝不足|眠れない|眠い|だるい/.test(safe)) {
+    return 'body_condition_note';
+  }
+  if (/頭痛/.test(safe) && !movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
+    return 'body_condition_note';
   }
 
-  if (/食欲がない|食べられません|あまり食べられ|頭痛があって|便が出て|便秘|便通|寝不足|眠れない|眠い|だるい|頭痛/.test(safe)) {
-    return 'body_condition_note';
+  if (movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
+    return 'movement_goal_companion';
   }
   if (/体重が増|体重が減って/.test(safe)) return 'body_condition_note';
 
@@ -185,7 +198,7 @@ function interpretConversationState({
 
   let mode;
   let labContinuation = null;
-  if (ERROR_FEEDBACK_RE.test(safe)) {
+  if (isAssistantErrorFeedbackText(safe)) {
     mode = 'assistant_error_feedback';
   } else if (pendingAnswer) {
     mode = 'pending_answer';
