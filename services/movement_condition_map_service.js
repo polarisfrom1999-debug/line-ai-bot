@@ -110,7 +110,7 @@ const CONDITIONS = [
   entry('shin_splint', ['シンスプリント', '脛骨過労性骨膜炎', 'shin splints', 'medial tibial stress syndrome', 'MTSS', 'すねの内側', '走るとすね'], BODY_REGION.LOWER_LEG, 'overuse_sports_injury', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT, CONV_MODE.SPORTS_OVERUSE, CONV_MODE.SELF_STRETCH], ['走る・ジャンプ量を増やさない', '一点鋭痛・片脚ジャンプ痛は医療確認', '休んでも痛い・歩行痛は注意'], SHIN_SPLINT_CONFIRM),
 
   // 手・肘
-  entry('de_quervain', ['フィンケルシュタイン', '親指の腱鞘炎'], BODY_REGION.HAND_ELBOW, 'tendon', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT]),
+  entry('de_quervain', ['フィンケルシュタイン症候群', 'フィンケルシュタイン', '親指の腱鞘炎'], BODY_REGION.HAND_ELBOW, 'tendon', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT]),
   entry('wrist_arthritis', ['手関節炎'], BODY_REGION.HAND_ELBOW, 'oa', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT]),
   entry('trigger_finger', ['ばね指'], BODY_REGION.HAND_ELBOW, 'tendon', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT]),
   entry('snapping_hip', ['ばね股'], BODY_REGION.HIP_KNEE, 'hip', RISK.NEEDS_CAUTION, [CONV_MODE.PAIN_SUPPORT]),

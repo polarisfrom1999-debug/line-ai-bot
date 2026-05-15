@@ -12,6 +12,7 @@ const RED_FLAG_PATTERNS = [
   { key: 'heat_swelling', label: '熱感・強い腫れ', re: /熱を持|熱感|腫れて.*熱/ },
   { key: 'rest_severe_pain', label: '安静時激痛', re: /じっとしてても|安静でも|何もしてなくても.*(激しい|強い)痛/ },
   { key: 'sudden_paralysis', label: '急な麻痺', re: /急に.*(動か|麻痺)|動かなくな/ },
+  { key: 'unilateral_paralysis', label: '片側麻痺', re: /片側.*麻痺|片麻痺|半身.*麻痺|麻痺.*片側/ },
   { key: 'slurred_speech', label: 'ろれつ障害', re: /ろれつ|話がうまく|言葉が出/ },
   { key: 'facial_droop', label: '顔のゆがみ', re: /顔がゆが|顔の片側|口角が下が/ },
   { key: 'chest_pain', label: '胸痛', re: /胸が痛|胸痛|胸が苦|胸の圧迫/ },

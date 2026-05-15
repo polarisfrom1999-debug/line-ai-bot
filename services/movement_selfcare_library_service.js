@@ -128,12 +128,16 @@ function formatMenuForPrompt(menuItem) {
 
 function formatMenuForReply(menuItem) {
   if (!menuItem) return '';
+  const stopRaw = String(menuItem.stopCondition || '').trim();
+  const stopLine = /中止|止め|控え/.test(stopRaw) ? stopRaw : `${stopRaw}の場合は中止`;
+  const intensityLine = menuItem.intensity ? `強さの目安：${menuItem.intensity}。` : '';
   return [
     menuItem.instructions,
     `まず${menuItem.reps}だけ。`,
-    menuItem.stopCondition,
+    intensityLine,
+    stopLine,
     'できたら「できた」で大丈夫です。',
-  ].join('\n');
+  ].join('\n').replace(/\n\n+/g, '\n');
 }
 
 module.exports = {
