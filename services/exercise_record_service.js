@@ -67,6 +67,8 @@ function detectKind(safe) {
   if (/ランニング|全力|スピード|ダッシュ|スプリント|走った|走りました|走る|練習/.test(safe)) return 'running';
   if (/800|1500|８００|１５００/.test(safe) && /m|ｍ|メートル|走/.test(safe)) return 'running';
   if (/ジョギング|ランニング|走/.test(safe)) return 'jogging';
+  if (/草むしり|除草/.test(safe)) return 'other_activity';
+  if (/縄跳び|エアー.*跳|エアー縄跳び/.test(safe)) return 'other_activity';
   return null;
 }
 
@@ -81,6 +83,7 @@ function getDisplayName(kind) {
   if (kind === 'jogging') return 'ジョギング';
   if (kind === 'running') return 'ランニング';
   if (kind === 'strength') return '筋トレ';
+  if (kind === 'other_activity') return '運動';
   return '運動';
 }
 
@@ -107,6 +110,10 @@ function estimateKcal({ kind, minutes, distanceKm, weightKg }) {
   if (kind === 'strength') {
     if (m != null) return Math.round(m * 6);
     return Math.round(20 * 6);
+  }
+  if (kind === 'other_activity') {
+    if (m != null) return Math.round(m * 5);
+    return Math.round(15 * 5);
   }
   return null;
 }
@@ -177,7 +184,13 @@ function tryParseExerciseRecord(text, options = {}) {
 
   return {
     type: 'exercise',
-    name: getDisplayName(kind),
+    name: (() => {
+      if (kind === 'other_activity') {
+        if (/草むしり/.test(safe)) return '草むしり';
+        if (/縄跳び|エアー/.test(safe)) return '縄跳び';
+      }
+      return getDisplayName(kind);
+    })(),
     exerciseType: kind,
     summary: safe,
     minutes,

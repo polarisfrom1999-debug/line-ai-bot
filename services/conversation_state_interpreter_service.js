@@ -51,6 +51,30 @@ function detectPrimaryMode(text = '') {
 
   if (EMOTIONAL_SUPPORT_RE.test(safe)) return 'emotional_support';
 
+  if (BODY_FEEDBACK_RE.test(safe) || /ストレッチ.*(楽|軽|伸び)|痛.*(楽|軽|よくな)/.test(safe)) {
+    return 'exercise_feedback';
+  }
+
+  if (/食欲がない|食べられません|あまり食べられ|頭痛があって|便が出て|便秘|便通|寝不足|眠れない|眠い|だるい|頭痛/.test(safe)) {
+    return 'body_condition_note';
+  }
+  if (/体重が増|体重が減って/.test(safe)) return 'body_condition_note';
+
+  if (/運動できませんでした|動けませんでした|今日は運動できなかった|できなかったので運動/.test(safe)) {
+    return 'life_companion';
+  }
+
+  if (
+    !/できなかった|動けなかった|できませんでした/.test(safe)
+    && /(腕立て|スクワット|ランニング|ウォーキング|走った|歩いた|筋トレ|草むしり|縄跳び|エアー).*(した|やった)|\d+\s*(分|回|km)/.test(safe)
+  ) {
+    return 'exercise_record';
+  }
+
+  if (/半分にしました/.test(safe) && !/ご飯|ごはん|米/.test(safe)) return 'meal_correction';
+  if (/写真.*忘れ|撮り忘れ/.test(safe)) return 'life_companion';
+  if (/お茶会|劇団で|草むしり|抱っこして|子どもを抱っこ/.test(safe)) return 'life_companion';
+
   if (isLabDateInventoryText(safe)) return 'lab_date_inventory';
 
   if (labContextContinuationService.isLabComparisonUtterance(safe)) return 'lab_comparison';
@@ -69,13 +93,16 @@ function detectPrimaryMode(text = '') {
 
   if (FOOD_TEXT_RE.test(safe) && FOOD_AMOUNT_RE.test(safe)) return 'meal_text_record';
 
-  if (/(腰|膝|だるい|眠い|頭痛|痛い|重い)/.test(safe) && !BODY_FEEDBACK_RE.test(safe)) {
+  if (/(腰|膝|だるい|眠い|頭痛|痛い|重い)/.test(safe) && !BODY_FEEDBACK_RE.test(safe) && !/スクワット|縄跳び|草むしり|運動/.test(safe)) {
     return 'body_condition_note';
   }
 
   if (BODY_FEEDBACK_RE.test(safe)) return 'exercise_feedback';
 
-  if (/(腕立て|スクワット|ランニング|ウォーキング|走った|歩いた|筋トレ).*(した|やった)?|\d+\s*(分|回|km)/.test(safe)) {
+  if (
+    !/できなかった|動けなかった|できませんでした/.test(safe)
+    && /(腕立て|スクワット|ランニング|ウォーキング|走った|歩いた|筋トレ).*(した|やった)?|\d+\s*(分|回|km)/.test(safe)
+  ) {
     return 'exercise_record';
   }
 

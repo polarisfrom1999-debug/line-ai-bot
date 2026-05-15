@@ -15,6 +15,8 @@ const contextMemoryService = require('../services/context_memory_service');
 const dailyNutritionSummaryService = require('../services/daily_nutrition_summary_service');
 const { runObservationLayerTests } = require('./simulate_line_observation_layer');
 const { evaluateReplyQuality, forbiddenPhraseHits } = require('./lib/simulate_line_reply_quality');
+const { evaluateUshigomeScenarioQuality } = require('./lib/simulate_line_ushigome_quality');
+const ushigomeConversationStyleService = require('../services/ushigome_conversation_style_service');
 
 function parseOnlyArg() {
   const raw = process.argv.find((a) => a.startsWith('--only='));
@@ -77,6 +79,23 @@ function selfTestForbiddenDetector() {
   const h = forbiddenPhraseHits(probe);
   if (!h.includes('記録しました')) {
     throw new Error('[simulate:line] forbidden detector self-test failed');
+  }
+}
+
+async function runUshigomeStyleSelfTest() {
+  const hints = ushigomeConversationStyleService.buildUshigomeStyleHints({
+    userText: 'おはぎ二個食べちゃいました',
+    conversationMode: 'reward_food',
+  });
+  if (!Array.isArray(hints.stylePrinciples) || hints.stylePrinciples.length < 5) {
+    throw new Error('[simulate:line] ushigome style: stylePrinciples missing');
+  }
+  if (!hints.userStateInterpretation?.primaryEmotion) {
+    throw new Error('[simulate:line] ushigome style: userStateInterpretation missing');
+  }
+  const block = ushigomeConversationStyleService.formatHintsForPrompt(hints);
+  if (!/AI牛込/.test(block) || /森田|松阪|髙橋/.test(block)) {
+    throw new Error('[simulate:line] ushigome prompt block invalid');
   }
 }
 
@@ -180,8 +199,11 @@ async function runScenario(def) {
       }
     }
 
-    if (exp.intentType && out.intentType !== exp.intentType) {
+    if (exp.intentType && !exp.intentTypeOneOf && out.intentType !== exp.intentType) {
       errors.push(`step${i} intentType want ${exp.intentType} got ${out.intentType}`);
+    }
+    if (Array.isArray(exp.intentTypeOneOf) && !exp.intentTypeOneOf.includes(out.intentType)) {
+      errors.push(`step${i} intentType want one of ${exp.intentTypeOneOf.join('|')} got ${out.intentType}`);
     }
     if (exp.intentTypeNot && exp.intentTypeNot.includes(out.intentType)) {
       errors.push(`step${i} intentType must not be ${out.intentType}`);
@@ -212,10 +234,22 @@ async function runScenario(def) {
       intentType: out.intentType,
       interpretMode: interp.primary_conversation_mode,
       replyDepth: interp.reply_depth,
-      allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase)
+      allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase),
+      skipDirectEchoCheck: Boolean(exp.ushigomeScenario),
     });
     if (qViol.length) {
       errors.push(`step${i} reply_quality: ${qViol.join('; ')}`);
+    }
+
+    if (exp.ushigomeScenario) {
+      const uViol = evaluateUshigomeScenarioQuality({
+        userText: st.qualityUserText != null ? st.qualityUserText : st.text,
+        reply: out.reply,
+        scenarioId: exp.ushigomeScenario,
+      });
+      if (uViol.length) {
+        errors.push(`step${i} ushigome_quality: ${uViol.join('; ')}`);
+      }
     }
 
     if (Array.isArray(exp.notIntentTypes) && exp.notIntentTypes.includes(out.intentType)) {
@@ -554,7 +588,30 @@ function allScenarios() {
         notIntentTypes: ['lab_followup', 'meal_record_text', 'emotional_support'],
         nonEmptyReply: true
       }
-    }
+    },
+    ...ushigomeScenarios(),
+  ];
+}
+
+function ushigomeScenarios() {
+  return [
+    { id: 'ushigome_ohagi', group: 'ushigome', title: 'おはぎ二個食べちゃいました', text: 'おはぎ二個食べちゃいました', expectInterpret: { primary_conversation_mode: 'reward_food' }, expect: { intentTypeOneOf: ['meal_note', 'reward_food', 'meal_record_text'], ushigomeScenario: 'reward_ohagi', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_weight_gain', group: 'ushigome', title: '体重が増えてしまいました', text: '体重が増えてしまいました', expectInterpret: { primary_conversation_mode: 'body_condition_note' }, expect: { intentTypeOneOf: ['body_condition_note', 'life_companion'], ushigomeScenario: 'weight_gain', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_low_appetite', group: 'ushigome', title: '食欲がなくてあまり食べられません', text: '今日は食欲がなくてあまり食べられません', expectInterpret: { primary_conversation_mode: 'body_condition_note' }, expect: { intentType: 'body_condition_note', ushigomeScenario: 'low_appetite', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_half_portion', group: 'ushigome', title: '半分にしました', text: '半分にしました', expect: { intentTypeOneOf: ['meal_correction', 'meal_correction_target_not_found', 'meal_record_text'], ushigomeScenario: 'half_portion', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_photo_forgot', group: 'ushigome', title: '写真撮り忘れました', text: '写真撮り忘れました', expectInterpret: { primary_conversation_mode: 'life_companion' }, expect: { intentTypeOneOf: ['life_companion', 'casual_chat'], ushigomeScenario: 'photo_forgot', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_stretch_relief', group: 'ushigome', title: '腰が痛かったけどストレッチしたら楽になりました', text: '腰が痛かったけどストレッチしたら楽になりました', expectInterpret: { primary_conversation_mode: 'exercise_feedback' }, expect: { intentType: 'exercise_feedback', ushigomeScenario: 'stretch_pain_relief', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_squat_pain', group: 'ushigome', title: '足が痛いけどスクワットしました', text: '足が痛いけどスクワットしました', expect: { intentTypeOneOf: ['exercise_record', 'exercise_feedback', 'body_condition_note'], ushigomeScenario: 'squat_with_pain', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_squat_20', group: 'ushigome', title: 'スクワット20回しました', text: 'スクワット20回しました', expect: { intentType: 'exercise_record', ushigomeScenario: 'squat_20', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_jump_rope', group: 'ushigome', title: 'エアー縄跳び1分しました', text: 'エアー縄跳び1分しました', expect: { intentType: 'exercise_record', ushigomeScenario: 'jump_rope', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_no_exercise', group: 'ushigome', title: '今日は運動できませんでした', text: '今日は運動できませんでした', expectInterpret: { primary_conversation_mode: 'life_companion' }, expect: { intentTypeOneOf: ['life_companion', 'casual_chat', 'exercise_record'], ushigomeScenario: 'exercise_skipped', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_child_carry', group: 'ushigome', title: '子どもを抱っこして歩きました', text: '子どもを抱っこして歩きました', expectInterpret: { primary_conversation_mode: 'life_companion' }, expect: { intentTypeOneOf: ['life_companion', 'casual_chat', 'exercise_record'], ushigomeScenario: 'child_carry', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_theater', group: 'ushigome', title: '劇団で遅くなりました', text: '劇団で遅くなりました', expectInterpret: { primary_conversation_mode: 'life_companion' }, expect: { intentTypeOneOf: ['life_companion', 'casual_chat'], ushigomeScenario: 'theater_late', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_weeding', group: 'ushigome', title: '草むしり1時間しました', text: '草むしり1時間しました', expect: { intentType: 'exercise_record', ushigomeScenario: 'weeding', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_tea_party', group: 'ushigome', title: '今日はお茶会でした', text: '今日はお茶会でした', expectInterpret: { primary_conversation_mode: 'life_companion' }, expect: { intentTypeOneOf: ['life_companion', 'casual_chat', 'meal_note'], ushigomeScenario: 'tea_party', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_headache', group: 'ushigome', title: '頭痛があって食欲がありません', text: '頭痛があって食欲がありません', expectInterpret: { primary_conversation_mode: 'body_condition_note' }, expect: { intentType: 'body_condition_note', ushigomeScenario: 'headache_no_appetite', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_constipation', group: 'ushigome', title: '便が出ていません', text: '便が出ていません', expectInterpret: { primary_conversation_mode: 'body_condition_note' }, expect: { intentType: 'body_condition_note', ushigomeScenario: 'constipation', forbidden: false, nonEmptyReply: true } },
+    { id: 'ushigome_sleep', group: 'ushigome', title: '寝不足です', text: '寝不足です', expectInterpret: { primary_conversation_mode: 'body_condition_note' }, expect: { intentType: 'body_condition_note', ushigomeScenario: 'sleep_deprived', forbidden: false, nonEmptyReply: true } },
   ];
 }
 
@@ -564,13 +621,17 @@ async function main() {
   const runConv = onlyWants(only, 'conversation');
   const runQuality = only.has('quality');
 
+  const runUshigome = onlyWants(only, 'ushigome');
+
   selfTestForbiddenDetector();
+  await runUshigomeStyleSelfTest();
   await runLabNormalizerSelfTests();
 
   const scenarios = allScenarios().filter((sc) => {
     if (only.has('all')) return true;
     if (runMeal && sc.group === 'meal') return true;
     if (runConv && sc.group === 'conversation') return true;
+    if (runUshigome && sc.group === 'ushigome') return true;
     return false;
   });
 

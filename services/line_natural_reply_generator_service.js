@@ -3,6 +3,7 @@
 const aiChatService = require('./ai_chat_service');
 const replyContextBuilder = require('./reply_context_builder_service');
 const mealTextManualRecordService = require('./meal_text_manual_record_service');
+const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -113,6 +114,20 @@ function modeSystemInstructions(conversationMode, replyDepth) {
       '患者名・医療機関・印刷日の長い説明はしない。',
     ].join('\n');
   }
+  if (cm === 'exercise_record') {
+    return [
+      '会話モード: exercise_record（運動の記録後）',
+      '記録の事実に触れつつ、小さな継続を具体的に拾う。2〜3文。',
+      '痛みがある文脈では回数を増やさない。カロリー行は書かない。',
+    ].join('\n');
+  }
+  if (cm === 'body_condition_note') {
+    return [
+      '会話モード: body_condition_note（体調・痛み・睡眠）',
+      '成果より安全。減量称賛より体調優先。2〜4文。',
+      '医療診断はしない。強い症状は受診を短く示す。',
+    ].join('\n');
+  }
   return [
     `会話モード: ${cm || 'normal'}`,
     `reply_depth: ${replyDepth || 'normal'}`,
@@ -153,7 +168,7 @@ function fallbackProse(ctx) {
     ].join('\n');
   }
 
-  if (cm === 'meal_text_record' || cm === 'meal_record_text' || fr.saved) {
+  if ((cm === 'meal_text_record' || cm === 'meal_record_text' || fr.recordKind === 'meal_text_record') && fr.saved) {
     const echoSource = isShortAck(ut) && (fr.items || []).length ? (fr.items || []).join('、') : ut;
     const items = (fr.items || []).join('、') || echoSource;
     const breakfast = mealTextManualRecordService.isBreakfastRoutineContext(
@@ -172,19 +187,91 @@ function fallbackProse(ctx) {
   }
 
   if (cm === 'exercise_feedback' || /ストレッチ|腕が伸び|伸びた感じ/.test(ut)) {
+    if (/腕/.test(ut) && /伸び|伸びた/.test(ut)) {
+      return [
+        'ストレッチ後に腕の伸びを感じられたんですね。',
+        'その感覚に気づけているのは、身体へのケアとしてとても良い流れです。',
+        '次も同じペースで十分です。',
+      ].join('\n');
+    }
+    if (/痛/.test(ut) && /楽/.test(ut)) {
+      return [
+        '痛みがあった中で、ストレッチ後に楽になった感覚まで届いていますね。',
+        'その変化に気づけているのが良いです。無理に強度は上げず、同じペースで十分です。',
+      ].join('\n');
+    }
     return [
-      'ストレッチ後に腕の伸びを感じられたんですね。',
+      'ストレッチ後に身体の変化を感じられたんですね。',
       'その感覚に気づけているのは、身体へのケアとしてとても良い流れです。',
       '次も同じペースで十分です。',
     ].join('\n');
   }
 
-  if (cm === 'life_companion' || /聞いて|相談|仕事|家族|人間関係/.test(ut)) {
-    return [
-      'それはしんどかったですね。',
-      'いまの話、ちゃんと聞いています。',
-      'もう少しだけ、どんな場面だったか教えてもらえますか？',
-    ].join('\n');
+  const themes = ushigomeConversationStyleService.inferThemes(ut);
+
+  if (cm === 'body_condition_note') {
+    if (/頭痛/.test(ut) && /食欲/.test(ut)) {
+      return '頭痛があって食欲も落ちているんですね。減量の成果より、いまは体調を守る日として扱いましょう。水分と少量の糖質、早めの休息が優先です。';
+    }
+    if (/食欲がない|食べられません|あまり食べられ/.test(ut)) {
+      return '食欲が落ちているんですね。減量を頑張る日というより、体調を整える日として扱いましょう。少量の糖質と水分、休息を優先で大丈夫です。';
+    }
+    if (/便|出ていません|便秘/.test(ut)) {
+      return '便のリズムが気になるんですね。体重の増え方ともつながって不安になりやすいので、まず水分と温かい汁物から整えましょう。';
+    }
+    if (/寝不足|眠れ/.test(ut)) {
+      return '寝不足ですね。今日は運動の強度も食事の制限も強めず、睡眠を優先する日にしましょう。';
+    }
+    if (/体重.*増/.test(ut)) {
+      return '体重が増えたと感じているんですね。責める必要はなく、塩分・水分・睡眠・便通などの候補も一緒に見ていきましょう。';
+    }
+    return 'いまの体調、受け取りました。無理に追い込まず、今日できる小さな一手だけにしましょう。';
+  }
+
+  if (cm === 'exercise_record' || fr.recordKind === 'exercise_record') {
+    const label = normalizeText(fr.exerciseLabel || ut) || '運動';
+    if (/できなかった|動けなかった/.test(ut)) {
+      return '今日は動けなかったんですね。休めたのも、身体の調整のうちです。明日は肩回しだけでも十分です。';
+    }
+    if (/痛/.test(ut) && /スクワット|運動/.test(ut)) {
+      return '痛みがある中での報告ですね。まず痛みの様子を大事にし、回数よりフォームと中止の目安を意識しましょう。';
+    }
+    if (/草むしり/.test(ut)) {
+      return '草むしり、届いています。立派な活動量ですね。腰や膝が気になる日は、あとから軽くストレッチする程度で十分です。';
+    }
+    if (/縄跳び|エアー/.test(ut)) {
+      return '縄跳び、記録できていますね。小さく続けられているのが良い流れです。足や膝が気になる日は無理に時間を延ばさなくて大丈夫です。';
+    }
+    if (/スクワット/.test(ut)) {
+      return 'スクワット、届いています。小さく続けられているのが良い流れです。無理に回数を増やさなくて大丈夫です。';
+    }
+    return `${label}、届いています。小さく続けられているのが良い流れです。無理に量を増やさなくて大丈夫です。`;
+  }
+
+  if (cm === 'life_companion') {
+    if (themes.exerciseSkipped) {
+      return '今日は動けなかったんですね。休めたのも、身体の調整のうちです。明日は肩回しだけでも十分です。';
+    }
+    if (themes.photoMissed) {
+      return '写真は忘れても大丈夫です。あとから文字で送ってもらえれば、こちらで受け止めます。';
+    }
+    if (/抱っこ|子ども/.test(ut)) {
+      return '抱っこしながら歩けたんですね。それも立派な活動量です。腰への負担が気になる日は、無理な追加運動はしなくて大丈夫です。';
+    }
+    if (/劇団|遅くな/.test(ut)) {
+      return '劇団で遅くなったんですね。睡眠と疲れを優先して、明日はいつものリズムに戻せれば十分です。';
+    }
+    if (/お茶会/.test(ut)) {
+      return 'お茶会、楽しめたんですね。楽しんだ日も大事です。次の食事で少し整えられれば十分です。';
+    }
+    if (/聞いて|相談|仕事|家族|人間関係/.test(ut)) {
+      return [
+        'それはしんどかったですね。',
+        'いまの話、ちゃんと聞いています。',
+        'もう少しだけ、どんな場面だったか教えてもらえますか？',
+      ].join('\n');
+    }
+    return 'いまの話、受け取っています。生活の流れの中で、今日は無理のない形で整えていきましょう。';
   }
 
   if (cm === 'lab_followup') {
@@ -210,7 +297,13 @@ function fallbackProse(ctx) {
   }
 
   if (!ut) return 'うん、届いています。続きがあればそのまま送ってください。';
-  return `なるほど、「${ut.slice(0, 40)}」ですね。いまの感じを、そのまま聞かせてください。`;
+  if (themes.rewardFood) {
+    return '食べてしまった気持ち、受け取っています。責める必要はなく、次の食事で少し整えられれば十分です。';
+  }
+  if (themes.portionControl) {
+    return '半分にできたんですね。我慢というより、調整力がついてきている感じです。';
+  }
+  return 'いまの話、受け取っています。今日は無理のない形で、小さな一手だけ一緒に見ていきましょう。';
 }
 
 function hasUnauthorizedStabilityInProse(prose, ctx) {
@@ -268,14 +361,37 @@ function isAcceptableProse(ctx, prose) {
     const hasStrongBodyCue = /ストレッチ|腕|身体|伸び|肩|背中|可動|筋|動き/.test(text);
     const notGenericFallback = !/^なるほど。今の感じは受け取れた/.test(text);
     if (/ストレッチ|腕/.test(rawUt)) {
-      return /(ストレッチ|腕|伸び)/.test(text) && !/(記録しました|いい流れです|無理なく続け)/.test(text);
+      const bodyCue = /(ストレッチ|腕|伸び|腰|楽|軽)/.test(text);
+      return bodyCue && !/(記録しました|いい流れです|無理なく続け)/.test(text);
     }
     return hasStrongBodyCue && notGenericFallback;
   }
   if (cm === 'life_companion') {
+    const ut = String(ctx.userText || '');
+    if (/運動できなかった|動けなかった|できませんでした/.test(ut)) {
+      if (/動けています|続けて体を動かせ|ちゃんと動け/.test(text)) return false;
+      if (!/動けなかった|できませんでした|休め|調整|肩|休めた/.test(text)) return false;
+    }
     return text.length >= 12
       && !/(手入力の目安|今日の合計|kcal|TG：|検査値)/i.test(text)
-      && !/(記録しました|いい流れです)/.test(text);
+      && !/(記録しました|いい流れです)/.test(text)
+      && !/^なるほど。今の感じは受け取れた/.test(text);
+  }
+  if (cm === 'body_condition_note') {
+    const ut = String(ctx.userText || '');
+    if (/^なるほど。今の感じは受け取れた/.test(text)) return false;
+    if (/今日の流れの中で、無理のない形として受け止め/.test(text)) return false;
+    if (/寝不足|眠れ/.test(ut) && !/眠|寝|睡眠|休息/.test(text)) return false;
+    if (/便|出ていない|便秘/.test(ut) && !/便|水分|汁|野菜/.test(text)) return false;
+    if (/食欲|食べられ/.test(ut) && !/食欲|体調|糖質|水分|休息|食べ/.test(text)) return false;
+    if (/体重.*増/.test(ut) && !/(塩分|水分|睡眠|便|一喜一憂|むくみ|戻|失敗)/.test(text)) return false;
+    if (/頭痛/.test(ut) && !/頭痛|体調|食欲|休息|水分/.test(text)) return false;
+    return text.length >= 12;
+  }
+  if (cm === 'exercise_record') {
+    const ut = String(ctx.userText || '');
+    if (/スクワット|草むしり|縄跳び/.test(ut) && !/スクワット|草むしり|縄跳び|運動|続け|回/.test(text)) return false;
+    return text.length >= 10 && !/^なるほど。今の感じは受け取れた/.test(text);
   }
   if (cm === 'lab_followup') {
     return text.length >= 8
@@ -294,11 +410,17 @@ function isAcceptableProse(ctx, prose) {
       && !/^\s*(TG|HbA1c)[：:]\s*\d/i.test(text)
       && !/(患者名|医療機関|印刷日)/.test(text);
   }
+  if (cm === 'exercise_record' || cm === 'body_condition_note') {
+    return text.length >= 12
+      && !/^なるほど。今の感じは受け取れた/.test(text)
+      && !/(記録しました|いい流れです|ここまでの流れ)/.test(text);
+  }
   return true;
 }
 
 async function generateProse(ctx) {
   const modeBlock = modeSystemInstructions(ctx.conversationMode, ctx.replyPolicy?.replyDepth);
+  const ushigomeBlock = ushigomeConversationStyleService.formatHintsForPrompt(ctx.ushigomeStyle);
   const hints = (ctx.observationHints || [])
     .map((h) => (typeof h === 'string' ? h : h?.hint))
     .filter(Boolean)
@@ -315,6 +437,7 @@ async function generateProse(ctx) {
 
   const hiddenContext = [
     '[ここから。自然返信]',
+    ushigomeBlock,
     modeBlock,
     hints.length ? `観察ヒント（使うかは文脈判断・そのまま貼らない）: ${hints.join(' / ')}` : null,
     `処理サマリ: ${featureSummary}`,

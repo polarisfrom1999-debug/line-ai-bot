@@ -2177,6 +2177,8 @@ const NATURAL_REPLY_MODES = new Set([
   'lab_followup',
   'lab_date_inventory',
   'lab_comparison',
+  'exercise_record',
+  'body_condition_note',
 ]);
 
 function inferNaturalConversationMode(intentType) {
@@ -2184,6 +2186,8 @@ function inferNaturalConversationMode(intentType) {
   if (it === 'meal_note') return 'reward_food';
   if (it === 'lab_date_inventory') return 'lab_date_inventory';
   if (it === 'lab_comparison') return 'lab_comparison';
+  if (it === 'exercise_record') return 'exercise_record';
+  if (it === 'body_condition_note') return 'body_condition_note';
   return it;
 }
 
@@ -3815,8 +3819,12 @@ async function orchestrateConversation(input) {
         });
         console.info('[contextual_intent_applied]', { intent: 'body_condition_note', user_id: input.userId });
         console.info('[body_condition_note_saved]', { user_id: input.userId, body_note: bodyNote });
-        const reply = '腰の重さ、メモしておきますね。今日は無理に追い込まず、軽めにしておくと安心です。';
-        const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note');
+        const reply = '';
+        const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note', {
+          skipHealthAggregation: true,
+          useNaturalGenerator: true,
+          featureResults: { recordKind: 'body_condition_note', saved: true, bodyNote },
+        });
         await appendTurn(input.userId, input.rawText || '', out);
         return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'body_condition_note', responseMode: 'record' } };
       }
@@ -3851,8 +3859,12 @@ async function orchestrateConversation(input) {
       });
       console.info('[contextual_intent_applied]', { intent: 'body_condition_note', user_id: input.userId });
       console.info('[body_condition_note_saved]', { user_id: input.userId, body_note: bodyNote });
-      const reply = '腰の重さ、メモしておきますね。今日は無理に追い込まず、軽めにしておくと安心です。';
-      const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note');
+      const reply = '';
+      const out = await withSurfaceReply(input, reply, { recentMessages, longMemory }, 'body_condition_note', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: { recordKind: 'body_condition_note', saved: true, bodyNote },
+      });
       await appendTurn(input.userId, input.rawText || '', out);
       return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'body_condition_note', responseMode: 'record' } };
     }
@@ -4080,11 +4092,35 @@ async function orchestrateConversation(input) {
       };
     }
 
+    if (input?.messageType === 'text' && priority.route === 'body_condition_note') {
+      logPriority(priority.route, priority.reason);
+      await contextMemoryService.addDailyRecord(input.userId, {
+        type: 'body_condition',
+        name: '体調メモ',
+        summary: text.slice(0, 120),
+        bodyNote: text.slice(0, 200),
+      });
+      const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'body_condition_note', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: { recordKind: 'body_condition_note', saved: true },
+      });
+      await appendTurn(input.userId, input.rawText || '', out);
+      return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'body_condition_note', responseMode: 'record' } };
+    }
+
     if (input?.messageType === 'text' && priority.route === 'exercise_record') {
       logPriority(priority.route, priority.reason);
       const handled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
       if (handled?.replyText) {
-        const out = await withSurfaceReply(input, handled.replyText, { recentMessages, longMemory }, 'exercise_record');
+        const out = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'exercise_record', {
+          useNaturalGenerator: true,
+          featureResults: {
+            recorded: true,
+            recordKind: 'exercise_record',
+            exerciseLabel: normalizeText(handled.record?.name || handled.record?.summary || text).slice(0, 60),
+          },
+        });
         await appendTurn(input.userId, input.rawText || '', out);
         return { ok: true, replyMessages: [{ type: 'text', text: out }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
       }
@@ -5064,7 +5100,14 @@ async function orchestrateConversation(input) {
 
     const simpleExerciseHandled = await maybeHandleSimpleExerciseRecord(input, text, longMemory);
     if (simpleExerciseHandled) {
-      const exOut = await withSurfaceReply(input, simpleExerciseHandled.replyText, { recentMessages, longMemory }, 'exercise_record');
+      const exOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'exercise_record', {
+        useNaturalGenerator: true,
+        featureResults: {
+          recorded: true,
+          recordKind: 'exercise_record',
+          exerciseLabel: normalizeText(simpleExerciseHandled.record?.name || simpleExerciseHandled.record?.summary || text).slice(0, 60),
+        },
+      });
       await appendTurn(input.userId, input.rawText || '', exOut);
       return { ok: true, replyMessages: [{ type: 'text', text: exOut }], internal: { intentType: 'exercise_record', responseMode: 'record' } };
     }

@@ -1,5 +1,7 @@
 'use strict';
 
+const ushigomeConversationStyleService = require('./ushigome_conversation_style_service');
+
 function normalizeText(v) {
   return String(v || '').trim();
 }
@@ -26,6 +28,16 @@ function buildReplyContext(params = {}) {
     ...(params.replyPolicy || {}),
   };
 
+  const ushigomeStyle = params.ushigomeStyle && typeof params.ushigomeStyle === 'object'
+    ? params.ushigomeStyle
+    : ushigomeConversationStyleService.buildUshigomeStyleHints({
+      userText,
+      conversationMode,
+      intentType: intent,
+      featureResults,
+      userContext,
+    });
+
   return {
     userText,
     conversationMode,
@@ -40,6 +52,7 @@ function buildReplyContext(params = {}) {
     },
     observationHints,
     replyPolicy,
+    ushigomeStyle,
   };
 }
 

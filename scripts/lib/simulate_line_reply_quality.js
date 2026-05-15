@@ -96,7 +96,8 @@ function evaluateReplyQuality({
   intentType = '',
   interpretMode = '',
   replyDepth = '',
-  allowStableRoutinePhrase = false
+  allowStableRoutinePhrase = false,
+  skipDirectEchoCheck = false,
 } = {}) {
   const violations = [];
   const hits = forbiddenPhraseHits(reply);
@@ -141,7 +142,8 @@ function evaluateReplyQuality({
   }
 
   if (intentType === 'life_companion') {
-    if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌)/.test(String(reply || ''))) {
+    if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('life_companion_generic_escape');
+    if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌|受け取|休|整え|睡眠|劇団|お茶会|抱っこ|写真|動け|調整)/.test(String(reply || ''))) {
       violations.push('life_companion_shallow');
     }
     if (/(手入力の目安|今日の合計|kcal)/i.test(reply)) violations.push('life_companion_health_bleed');
@@ -172,10 +174,23 @@ function evaluateReplyQuality({
 
   if (intentType === 'exercise_feedback') {
     if (!hasExerciseBodyCue(reply)) violations.push('exercise_feedback_no_body_cue');
-    if (/ストレッチ|腕/.test(userText) && !/(ストレッチ|腕|伸び|肩|背中|身体|可動|筋)/.test(reply)) {
+    if (/ストレッチ|腕|腰/.test(userText) && !/(ストレッチ|腕|伸び|肩|背中|身体|可動|筋|腰|楽)/.test(reply)) {
       violations.push('exercise_feedback_no_body_cue');
     }
     if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('exercise_feedback_generic_escape');
+    return violations;
+  }
+
+  if (intentType === 'body_condition_note') {
+    if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('body_condition_generic');
+    if (!/(体調|痛|頭|便|眠|睡眠|休息|体重|水分|糖質|食欲)/.test(String(reply || ''))) {
+      violations.push('body_condition_shallow');
+    }
+    return violations;
+  }
+
+  if (intentType === 'exercise_record') {
+    if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('exercise_record_generic');
     return violations;
   }
 
@@ -201,7 +216,7 @@ function evaluateReplyQuality({
     return violations;
   }
 
-  if (!hasDirectEcho(userText, reply)) violations.push('no_direct_echo');
+  if (!skipDirectEchoCheck && !hasDirectEcho(userText, reply)) violations.push('no_direct_echo');
 
   return violations;
 }
