@@ -57,7 +57,7 @@ const MENUS = [
   menu('wrist_mobility', BODY_REGION.HAND_ELBOW, '手首可動域', ['手首のこわばり'], ['骨折疑い'], '手首をゆっくり回す', '各方向5〜10回', '0〜3', '痛み増', '10回', '片方向のみ'),
 
   // 足・アキレス・シンスプリント
-  menu('calf_stretch', BODY_REGION.LOWER_LEG, 'ふくらはぎストレッチ', ['アキレス', 'シンスプリント', 'すねの張り'], ['一点の鋭痛', '片脚ジャンプ痛'], '壁を使いすねを軽く伸ばす', '10〜20秒×1〜2', '0〜3', 'すねの鋭痛・しびれで中止', '20秒×2', '膝を曲げた版'),
+  menu('calf_stretch', BODY_REGION.LOWER_LEG, 'ふくらはぎストレッチ', ['アキレス', 'シンスプリント', 'すねの張り'], ['一点の鋭痛', '片脚ジャンプ痛'], '壁に手をつき、かかとを少し下げてふくらはぎを軽く伸ばす', '10秒×1〜2', '0〜3', 'すねの鋭痛・しびれで中止', '20秒×2', '膝を曲げた版'),
   menu('ankle_circle', BODY_REGION.LOWER_LEG, '足首可動域', ['シンスプリント', '足首こわばり'], ['急性捻挫腫れ'], '足首をゆっくり回す', '左右10回', '0〜3', '痛み増', '12回', '片方向5回'),
   menu('towel_gather', BODY_REGION.LOWER_LEG, '足裏・足指', ['シンスプリント', '扁平足補助'], ['足底強痛'], 'タオルを足で掴む', '10回', '0〜3', '足底鋭痛', '12回', '5回'),
   menu('calf_raise_bilateral', BODY_REGION.LOWER_LEG, 'ふくらはぎ筋', ['シンスプリント回復期'], ['走ると痛い', '一点痛', '片脚ジャンプ痛'], '両脚でかかとを上げる', '5〜10回', '0〜3', 'すね鋭痛で中止', '12回', '片脚は禁止'),
@@ -83,7 +83,7 @@ function pickMenus({ bodyRegion = 'general', conditionIds = [], safetyLevel = 's
 
   if (/シンスプリント|すね.*内側|走るとすね|shin|MTSS/i.test(text) || conditionIds.includes('shin_splint')) {
     const shinMenus = MENUS.filter((m) =>
-      ['calf_stretch', 'ankle_circle', 'towel_gather', 'calf_raise_bilateral', 'shin_self_massage_light'].includes(m.id)
+      ['ankle_circle', 'calf_stretch', 'towel_gather', 'calf_raise_bilateral', 'shin_self_massage_light'].includes(m.id)
     );
     pool = [...shinMenus, ...pool];
   }

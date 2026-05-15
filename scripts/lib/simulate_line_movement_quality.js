@@ -81,8 +81,8 @@ const SCENARIO_RULES = {
     forbidSelfCare: true,
   },
   shin_run_pain: {
-    must: [/(すね|走|足首|ふくらはぎ|10|中止|ズキ|片脚)/],
-    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+    must: [/(すね|走|足首|ふくらはぎ|10|ズキ|片脚|増やさ)/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, /壁を使いすね/],
     requireSmallStep: true,
   },
   shin_point_jump: {

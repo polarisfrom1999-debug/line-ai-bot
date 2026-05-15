@@ -24,7 +24,8 @@ function buildMovementOpening(userText, mg) {
   if (/シンスプリント|すね/.test(ut) && /練習していい|練習しても|走っていい|走ってもいい/.test(ut)) {
     return 'シンスプリントの時期に、練習の判断を迷っているんですね。';
   }
-  if (/走るとすね|シンスプリント/.test(ut)) return '走るとすねの内側が痛い感じですね。';
+  if (/走るとすね|走ると.*すね|すね.*内側/.test(ut)) return '走るとすねの内側が痛いんですね。';
+  if (/シンスプリント/.test(ut)) return 'シンスプリントで気になるんですね。';
   if (/ろれつ|話がうまく|言葉が出/.test(ut)) return 'ろれつが回りにくい感じがあるんですね。';
   if (/片側.*麻痺|片麻痺|麻痺.*片側/.test(ut)) return '片側の麻痺があるんですね。';
   if (/胸が苦|息が苦/.test(ut)) return '胸が苦しいんですね。';
@@ -32,6 +33,29 @@ function buildMovementOpening(userText, mg) {
   if (/排尿|排便/.test(ut) && /腰|しびれ/.test(ut)) return '腰痛と足のしびれ、排尿の変化があるんですね。';
   if (mg?.goal_context && /目標|続け|練習/.test(ut)) return '目標に向けて続けたい気持ち、受け取りました。';
   return 'いまの状態、受け取りました。';
+}
+
+function isShinSplintRunPainSafeCase(userText = '', mg = {}) {
+  const ut = normalizeText(userText);
+  if (mg?.block_self_care) return false;
+  if (!/走ると.*すね|走るとすね|すね.*内側|シンスプリント/.test(ut)) return false;
+  if (/練習していい|練習しても|走っていい|走ってもいい/.test(ut)) return false;
+  if (/一点|ズキッ|片脚.*ジャンプ|歩いても痛|休んでも痛/.test(ut)) return false;
+  return true;
+}
+
+function buildShinSplintSafeRunPainReply(open = '') {
+  const lead = open || '走るとすねの内側が痛いんですね。';
+  return [
+    lead,
+    'シンスプリントっぽい時は、まず走る量を増やさず、すねとふくらはぎの負担を落とす方が先です。',
+    '',
+    '今日は足首回しを左右10回。',
+    'ふくらはぎを軽く10秒だけ伸ばしてみましょう。痛みが強くなったら中止で。',
+    '',
+    '一点がズキッと痛い、歩いても痛い、片脚ジャンプで痛い、休んでも痛い時は、無理に練習せず確認が必要です。',
+    'できたら「できた」で大丈夫です。',
+  ].join('\n');
 }
 
 function buildManualNutritionBlock(featureResults = {}) {
@@ -294,6 +318,9 @@ function fallbackProse(ctx) {
         '強度は上げず、同じペースで大丈夫です。',
       ].join('\n');
     }
+    if (isShinSplintRunPainSafeCase(ut, mg)) {
+      return buildShinSplintSafeRunPainReply(open);
+    }
     if (mg.recommended_menu) {
       const menuBlock = movementSelfcareLibrary.formatMenuForReply(mg.recommended_menu);
       return [open, '今日は強く伸ばすより、次の一手だけで十分です。', menuBlock].join('\n');
@@ -307,13 +334,7 @@ function fallbackProse(ctx) {
       ].join('\n');
     }
     if (/シンスプリント|すね.*内側|走るとすね|走ると.*すね/.test(ut)) {
-      return [
-        open || 'すねの内側が走ると痛い感じですね。',
-        'シンスプリントっぽい時は、まず走る量を増やすより負担を落とす方が先です。',
-        '足首回しを左右10回、ふくらはぎを軽く10秒だけ伸ばしてみましょう。強さは痛み0〜3、気持ちいい張りまで。',
-        '一点がズキッと痛い、歩いても痛い、片脚ジャンプで痛い時は無理に動かさず確認が必要です。',
-        'できたら「できた」で大丈夫です。',
-      ].join('\n');
+      return buildShinSplintSafeRunPainReply(open);
     }
     if (/脊柱管|狭窄/.test(ut) && /しびれ|歩/.test(ut)) {
       return [
