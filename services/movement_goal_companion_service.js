@@ -241,7 +241,7 @@ function formatMovementHintsForPrompt(hints) {
     lines.push('反応に合わせて自然文で返す。すぐ回数を増やさない。しびれ・悪化はセルフケアを止め確認優先。');
   } else if (hints.life_scene_pick?.exercise) {
     lines.push(movementLifeSceneSelfcare.formatLifeSceneForPrompt(hints.life_scene_pick));
-    lines.push('専門用語（骨盤前後運動・胸椎伸展・肩甲骨内転・股関節屈曲伸展・股関節外旋・大腿四頭筋セッティング・足関節底背屈・神経モビライゼーション・体幹安定化）は使わない。生活の言葉に言い換える。');
+    lines.push('専門用語は使わず生活の言葉で書く。「ゴキブリ体操」という言葉の言い換え説明は書かない（手足ぶらぶら体操とだけ伝える）。');
   } else if (hints.block_self_care || hints.safety_level === 'red_flag') {
     lines.push(hints.red_flag_message || movementRedFlagGuard.evaluateRedFlags('').priorityMessage);
     lines.push('ストレッチ・筋トレ・走る・ジャンプの提案は禁止。');

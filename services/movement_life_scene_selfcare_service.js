@@ -82,7 +82,7 @@ const EXERCISES = {
     intensity: '痛みは0〜10のうち0〜3まで。「少し張る」か「痛気持ちいい手前」まで。',
     stopCondition:
       'ズキッとする痛み、しびれ、痛みが強くなる、終わったあと悪化、めまい・ふらつき、息苦しさで中止。',
-    avoidIf: '腰が反る感じがある人、腰痛が強い朝、股関節に引っかかる痛みがある時はやらない。',
+    avoidIf: '腰が反る感じがある時はやらない。腰痛が強い日は無理にしない。股関節に引っかかる痛みがある時も中止。',
     followupPrompt: '終わったら「楽・変わらない・痛い・しびれ」で教えてください。',
   },
   side_lying_getup: {
@@ -109,7 +109,7 @@ const EXERCISES = {
     intensity: '痛みは0〜10のうち0〜3まで。無理に伸ばさない。',
     stopCondition:
       'のぼせ、動悸、息苦しめまい、ふらつき、しびれ増、痛み増で中止。滑りやすいので急がない。',
-    avoidIf: 'のぼせやすい人、動悸・息苦しさがある人、浴槽内で姿勢を変えるのが怖い人にはすすめない。',
+    avoidIf: 'のぼせる、ふらつく、滑りそうな時はやらない。動悸・息苦しさがある時も中止。',
     followupPrompt: '終わったら「楽・変わらない・痛い・しびれ」で教えてください。',
   },
   bath_knee_to_chest: {
@@ -268,17 +268,92 @@ function formatLifeSceneForPrompt(pick) {
   ].join('\n');
 }
 
-function buildLifeSceneFallbackLines(pick, openingLine = '') {
+const INTENSITY_SHORT = '痛みは0〜10のうち0〜3まで。';
+const STOP_SHORT =
+  'ズキッとする痛み、しびれ、痛みが強くなる、めまい・ふらつきが出たら中止です。';
+
+function buildLifeSceneFallbackLines(pick, openingLine = '', userText = '') {
   if (!pick?.exercise) return [];
   const e = pick.exercise;
+  const key = pick.exerciseKey || '';
+  const repsLine = /^まず/.test(e.reps) ? e.reps : `まず${e.reps}`;
+
+  if (key === 'hand_foot_shake_bed' || /ゴキブリ|ごきぶり/.test(userText)) {
+    return [
+      openingLine || '朝、体が重い時には「手足ぶらぶら体操」が合います。',
+      '仰向けのまま、手首と足首を小さくぶらぶら10秒だけ動かしましょう。',
+      INTENSITY_SHORT,
+      '腰が反りやすい時は足を高く上げないで。首に力を入れすぎないで。',
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
+  if (key === 'small_bicycle_bed') {
+    return [
+      openingLine || '布団の中で少し足を動かしたいんですね。',
+      e.userFriendlyInstructions,
+      repsLine,
+      INTENSITY_SHORT,
+      '腰が反る感じがある時はやらない。腰が痛い日は無理にしない。',
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
+  if (key === 'bath_round_back') {
+    return [
+      openingLine || 'お風呂で温まったあと、腰を強く伸ばすより休ませる方が合いそうです。',
+      e.userFriendlyInstructions,
+      repsLine,
+      INTENSITY_SHORT,
+      'のぼせる、ふらつく、滑りそうな時は、この体操はやらないでください。',
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
+  if (key === 'knee_sway_bed') {
+    return [
+      openingLine || '朝起きた時に腰が固いんですね。起きてすぐ立つより、布団の中で少し体を起こす準備をしましょう。',
+      e.userFriendlyInstructions,
+      repsLine,
+      INTENSITY_SHORT,
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
+  if (key === 'knee_flex_one_leg_bed') {
+    return [
+      openingLine || '朝、股関節が固い感じですね。',
+      e.userFriendlyInstructions,
+      repsLine,
+      INTENSITY_SHORT,
+      '腰が反るほど大きく動かさなくて大丈夫です。',
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
+  if (key === 'chair_round_straight') {
+    return [
+      openingLine || '椅子で腰を整えたいんですね。',
+      e.userFriendlyInstructions,
+      repsLine,
+      INTENSITY_SHORT,
+      STOP_SHORT,
+      e.followupPrompt,
+    ];
+  }
+
   const lines = [];
   if (openingLine) lines.push(openingLine);
-  lines.push(`${e.userFriendlyName}を試してみましょう。`);
   lines.push(e.userFriendlyInstructions);
-  lines.push(`回数・時間の目安：${e.reps}`);
-  lines.push(e.intensity);
-  lines.push(`中止の目安：${e.stopCondition}`);
-  if (e.avoidIf) lines.push(`注意：${e.avoidIf}`);
+  lines.push(repsLine);
+  lines.push(INTENSITY_SHORT);
+  lines.push(STOP_SHORT);
+  if (e.avoidIf) lines.push(e.avoidIf);
   lines.push(e.followupPrompt);
   return lines;
 }

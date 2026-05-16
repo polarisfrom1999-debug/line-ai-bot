@@ -23,9 +23,9 @@ function buildReactionFollowupFallback(kind) {
   const k = String(kind || '');
   if (k === movementReactionFollowup.REACTION_KIND.BETTER) {
     return [
-      'その変化、ちゃんと受け取りました。',
-      'すぐに回数や時間を増やさず、いま感じた強さのまま、次も同じペースで大丈夫です。',
-      'また体の声が変わったら、そのまま送ってください。',
+      '良い反応です。',
+      '今日は増やさず、同じ強さで十分です。',
+      '明日も同じくらいで、楽になる感じが再現できるか見ましょう。',
     ].join('\n');
   }
   if (k === movementReactionFollowup.REACTION_KIND.SAME) {
@@ -253,7 +253,7 @@ function modeSystemInstructions(conversationMode, replyDepth) {
     return [
       '会話モード: movement_goal_companion（可動域・生活場面のセルフケア・反応フォロー）',
       '診断・治療断定はしない。赤旗・強い痛みは医療相談を先に。',
-      '専門用語（骨盤前後運動・胸椎伸展・肩甲骨内転・股関節屈曲伸展・股関節外旋・大腿四頭筋セッティング・足関節底背屈・神経モビライゼーション・体幹安定化・ゴキブリ体操）は使わず、生活の言葉に言い換える。',
+      '専門用語は使わず生活の言葉で書く。「ゴキブリ体操」の言い換え説明は書かない（手足ぶらぶら体操とだけ伝える）。',
       '安全なら生活場面に合う動きを1つだけ。回数・強さ（痛み0〜10の0〜3）・中止条件を必ず入れる。',
       'セルフケア提案の末尾に「楽・変わらない・痛い・しびれ」の反応確認を入れる（定型文の羅列ではなく自然文で）。',
       '痛みがある時は回数・強度を増やさない。数値・カロリー行は書かない。',
@@ -397,7 +397,7 @@ function fallbackProse(ctx) {
     }
     if (mg.life_scene_pick?.exercise) {
       const sceneOpen = buildLifeSceneOpening(ut) || open;
-      return movementLifeSceneSelfcare.buildLifeSceneFallbackLines(mg.life_scene_pick, sceneOpen).join('\n');
+      return movementLifeSceneSelfcare.buildLifeSceneFallbackLines(mg.life_scene_pick, sceneOpen, ut).join('\n');
     }
     if (isShinSplintRunPainSafeCase(ut, mg)) {
       return buildShinSplintSafeRunPainReply(open);
