@@ -7,6 +7,78 @@ const ushigomeConversationStyleService = require('./ushigome_conversation_style_
 const movementGoalCompanionService = require('./movement_goal_companion_service');
 const movementSelfcareLibrary = require('./movement_selfcare_library_service');
 const movementSupportClassifier = require('./movement_support_classifier_service');
+const movementLifeSceneSelfcare = require('./movement_life_scene_selfcare_service');
+const movementReactionFollowup = require('./movement_reaction_followup_service');
+
+const SAFE_MOVEMENT_FOLLOWUP = '終わったら「楽・変わらない・痛い・しびれ」で教えてください。';
+
+function ensureMovementFollowup(body) {
+  const b = normalizeText(body);
+  if (!b) return SAFE_MOVEMENT_FOLLOWUP;
+  if (/楽・変わらない|「楽」「変わらない」|しびれ」で教え|楽・変わらない・痛い・しびれ/.test(b)) return b;
+  return `${b}\n\n${SAFE_MOVEMENT_FOLLOWUP}`;
+}
+
+function buildReactionFollowupFallback(kind) {
+  const k = String(kind || '');
+  if (k === movementReactionFollowup.REACTION_KIND.BETTER) {
+    return [
+      'その変化、ちゃんと受け取りました。',
+      'すぐに回数や時間を増やさず、いま感じた強さのまま、次も同じペースで大丈夫です。',
+      'また体の声が変わったら、そのまま送ってください。',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.SAME) {
+    return [
+      '変わらなかったんですね。こちらから無理に増やす必要はありません。',
+      '次は別のやさしい動きに切り替えるのもありです。いま一番近いのは、腰・脚・首肩のどれですか？',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.WORSE) {
+    return [
+      '痛みが出たんですね。そこで止めてください。',
+      '強さか動きの方向が合わなかった可能性があります。必要なら医療機関・専門への相談を優先しましょう。',
+      '今日はこの動きは中止で大丈夫です。',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.NUMB) {
+    return [
+      'しびれが出たんですね。セルフケアはいったん止めてください。',
+      '神経に響いている可能性があるので、確認を優先しましょう。',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.SCARED) {
+    return [
+      '怖くなったんですね。無理に続けなくて大丈夫です。',
+      '今日は休む選択で大丈夫です。また落ち着いたら、やさしい版からで構いません。',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.MORE) {
+    return [
+      'もう少しできそうな感じなんですね。',
+      'でも今日は回数を増やさず、同じ強さで十分です。続けられる形を優先しましょう。',
+    ].join('\n');
+  }
+  if (k === movementReactionFollowup.REACTION_KIND.DONE_ACK) {
+    return [
+      'できたんですね。今日はそれで十分です。',
+      '次回も同じ量からで大丈夫です。',
+    ].join('\n');
+  }
+  return [
+    'どの感じに近かったか、「楽・変わらない・痛い・しびれ」で短く教えてもらえますか？',
+  ].join('\n');
+}
+
+function buildLifeSceneOpening(ut) {
+  if (/朝起き|起きると腰|朝.*腰.*固|朝.*腰が固/.test(ut)) return '朝起きた時に腰が固いんですね。';
+  if (/朝.*股関節|股関節.*朝/.test(ut) && /固|こわば/.test(ut)) return '朝、股関節が固い感じですね。';
+  if (/ゴキブリ|ごきぶり/.test(ut) || (/朝.*体が重い|体が重い.*朝/.test(ut))) return '朝、体が重い感じですね。';
+  if (/布団|寝ながら/.test(ut) && /自転車|こぎ/.test(ut)) return '布団の中で少し動かしていいか、迷っているんですね。';
+  if (/お風呂|おふろ|風呂|湯船/.test(ut) && /腰.*伸ば|伸ばして/.test(ut)) return 'お風呂で腰を伸ばしていいか、迷っているんですね。';
+  if (/椅子で/.test(ut) && /腰.*体操|体操.*腰/.test(ut)) return '椅子で腰を整えたいんですね。';
+  return '';
+}
 
 function normalizeText(v) {
   return String(v || '').trim();
@@ -54,7 +126,7 @@ function buildShinSplintSafeRunPainReply(open = '') {
     'ふくらはぎを軽く10秒だけ伸ばしてみましょう。痛みが強くなったら中止で。',
     '',
     '一点がズキッと痛い、歩いても痛い、片脚ジャンプで痛い、休んでも痛い時は、無理に練習せず確認が必要です。',
-    'できたら「できた」で大丈夫です。',
+    SAFE_MOVEMENT_FOLLOWUP,
   ].join('\n');
 }
 
@@ -179,9 +251,11 @@ function modeSystemInstructions(conversationMode, replyDepth) {
   }
   if (cm === 'movement_goal_companion') {
     return [
-      '会話モード: movement_goal_companion（可動域・ストレッチ・自重・目標）',
+      '会話モード: movement_goal_companion（可動域・生活場面のセルフケア・反応フォロー）',
       '診断・治療断定はしない。赤旗・強い痛みは医療相談を先に。',
-      '安全なセルフケア候補と今日の小さな一歩を1つ。2〜4文。',
+      '専門用語（骨盤前後運動・胸椎伸展・肩甲骨内転・股関節屈曲伸展・股関節外旋・大腿四頭筋セッティング・足関節底背屈・神経モビライゼーション・体幹安定化・ゴキブリ体操）は使わず、生活の言葉に言い換える。',
+      '安全なら生活場面に合う動きを1つだけ。回数・強さ（痛み0〜10の0〜3）・中止条件を必ず入れる。',
+      'セルフケア提案の末尾に「楽・変わらない・痛い・しびれ」の反応確認を入れる（定型文の羅列ではなく自然文で）。',
       '痛みがある時は回数・強度を増やさない。数値・カロリー行は書かない。',
     ].join('\n');
   }
@@ -304,6 +378,9 @@ function fallbackProse(ctx) {
         'ここから。では病名の断定はせず、今日は無理に体を動かさないことだけ一緒に整理しましょう。',
       ].join('\n');
     }
+    if (mg.reaction_followup && mg.reaction_followup.kind !== movementReactionFollowup.REACTION_KIND.UNKNOWN) {
+      return buildReactionFollowupFallback(mg.reaction_followup.kind);
+    }
     if (sl === movementSupportClassifier.SAFETY_LEVEL.NEEDS_MEDICAL_CHECK) {
       return [
         open,
@@ -318,74 +395,93 @@ function fallbackProse(ctx) {
         '強度は上げず、同じペースで大丈夫です。',
       ].join('\n');
     }
+    if (mg.life_scene_pick?.exercise) {
+      const sceneOpen = buildLifeSceneOpening(ut) || open;
+      return movementLifeSceneSelfcare.buildLifeSceneFallbackLines(mg.life_scene_pick, sceneOpen).join('\n');
+    }
     if (isShinSplintRunPainSafeCase(ut, mg)) {
       return buildShinSplintSafeRunPainReply(open);
     }
     if (mg.recommended_menu) {
       const menuBlock = movementSelfcareLibrary.formatMenuForReply(mg.recommended_menu);
-      return [open, '今日は強く伸ばすより、次の一手だけで十分です。', menuBlock].join('\n');
+      return ensureMovementFollowup([open, '今日は強く伸ばすより、次の一手だけで十分です。', menuBlock].join('\n'));
     }
     if (/シンスプリント|すね/.test(ut) && /練習していい|練習しても|走っていい|走ってもいい/.test(ut)) {
-      return [
-        open,
-        '迷ったら今日は走る量を増やさず、痛みが出たら休む・走らないを優先にしましょう。',
-        '一点がズキッと痛い・片脚ジャンプが痛い・歩いても痛い・腫れがある時は、走る練習は控えて専門家に確認してください。',
-        '痛みが広くて軽い日だけ、足首回し左右10回やふくらはぎの軽いケアで十分です。状態を送ってもらえれば一緒に整理します。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '迷ったら今日は走る量を増やさず、痛みが出たら休む・走らないを優先にしましょう。',
+          '一点がズキッと痛い・片脚ジャンプが痛い・歩いても痛い・腫れがある時は、走る練習は控えて専門家に確認してください。',
+          '痛みが広くて軽い日だけ、足首回し左右10回やふくらはぎの軽いケアで十分です。状態を送ってもらえれば一緒に整理します。',
+        ].join('\n')
+      );
     }
     if (/シンスプリント|すね.*内側|走るとすね|走ると.*すね/.test(ut)) {
       return buildShinSplintSafeRunPainReply(open);
     }
     if (/脊柱管|狭窄/.test(ut) && /しびれ|歩/.test(ut)) {
-      return [
-        open,
-        '歩くとしびれる・休むと楽になることも、一緒に見ていきましょう。今日は長く反らすより、椅子で骨盤を前後に10回だけ動かしてみてください。',
-        '痛みやしびれが増えたら中止で大丈夫です。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '歩くとしびれる・休むと楽になることも、一緒に見ていきましょう。今日は長く反らさず、椅子に座り、おしりの付け根あたりを前後に小さく10回だけ揺らしてみてください。',
+          '痛みは0〜10のうち0〜3まで。痛みやしびれが増えたら中止で大丈夫です。',
+        ].join('\n')
+      );
     }
     if (/ぎっくり|動くのが怖/.test(ut)) {
-      return [
-        open,
-        '動くのが怖い気持ち、わかります。今日は強いストレッチより、楽な姿勢と短い骨盤運動からで十分です。',
-        '椅子に座って骨盤を前後に10回だけ。痛みが増えたらそこで止めてください。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '動くのが怖い気持ち、わかります。今日は強いストレッチより、楽な姿勢からで十分です。',
+          '椅子に座り、おしりの付け根あたりを前後に10回だけ。痛みは0〜10のうち0〜3まで。痛みが増えたらそこで止めてください。',
+        ].join('\n')
+      );
     }
     if (/五十肩|肩が上がり|夜痛/.test(ut)) {
-      return [
-        open,
-        '無理に上まで上げるより、肩甲骨を動かす方から始めましょう。肘を軽く曲げて肩をすくめてストンと落とす。10回だけ。',
-        'ズキッとする角度は避けてください。夜に痛みが強い日は回数を減らして大丈夫です。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '無理に上まで上げるより、背中のあたりをゆるく動かす方から始めましょう。肘を軽く曲げて肩をすくめてストンと落とす。10回だけ。',
+          '痛みは0〜10のうち0〜3まで。ズキッとする角度は避けてください。夜に痛みが強い日は回数を減らして大丈夫です。',
+        ].join('\n')
+      );
     }
     if (/ストレートネック|首肩/.test(ut)) {
-      return [
-        open,
-        '今日は無理に首を反らすより、胸を開く・肩甲骨を動かす方からで十分です。',
-        '首をゆっくり左右に振る。各5〜8回だけ。',
-        'しびれ・痛みが増えたら中止です。できたら「できた」で大丈夫です。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '今日は無理に首を反らさず、胸を軽く開いてからで十分です。',
+          '首をゆっくり左右に振る。各5〜8回だけ。痛みは0〜10のうち0〜3まで。',
+          'しびれ・痛みが増えたら中止です。',
+        ].join('\n')
+      );
     }
     if (/腰が固|腰.*固|ストレッチ.*教/.test(ut)) {
-      return [
-        open,
-        '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
-        '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
-        '痛みが強くなる、足にしびれが出る時は中止です。できたら「10回できた」で大丈夫です。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
+          '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
+          '痛みは0〜10のうち0〜3まで。痛みが強くなる、足にしびれが出る時は中止です。',
+        ].join('\n')
+      );
     }
     if (/腰が重|腰.*張/.test(ut)) {
-      return [
-        open,
-        '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
-        '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
-        '痛みが強くなる、足にしびれが出る時は中止です。',
-      ].join('\n');
+      return ensureMovementFollowup(
+        [
+          open,
+          '今日は強く伸ばすより、腰まわりを少しゆるめるくらいが良さそうです。',
+          '仰向けで膝を立て、両膝をゆっくり左右に倒してみてください。まず10回だけ。',
+          '痛みは0〜10のうち0〜3まで。痛みが強くなる、足にしびれが出る時は中止です。',
+        ].join('\n')
+      );
     }
-    return [
-      open,
-      '今日は1つだけ、やさしい版で十分です。痛みが増えたら中止で大丈夫です。',
-      'できたら「できた」で送ってもらえれば大丈夫です。',
-    ].join('\n');
+    return ensureMovementFollowup(
+      [
+        open,
+        '今日は1つだけ、やさしい版で十分です。痛みは0〜10のうち0〜3まで。痛みが増えたら中止で大丈夫です。',
+      ].join('\n')
+    );
   }
 
   if (cm === 'exercise_record' || fr.recordKind === 'exercise_record') {

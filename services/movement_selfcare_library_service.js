@@ -136,7 +136,7 @@ function formatMenuForReply(menuItem) {
     `まず${menuItem.reps}だけ。`,
     intensityLine,
     stopLine,
-    'できたら「できた」で大丈夫です。',
+    '終わったら「楽・変わらない・痛い・しびれ」で教えてください。',
   ].join('\n').replace(/\n\n+/g, '\n');
 }
 

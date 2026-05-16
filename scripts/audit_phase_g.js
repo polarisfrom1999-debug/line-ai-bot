@@ -98,7 +98,7 @@ const SHIN_CASES = [
 
 const SELF_CARE_INSTRUCT_RE = /(\d+回|10秒|5回|20秒|各\d)/;
 const STOP_RE = /中止|止め|やめて|控え/;
-const FOLLOW_UP_RE = /できた|送って|大丈夫です/;
+const FOLLOW_UP_RE = /できた|送って|大丈夫です|楽・変わらない|しびれ.*教え/;
 const INTENSITY_RE = /(0〜3|0〜2|痛み|気持ちいい|張り|やさし|軽く)/;
 
 function pullReply(result) {

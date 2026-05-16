@@ -131,6 +131,16 @@ async function runMovementCompanionSelfTest() {
     text: '走るとすねが痛い',
   });
   if (!menus.length) throw new Error('[simulate:line] shin splint menus missing');
+
+  const movementLifeSceneSelfcare = require('../services/movement_life_scene_selfcare_service');
+  const lp = movementLifeSceneSelfcare.pickLifeSceneExercise({
+    userText: '朝起きると腰が固いです',
+    blockSelfCare: false,
+    safetyLevel: 'needs_caution',
+  });
+  if (!lp || lp.exerciseKey !== 'knee_sway_bed') {
+    throw new Error('[simulate:line] life scene morning waist pick failed');
+  }
 }
 
 async function runUshigomeStyleSelfTest() {
@@ -689,6 +699,15 @@ function movementGoalScenarios() {
     { id: 'movement_unilateral_paralysis', group: 'movement', title: '片側麻痺', text: '片側の麻痺があります', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'neuro_red_flag', forbidden: false, nonEmptyReply: true } },
     { id: 'movement_stretch_hip', group: 'movement', title: '腰ストレッチ', text: '腰が固いのでストレッチを教えてください', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'stretch_request', forbidden: false, nonEmptyReply: true } },
     { id: 'movement_red_flag', group: 'movement', title: '足しびれ歩けない', text: '足がしびれて歩けません', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'red_flag_numbness', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_morning_waist', group: 'movement', title: '朝腰固い', text: '朝起きると腰が固いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_morning_waist_stiff', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_morning_hip', group: 'movement', title: '朝股関節固い', text: '朝、股関節が固いです', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_morning_hip_stiff', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_cockroach', group: 'movement', title: 'ゴキブリ体操', text: '朝、体が重いのでゴキブリ体操していいですか', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_hand_foot_shake', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_bed_bike', group: 'movement', title: '布団自転車こぎ', text: '布団の中で自転車こぎしていいですか', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_small_bicycle', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_bath_stretch', group: 'movement', title: 'お風呂腰伸ばし', text: 'お風呂で腰を伸ばしてもいいですか', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_bath_waist', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_chair_lumbar', group: 'movement', title: '椅子腰体操', text: '椅子でできる腰の体操ありますか', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_chair_waist', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_rx_better', group: 'movement', title: '反応楽', text: '楽になりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_better', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_rx_pain', group: 'movement', title: '反応痛い', text: '痛くなりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_pain', forbidden: false, nonEmptyReply: true } },
+    { id: 'life_rx_numb', group: 'movement', title: '反応しびれ', text: 'しびれました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_numb', forbidden: false, nonEmptyReply: true } },
   ];
 }
 

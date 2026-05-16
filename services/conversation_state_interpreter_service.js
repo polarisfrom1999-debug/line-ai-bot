@@ -3,6 +3,7 @@
 const topicShiftDetectorService = require('./topic_shift_detector_service');
 const labContextContinuationService = require('./lab_context_continuation_service');
 const movementGoalCompanionService = require('./movement_goal_companion_service');
+const movementReactionFollowupService = require('./movement_reaction_followup_service');
 
 const ERROR_FEEDBACK_RE =
   /(間違えて|間違い|違います|ちがう|そうじゃない|今の違う|それ違う|読み違い|おかしい)/;
@@ -57,6 +58,10 @@ function isLabDateInventoryText(text = '') {
 function detectPrimaryMode(text = '') {
   const safe = normalizeText(text);
   if (!safe) return 'casual_chat';
+
+  if (movementReactionFollowupService.isReactionFollowUpText(safe)) {
+    return 'movement_goal_companion';
+  }
 
   if (EMOTIONAL_SUPPORT_RE.test(safe) && !movementGoalCompanionService.isMovementGoalCompanionText(safe)) {
     return 'emotional_support';

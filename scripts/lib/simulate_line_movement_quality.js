@@ -35,11 +35,11 @@ const SCENARIO_RULES = {
     forbidSelfCareOnRed: false,
   },
   spinal_stenosis_numbness: {
-    must: [/(しびれ|歩|骨盤|椅子|10回|中止)/],
+    must: [/(しびれ|歩|椅子|おしり|前後|10回|中止)/],
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
   },
   acute_low_back_fear: {
-    must: [/(怖|ぎっくり|骨盤|10回|中止|無理)/],
+    must: [/(怖|ぎっくり|椅子|おしり|前後|10回|中止|無理)/],
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
   },
   shoulder_frozen: {
@@ -51,7 +51,7 @@ const SCENARIO_RULES = {
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
   },
   straight_neck: {
-    must: [/(首|肩|ストレッチ|胸|10|中止)/],
+    must: [/(首|肩|ストレッチ|胸|10|中止|0〜3|0〜10)/],
     mustNot: [DIAGNOSIS_ASSERT_RE],
   },
   weeding_back: {
@@ -61,6 +61,7 @@ const SCENARIO_RULES = {
   squat_done_with_pain: {
     must: [/(痛|スクワット|中止|フォーム|無理)/],
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+    skipReactionTail: true,
   },
   chest_red_flag: {
     must: [MEDICAL_RE, /(胸|息|苦)/],
@@ -92,7 +93,7 @@ const SCENARIO_RULES = {
     forbidSelfCare: true,
   },
   shin_practice_ok: {
-    must: [/(シンスプリント|練習|痛み|確認|走|ジャンプ|休|上半身|体幹)/],
+    must: [/(シンスプリント|練習|痛み|確認|走|ジャンプ|休|上半身|体幹)/, /楽・変わらない|楽・変わらない・痛い・しびれ/],
     mustNot: [DIAGNOSIS_ASSERT_RE],
   },
   stretch_request: {
@@ -114,6 +115,7 @@ const SCENARIO_RULES = {
   goal_continue: {
     must: [/(目標|続|小さ|5分|肩|一歩|できた)/],
     mustNot: [DIAGNOSIS_ASSERT_RE],
+    skipReactionTail: true,
   },
   red_flag_numbness: {
     must: [MEDICAL_RE, /(しびれ|歩)/],
@@ -126,6 +128,46 @@ const SCENARIO_RULES = {
     mustNot: [DIAGNOSIS_ASSERT_RE, SELF_CARE_ON_RED_RE],
     requireMedical: true,
     forbidSelfCare: true,
+    skipReactionTail: true,
+  },
+  life_morning_waist_stiff: {
+    must: [/(膝|ゆら|10回|仰向け|腰|朝)/, /0〜10|0〜3/, STOP_RE],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+  },
+  life_morning_hip_stiff: {
+    must: [/(膝|曲げ|伸ば|仰向け|左右5|股関節)/, /0〜10|0〜3/, STOP_RE],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+  },
+  life_hand_foot_shake: {
+    must: [/(手足|ぶらぶら|手首|足首|10秒|仰向け)/, /0〜10|0〜3/, /腰が反|反ら|高く上げない/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, /ゴキブリ体操/],
+  },
+  life_small_bicycle: {
+    must: [/(自転車|こぎ|5回|仰向け)/, /0〜10|0〜3/, /腰が反|腰痛が強い|避け|反る/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+  },
+  life_bath_waist: {
+    must: [/(湯船|お風呂|風呂|丸め|10秒)/, /(のぼせ|滑り|滑る|ふらつき|動悸|息苦し)/, /0〜10|0〜3/, STOP_RE],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+  },
+  life_chair_waist: {
+    must: [/(椅子|背中|丸め|背すじ|10回)/, /0〜10|0〜3/, STOP_RE],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+  },
+  life_reaction_better: {
+    must: [/(増やさ|同じ|ペース|強さ|再現)/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+    skipReactionTail: true,
+  },
+  life_reaction_pain: {
+    must: [/(止め|中止|合わ|痛み)/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE],
+    skipReactionTail: true,
+  },
+  life_reaction_numb: {
+    must: [/(止め|いったん|セルフ|確認|医療|相談)/],
+    mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, /足首回し/],
+    skipReactionTail: true,
   },
 };
 
@@ -160,6 +202,21 @@ function evaluateMovementScenarioQuality({ userText = '', reply = '', scenarioId
   }
   if (/痛|しびれ/.test(u) && PUSH_LOAD_RE.test(r)) {
     violations.push('movement_push_on_pain');
+  }
+
+  const jargonRe =
+    /骨盤前後運動|胸椎伸展|肩甲骨内転|股関節屈曲伸展|股関節外旋|大腿四頭筋セッティング|足関節底背屈|神経モビライゼーション|体幹安定化|ゴキブリ体操/;
+  if (rules.banJargon !== false && jargonRe.test(r)) {
+    violations.push('movement_jargon_forbidden');
+  }
+
+  const needReactionTail =
+    rules.skipReactionTail !== true
+    && !rules.requireMedical
+    && !rules.forbidSelfCare
+    && !/^life_reaction_/.test(scenarioId);
+  if (needReactionTail && !/楽・変わらない|楽・変わらない・痛い・しびれ/.test(r)) {
+    violations.push('movement_missing_reaction_prompt');
   }
 
   return [...new Set(violations)];
