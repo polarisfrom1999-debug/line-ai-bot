@@ -149,8 +149,8 @@ const SCENARIO_RULES = {
       /(自転車|こぎ|5回|仰向け)/,
       INTENSITY_03_RE,
       STOP_RE,
-      /腰が反る感じ|腰が反/,
-      /腰が痛い|無理にしない/,
+      /腰が反る感じがある時はやらない/,
+      /腰が痛い日は無理にしない/,
       /楽・変わらない/,
     ],
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, COCKROACH_META_RE],
@@ -158,7 +158,9 @@ const SCENARIO_RULES = {
   life_bath_waist: {
     must: [
       /(湯船|お風呂|風呂|丸め|10秒)/,
-      /(のぼせ|ふらつ|滑りそう|滑り)/,
+      /のぼせ/,
+      /ふらつ/,
+      /滑りそう|滑り/,
       INTENSITY_03_RE,
       STOP_RE,
       /楽・変わらない/,
@@ -170,7 +172,13 @@ const SCENARIO_RULES = {
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, COCKROACH_META_RE],
   },
   life_reaction_better: {
-    must: [/(良い反応|増やさず|同じ強さ|再現|明日)/],
+    must: [
+      /良い反応/,
+      /増やさず/,
+      /同じ強さ/,
+      /再現/,
+      /明日/,
+    ],
     mustNot: [DIAGNOSIS_ASSERT_RE, PUSH_LOAD_RE, /すぐ.*増|回数.*増や|追い込/],
     skipReactionTail: true,
   },

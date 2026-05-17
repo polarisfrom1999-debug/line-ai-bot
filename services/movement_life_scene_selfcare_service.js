@@ -358,11 +358,105 @@ function buildLifeSceneFallbackLines(pick, openingLine = '', userText = '') {
   return lines;
 }
 
+const BICYCLE_WAIST_CLAUSES = [
+  '腰が反る感じがある時はやらない。',
+  '腰が痛い日は無理にしない。',
+];
+
+const BATH_CAUTION_CLAUSE = 'のぼせる、ふらつく、滑りそうな時はやらないでください。';
+
+const BETTER_REACTION_REPLY = [
+  '良い反応です。',
+  '今日は増やさず、同じ強さで十分です。',
+  '明日も同じくらいで、楽になる感じが再現できるか見ましょう。',
+].join('\n');
+
+function isBicycleBedContext(userText = '', lifeScenePick = null) {
+  const t = normalizeText(userText);
+  if (lifeScenePick?.exerciseKey === 'small_bicycle_bed') return true;
+  return (/布団|布団の中|寝ながら/.test(t) || /朝/.test(t)) && /自転車|こぎ/.test(t);
+}
+
+function isBathStretchContext(userText = '', lifeScenePick = null) {
+  const t = normalizeText(userText);
+  if (lifeScenePick?.exerciseKey === 'bath_round_back') return true;
+  return /お風呂|おふろ|風呂|湯船/.test(t) && /腰|伸ば|ゆる|ストレッチ|体操/.test(t);
+}
+
+function isBetterReactionContext(userText = '', reactionFollowup = null) {
+  const t = normalizeText(userText);
+  if (reactionFollowup?.kind === 'better') return true;
+  return /^(楽になり|楽になっ|軽くなっ|少し良くなっ)/.test(t) && !/痛|悪化|しびれ/.test(t);
+}
+
+function insertBeforeFollowup(text, sentence) {
+  const s = normalizeText(sentence);
+  if (!s || text.includes(s.replace(/。$/, ''))) return text;
+  const idx = text.search(/終わったら|楽・変わらない/);
+  if (idx > 0) {
+    return `${text.slice(0, idx).trimEnd()}\n${s}\n${text.slice(idx).trimStart()}`.trim();
+  }
+  return `${text.trimEnd()}\n${s}`.trim();
+}
+
+function ensureBicycleWaistClauses(text) {
+  let out = text;
+  for (const clause of BICYCLE_WAIST_CLAUSES) {
+    const core = clause.replace(/。$/, '');
+    if (!out.includes(core)) {
+      out = insertBeforeFollowup(out, clause);
+    }
+  }
+  return out;
+}
+
+function ensureBathCautionClause(text) {
+  if (/のぼせ/.test(text) && /ふらつ/.test(text) && /滑り/.test(text)) return text;
+  return insertBeforeFollowup(text, BATH_CAUTION_CLAUSE);
+}
+
+/**
+ * OpenAI / 自然生成後も必須の安全句・反応返信を固定挿入する。
+ * @param {{ userText?: string, replyText?: string, lifeScenePick?: object|null, reactionFollowup?: object|null }} params
+ */
+function postProcessMovementReply(params = {}) {
+  const userText = normalizeText(params.userText);
+  let text = normalizeText(params.replyText);
+  if (!text || !userText) return text;
+
+  const pick = params.lifeScenePick || null;
+  const reaction = params.reactionFollowup || null;
+
+  if (isBetterReactionContext(userText, reaction)) {
+    if (!/増やさず/.test(text) || !/同じ強さ/.test(text) || !/再現/.test(text)) {
+      return BETTER_REACTION_REPLY;
+    }
+    return text;
+  }
+
+  if (isBicycleBedContext(userText, pick)) {
+    text = ensureBicycleWaistClauses(text);
+  }
+
+  if (isBathStretchContext(userText, pick)) {
+    text = ensureBathCautionClause(text);
+  }
+
+  return text;
+}
+
 module.exports = {
   SCENES,
   EXERCISES,
   BANNED_TERMS_RE,
+  BICYCLE_WAIST_CLAUSES,
+  BATH_CAUTION_CLAUSE,
+  BETTER_REACTION_REPLY,
   pickLifeSceneExercise,
   formatLifeSceneForPrompt,
   buildLifeSceneFallbackLines,
+  postProcessMovementReply,
+  isBicycleBedContext,
+  isBathStretchContext,
+  isBetterReactionContext,
 };

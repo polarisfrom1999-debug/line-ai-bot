@@ -141,6 +141,29 @@ async function runMovementCompanionSelfTest() {
   if (!lp || lp.exerciseKey !== 'knee_sway_bed') {
     throw new Error('[simulate:line] life scene morning waist pick failed');
   }
+
+  const { postProcessMovementReply } = require('../services/movement_life_scene_selfcare_service');
+  const bikePp = postProcessMovementReply({
+    userText: '布団の中で自転車こぎしていいですか',
+    replyText: '仰向けで少し動かしてみましょう。終わったら教えてください。',
+  });
+  if (!/腰が反る感じがある時はやらない/.test(bikePp) || !/腰が痛い日は無理にしない/.test(bikePp)) {
+    throw new Error('[simulate:line] postProcess bicycle waist clauses failed');
+  }
+  const bathPp = postProcessMovementReply({
+    userText: 'お風呂で腰を伸ばしてもいいですか',
+    replyText: '湯船で背中を丸めて10秒。終わったら教えてください。',
+  });
+  if (!/のぼせ/.test(bathPp) || !/ふらつ/.test(bathPp) || !/滑りそう/.test(bathPp)) {
+    throw new Error('[simulate:line] postProcess bath caution failed');
+  }
+  const betterPp = postProcessMovementReply({
+    userText: '楽になりました',
+    replyText: 'いい感じですね。明日も頑張りましょう。',
+  });
+  if (!/増やさず/.test(betterPp) || !/同じ強さ/.test(betterPp) || !/再現/.test(betterPp)) {
+    throw new Error('[simulate:line] postProcess better reaction failed');
+  }
 }
 
 async function runUshigomeStyleSelfTest() {

@@ -783,6 +783,20 @@ async function generateNaturalLineReply(params = {}) {
   const { prose, source } = await generateProse(ctx);
 
   let text = prose;
+  if (normalizeText(ctx.conversationMode) === 'movement_goal_companion') {
+    const mg = ctx.movementGoalHints
+      || movementGoalCompanionService.buildMovementGoalHints({
+        userText: ctx.userText,
+        conversationMode: ctx.conversationMode,
+        userContext: ctx.userContext,
+      });
+    text = movementLifeSceneSelfcare.postProcessMovementReply({
+      userText: ctx.userText,
+      replyText: text,
+      lifeScenePick: mg.life_scene_pick || null,
+      reactionFollowup: mg.reaction_followup || null,
+    });
+  }
   if (shouldAttachNutritionBlock(ctx.conversationMode, ctx.featureResults)) {
     const numeric = buildManualNutritionBlock(ctx.featureResults);
     if (numeric) text = `${prose}\n\n${numeric}`.trim();
@@ -813,4 +827,5 @@ module.exports = {
   buildManualNutritionBlock,
   buildLabValuesBlock,
   fallbackProse,
+  postProcessMovementReply: movementLifeSceneSelfcare.postProcessMovementReply,
 };
