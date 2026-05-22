@@ -341,7 +341,9 @@ function conversationCoreFallback(ctx = {}) {
       '続けるか迷っているんですね。確認してから進めようとしているのは良い判断です。',
       '',
       'シナールのような薬でも、今の目的や体調によって判断が変わるので、処方元に確認する形が安全です。',
-      '不安があるなら、いつから飲んでいるか、何が気になるかを短くまとめて相談しましょう。',
+      '自己判断で中止はせず、医師か薬剤師に確認してください。',
+      '',
+      '迷いの理由は「効果が分からない」「副作用が心配」「いつまで続けるのか知りたい」のどれに近いかで伝えると相談しやすいです。',
     ].join('\n');
   }
 
@@ -355,6 +357,7 @@ function conversationCoreFallback(ctx = {}) {
       '',
       '量はまず大さじ1/2くらいで十分です。',
       '買うなら粒ごまではなく「すりごま」を選んでください。白すりごまの方が味が強すぎず、朝の食事に合わせやすいです。',
+      '風味を強くしたい料理なら黒すりごまでも大丈夫ですが、ヨーグルトやアボカドには白の方がなじみます。',
       '',
       'その形なら、安心して買い出しに進めます。',
     ].join('\n');
@@ -364,12 +367,13 @@ function conversationCoreFallback(ctx = {}) {
     return [
       '作る前に確認できているのが良いです。あとから迷いにくくなります。',
       '',
-      '結論、味を濃くしすぎず、あとで足せる形なら作り置きとして進めて大丈夫です。',
+      '結論、内容がまだ見えていないので断定はしませんが、見るべき項目を分ければ安全に判断できます。',
       '',
-      '理由は、日によって食欲や活動量が変わること、家族分と自分の分で必要量が違うこと、濃い味だと翌日以降に調整しにくいことです。',
+      '送ってほしいのは、主菜、野菜や副菜、味つけ、1食分の量の4つです。',
+      'この4つが分かると、保存しやすさ・量・あとで調整できるかを見られます。',
       '',
-      '先に1食分を取り分けて、たんぱく質のおかずと野菜系を分けて保存すると使いやすいです。',
-      '迷ったら、主食は後から足す形にしておくと安心です。',
+      '先回りとしては、味を濃くしすぎず、主食は後から足せる形にしておくと安心です。',
+      '家族分と自分の分が混ざるなら、先に1食分を取り分けておくと迷いにくいです。',
     ].join('\n');
   }
 
@@ -392,12 +396,13 @@ function conversationCoreFallback(ctx = {}) {
       '',
       '結論、歩く量そのものより「休める場所」と「靴」と「翌日の余白」を作ると安心です。',
       '',
+      '見るポイントは3つです。歩き始めの足腰、途中で座った後の回復、翌日の痛みやだるさです。',
       '理由は、旅行中は普段より立ち時間が増えやすいこと、疲れてから休むと回復に時間がかかること、足腰の違和感は翌日に出ることがあるからです。',
       '',
       '当日は午前と午後で1回ずつ座る時間を先に入れてください。',
-      '靴は履き慣れたものにして、痛みやしびれが出たら距離を増やさないで大丈夫です。',
+      '靴は履き慣れたものにして、荷物は片側だけに重くならないようにします。痛みやしびれが出たら距離を増やさないで大丈夫です。',
       '',
-      '準備しておけば、楽しむ方に気持ちを使えます。',
+      '今日できる確認は、靴で10分歩いて違和感が出ないか見ることです。',
     ].join('\n');
   }
 
@@ -408,20 +413,23 @@ function conversationCoreFallback(ctx = {}) {
       'まずは、痛みの強さ・腫れ・熱感・歩けるかを分けて見てください。',
       '',
       '腫れている、熱を持っている、体重をかけられない、転倒後に痛い場合は、セルフケアより医療機関への確認が安心です。',
+      '生活では、階段、立ち上がり、歩行距離で痛みが増えるかを見ると判断しやすいです。',
       '軽い違和感くらいなら、今日は無理に動かさず、階段や長歩きを減らすだけでも十分です。',
       '',
-      '「いつから」「どこが」「歩くとどうか」を聞けると、次に整理しやすいです。',
+      '声をかけるなら、いつから痛いか、腫れや熱っぽさがあるか、どのくらい歩くと痛いかの3つで十分です。',
     ].join('\n');
   }
 
   if (/100m.*タイム|タイム.*落/.test(ut)) {
     return [
-      'タイムが落ちると、かなり気になりますよね。',
+      '100mのタイムが落ちると、悔しいですよね。',
       '',
       '結論、1回のタイムだけで実力低下と決めなくて大丈夫です。まず疲労・睡眠・向かい風・アップの入り方を分けて見ましょう。',
       '',
       '特に100mは、脚の張りやスタート前の緊張、前日の疲れで数字が動きやすいです。',
-      '次は「前半の出だし」「中盤の力み」「後半の落ち方」のどこで違ったかを見ると、次の練習につながります。',
+      '次はタイム差、前半の出だし、後半の落ち方、張りや痛みの有無を見ます。',
+      '',
+      '根性で押し切るより、どこで落ちたかを1つ見つける方が次の練習につながります。',
     ].join('\n');
   }
 
@@ -457,8 +465,8 @@ function conversationCoreFallback(ctx = {}) {
   if (purpose === 'boundary_sensitive') {
     return [
       'もちろん、健康と直接関係ない話でも大丈夫です。',
-      'ここでは、食事や運動に無理に戻さず、まずその話として聞きます。',
-      '聞いてほしいだけか、少し整理したいか、どちらでも合わせます。',
+      'その話も生活の一部なので、食事や運動に無理に戻さず、まずその話として聞きます。',
+      '聞いてほしいだけか、少し整理したいか、どちらでも合わせます。今の話題をそのまま送ってください。',
     ].join('\n');
   }
 
@@ -498,11 +506,129 @@ function conversationCoreFallback(ctx = {}) {
     return [
       '今日は疲れたんですね。',
       '整えるより先に、疲れていることをそのまま扱って大丈夫です。',
-      '今日は水分を取って、追加で頑張ることは1つ減らしましょう。',
+      '今日は何かを増やすより、睡眠と水分を削らない日にしましょう。追加で頑張ることは1つ減らして大丈夫です。',
     ].join('\n');
   }
 
   return '';
+}
+
+function questionCount(text = '') {
+  return (normalizeText(text).match(/[？?]/g) || []).length;
+}
+
+function limitQuestions(text = '', maxQuestions = 1) {
+  const max = Math.max(0, Number(maxQuestions || 0));
+  if (!max) return normalizeText(text).replace(/[？?]/g, '。');
+  let seen = 0;
+  return normalizeText(text).replace(/[？?]/g, (m) => {
+    seen += 1;
+    return seen <= max ? m : '。';
+  });
+}
+
+function isQuestionOnlyReply(text = '') {
+  const t = normalizeText(text);
+  if (!/[？?]/.test(t)) return false;
+  if (t.length >= 90) return false;
+  return !/(結論|大丈夫|できます|できる|目安|理由|ポイント|まず|見る|選|自己判断|医師|薬剤師|休|水分)/.test(t);
+}
+
+function hasExplainStructure(text = '') {
+  const t = normalizeText(text);
+  if (t.length < 90) return false;
+  const hasAnswer = /(結論|大丈夫|できます|できる|目安|自己判断|医師|薬剤師|優先|見ます|扱えます)/.test(t);
+  const hasReasonOrPoints = /(理由|ポイント|見る|分け|1つ|2つ|3つ|一つ|二つ|三つ|確認)/.test(t);
+  const hasNext = /(今日は|次は|まず|送って|確認|選んで|見ましょう|十分です)/.test(t);
+  return hasAnswer && hasReasonOrPoints && hasNext;
+}
+
+function praiseTextForTarget(target = '') {
+  const t = normalizeText(target);
+  if (t === 'question') return '聞いてくれて良かったです。';
+  if (t === 'awareness') return 'そこに気づけたのは大事です。';
+  if (t === 'safety_report') return '痛みを伝えてくれたのは良い判断です。';
+  if (t === 'achievement') return 'それは嬉しいですね。ここまで積み重ねた結果です。';
+  return '';
+}
+
+function hasPraiseForTarget(text = '', target = '') {
+  const t = normalizeText(text);
+  const targetNorm = normalizeText(target);
+  if (!targetNorm) return true;
+  if (targetNorm === 'question') return /(聞いてくれて|先に確認|確認できて|相談できて|確認してくれて)/.test(t);
+  if (targetNorm === 'awareness') return /(気づけた|気づき|大事)/.test(t);
+  if (targetNorm === 'safety_report') return /(伝えてくれた|報告でき|良い判断|安全)/.test(t);
+  if (targetNorm === 'achievement') return /(嬉しい|積み重ね|成果|達成|おめでとう)/.test(t);
+  return true;
+}
+
+function insertAfterFirstLine(text = '', line = '') {
+  const t = normalizeText(text);
+  const l = normalizeText(line);
+  if (!t || !l || t.includes(l.replace(/。$/, ''))) return t;
+  const parts = t.split('\n');
+  if (parts.length <= 1) return `${parts[0]}\n${l}`.trim();
+  return [parts[0], l, ...parts.slice(1)].join('\n').trim();
+}
+
+function hasAnticipatorySupport(text = '', supportItems = []) {
+  const t = normalizeText(text);
+  if (!supportItems.length) return true;
+  return supportItems.some((item) => {
+    const s = normalizeText(item);
+    if (!s) return false;
+    if (/大さじ|すりごま|粒ごま|白/.test(s)) return /大さじ|すりごま|粒ごま|白|黒/.test(t);
+    if (/保存|取り分け|味/.test(s)) return /保存|取り分け|味|量|主菜|副菜/.test(t);
+    if (/靴|休憩|座/.test(s)) return /靴|休憩|座|荷物|翌日/.test(t);
+    if (/自己判断|処方|薬/.test(s)) return /自己判断|処方|医師|薬剤師/.test(t);
+    if (/検査|診断|項目/.test(s)) return /検査|診断|項目|医師|前回/.test(t);
+    if (/疲労|痛み|睡眠|違和感/.test(s)) return /疲労|痛み|睡眠|違和感|前半|後半|タイム|張り/.test(t);
+    return t.includes(s.slice(0, Math.min(8, s.length)));
+  });
+}
+
+function appendAnticipatorySupport(text = '', supportItems = []) {
+  const items = (supportItems || []).map((x) => normalizeText(x)).filter(Boolean).slice(0, 2);
+  if (!items.length) return normalizeText(text);
+  return `${normalizeText(text)}\n\n先に迷いやすい点は、${items.join(' ')}`
+    .trim();
+}
+
+function enforceStrategyShape(ctx = {}, reply = '', fallback = '') {
+  const core = ctx.conversationUnderstanding || {};
+  const strategy = ctx.replyStrategy || {};
+  let text = normalizeText(reply);
+  const depth = normalizeText(strategy.reply_depth || core.reply_depth);
+  const maxQuestions = Number.isFinite(Number(strategy.max_questions ?? core.max_questions))
+    ? Number(strategy.max_questions ?? core.max_questions)
+    : 1;
+  const praiseTarget = normalizeText(strategy?.praise?.target || core.praise_target || '');
+  const supportItems = Array.isArray(strategy.anticipatory_support) ? strategy.anticipatory_support : [];
+
+  if (depth === 'explain' && fallback && (!hasExplainStructure(text) || isQuestionOnlyReply(text))) {
+    text = fallback;
+  }
+  if (core.anticipatory_support_needed && fallback && !hasAnticipatorySupport(text, supportItems)) {
+    text = fallback;
+  }
+  if (praiseTarget && fallback && !hasPraiseForTarget(text, praiseTarget)) {
+    text = fallback;
+  }
+
+  if (praiseTarget && !hasPraiseForTarget(text, praiseTarget)) {
+    text = insertAfterFirstLine(text, praiseTextForTarget(praiseTarget));
+  }
+  if (core.anticipatory_support_needed && !hasAnticipatorySupport(text, supportItems)) {
+    text = appendAnticipatorySupport(text, supportItems);
+  }
+  if (depth === 'explain' && isQuestionOnlyReply(text) && fallback) {
+    text = fallback;
+  }
+  if (questionCount(text) > maxQuestions) {
+    text = limitQuestions(text, maxQuestions);
+  }
+  return text;
 }
 
 function enforceConversationCoreReply(ctx = {}, reply = '') {
@@ -545,7 +671,7 @@ function enforceConversationCoreReply(ctx = {}, reply = '') {
     if (/健康と関係ない/.test(ut) && !/(健康|関係ない|話|聞|合わせ)/.test(text)) return fallback;
     if (/死にたい|消えたい/.test(ut)) return fallback;
   }
-  return text;
+  return enforceStrategyShape(ctx, text, fallback);
 }
 
 function fallbackProse(ctx) {
