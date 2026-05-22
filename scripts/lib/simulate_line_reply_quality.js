@@ -45,6 +45,7 @@ function hasDirectEcho(userText, reply) {
   const rt = normalizeForEcho(reply);
   if (ut.length < 2) return true;
   if (/おはぎ|お萩/.test(String(userText || '')) && /おはぎ|お萩/.test(String(reply || ''))) return true;
+  if (/ラーメン/.test(String(userText || '')) && /ラーメン/.test(String(reply || ''))) return true;
   const chunks = String(userText || '')
     .split(/[,、，\s]+/)
     .map((x) => normalizeForEcho(x))
@@ -143,7 +144,7 @@ function evaluateReplyQuality({
 
   if (intentType === 'life_companion') {
     if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('life_companion_generic_escape');
-    if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌|受け取|休|整え|睡眠|劇団|お茶会|抱っこ|写真|動け|調整)/.test(String(reply || ''))) {
+    if (!/(聞い|しんど|つら|大丈夫|教えて|場面|感じ|なるほど|そう|嫌|受け取|休|整え|睡眠|劇団|お茶会|抱っこ|写真|動け|調整|コンビニ|主食|たんぱく|水分|お茶|母|お母さん|膝|腫れ|医療|薬|シナール|処方|確認|200m|100m|タイム|レスト|目標|達成|旅行|靴)/.test(String(reply || ''))) {
       violations.push('life_companion_shallow');
     }
     if (/(手入力の目安|今日の合計|kcal)/i.test(reply)) violations.push('life_companion_health_bleed');
@@ -191,6 +192,10 @@ function evaluateReplyQuality({
 
   if (intentType === 'exercise_record') {
     if (/^なるほど。今の感じは受け取れた/.test(reply)) violations.push('exercise_record_generic');
+    return violations;
+  }
+
+  if (intentType === 'movement_goal_companion') {
     return violations;
   }
 

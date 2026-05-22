@@ -21,6 +21,15 @@ function buildReplyContext(params = {}) {
     ? params.userContext
     : {};
   const observationHints = Array.isArray(params.observationHints) ? params.observationHints : [];
+  const conversationUnderstanding = params.conversationUnderstanding && typeof params.conversationUnderstanding === 'object'
+    ? params.conversationUnderstanding
+    : null;
+  const extractedDataCandidates = params.extractedDataCandidates && typeof params.extractedDataCandidates === 'object'
+    ? params.extractedDataCandidates
+    : null;
+  const replyStrategy = params.replyStrategy && typeof params.replyStrategy === 'object'
+    ? params.replyStrategy
+    : null;
   const replyPolicy = {
     lineShort: params.replyPolicy?.lineShort !== false,
     avoidTemplate: params.replyPolicy?.avoidTemplate !== false,
@@ -69,6 +78,9 @@ function buildReplyContext(params = {}) {
     replyPolicy,
     ushigomeStyle,
     movementGoalHints,
+    conversationUnderstanding,
+    extractedDataCandidates,
+    replyStrategy,
   };
 }
 

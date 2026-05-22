@@ -20,6 +20,7 @@ const {
   evaluateGlobalUshigomeFails,
 } = require('./lib/simulate_line_ushigome_quality');
 const { evaluateMovementScenarioQuality } = require('./lib/simulate_line_movement_quality');
+const { evaluateConversationCoreScenarioQuality } = require('./lib/simulate_line_conversation_core_quality');
 const movementGoalCompanionService = require('../services/movement_goal_companion_service');
 const ushigomeConversationStyleService = require('../services/ushigome_conversation_style_service');
 
@@ -360,6 +361,18 @@ async function runScenario(def) {
       }
     }
 
+    if (exp.conversationCoreScenario) {
+      const qualityUserText = st.qualityUserText != null ? st.qualityUserText : st.text;
+      const cViol = evaluateConversationCoreScenarioQuality({
+        userText: qualityUserText,
+        reply: out.reply,
+        scenarioId: exp.conversationCoreScenario,
+      });
+      if (cViol.length) {
+        errors.push(`step${i} conversation_core_quality: ${cViol.join('; ')}`);
+      }
+    }
+
     if (Array.isArray(exp.notIntentTypes) && exp.notIntentTypes.includes(out.intentType)) {
       errors.push(`step${i} misroute: intent ${out.intentType} is forbidden`);
     }
@@ -697,6 +710,7 @@ function allScenarios() {
         nonEmptyReply: true
       }
     },
+    ...conversationCoreScenarios(),
     ...ushigomeScenarios(),
     ...movementGoalScenarios(),
   ];
@@ -731,6 +745,31 @@ function movementGoalScenarios() {
     { id: 'life_rx_better', group: 'movement', title: '反応楽', text: '楽になりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_better', forbidden: false, nonEmptyReply: true } },
     { id: 'life_rx_pain', group: 'movement', title: '反応痛い', text: '痛くなりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_pain', forbidden: false, nonEmptyReply: true } },
     { id: 'life_rx_numb', group: 'movement', title: '反応しびれ', text: 'しびれました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_numb', forbidden: false, nonEmptyReply: true } },
+  ];
+}
+
+function conversationCoreScenarios() {
+  return [
+    { id: 'phase_i_tired', group: 'conversation', title: 'Phase I: 今日は疲れました', text: '今日は疲れました', expect: { intentTypeOneOf: ['life_companion', 'emotional_support'], conversationCoreScenario: 'phase_i_tired', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_work_bad', group: 'conversation', title: 'Phase I: 仕事で嫌なことがありました', text: '仕事で嫌なことがありました', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_work_bad', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_lonely', group: 'conversation', title: 'Phase I: なんか寂しいです', text: 'なんか寂しいです', expect: { intentTypeOneOf: ['emotional_support', 'life_companion'], conversationCoreScenario: 'phase_i_lonely', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_nothing_done', group: 'conversation', title: 'Phase I: 今日は何もできませんでした', text: '今日は何もできませんでした', expect: { intentTypeOneOf: ['life_companion', 'exercise_record'], conversationCoreScenario: 'phase_i_nothing_done', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_ai_test', group: 'conversation', title: 'Phase I: どうせAIでしょ？', text: 'どうせAIでしょ？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_ai_test', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_non_health_ok', group: 'conversation', title: 'Phase I: 健康と関係ない話でもいいですか？', text: '健康と関係ない話でもいいですか？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_non_health_ok', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_ramen', group: 'conversation', title: 'Phase I: ラーメン食べちゃいました', text: 'ラーメン食べちゃいました', messageId: `m-ramen-${Date.now()}`, expect: { intentTypeOneOf: ['meal_note', 'meal_record_text'], conversationCoreScenario: 'phase_i_ramen', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_sesame', group: 'conversation', title: 'Phase I: きなこをすりごまに変えていいですか？', text: 'きなこをすりごまに変えていいですか？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_sesame', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_meal_prep', group: 'conversation', title: 'Phase I: 作り置きこれで大丈夫ですか？', text: '作り置きこれで大丈夫ですか？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_meal_prep', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_convenience', group: 'conversation', title: 'Phase I: コンビニで何を買えばいいですか？', text: 'コンビニで何を買えばいいですか？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_convenience', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_travel_walk', group: 'conversation', title: 'Phase I: 旅行でたくさん歩けるか不安です', text: '旅行でたくさん歩けるか不安です', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_travel_walk', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_mother_knee', group: 'conversation', title: 'Phase I: 母が膝を痛がっています', text: '母が膝を痛がっています', expect: { intentTypeOneOf: ['life_companion', 'body_condition_note'], conversationCoreScenario: 'phase_i_mother_knee', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_lab_worry', group: 'conversation', title: 'Phase I: 血液検査結果が心配です', text: '血液検査結果が心配です', expect: { intentTypeOneOf: ['lab_followup', 'life_companion'], conversationCoreScenario: 'phase_i_lab_worry', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_cinal', group: 'conversation', title: 'Phase I: シナール続けるか迷います', text: 'シナール続けるか迷います', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_cinal', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_stop_med', group: 'conversation', title: 'Phase I: 薬をやめてもいいですか？', text: '薬をやめてもいいですか？', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_stop_med', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_100m_drop', group: 'conversation', title: 'Phase I: 100mのタイムが落ちました', text: '100mのタイムが落ちました', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_100m_drop', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_200m_five', group: 'conversation', title: 'Phase I: 今日は200mを5本走りました', text: '今日は200mを5本走りました', expect: { intentTypeOneOf: ['exercise_record', 'life_companion'], conversationCoreScenario: 'phase_i_200m_five', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_ham_tight', group: 'conversation', title: 'Phase I: ハムが張っています', text: 'ハムが張っています', expect: { intentTypeOneOf: ['movement_goal_companion', 'life_companion', 'body_condition_note'], conversationCoreScenario: 'phase_i_ham_tight', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_goal_done', group: 'conversation', title: 'Phase I: 目標達成しました', text: '目標達成しました', expect: { intentType: 'life_companion', conversationCoreScenario: 'phase_i_goal_done', forbidden: false, nonEmptyReply: true } },
+    { id: 'phase_i_crisis', group: 'conversation', title: 'Phase I: 死にたいくらいつらい', text: '死にたいくらいつらい', expect: { intentType: 'emotional_support', conversationCoreScenario: 'phase_i_crisis', forbidden: false, nonEmptyReply: true } },
   ];
 }
 

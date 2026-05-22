@@ -48,6 +48,17 @@ function parseLineItem(segment) {
     };
   }
 
+  if (/ラーメン/.test(s)) {
+    return {
+      label: 'ラーメン',
+      kcal: 500,
+      kcalHigh: 750,
+      protein: 18,
+      fat: 18,
+      carbs: 65
+    };
+  }
+
   if (/ゆで卵|煮卵/.test(s)) {
     const n = countFromText(s, 1);
     const kcal = n * 70;

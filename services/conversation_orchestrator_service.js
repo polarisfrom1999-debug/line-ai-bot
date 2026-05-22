@@ -61,6 +61,9 @@ const companionReplyService = require('./companion_reply_service');
 const lineNaturalReplyGeneratorService = require('./line_natural_reply_generator_service');
 const emotionalQualityCheckService = require('./emotional_quality_check_service');
 const conversationStateInterpreterService = require('./conversation_state_interpreter_service');
+const conversationUnderstandingCoreService = require('./conversation_understanding_core_service');
+const conversationDataExtractorService = require('./conversation_data_extractor_service');
+const replyStrategyBuilderService = require('./reply_strategy_builder_service');
 const relationshipPhaseService = require('./relationship_phase_service');
 const trustSignalDetectorService = require('./trust_signal_detector_service');
 const lifeCompanionConversationService = require('./life_companion_conversation_service');
@@ -2213,12 +2216,60 @@ function resolveLabFollowUpIntentType(conversationState, labFeature) {
   return 'lab_followup';
 }
 
+function getConversationCoreFromInput(input = {}, ctx = {}) {
+  const understanding = input.conversationUnderstanding || ctx.conversationUnderstanding || null;
+  const extracted = input.conversationDataCandidates || ctx.extractedDataCandidates || null;
+  return { understanding, extracted };
+}
+
+function logConversationCoreRouteSelected({ input, understanding, route, reason }) {
+  if (!understanding) return;
+  console.info('[conversation_core_route_selected]', {
+    user_id: input.userId,
+    text: normalizeText(input?.rawText || '').slice(0, 120),
+    conversation_purpose: understanding.conversation_purpose,
+    emotional_state: understanding.emotional_state,
+    user_need: understanding.user_need,
+    reply_depth: understanding.reply_depth,
+    feature_plan: understanding.feature_plan || [],
+    data_extraction_targets: understanding.data_extraction_targets || [],
+    praise_target: understanding.praise_target || null,
+    anticipatory_support_needed: Boolean(understanding.anticipatory_support_needed),
+    safety_level: understanding.safety_level,
+    route,
+    reason: reason || understanding.reason || 'conversation_core_route',
+  });
+}
+
 async function withSurfaceReply(input, draftText, ctx, intentType, options = {}) {
   const itNorm = normalizeText(intentType || '');
+  const core = getConversationCoreFromInput(input, ctx);
+  const replyStrategy = options.replyStrategy || ctx?.replyStrategy || (
+    core.understanding
+      ? replyStrategyBuilderService.buildReplyStrategy({
+        userId: input.userId,
+        text: input?.rawText || '',
+        route: itNorm,
+        intentType: itNorm,
+        conversationUnderstanding: core.understanding,
+        extractedDataCandidates: core.extracted,
+        featureResults: options.featureResults || {},
+        replyDepth: options.replyDepth,
+        userProfile: ctx?.longMemory || {},
+      })
+      : null
+  );
+  logConversationCoreRouteSelected({
+    input,
+    understanding: core.understanding,
+    route: itNorm,
+    reason: options.routeReason || 'with_surface_reply',
+  });
   const useNatural = Boolean(
     options.featureResults
     || (options.useNaturalGenerator !== false && NATURAL_REPLY_MODES.has(itNorm))
   );
+  const effectiveReplyDepth = options.replyDepth || replyStrategy?.reply_depth || (itNorm === 'emotional_support' ? 'deep' : 'normal');
 
   if (useNatural) {
     const conversationMode = inferNaturalConversationMode(itNorm);
@@ -2235,7 +2286,10 @@ async function withSurfaceReply(input, draftText, ctx, intentType, options = {})
         longMemory: ctx?.longMemory || {},
       },
       observationHints: options.observationHints || [],
-      replyDepth: options.replyDepth || (itNorm === 'emotional_support' ? 'deep' : 'normal'),
+      replyDepth: effectiveReplyDepth,
+      conversationUnderstanding: core.understanding,
+      extractedDataCandidates: core.extracted,
+      replyStrategy,
     });
     const hour = Number(getJapanNow().hour || 0);
     let totalTurns = 0;
@@ -2255,7 +2309,7 @@ async function withSurfaceReply(input, draftText, ctx, intentType, options = {})
       longMemory: ctx?.longMemory || {},
       hour,
       totalTurns,
-      replyDepth: options.replyDepth || (itNorm === 'emotional_support' ? 'deep' : 'normal'),
+      replyDepth: effectiveReplyDepth,
     });
     return normalizeText(enhanced?.text || generated.text) || generated.text;
   }
@@ -3614,6 +3668,83 @@ async function orchestrateConversation(input) {
       }
     }
 
+    if (input?.messageType === 'text' && text) {
+      const conversationUnderstanding = conversationUnderstandingCoreService.analyzeConversation({
+        userId: input.userId,
+        text,
+        shortMemory,
+        longMemory,
+        recentMessages,
+      });
+      const conversationDataCandidates = conversationDataExtractorService.extractConversationData({
+        userId: input.userId,
+        text,
+        conversationUnderstanding,
+        shortMemory,
+        longMemory,
+      });
+      input.conversationUnderstanding = conversationUnderstanding;
+      input.conversationDataCandidates = conversationDataCandidates;
+      console.info('[conversation_understanding]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        conversation_purpose: conversationUnderstanding.conversation_purpose,
+        emotional_state: conversationUnderstanding.emotional_state,
+        user_need: conversationUnderstanding.user_need,
+        reply_depth: conversationUnderstanding.reply_depth,
+        feature_plan: conversationUnderstanding.feature_plan || [],
+        data_extraction_targets: conversationUnderstanding.data_extraction_targets || [],
+        praise_target: conversationUnderstanding.praise_target || null,
+        anticipatory_support_needed: Boolean(conversationUnderstanding.anticipatory_support_needed),
+        safety_level: conversationUnderstanding.safety_level,
+        route: 'pre_interpreter',
+        reason: conversationUnderstanding.reason,
+      });
+      console.info('[conversation_data_extracted]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        conversation_purpose: conversationUnderstanding.conversation_purpose,
+        emotional_state: conversationUnderstanding.emotional_state,
+        user_need: conversationUnderstanding.user_need,
+        reply_depth: conversationUnderstanding.reply_depth,
+        feature_plan: conversationUnderstanding.feature_plan || [],
+        data_extraction_targets: conversationUnderstanding.data_extraction_targets || [],
+        praise_target: conversationUnderstanding.praise_target || null,
+        anticipatory_support_needed: Boolean(conversationUnderstanding.anticipatory_support_needed),
+        safety_level: conversationUnderstanding.safety_level,
+        route: 'data_extractor',
+        reason: conversationUnderstanding.reason,
+        extracted_counts: {
+          meal_items: conversationDataCandidates.meal_items?.length || 0,
+          exercise_logs: conversationDataCandidates.exercise_logs?.length || 0,
+          movement_symptoms: conversationDataCandidates.movement_symptoms?.length || 0,
+          body_metrics: conversationDataCandidates.body_metrics?.length || 0,
+          medication_mentions: conversationDataCandidates.medication_mentions?.length || 0,
+          lab_mentions: conversationDataCandidates.lab_mentions?.length || 0,
+          athlete_training_logs: conversationDataCandidates.athlete_training_logs?.length || 0,
+          life_context_notes: conversationDataCandidates.life_context_notes?.length || 0,
+          emotional_notes: conversationDataCandidates.emotional_notes?.length || 0,
+          goal_updates: conversationDataCandidates.goal_updates?.length || 0,
+        },
+      });
+      console.info('[conversation_profile_update_candidate]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        conversation_purpose: conversationUnderstanding.conversation_purpose,
+        emotional_state: conversationUnderstanding.emotional_state,
+        user_need: conversationUnderstanding.user_need,
+        reply_depth: conversationUnderstanding.reply_depth,
+        feature_plan: conversationUnderstanding.feature_plan || [],
+        data_extraction_targets: conversationUnderstanding.data_extraction_targets || [],
+        praise_target: conversationUnderstanding.praise_target || null,
+        anticipatory_support_needed: Boolean(conversationUnderstanding.anticipatory_support_needed),
+        safety_level: conversationUnderstanding.safety_level,
+        route: 'profile_candidate_only',
+        reason: conversationUnderstanding.reason,
+        candidate: conversationDataCandidates.profile_update_candidates || [],
+      });
+    }
+
     if (input?.messageType === 'text' && /^(はい|うん|そう|OK|ok|お願いします|それで)$/i.test(text) && !pendingAtInput) {
       console.info('[yes_without_pending_context]', {
         user_id: input.userId,
@@ -3660,6 +3791,123 @@ async function orchestrateConversation(input) {
         ok: true,
         replyMessages: [{ type: 'text', text: errOut }],
         internal: { intentType: 'correction_feedback', responseMode: 'conversation_first' }
+      };
+    }
+
+    const conversationUnderstanding = input.conversationUnderstanding || null;
+    const corePurpose = normalizeText(conversationUnderstanding?.conversation_purpose || '');
+    const coreRouteReason = normalizeText(conversationUnderstanding?.reason || 'conversation_core');
+    if (conversationUnderstanding?.safety_level === 'urgent') {
+      const crisisOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'emotional_support', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        replyDepth: 'deep',
+        routeReason: coreRouteReason,
+      });
+      await appendTurn(input.userId, input.rawText || '', crisisOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: crisisOut }],
+        internal: { intentType: 'emotional_support', responseMode: 'conversation_core_urgent' },
+      };
+    }
+
+    if (corePurpose === 'lab_question' && conversationState?.primary_conversation_mode === 'casual_chat') {
+      const labFeature = await resolveLabFollowUpFeatureResults(input.userId, text, shortMemory);
+      const labOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'lab_followup', {
+        useNaturalGenerator: true,
+        featureResults: labFeature?.queryType ? labFeature : { found: false, queryType: 'no_panel', formattedLines: [] },
+        replyDepth: conversationUnderstanding.reply_depth || 'explain',
+        routeReason: coreRouteReason,
+      });
+      await appendTurn(input.userId, input.rawText || '', labOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: labOut }],
+        internal: { intentType: 'lab_followup', responseMode: 'conversation_core_feature' },
+      };
+    }
+
+    if (/母|父|家族|子ども|夫|妻/.test(text) && /痛|膝|腰|体調|具合/.test(text)) {
+      const familyOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        replyDepth: conversationUnderstanding?.reply_depth || 'explain',
+        routeReason: coreRouteReason || 'family_health_core_route',
+      });
+      await appendTurn(input.userId, input.rawText || '', familyOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: familyOut }],
+        internal: { intentType: 'life_companion', responseMode: 'conversation_core' },
+      };
+    }
+
+    if (['travel_advice', 'celebration'].includes(corePurpose)) {
+      const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        replyDepth: conversationUnderstanding?.reply_depth || 'normal',
+        routeReason: coreRouteReason,
+      });
+      await appendTurn(input.userId, input.rawText || '', lifeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: lifeOut }],
+        internal: { intentType: 'life_companion', responseMode: 'conversation_core' },
+      };
+    }
+
+    const coreLifePurposes = new Set([
+      'medication_question',
+      'practical_advice',
+      'family_health',
+      'travel_advice',
+      'athlete_training',
+      'test_the_ai',
+      'boundary_sensitive',
+      'celebration',
+      'shame_or_guilt',
+      'anger_or_frustration',
+      'listen_only',
+      'emotional_support',
+    ]);
+    if (
+      coreLifePurposes.has(corePurpose)
+      && !['assistant_error_feedback', 'emotional_support', 'life_companion', 'movement_goal_companion'].includes(conversationState?.primary_conversation_mode)
+      && !/^(meal_text_record|reward_food|meal_correction|lab_followup|lab_date_inventory|lab_comparison|exercise_record)$/.test(conversationState?.primary_conversation_mode || '')
+    ) {
+      const lifeOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'life_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        replyDepth: conversationUnderstanding.reply_depth || 'normal',
+        routeReason: coreRouteReason,
+      });
+      await appendTurn(input.userId, input.rawText || '', lifeOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: lifeOut }],
+        internal: { intentType: 'life_companion', responseMode: 'conversation_core' },
+      };
+    }
+
+    if (
+      corePurpose === 'movement_support'
+      && conversationState?.primary_conversation_mode === 'casual_chat'
+      && !/母|父|家族|子ども|夫|妻/.test(text)
+    ) {
+      const mgOut = await withSurfaceReply(input, '', { recentMessages, longMemory }, 'movement_goal_companion', {
+        skipHealthAggregation: true,
+        useNaturalGenerator: true,
+        featureResults: { recordKind: 'movement_goal_companion' },
+        replyDepth: conversationUnderstanding.reply_depth || 'normal',
+        routeReason: coreRouteReason,
+      });
+      await appendTurn(input.userId, input.rawText || '', mgOut);
+      return {
+        ok: true,
+        replyMessages: [{ type: 'text', text: mgOut }],
+        internal: { intentType: 'movement_goal_companion', responseMode: 'conversation_core_feature' },
       };
     }
 

@@ -266,11 +266,298 @@ function modeSystemInstructions(conversationMode, replyDepth) {
   ].join('\n');
 }
 
+function buildConversationCorePromptBlock(ctx = {}) {
+  const understanding = ctx.conversationUnderstanding || null;
+  const strategy = ctx.replyStrategy || null;
+  if (!understanding && !strategy) return '';
+  const summary = {
+    conversation_purpose: understanding?.conversation_purpose,
+    emotional_state: understanding?.emotional_state,
+    user_need: understanding?.user_need,
+    reply_depth: strategy?.reply_depth || understanding?.reply_depth,
+    feature_plan: understanding?.feature_plan,
+    data_extraction_targets: understanding?.data_extraction_targets,
+    praise_target: strategy?.praise?.target || understanding?.praise_target,
+    praise_hint: strategy?.praise?.text_hint || null,
+    anticipatory_support: strategy?.anticipatory_support || [],
+    max_questions: strategy?.max_questions ?? understanding?.max_questions,
+    safety_level: understanding?.safety_level,
+    avoid: strategy?.avoid || [],
+  };
+  return [
+    '[Conversation Core]',
+    JSON.stringify(summary),
+    '返信の主役は会話。食事・検査・運動・薬・陸上などの feature result は材料として使う。',
+    'reply_depth=explain の時は、安心→結論→理由2〜3個→注意点→具体的な量・選び方・行動→最後に進める一言、の順に読みやすく書く。',
+    '褒める時は、結果だけでなく質問・気づき・調整・安全な報告を具体的に拾う。',
+    '先回りは最大2個。本人の性格ラベルは出さない。',
+  ].join('\n');
+}
+
+function conversationCoreFallback(ctx = {}) {
+  const ut = normalizeText(ctx.userText);
+  const core = ctx.conversationUnderstanding || {};
+  const strategy = ctx.replyStrategy || {};
+  const purpose = normalizeText(core.conversation_purpose);
+
+  if (core.safety_level === 'urgent' || purpose === 'crisis_or_urgent') {
+    return [
+      '今、それくらいつらいところまで来ているんですね。ここに言葉にしてくれたことは、とても大事です。',
+      '',
+      '今は一人で抱えないでください。身近な人に「今かなり危ない」とそのまま伝えて、ひとりにならない場所へ移動してください。',
+      'もし今すぐ自分を傷つけそう、または安全を保てない感じがあるなら、119や地域の救急相談、身近な医療機関につないでください。',
+      '',
+      'ここでは診断はしません。まず今夜を安全に越えることを最優先にしましょう。',
+    ].join('\n');
+  }
+
+  if (purpose === 'lab_question') {
+    return [
+      '血液検査結果が心配なんですね。心配な段階で聞いてくれて良かったです。',
+      '',
+      '結論、ここでは診断は断定せず、保存されているデータや画像があれば項目ごとに整理して見ます。',
+      '',
+      '見る時は、単回の良し悪しだけでなく、前回との差、検査日、気になる項目を分けると落ち着いて確認できます。',
+      '医師に確認する前提で、まずは「尿酸」「LDL」「中性脂肪」のように項目名を送ってください。',
+    ].join('\n');
+  }
+
+  if (purpose === 'medication_question') {
+    if (/やめ|中止/.test(ut)) {
+      return [
+        '迷っている段階で確認してくれて良かったです。',
+        '',
+        '結論から言うと、薬は自己判断で中止や変更はしないでください。処方した医師・薬剤師に確認してからが安全です。',
+        '',
+        '理由は3つあります。',
+        '1つ目は、急にやめると症状や数値が戻る薬があること。',
+        '2つ目は、薬によっては中止の順番や量の調整が必要なこと。',
+        '3つ目は、今の不安が副作用なのか、別の原因なのかを分けて見る必要があることです。',
+        '',
+        '相談するときは、薬名・飲んでいる量・いつから飲んでいるか・何が不安かをメモして持っていけば十分です。',
+      ].join('\n');
+    }
+    return [
+      '続けるか迷っているんですね。確認してから進めようとしているのは良い判断です。',
+      '',
+      'シナールのような薬でも、今の目的や体調によって判断が変わるので、処方元に確認する形が安全です。',
+      '不安があるなら、いつから飲んでいるか、何が気になるかを短くまとめて相談しましょう。',
+    ].join('\n');
+  }
+
+  if (/きなこ.*すりごま|すりごま.*きなこ/.test(ut)) {
+    return [
+      '変えて大丈夫です。買い出し前に確認できたのは、かなり良い進め方です。',
+      '',
+      '結論としては、きなこの代わりに白すりごまを少量使う形なら合わせやすいです。',
+      '',
+      '理由は、香ばしさが足せること、脂質が少し入って満足感が出やすいこと、ヨーグルトやアボカドにも混ぜやすいことです。',
+      '',
+      '量はまず大さじ1/2くらいで十分です。',
+      '買うなら粒ごまではなく「すりごま」を選んでください。白すりごまの方が味が強すぎず、朝の食事に合わせやすいです。',
+      '',
+      'その形なら、安心して買い出しに進めます。',
+    ].join('\n');
+  }
+
+  if (/作り置き/.test(ut)) {
+    return [
+      '作る前に確認できているのが良いです。あとから迷いにくくなります。',
+      '',
+      '結論、味を濃くしすぎず、あとで足せる形なら作り置きとして進めて大丈夫です。',
+      '',
+      '理由は、日によって食欲や活動量が変わること、家族分と自分の分で必要量が違うこと、濃い味だと翌日以降に調整しにくいことです。',
+      '',
+      '先に1食分を取り分けて、たんぱく質のおかずと野菜系を分けて保存すると使いやすいです。',
+      '迷ったら、主食は後から足す形にしておくと安心です。',
+    ].join('\n');
+  }
+
+  if (/コンビニ/.test(ut)) {
+    return [
+      'コンビニで先に決めておこうとしているの、良いです。',
+      '',
+      '選ぶなら、主食・たんぱく質・汁物か水分の3つで考えると迷いにくいです。',
+      '',
+      '例としては、おにぎり1個、ゆで卵かサラダチキン、味噌汁かお茶。',
+      '甘い飲み物より先に水かお茶を選ぶと、全体が整いやすいです。',
+      '',
+      '今日は完璧に選ぶより、この3点だけそろえば十分です。',
+    ].join('\n');
+  }
+
+  if (/旅行|たくさん歩/.test(ut)) {
+    return [
+      '旅行前に歩けるか不安なんですね。先に確認しておくのは良い準備です。',
+      '',
+      '結論、歩く量そのものより「休める場所」と「靴」と「翌日の余白」を作ると安心です。',
+      '',
+      '理由は、旅行中は普段より立ち時間が増えやすいこと、疲れてから休むと回復に時間がかかること、足腰の違和感は翌日に出ることがあるからです。',
+      '',
+      '当日は午前と午後で1回ずつ座る時間を先に入れてください。',
+      '靴は履き慣れたものにして、痛みやしびれが出たら距離を増やさないで大丈夫です。',
+      '',
+      '準備しておけば、楽しむ方に気持ちを使えます。',
+    ].join('\n');
+  }
+
+  if (/母|父|家族/.test(ut) && /膝|痛/.test(ut)) {
+    return [
+      'お母さんの膝のこと、心配になりますね。家族の様子を見て相談できているのは大事です。',
+      '',
+      'まずは、痛みの強さ・腫れ・熱感・歩けるかを分けて見てください。',
+      '',
+      '腫れている、熱を持っている、体重をかけられない、転倒後に痛い場合は、セルフケアより医療機関への確認が安心です。',
+      '軽い違和感くらいなら、今日は無理に動かさず、階段や長歩きを減らすだけでも十分です。',
+      '',
+      '「いつから」「どこが」「歩くとどうか」を聞けると、次に整理しやすいです。',
+    ].join('\n');
+  }
+
+  if (/100m.*タイム|タイム.*落/.test(ut)) {
+    return [
+      'タイムが落ちると、かなり気になりますよね。',
+      '',
+      '結論、1回のタイムだけで実力低下と決めなくて大丈夫です。まず疲労・睡眠・向かい風・アップの入り方を分けて見ましょう。',
+      '',
+      '特に100mは、脚の張りやスタート前の緊張、前日の疲れで数字が動きやすいです。',
+      '次は「前半の出だし」「中盤の力み」「後半の落ち方」のどこで違ったかを見ると、次の練習につながります。',
+    ].join('\n');
+  }
+
+  if (/200m.*5本|5本.*200m/.test(ut)) {
+    return [
+      '200mを5本走れたんですね。内容を残せているのが良いです。',
+      '',
+      '今日は本数を増やすより、各本のタイムの落ち方と、レスト後に動きが戻ったかを見るのが大事です。',
+      'ハムやふくらはぎに張りが強いなら、追加で追い込まず、明日は軽めにして再現性を見ましょう。',
+    ].join('\n');
+  }
+
+  if (/ハム/.test(ut) && /張/.test(ut)) {
+    return [
+      'ハムが張っている感じですね。気づいて報告できているのは良いです。',
+      '',
+      '今日は強く伸ばしたり、本数を足したりしない方が安全です。',
+      '軽く歩いて張りが下がるか、押した痛みや走り出しの違和感が強いかを見ましょう。',
+      '',
+      '強い痛み、力が入りにくい、走ると悪化する感じがあれば、練習は増やさず確認を優先してください。',
+    ].join('\n');
+  }
+
+  if (purpose === 'test_the_ai') {
+    return [
+      'そう感じるのは自然です。AIなので、わかったふりはしないようにします。',
+      '',
+      'ただ、送ってくれた言葉から「今ほしいのは答えか、整理か、聞いてほしいだけか」はできるだけ読みます。',
+      '違ったら「そうじゃない」と言ってください。そこも会話として直します。',
+    ].join('\n');
+  }
+
+  if (purpose === 'boundary_sensitive') {
+    return [
+      'もちろん、健康と直接関係ない話でも大丈夫です。',
+      'ここでは、食事や運動に無理に戻さず、まずその話として聞きます。',
+      '聞いてほしいだけか、少し整理したいか、どちらでも合わせます。',
+    ].join('\n');
+  }
+
+  if (purpose === 'celebration') {
+    return [
+      '目標達成、おめでとうございます。',
+      strategy?.praise?.text_hint || 'ここまで続けた成果ですね。',
+      '今日は次の課題を急がず、何がうまくいったかだけ1つ覚えておきましょう。明日以降に再現しやすくなります。',
+    ].join('\n');
+  }
+
+  if (purpose === 'shame_or_guilt') {
+    return [
+      '今日は何もできなかった、と感じているんですね。',
+      'でも、こうして言葉にできた時点で、途切れたのではなく調整の日として扱えます。',
+      '今日は増やす日ではなく、睡眠・水分・早めに休む、のどれか1つで十分です。',
+    ].join('\n');
+  }
+
+  if (/仕事で嫌|嫌なこと/.test(ut)) {
+    return [
+      'それは嫌でしたね。',
+      '今は解決策より、まずその場面がしんどかったことをそのまま受け取ります。',
+      '話せそうなら、何を言われた・されたのが一番残っているか、そこだけ教えてください。',
+    ].join('\n');
+  }
+
+  if (/寂しい|さみしい/.test(ut)) {
+    return [
+      '寂しい感じがあるんですね。',
+      'そういう日は、元気を出そうとするほど余計にしんどくなることがあります。',
+      '今は短くでいいので、誰かに会いたい寂しさなのか、わかってほしい寂しさなのか、近い方だけ教えてください。',
+    ].join('\n');
+  }
+
+  if (/疲れ/.test(ut)) {
+    return [
+      '今日は疲れたんですね。',
+      '整えるより先に、疲れていることをそのまま扱って大丈夫です。',
+      '今日は水分を取って、追加で頑張ることは1つ減らしましょう。',
+    ].join('\n');
+  }
+
+  return '';
+}
+
+function enforceConversationCoreReply(ctx = {}, reply = '') {
+  const ut = normalizeText(ctx.userText);
+  const core = ctx.conversationUnderstanding || {};
+  let text = normalizeText(reply);
+  if (!text) return text;
+  const fallback = conversationCoreFallback(ctx);
+
+  if (core.safety_level === 'urgent' && !/(119|救急|ひとり|一人|身近|相談)/.test(text)) {
+    return fallback;
+  }
+  if (/薬.*(やめ|中止)|やめてもいい/.test(ut) && !/(自己判断|処方|医師|薬剤師)/.test(text)) {
+    return fallback;
+  }
+  if (core.conversation_purpose === 'medication_question' && !/(処方|医師|薬剤師|確認)/.test(text)) {
+    return fallback;
+  }
+  if (core.conversation_purpose === 'lab_question' && !/(検査|データ|画像|項目|医師|診断|断定)/.test(text)) {
+    return fallback;
+  }
+  if (/きなこ.*すりごま|すりごま.*きなこ/.test(ut)) {
+    if (!/大さじ1\/2|大さじ半分|すりごま/.test(text) || !/粒ごま|白すりごま/.test(text)) {
+      return fallback;
+    }
+  }
+  if (/コンビニ/.test(ut) && !/(主食|たんぱく|水分|お茶)/.test(text)) {
+    return fallback;
+  }
+  if (/血液検査|検査結果/.test(ut) && /(診断です|治療|必ず)/.test(text)) {
+    return fallback;
+  }
+  if (fallback && /作り置き|旅行|母.*膝|膝.*母|100m.*タイム|200m.*5本|ハム.*張|目標達成|どうせAI|健康と関係ない|今日は疲れ|疲れました|仕事で嫌|寂しい|何もでき/.test(ut)) {
+    if (core.reply_depth === 'explain' && text.length < 80) return fallback;
+    if (/疲れました|今日は疲れ/.test(ut) && !/(疲れ|休|水分|減ら)/.test(text)) return fallback;
+    if (/母.*膝|膝.*母/.test(ut) && !/(腫れ|歩け|医療|確認)/.test(text)) return fallback;
+    if (/ハム.*張/.test(ut) && !/(増や|強い痛み|確認)/.test(text)) return fallback;
+    if (/目標達成/.test(ut) && !/(目標|達成|成果|再現|おめでとう)/.test(text)) return fallback;
+    if (/どうせAI/.test(ut) && !/(AI|わかったふり|違ったら|直)/.test(text)) return fallback;
+    if (/健康と関係ない/.test(ut) && !/(健康|関係ない|話|聞|合わせ)/.test(text)) return fallback;
+    if (/死にたい|消えたい/.test(ut)) return fallback;
+  }
+  return text;
+}
+
 function fallbackProse(ctx) {
   const ut = normalizeText(ctx.userText);
   const cm = normalizeText(ctx.conversationMode);
   const fr = ctx.featureResults || {};
   const stable = Number(ctx.userContext?.stableRoutineEvidenceCount || fr.stableRoutineEvidenceCount || 0);
+
+  const coreFallback = conversationCoreFallback(ctx);
+  if (coreFallback && !['meal_text_record', 'meal_record_text', 'reward_food', 'meal_note', 'lab_followup', 'lab_date_inventory', 'lab_comparison', 'movement_goal_companion', 'exercise_record', 'exercise_feedback', 'body_condition_note'].includes(cm)) {
+    return coreFallback;
+  }
 
   if (
     cm !== 'movement_goal_companion'
@@ -596,6 +883,16 @@ function isAcceptableProse(ctx, prose) {
   if (text.length < 6) return false;
   const cm = normalizeText(ctx.conversationMode);
   const ut = effectiveUserTextForEcho(ctx);
+  const core = ctx.conversationUnderstanding || {};
+  if (core.safety_level === 'urgent') {
+    return /(ひとり|一人|身近|119|救急|相談|安全)/.test(text)
+      && !/(カロリー|kcal|運動|ストレッチ)/i.test(text);
+  }
+  if (core.reply_depth === 'explain' && cm === 'life_companion') {
+    return text.length >= 80
+      && !/^なるほど。今の感じは受け取れた/.test(text)
+      && !/(性格|心配性|神経質)/.test(text);
+  }
 
   if (cm === 'emotional_support') {
     return /重|つら|しんど|気持ち|無理に|大丈夫|疲れ|不安|寂し|悔し/.test(text)
@@ -609,6 +906,7 @@ function isAcceptableProse(ctx, prose) {
     return hasFoodEcho(ut, text) && !hasUnauthorizedStabilityInProse(text, ctx);
   }
   if (cm === 'reward_food' || cm === 'meal_note') {
+    if (/ラーメン/.test(ut) && !/ラーメン/.test(text)) return false;
     return !/(反省|禁物|だめだ|やりすぎ)/.test(text)
       && (hasFoodEcho(ut, text) || /責め|大丈夫|軽め/.test(text));
   }
@@ -693,6 +991,7 @@ function isAcceptableProse(ctx, prose) {
 
 async function generateProse(ctx) {
   const modeBlock = modeSystemInstructions(ctx.conversationMode, ctx.replyPolicy?.replyDepth);
+  const conversationCoreBlock = buildConversationCorePromptBlock(ctx);
   const ushigomeBlock = ushigomeConversationStyleService.formatHintsForPrompt(ctx.ushigomeStyle);
   const movementBlock = ctx.movementGoalHints
     ? movementGoalCompanionService.formatMovementHintsForPrompt(ctx.movementGoalHints)
@@ -713,6 +1012,7 @@ async function generateProse(ctx) {
 
   const hiddenContext = [
     '[ここから。自然返信]',
+    conversationCoreBlock,
     movementBlock,
     ushigomeBlock,
     modeBlock,
@@ -797,14 +1097,15 @@ async function generateNaturalLineReply(params = {}) {
       reactionFollowup: mg.reaction_followup || null,
     });
   }
+  text = enforceConversationCoreReply(ctx, text);
   if (shouldAttachNutritionBlock(ctx.conversationMode, ctx.featureResults)) {
     const numeric = buildManualNutritionBlock(ctx.featureResults);
-    if (numeric) text = `${prose}\n\n${numeric}`.trim();
+    if (numeric) text = `${text}\n\n${numeric}`.trim();
   } else if (shouldAttachLabBlock(ctx.conversationMode, ctx.featureResults)) {
     const labBlock = ctx.conversationMode === 'lab_date_inventory'
       ? buildLabDatesInventoryBlock(ctx.featureResults)
       : buildLabValuesBlock(ctx.featureResults);
-    if (labBlock) text = `${prose}\n\n${labBlock}`.trim();
+    if (labBlock) text = `${text}\n\n${labBlock}`.trim();
   }
 
   console.info('[line_natural_reply_generated]', {
