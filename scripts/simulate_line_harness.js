@@ -257,6 +257,14 @@ function printBlock(title, obj) {
   console.info('');
 }
 
+function profileTraitScore(profile = {}, path = '') {
+  const parts = String(path || '').split('.').filter(Boolean);
+  if (parts.length < 2) return 0;
+  const category = parts[0];
+  const trait = parts.slice(1).join('.');
+  return Number(profile?.[category]?.[trait]?.score || 0);
+}
+
 async function runScenario(def) {
   const userId = `U_simline_${def.id}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   const errors = [];
@@ -319,17 +327,19 @@ async function runScenario(def) {
       errors.push(`step${i} forbidden phrase(s): ${hits.join(' | ')}`);
     }
 
-    const qViol = evaluateReplyQuality({
-      userText: st.qualityUserText != null ? st.qualityUserText : st.text,
-      reply: out.reply,
-      intentType: out.intentType,
-      interpretMode: interp.primary_conversation_mode,
-      replyDepth: interp.reply_depth,
-      allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase),
-      skipDirectEchoCheck: Boolean(exp.ushigomeScenario || exp.movementScenario),
-    });
-    if (qViol.length) {
-      errors.push(`step${i} reply_quality: ${qViol.join('; ')}`);
+    if (!exp.skipReplyQuality) {
+      const qViol = evaluateReplyQuality({
+        userText: st.qualityUserText != null ? st.qualityUserText : st.text,
+        reply: out.reply,
+        intentType: out.intentType,
+        interpretMode: interp.primary_conversation_mode,
+        replyDepth: interp.reply_depth,
+        allowStableRoutinePhrase: Boolean(exp.allowStableRoutinePhrase),
+        skipDirectEchoCheck: Boolean(exp.ushigomeScenario || exp.movementScenario),
+      });
+      if (qViol.length) {
+        errors.push(`step${i} reply_quality: ${qViol.join('; ')}`);
+      }
     }
 
     if (exp.ushigomeScenario) {
@@ -385,14 +395,33 @@ async function runScenario(def) {
     if (exp.nonEmptyReply && !out.reply) {
       errors.push(`step${i} empty reply`);
     }
+    if (exp.profileMinScores || exp.profileMaxScores) {
+      const longMemory = await contextMemoryService.getLongMemory(userId);
+      const profile = longMemory?.conversation_profile || {};
+      for (const [trait, minScore] of Object.entries(exp.profileMinScores || {})) {
+        const actual = profileTraitScore(profile, trait);
+        if (actual < Number(minScore || 0)) {
+          errors.push(`step${i} profile ${trait} score want >= ${minScore} got ${actual}`);
+        }
+      }
+      for (const [trait, maxScore] of Object.entries(exp.profileMaxScores || {})) {
+        const actual = profileTraitScore(profile, trait);
+        if (actual > Number(maxScore || 0)) {
+          errors.push(`step${i} profile ${trait} score want <= ${maxScore} got ${actual}`);
+        }
+      }
+    }
 
     if (i === steps.length - 1) {
+      const longMemory = await contextMemoryService.getLongMemory(userId);
+      const conversationProfile = longMemory?.conversation_profile || {};
       agg.expected = {
         route: exp.reportRoute || exp.intentType || def.title,
         interpret_mode: def.expectInterpret?.primary_conversation_mode,
         persisted: exp.persisted,
         daily_total_kcal: exp.dailyTotalBucketKcal,
-        forbidden_phrase: Boolean(exp.forbidden != null ? exp.forbidden : false)
+        forbidden_phrase: Boolean(exp.forbidden != null ? exp.forbidden : false),
+        profile_min_scores: exp.profileMinScores || undefined,
       };
       agg.actual = {
         route: out.intentType,
@@ -402,6 +431,7 @@ async function runScenario(def) {
         daily_total_kcal_bucket: out.after.bucketKcal,
         daily_total_kcal_db: out.after.dbKcal,
         forbidden_phrase: forbidden,
+        profile_scores: Object.fromEntries(Object.keys(exp.profileMinScores || {}).map((trait) => [trait, profileTraitScore(conversationProfile, trait)])),
         reply_preview: out.reply.slice(0, 120)
       };
     }
@@ -710,6 +740,7 @@ function allScenarios() {
         nonEmptyReply: true
       }
     },
+    ...conversationProfileScenarios(),
     ...conversationCoreScenarios(),
     ...ushigomeScenarios(),
     ...movementGoalScenarios(),
@@ -745,6 +776,94 @@ function movementGoalScenarios() {
     { id: 'life_rx_better', group: 'movement', title: '反応楽', text: '楽になりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_better', forbidden: false, nonEmptyReply: true } },
     { id: 'life_rx_pain', group: 'movement', title: '反応痛い', text: '痛くなりました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_pain', forbidden: false, nonEmptyReply: true } },
     { id: 'life_rx_numb', group: 'movement', title: '反応しびれ', text: 'しびれました', expectInterpret: { primary_conversation_mode: 'movement_goal_companion' }, expect: { intentType: 'movement_goal_companion', movementScenario: 'life_reaction_numb', forbidden: false, nonEmptyReply: true } },
+  ];
+}
+
+function conversationProfileScenarios() {
+  return [
+    {
+      id: 'profile_checks_before_action',
+      group: 'conversation',
+      title: 'Phase I-2: 確認してから動く人',
+      steps: [
+        { text: 'きなこをすりゴマに変えて良いですか？', expect: { skipReplyQuality: true, profileMaxScores: { 'decision_style.checks_before_action': 0.69 } } },
+        { text: '作り置きこれで大丈夫ですか？', expect: { skipReplyQuality: true } },
+        {
+          text: '買い出し前に確認したいです',
+          expect: {
+            skipReplyQuality: true,
+            profileMinScores: {
+              'decision_style.checks_before_action': 0.7,
+              'support_style.reasoned_explanation': 0.7,
+              'trust_builders.specific_amounts': 0.7,
+              'support_style.anticipatory_support': 0.7,
+            },
+            nonEmptyReply: true,
+          },
+        },
+      ],
+    },
+    {
+      id: 'profile_praise_motivation',
+      group: 'conversation',
+      title: 'Phase I-2: 褒めで伸びる人',
+      steps: [
+        { text: '今日は水分飲めました', expect: { skipReplyQuality: true, profileMaxScores: { 'motivation_source.praise': 0.69 } } },
+        { text: 'ストレッチできました', expect: { skipReplyQuality: true } },
+        {
+          text: '昨日より少し歩けました',
+          expect: {
+            skipReplyQuality: true,
+            profileMinScores: {
+              'motivation_source.praise': 0.7,
+              'trust_builders.warm_praise': 0.7,
+            },
+            nonEmptyReply: true,
+          },
+        },
+      ],
+    },
+    {
+      id: 'profile_numbers_based',
+      group: 'conversation',
+      title: 'Phase I-2: 数字で納得する人',
+      steps: [
+        { text: '何kcalくらいですか？', expect: { skipReplyQuality: true, profileMaxScores: { 'decision_style.numbers_based': 0.69 } } },
+        { text: '何gくらいが良いですか？', expect: { skipReplyQuality: true } },
+        {
+          text: '何回やれば良いですか？',
+          expect: {
+            skipReplyQuality: true,
+            profileMinScores: {
+              'decision_style.numbers_based': 0.7,
+              'trust_builders.specific_amounts': 0.7,
+            },
+            nonEmptyReply: true,
+          },
+        },
+      ],
+    },
+    {
+      id: 'profile_reassurance_safety',
+      group: 'conversation',
+      title: 'Phase I-2: 不安が強い人',
+      steps: [
+        { text: '旅行で歩けるか不安です', expect: { skipReplyQuality: true, profileMaxScores: { 'decision_style.needs_reassurance': 0.69 } } },
+        { text: '母の膝が心配です', expect: { skipReplyQuality: true } },
+        {
+          text: '薬を続けるか迷います',
+          expect: {
+            skipReplyQuality: true,
+            profileMinScores: {
+              'decision_style.needs_reassurance': 0.7,
+            },
+            replyMustContain: '自己判断',
+            replyMustNotContain: '中止していい',
+            nonEmptyReply: true,
+          },
+        },
+      ],
+    },
   ];
 }
 

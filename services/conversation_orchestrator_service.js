@@ -63,6 +63,7 @@ const emotionalQualityCheckService = require('./emotional_quality_check_service'
 const conversationStateInterpreterService = require('./conversation_state_interpreter_service');
 const conversationUnderstandingCoreService = require('./conversation_understanding_core_service');
 const conversationDataExtractorService = require('./conversation_data_extractor_service');
+const conversationProfileAggregatorService = require('./conversation_profile_aggregator_service');
 const replyStrategyBuilderService = require('./reply_strategy_builder_service');
 const relationshipPhaseService = require('./relationship_phase_service');
 const trustSignalDetectorService = require('./trust_signal_detector_service');
@@ -2219,7 +2220,8 @@ function resolveLabFollowUpIntentType(conversationState, labFeature) {
 function getConversationCoreFromInput(input = {}, ctx = {}) {
   const understanding = input.conversationUnderstanding || ctx.conversationUnderstanding || null;
   const extracted = input.conversationDataCandidates || ctx.extractedDataCandidates || null;
-  return { understanding, extracted };
+  const conversationProfile = input.conversationProfile || ctx.conversationProfile || ctx?.longMemory?.conversation_profile || null;
+  return { understanding, extracted, conversationProfile };
 }
 
 function logConversationCoreRouteSelected({ input, understanding, route, reason }) {
@@ -2256,6 +2258,7 @@ async function withSurfaceReply(input, draftText, ctx, intentType, options = {})
         featureResults: options.featureResults || {},
         replyDepth: options.replyDepth,
         userProfile: ctx?.longMemory || {},
+        conversationProfile: core.conversationProfile,
       })
       : null
   );
@@ -3743,6 +3746,53 @@ async function orchestrateConversation(input) {
         reason: conversationUnderstanding.reason,
         candidate: conversationDataCandidates.profile_update_candidates || [],
       });
+      const profileAggregate = conversationProfileAggregatorService.aggregateConversationProfileCandidate({
+        userId: input.userId,
+        text,
+        conversationUnderstanding,
+        extractedData: conversationDataCandidates,
+        conversation_profile_update_candidate: conversationDataCandidates.profile_update_candidates,
+        currentProfile: longMemory?.conversation_profile || {},
+        timestamp: new Date().toISOString(),
+      });
+      input.conversationProfile = profileAggregate.conversationProfile;
+      console.info('[conversation_profile_aggregated]', {
+        user_id: input.userId,
+        text: text.slice(0, 120),
+        candidate_traits: profileAggregate.evidence.map((e) => e.trait),
+        persisted_traits: profileAggregate.appliedTraits.map((e) => `${e.category}.${e.trait}`),
+        skipped_traits: profileAggregate.skippedTraits.map((e) => `${e.category}.${e.trait}`),
+        current_scores: profileAggregate.conversationProfile,
+        applied_to_reply_strategy: profileAggregate.appliedTraits,
+        reason: profileAggregate.reason,
+      });
+      if (profileAggregate.evidence.length) {
+        longMemory = await contextMemoryService.mergeLongMemory(input.userId, {
+          conversation_profile: profileAggregate.conversationProfile,
+        });
+        input.conversationProfile = longMemory?.conversation_profile || profileAggregate.conversationProfile;
+        console.info('[conversation_profile_persisted]', {
+          user_id: input.userId,
+          text: text.slice(0, 120),
+          candidate_traits: profileAggregate.evidence.map((e) => e.trait),
+          persisted_traits: profileAggregate.evidence.map((e) => e.trait),
+          skipped_traits: profileAggregate.skippedTraits.map((e) => `${e.category}.${e.trait}`),
+          current_scores: longMemory?.conversation_profile || {},
+          applied_to_reply_strategy: profileAggregate.appliedTraits,
+          reason: 'longMemory.conversation_profile',
+        });
+      } else {
+        console.info('[conversation_profile_skipped]', {
+          user_id: input.userId,
+          text: text.slice(0, 120),
+          candidate_traits: [],
+          persisted_traits: [],
+          skipped_traits: [],
+          current_scores: longMemory?.conversation_profile || {},
+          applied_to_reply_strategy: [],
+          reason: 'no_profile_signal',
+        });
+      }
     }
 
     if (input?.messageType === 'text' && /^(はい|うん|そう|OK|ok|お願いします|それで)$/i.test(text) && !pendingAtInput) {

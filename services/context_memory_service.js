@@ -76,6 +76,7 @@ const DEFAULT_LONG_MEMORY = {
   relationshipPhase: 'phase_1_professional_trust',
   relationshipPhaseUpdatedAt: null,
   relationshipPhaseMeta: null,
+  conversation_profile: {},
   conversationStyleProfile: {
     emojiLover: false,
     casualLover: false,
@@ -1030,6 +1031,9 @@ async function mergeLongMemory(userId, patch) {
     if (safePatch.relationshipPhaseUpdatedAt != null) next.relationshipPhaseUpdatedAt = safePatch.relationshipPhaseUpdatedAt;
     if (safePatch.relationshipPhaseMeta != null && typeof safePatch.relationshipPhaseMeta === 'object') {
       next.relationshipPhaseMeta = { ...(next.relationshipPhaseMeta || {}), ...safePatch.relationshipPhaseMeta };
+    }
+    if (safePatch.conversation_profile != null && typeof safePatch.conversation_profile === 'object') {
+      next.conversation_profile = mergeDeep(next.conversation_profile || {}, safePatch.conversation_profile);
     }
 
     if (Array.isArray(safePatch.eatingPattern)) {

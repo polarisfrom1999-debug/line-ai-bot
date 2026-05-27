@@ -66,6 +66,103 @@ function buildAnticipatorySupport(text, understanding = {}) {
   return uniq(items).slice(0, 2);
 }
 
+function traitScore(profile = {}, category = '', trait = '') {
+  const score = Number(profile?.[category]?.[trait]?.score || 0);
+  return Number.isFinite(score) ? score : 0;
+}
+
+function hasStrongTrait(profile = {}, category = '', trait = '') {
+  return traitScore(profile, category, trait) >= 0.7;
+}
+
+function applyConversationProfileToStrategy(strategy, params = {}) {
+  const profile = params.conversationProfile && typeof params.conversationProfile === 'object'
+    ? params.conversationProfile
+    : params.userProfile?.conversation_profile || {};
+  const safety = normalizeText(params.conversationUnderstanding?.safety_level || '');
+  if (!profile || /caution|urgent/.test(safety)) {
+    console.info('[conversation_profile_applied_to_reply_strategy]', {
+      user_id: normalizeText(params.userId || ''),
+      text: normalizeText(params.text || params.userText || '').slice(0, 120),
+      candidate_traits: [],
+      persisted_traits: [],
+      skipped_traits: [],
+      current_scores: profile || {},
+      applied_to_reply_strategy: [],
+      reason: safety ? 'safety_priority_over_profile' : 'no_conversation_profile',
+    });
+    return strategy;
+  }
+
+  const applied = [];
+  const addApplied = (category, trait) => {
+    applied.push({ category, trait, score: traitScore(profile, category, trait), level: 'strong' });
+  };
+
+  const next = {
+    ...strategy,
+    praise: { ...(strategy.praise || {}) },
+    anticipatory_support: Array.isArray(strategy.anticipatory_support) ? [...strategy.anticipatory_support] : [],
+    avoid: Array.isArray(strategy.avoid) ? [...strategy.avoid] : [],
+  };
+
+  if (hasStrongTrait(profile, 'decision_style', 'checks_before_action')) {
+    addApplied('decision_style', 'checks_before_action');
+    if (/買い出し|作り置き|変えて|薬|検査|運動/.test(normalizeText(params.text || params.userText || ''))) {
+      next.reply_depth = next.reply_depth === 'short' ? 'normal' : next.reply_depth;
+      next.opening_style = 'reassure_first';
+      next.avoid.push('確認前の相談では、結論・理由・量や選び方・安心して進める一言を優先');
+    }
+  }
+  if (hasStrongTrait(profile, 'support_style', 'reasoned_explanation')) {
+    addApplied('support_style', 'reasoned_explanation');
+    next.reply_depth = next.reply_depth === 'short' ? 'normal' : next.reply_depth;
+    next.avoid.push('大丈夫ですだけで終わらず理由を2〜3個に整理');
+  }
+  if (hasStrongTrait(profile, 'trust_builders', 'specific_amounts')) {
+    addApplied('trust_builders', 'specific_amounts');
+    next.anticipatory_support.push('可能なら量・回数・目安を1つ入れる。');
+  }
+  if (hasStrongTrait(profile, 'trust_builders', 'warm_praise') || hasStrongTrait(profile, 'motivation_source', 'praise')) {
+    addApplied(
+      hasStrongTrait(profile, 'trust_builders', 'warm_praise') ? 'trust_builders' : 'motivation_source',
+      hasStrongTrait(profile, 'trust_builders', 'warm_praise') ? 'warm_praise' : 'praise'
+    );
+    if (!next.praise.target) next.praise.target = 'action';
+    if (!next.praise.text_hint) next.praise.text_hint = praiseHint(next.praise.target, 'light');
+    next.praise.intensity = next.praise.intensity === 'none' ? 'light' : next.praise.intensity;
+  }
+  if (hasStrongTrait(profile, 'support_style', 'anticipatory_support') || hasStrongTrait(profile, 'anticipatory_support_preference', 'preferred')) {
+    addApplied(
+      hasStrongTrait(profile, 'support_style', 'anticipatory_support') ? 'support_style' : 'anticipatory_support_preference',
+      hasStrongTrait(profile, 'support_style', 'anticipatory_support') ? 'anticipatory_support' : 'preferred'
+    );
+    next.anticipatory_support.push('先回り補助を1〜2個だけ入れる。');
+  }
+  if (hasStrongTrait(profile, 'decision_style', 'numbers_based')) {
+    addApplied('decision_style', 'numbers_based');
+    next.anticipatory_support.push('数字が答えられる時は、概算の量・回数・目安を先に出す。');
+  }
+  if (hasStrongTrait(profile, 'decision_style', 'needs_reassurance')) {
+    addApplied('decision_style', 'needs_reassurance');
+    next.opening_style = next.opening_style === 'direct' ? 'reassure_first' : next.opening_style;
+  }
+
+  next.anticipatory_support = uniq(next.anticipatory_support).slice(0, 3);
+  next.avoid = uniq(next.avoid);
+  console.info('[conversation_profile_applied_to_reply_strategy]', {
+    user_id: normalizeText(params.userId || ''),
+    text: normalizeText(params.text || params.userText || '').slice(0, 120),
+    candidate_traits: [],
+    persisted_traits: applied.map((x) => `${x.category}.${x.trait}`),
+    skipped_traits: [],
+    current_scores: profile,
+    applied_to_reply_strategy: applied,
+    reason: applied.length ? 'strong_profile_traits_applied' : 'no_score_above_profile_apply_threshold',
+  });
+  return next;
+}
+
 function buildReplyStrategy(params = {}) {
   const understanding = params.conversationUnderstanding || {};
   const text = normalizeText(params.text || params.userText || '');
@@ -90,7 +187,7 @@ function buildReplyStrategy(params = {}) {
   const featureResults = params.featureResults && typeof params.featureResults === 'object' ? params.featureResults : {};
   const featureRoute = Boolean(route && !/life_companion|emotional_support|casual_chat|normal_chat/.test(route));
 
-  const strategy = {
+  let strategy = {
     reply_depth: replyDepth,
     opening_style: openingStyle,
     praise,
@@ -108,6 +205,11 @@ function buildReplyStrategy(params = {}) {
       safety === 'urgent' ? '通常会話として流さない' : '',
     ]),
   };
+  strategy = applyConversationProfileToStrategy(strategy, {
+    ...params,
+    text,
+    conversationUnderstanding: understanding,
+  });
 
   console.info('[reply_strategy_built]', {
     user_id: normalizeText(params.userId || ''),
@@ -118,7 +220,7 @@ function buildReplyStrategy(params = {}) {
     reply_depth: strategy.reply_depth,
     feature_plan: featurePlan,
     data_extraction_targets: understanding.data_extraction_targets || [],
-    praise_target: praise.target,
+    praise_target: strategy.praise?.target || null,
     anticipatory_support_needed: Boolean(understanding.anticipatory_support_needed),
     safety_level: safety || 'normal',
     route,
